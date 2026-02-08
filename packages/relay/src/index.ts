@@ -53,3 +53,13 @@ export {
   loadPricingConfigFromEnv,
   loadPricingConfigFromFile,
 } from './pricing/index.js';
+
+// Re-export from @agent-society/bls for downstream consumers
+export {
+  BlsBaseError,
+  createBlsServer,
+} from '@agent-society/bls';
+export type {
+  CreateBlsServerConfig,
+  BlsServerInstance,
+} from '@agent-society/bls';

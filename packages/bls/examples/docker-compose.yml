@@ -1,0 +1,55 @@
+# Docker Compose example for @agent-society/bls
+# Uses the Compose Specification format (no top-level 'version' key needed).
+#
+# Usage:
+#   1. Copy .env.example to .env and fill in your values
+#   2. Run: docker compose up
+#
+# See packages/bls/README.md for integration instructions.
+
+services:
+  bls:
+    image: di3twater/agent-society-bls:latest
+    ports:
+      - "3100:3100"
+    volumes:
+      - bls-data:/data
+    environment:
+      # Required
+      NODE_ID: ${NODE_ID}
+      NOSTR_SECRET_KEY: ${NOSTR_SECRET_KEY}
+      ILP_ADDRESS: ${ILP_ADDRESS}
+      # Optional (uncomment to override defaults)
+      # BLS_PORT: ${BLS_PORT:-3100}
+      # BLS_BASE_PRICE_PER_BYTE: ${BLS_BASE_PRICE_PER_BYTE:-10}
+      # OWNER_PUBKEY: ${OWNER_PUBKEY}
+      # DATA_DIR: ${DATA_DIR:-/data}
+      # BLS_KIND_OVERRIDES: ${BLS_KIND_OVERRIDES}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3100/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------
+  # ILP Connector Stub
+  # ---------------------------------------------------------------
+  # This is a placeholder for your actual ILP connector service.
+  # Replace the image and configuration with your connector of choice
+  # (e.g., rafiki, ilp-connector, or a custom implementation).
+  #
+  # The BLS service is reachable from the connector at:
+  #   http://bls:3100/handle-payment
+  # ---------------------------------------------------------------
+  ilp-connector:
+    image: node:20-alpine
+    # Replace this command with your actual connector entrypoint
+    command: ["sh", "-c", "echo 'Replace this with your ILP connector' && sleep infinity"]
+    depends_on:
+      bls:
+        condition: service_healthy
+
+volumes:
+  bls-data:

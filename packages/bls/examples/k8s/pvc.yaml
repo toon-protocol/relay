@@ -1,0 +1,22 @@
+# BLS PersistentVolumeClaim
+# Provides persistent storage for the SQLite database at /data.
+#
+# Sizing guidance: 1Gi is suitable for moderate event storage.
+# Increase for high-traffic nodes that store many Nostr events.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bls-data
+  labels:
+    app: bls
+    app.kubernetes.io/name: bls
+    app.kubernetes.io/part-of: agent-society
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  # Uncomment and set to your cluster's storage class.
+  # If omitted, the cluster default storage class is used.
+  # storageClassName: standard
