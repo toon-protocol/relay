@@ -1,0 +1,34 @@
+# BLS ConfigMap
+# Non-secret configuration for the BLS. Edit these values for your deployment.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bls-config
+  labels:
+    app: bls
+    app.kubernetes.io/name: bls
+    app.kubernetes.io/part-of: agent-society
+data:
+  # Required: Unique identifier for this node (used in health checks and logging)
+  NODE_ID: my-node
+
+  # Required: Node's ILP address (must start with "g." and contain only
+  # alphanumeric characters, dots, and hyphens)
+  ILP_ADDRESS: g.agent-society.my-node
+
+  # Optional: HTTP port (default: 3100, must be 1-65535)
+  BLS_PORT: "3100"
+
+  # Optional: Directory for SQLite database storage (default: /data)
+  DATA_DIR: /data
+
+  # --- Optional variables (uncomment and configure as needed) ---
+  # Base price per byte for event storage (default: 10)
+  # BLS_BASE_PRICE_PER_BYTE: "10"
+
+  # 64-char hex pubkey whose events bypass payment requirements
+  # OWNER_PUBKEY: ""
+
+  # JSON object mapping event kinds to custom prices
+  # Example: {"0":"0","30023":"100"}
+  # BLS_KIND_OVERRIDES: '{}'

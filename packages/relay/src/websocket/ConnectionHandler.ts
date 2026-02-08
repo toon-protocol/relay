@@ -34,6 +34,7 @@ export class ConnectionHandler {
    * Handle an incoming message from the WebSocket.
    */
   handleMessage(data: string): void {
+    console.log(`[ConnectionHandler] Received message:`, data.slice(0, 150));
     let message: unknown[];
 
     try {
@@ -49,11 +50,15 @@ export class ConnectionHandler {
     }
 
     const messageType = message[0];
+    console.log(`[ConnectionHandler] Message type: ${messageType}`);
 
     if (messageType === 'REQ') {
       const subscriptionId = message[1];
       const filters = message.slice(2) as Filter[];
       this.handleReq(subscriptionId as string, filters);
+    } else if (messageType === 'EVENT') {
+      const event = message[1];
+      this.handleEvent(event as NostrEvent);
     } else if (messageType === 'CLOSE') {
       const subscriptionId = message[1];
       this.handleClose(subscriptionId as string);
@@ -93,15 +98,44 @@ export class ConnectionHandler {
     });
 
     // Query matching events
+    console.log(`[ConnectionHandler] REQ: ${subscriptionId}, filters:`, JSON.stringify(filters).slice(0, 100));
     const events = this.eventStore.query(filters);
+    console.log(`[ConnectionHandler] Query returned ${events.length} events for ${subscriptionId}`);
 
     // Send matching events
     for (const event of events) {
+      console.log(`[ConnectionHandler] Sending event ${event.id.slice(0, 16)}... to ${subscriptionId}`);
       this.sendEvent(subscriptionId, event);
     }
 
     // Send EOSE
+    console.log(`[ConnectionHandler] Sending EOSE for ${subscriptionId}`);
     this.sendEose(subscriptionId);
+  }
+
+  /**
+   * Handle an EVENT message to store an event.
+   * Accepts events for free (no payment required).
+   */
+  private handleEvent(event: NostrEvent): void {
+    console.log(`[ConnectionHandler] Received EVENT: ${event.id.slice(0, 16)}... kind:${event.kind}`);
+
+    try {
+      // Store the event
+      this.eventStore.store(event);
+      console.log(`[ConnectionHandler] Event stored successfully`);
+
+      // Send OK message (NIP-20)
+      this.sendOk(event.id, true, '');
+    } catch (error) {
+      console.error(`[ConnectionHandler] Failed to store event:`, error);
+      // Send OK message with error (NIP-20)
+      this.sendOk(
+        event.id,
+        false,
+        error instanceof Error ? error.message : 'storage failed'
+      );
+    }
   }
 
   /**
@@ -132,6 +166,10 @@ export class ConnectionHandler {
 
   private sendEose(subscriptionId: string): void {
     this.send(['EOSE', subscriptionId]);
+  }
+
+  private sendOk(eventId: string, success: boolean, message: string): void {
+    this.send(['OK', eventId, success, message]);
   }
 
   private sendNotice(message: string): void {

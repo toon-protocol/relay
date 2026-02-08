@@ -1,0 +1,65 @@
+# BLS Deployment
+# Note: replicas is set to 1 because BLS uses SQLite, which is a single-writer
+# database. Horizontal scaling is not supported.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bls
+  labels:
+    app: bls
+    app.kubernetes.io/name: bls
+    app.kubernetes.io/part-of: agent-society
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bls
+  template:
+    metadata:
+      labels:
+        app: bls
+        app.kubernetes.io/name: bls
+        app.kubernetes.io/part-of: agent-society
+    spec:
+      containers:
+        - name: bls
+          image: di3twater/agent-society-bls:latest
+          ports:
+            - name: http
+              containerPort: 3100
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          envFrom:
+            - configMapRef:
+                name: bls-config
+            - secretRef:
+                name: bls-secret
+          volumeMounts:
+            - name: bls-data
+              mountPath: /data
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: bls-data
+          persistentVolumeClaim:
+            claimName: bls-data

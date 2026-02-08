@@ -1,0 +1,32 @@
+# Kustomize base for BLS Kubernetes manifests.
+#
+# Usage:
+#   kubectl apply -k packages/bls/examples/k8s/
+#
+# To customize for different environments, create an overlay directory:
+#   overlays/production/kustomization.yaml
+#
+# Example overlay:
+#   apiVersion: kustomize.config.k8s.io/v1beta1
+#   kind: Kustomization
+#   resources:
+#     - ../../packages/bls/examples/k8s
+#   patches:
+#     - target:
+#         kind: Deployment
+#         name: bls
+#       patch: |
+#         - op: replace
+#           path: /spec/template/spec/containers/0/resources/limits/memory
+#           value: 512Mi
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  - service.yaml
+  - configmap.yaml
+  - secret.yaml
+  - pvc.yaml
+commonLabels:
+  app.kubernetes.io/name: bls
+  app.kubernetes.io/part-of: agent-society

@@ -1,0 +1,21 @@
+# BLS Service
+# Exposes the BLS within the cluster. Other services (e.g., an ILP connector)
+# can reach the BLS at http://bls:3100/handle-payment when deployed in the
+# same namespace.
+apiVersion: v1
+kind: Service
+metadata:
+  name: bls
+  labels:
+    app: bls
+    app.kubernetes.io/name: bls
+    app.kubernetes.io/part-of: agent-society
+spec:
+  type: ClusterIP
+  selector:
+    app: bls
+  ports:
+    - name: http
+      port: 3100
+      targetPort: http
+      protocol: TCP
