@@ -3,7 +3,7 @@ import { createHash } from 'crypto';
 import { generateSecretKey, finalizeEvent, getPublicKey } from 'nostr-tools/pure';
 import type { NostrEvent } from 'nostr-tools/pure';
 import { BusinessLogicServer, generateFulfillment } from './BusinessLogicServer.js';
-import { ILP_ERROR_CODES, BlsError, isValidPubkey } from './types.js';
+import { ILP_ERROR_CODES, BlsError, isValidPubkey, SPSP_REQUEST_KIND } from './types.js';
 import type { EventStore } from '../storage/index.js';
 import { encodeEventToToon } from '../toon/index.js';
 import { SqliteEventStore } from '../storage/index.js';
@@ -1003,5 +1003,84 @@ describe('BusinessLogicServer with ownerPubkey integration', () => {
       const stored = eventStore.get(event.id);
       expect(stored?.id).toBe(event.id);
     }
+  });
+});
+
+describe('BusinessLogicServer with spspMinPrice', () => {
+  let mockEventStore: ReturnType<typeof createMockEventStore>;
+
+  beforeEach(() => {
+    mockEventStore = createMockEventStore();
+  });
+
+  it('should accept kind:23194 events with amount=0 when spspMinPrice is 0n', async () => {
+    const bls = new BusinessLogicServer(
+      { basePricePerByte: 10n, spspMinPrice: 0n },
+      mockEventStore
+    );
+    const event = createValidSignedEvent({ kind: SPSP_REQUEST_KIND, content: 'encrypted-spsp-request' });
+    const base64Data = eventToBase64Toon(event);
+
+    const response = await bls.getApp().request('/handle-payment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        amount: '0',
+        destination: 'g.agent.test',
+        data: base64Data,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.accept).toBe(true);
+  });
+
+  it('should still require standard payment for non-SPSP events when spspMinPrice is 0n', async () => {
+    const bls = new BusinessLogicServer(
+      { basePricePerByte: 10n, spspMinPrice: 0n },
+      mockEventStore
+    );
+    const event = createValidSignedEvent({ kind: 1, content: 'regular note' });
+    const base64Data = eventToBase64Toon(event);
+
+    const response = await bls.getApp().request('/handle-payment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        amount: '0',
+        destination: 'g.agent.test',
+        data: base64Data,
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const json = await response.json();
+    expect(json.accept).toBe(false);
+    expect(json.code).toBe(ILP_ERROR_CODES.INSUFFICIENT_AMOUNT);
+  });
+
+  it('should require standard payment for kind:23194 when spspMinPrice is not set', async () => {
+    const bls = new BusinessLogicServer(
+      { basePricePerByte: 10n },
+      mockEventStore
+    );
+    const event = createValidSignedEvent({ kind: SPSP_REQUEST_KIND, content: 'encrypted-spsp-request' });
+    const base64Data = eventToBase64Toon(event);
+
+    const response = await bls.getApp().request('/handle-payment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        amount: '0',
+        destination: 'g.agent.test',
+        data: base64Data,
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const json = await response.json();
+    expect(json.accept).toBe(false);
+    expect(json.code).toBe(ILP_ERROR_CODES.INSUFFICIENT_AMOUNT);
   });
 });

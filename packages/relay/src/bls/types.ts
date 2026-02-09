@@ -2,6 +2,12 @@ import { RelayError } from '../storage/index.js';
 import type { PricingService } from '../pricing/index.js';
 
 /**
+ * SPSP request event kind (NIP-proposed kind:23194).
+ * Defined locally since relay BLS does not import from @agent-society/core.
+ */
+export const SPSP_REQUEST_KIND = 23194;
+
+/**
  * Regex for validating Nostr pubkeys (64 lowercase hex characters).
  */
 export const PUBKEY_REGEX = /^[0-9a-f]{64}$/;
@@ -25,6 +31,8 @@ export interface BlsConfig {
   pricingService?: PricingService;
   /** Optional owner pubkey - events from this pubkey bypass payment */
   ownerPubkey?: string;
+  /** Optional minimum price for SPSP request events (kind:23194). When set to 0n, SPSP requests are accepted without payment. Defaults to standard pricing when undefined. */
+  spspMinPrice?: bigint;
 }
 
 /**
