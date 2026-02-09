@@ -20,6 +20,8 @@ export interface CreateBlsServerConfig {
   dbPath?: string;
   /** Optional kind-specific price overrides */
   kindOverrides?: Map<number, bigint>;
+  /** Optional minimum price for SPSP request events (kind:23194) */
+  spspMinPrice?: bigint;
 }
 
 /**
@@ -58,6 +60,7 @@ export function createBlsServer(config: CreateBlsServerConfig): BlsServerInstanc
       basePricePerByte: config.basePricePerByte,
       pricingService,
       ownerPubkey: config.ownerPubkey,
+      spspMinPrice: config.spspMinPrice,
     },
     eventStore
   );

@@ -45,6 +45,7 @@ async function main(): Promise<void> {
     ownerPubkey,
     dataDir,
     kindOverrides,
+    spspMinPrice,
   } = config;
 
   // Create event store with automatic fallback
@@ -62,6 +63,7 @@ async function main(): Promise<void> {
       basePricePerByte,
       pricingService,
       ownerPubkey,
+      spspMinPrice,
     },
     eventStore
   );
@@ -98,6 +100,9 @@ async function main(): Promise<void> {
   console.log(`  Data Dir:           ${dataDir}`);
   console.log(`  Storage:            ${storageSummary}`);
   console.log(`  Base Price/Byte:    ${basePricePerByte}`);
+  if (spspMinPrice !== undefined) {
+    console.log(`  SPSP Min Price:     ${spspMinPrice}`);
+  }
   if (ownerPubkey) {
     console.log(`  Owner Pubkey:       ${ownerPubkey}`);
   }

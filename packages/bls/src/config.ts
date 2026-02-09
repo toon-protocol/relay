@@ -25,6 +25,8 @@ export interface BlsEnvConfig {
   dataDir: string;
   /** Optional kind-specific price overrides */
   kindOverrides?: Map<number, bigint>;
+  /** Optional minimum price for SPSP request events (kind:23194) */
+  spspMinPrice?: bigint;
 }
 
 const HEX_64_REGEX = /^[0-9a-f]{64}$/;
@@ -97,6 +99,26 @@ export function loadBlsConfigFromEnv(): BlsEnvConfig {
   // Optional: DATA_DIR (default /data)
   const dataDir = process.env['DATA_DIR'] ?? '/data';
 
+  // Optional: SPSP_MIN_PRICE (bigint, non-negative)
+  let spspMinPrice: bigint | undefined;
+  const rawSpspMinPrice = process.env['SPSP_MIN_PRICE'];
+  if (rawSpspMinPrice !== undefined && rawSpspMinPrice !== '') {
+    try {
+      spspMinPrice = BigInt(rawSpspMinPrice);
+    } catch {
+      throw new ConfigError(
+        'SPSP_MIN_PRICE',
+        `must be a valid integer, got "${rawSpspMinPrice}"`
+      );
+    }
+    if (spspMinPrice < 0n) {
+      throw new ConfigError(
+        'SPSP_MIN_PRICE',
+        `must be non-negative, got "${rawSpspMinPrice}"`
+      );
+    }
+  }
+
   // Pricing: delegate to loadPricingConfigFromEnv() with unprefixed fallbacks
   propagateUnprefixedEnvVars();
   const pricingConfig: PricingConfig = loadPricingConfigFromEnv();
@@ -111,6 +133,7 @@ export function loadBlsConfigFromEnv(): BlsEnvConfig {
     ownerPubkey,
     dataDir,
     kindOverrides: pricingConfig.kindOverrides,
+    spspMinPrice,
   };
 }
 
