@@ -1,6 +1,6 @@
 {
   "name": "@agent-society/relay",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "ILP-gated Nostr relay with Business Logic Server",
   "type": "module",
   "main": "./dist/index.js",
@@ -26,9 +26,18 @@
     "interledger"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ALLiDoizCode/agent-society.git",
+    "directory": "packages/relay"
+  },
+  "author": "ALLiDoizCode",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
-    "@agent-society/bls": "workspace:*",
-    "@agent-society/core": "workspace:*",
+    "@agent-society/bls": "^1.0.0",
+    "@agent-society/core": "^1.0.0",
     "@toon-format/toon": "^1.0.0",
     "better-sqlite3": "^11.0.0",
     "hono": "^4.0.0",
