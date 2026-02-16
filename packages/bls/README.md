@@ -52,7 +52,7 @@ To add the BLS to your own `docker-compose.yml`:
 3. Set the required environment variables (`NODE_ID`, `NOSTR_SECRET_KEY`, `ILP_ADDRESS`)
 4. Connect the BLS to the same Docker network as your ILP connector
 
-Your connector can reach the BLS at `http://bls:3100/handle-payment` when both services share a network.
+Your connector can reach the BLS at `http://bls:3100/handle-packet` when both services share a network.
 
 ## Kubernetes
 
@@ -175,7 +175,7 @@ Health check endpoint for container orchestration.
 }
 ```
 
-### POST /handle-payment
+### POST /handle-packet
 
 Verify an ILP payment and process event storage.
 

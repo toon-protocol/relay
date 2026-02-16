@@ -97,12 +97,12 @@ describe('BusinessLogicServer', () => {
     bls = new BusinessLogicServer({ basePricePerByte: 10n }, mockEventStore);
   });
 
-  describe('POST /handle-payment', () => {
+  describe('POST /handle-packet', () => {
     it('should accept payment when amount meets price', async () => {
       const event = createValidSignedEvent();
       const base64Data = eventToBase64Toon(event);
 
-      const response = await bls.getApp().request('/handle-payment', {
+      const response = await bls.getApp().request('/handle-packet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -124,7 +124,7 @@ describe('BusinessLogicServer', () => {
       const event = createValidSignedEvent();
       const base64Data = eventToBase64Toon(event);
 
-      await bls.getApp().request('/handle-payment', {
+      await bls.getApp().request('/handle-packet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -144,7 +144,7 @@ describe('BusinessLogicServer', () => {
       const event = createValidSignedEvent();
       const base64Data = eventToBase64Toon(event);
 
-      const response = await bls.getApp().request('/handle-payment', {
+      const response = await bls.getApp().request('/handle-packet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -167,7 +167,7 @@ describe('BusinessLogicServer', () => {
       const event = createValidSignedEvent();
       const base64Data = eventToBase64Toon(event);
 
-      await bls.getApp().request('/handle-payment', {
+      await bls.getApp().request('/handle-packet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -181,7 +181,7 @@ describe('BusinessLogicServer', () => {
     });
 
     it('should reject invalid base64 data with F00', async () => {
-      const response = await bls.getApp().request('/handle-payment', {
+      const response = await bls.getApp().request('/handle-packet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -203,7 +203,7 @@ describe('BusinessLogicServer', () => {
         'base64'
       );
 
-      const response = await bls.getApp().request('/handle-payment', {
+      const response = await bls.getApp().request('/handle-packet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -227,7 +227,7 @@ describe('BusinessLogicServer', () => {
       const tamperedEvent = { ...event, content: 'tampered content' };
       const base64Data = eventToBase64Toon(tamperedEvent);
 
-      const response = await bls.getApp().request('/handle-payment', {
+      const response = await bls.getApp().request('/handle-packet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -249,7 +249,7 @@ describe('BusinessLogicServer', () => {
       const tamperedEvent = { ...event, content: 'tampered' };
       const base64Data = eventToBase64Toon(tamperedEvent);
 
-      await bls.getApp().request('/handle-payment', {
+      await bls.getApp().request('/handle-packet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -263,7 +263,7 @@ describe('BusinessLogicServer', () => {
     });
 
     it('should reject missing required fields with F00', async () => {
-      const response = await bls.getApp().request('/handle-payment', {
+      const response = await bls.getApp().request('/handle-packet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -284,7 +284,7 @@ describe('BusinessLogicServer', () => {
       const base64Data = eventToBase64Toon(event);
       const expectedFulfillment = generateFulfillment(event.id);
 
-      const response = await bls.getApp().request('/handle-payment', {
+      const response = await bls.getApp().request('/handle-packet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -305,7 +305,7 @@ describe('BusinessLogicServer', () => {
       const expectedPrice = BigInt(toonData.length) * 10n;
 
       // Amount exactly meets price
-      const response = await bls.getApp().request('/handle-payment', {
+      const response = await bls.getApp().request('/handle-packet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -326,7 +326,7 @@ describe('BusinessLogicServer', () => {
       const price = BigInt(toonData.length) * 10n;
       const insufficientAmount = price - 1n;
 
-      const response = await bls.getApp().request('/handle-payment', {
+      const response = await bls.getApp().request('/handle-packet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -381,7 +381,7 @@ describe('BusinessLogicServer integration', () => {
     const event = createValidSignedEvent({ content: 'integration test' });
     const base64Data = eventToBase64Toon(event);
 
-    const response = await bls.getApp().request('/handle-payment', {
+    const response = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -410,7 +410,7 @@ describe('BusinessLogicServer integration', () => {
 
     for (const event of events) {
       const base64Data = eventToBase64Toon(event);
-      const response = await bls.getApp().request('/handle-payment', {
+      const response = await bls.getApp().request('/handle-packet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -433,7 +433,7 @@ describe('BusinessLogicServer integration', () => {
     const event = createValidSignedEvent();
     const base64Data = eventToBase64Toon(event);
 
-    await bls.getApp().request('/handle-payment', {
+    await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -472,7 +472,7 @@ describe('BusinessLogicServer integration', () => {
     // Store both events via payment
     for (const event of [event1, event2]) {
       const base64Data = eventToBase64Toon(event);
-      await bls.getApp().request('/handle-payment', {
+      await bls.getApp().request('/handle-packet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -515,7 +515,7 @@ describe('BusinessLogicServer with PricingService', () => {
     const base64Data = eventToBase64Toon(event);
 
     // Even with amount 0, it should accept (free profile)
-    const response = await bls.getApp().request('/handle-payment', {
+    const response = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -537,7 +537,7 @@ describe('BusinessLogicServer with PricingService', () => {
     const expectedPrice = BigInt(toonData.length) * 100n; // 100 per byte for kind 30023
 
     // Pay exactly the required price
-    const response = await bls.getApp().request('/handle-payment', {
+    const response = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -559,7 +559,7 @@ describe('BusinessLogicServer with PricingService', () => {
     // Pay base rate (10n) instead of override rate (100n)
     const insufficientPrice = BigInt(toonData.length) * 10n;
 
-    const response = await bls.getApp().request('/handle-payment', {
+    const response = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -581,7 +581,7 @@ describe('BusinessLogicServer with PricingService', () => {
     const base64Data = Buffer.from(toonData).toString('base64');
     const expectedPrice = BigInt(toonData.length) * 5n; // 5 per byte for kind 1
 
-    const response = await bls.getApp().request('/handle-payment', {
+    const response = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -602,7 +602,7 @@ describe('BusinessLogicServer with PricingService', () => {
     const base64Data = Buffer.from(toonData).toString('base64');
     const expectedPrice = BigInt(toonData.length) * 10n; // Base price
 
-    const response = await bls.getApp().request('/handle-payment', {
+    const response = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -623,7 +623,7 @@ describe('BusinessLogicServer with PricingService', () => {
     const base64Data = Buffer.from(toonData).toString('base64');
     const insufficientPrice = BigInt(toonData.length) * 5n; // Less than base 10n
 
-    const response = await bls.getApp().request('/handle-payment', {
+    const response = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -654,7 +654,7 @@ describe('BusinessLogicServer backwards compatibility', () => {
     const base64Data = Buffer.from(toonData).toString('base64');
     const expectedPrice = BigInt(toonData.length) * 10n;
 
-    const response = await bls.getApp().request('/handle-payment', {
+    const response = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -721,7 +721,7 @@ describe('BusinessLogicServer with ownerPubkey', () => {
     const event = createEventFromKey(ownerSk);
     const base64Data = eventToBase64Toon(event);
 
-    const response = await bls.getApp().request('/handle-payment', {
+    const response = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -742,7 +742,7 @@ describe('BusinessLogicServer with ownerPubkey', () => {
     const event = createEventFromKey(ownerSk);
     const base64Data = eventToBase64Toon(event);
 
-    await bls.getApp().request('/handle-payment', {
+    await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -764,7 +764,7 @@ describe('BusinessLogicServer with ownerPubkey', () => {
     const tamperedEvent = { ...event, content: 'tampered content' };
     const base64Data = eventToBase64Toon(tamperedEvent);
 
-    const response = await bls.getApp().request('/handle-payment', {
+    const response = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -787,7 +787,7 @@ describe('BusinessLogicServer with ownerPubkey', () => {
     const event = createEventFromKey(nonOwnerSk);
     const base64Data = eventToBase64Toon(event);
 
-    const response = await bls.getApp().request('/handle-payment', {
+    const response = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -809,7 +809,7 @@ describe('BusinessLogicServer with ownerPubkey', () => {
     const event = createEventFromKey(nonOwnerSk);
     const base64Data = eventToBase64Toon(event);
 
-    const response = await bls.getApp().request('/handle-payment', {
+    const response = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -833,7 +833,7 @@ describe('BusinessLogicServer with ownerPubkey', () => {
     const event = createEventFromKey(ownerSk);
     const base64Data = eventToBase64Toon(event);
 
-    const response = await blsWithoutOwner.getApp().request('/handle-payment', {
+    const response = await blsWithoutOwner.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -906,7 +906,7 @@ describe('BusinessLogicServer with ownerPubkey integration', () => {
     const event = createEventFromKey(ownerSk, { content: 'owner integration test' });
     const base64Data = eventToBase64Toon(event);
 
-    const response = await bls.getApp().request('/handle-payment', {
+    const response = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -937,7 +937,7 @@ describe('BusinessLogicServer with ownerPubkey integration', () => {
     const nonOwnerBase64 = eventToBase64Toon(nonOwnerEvent);
 
     // Submit owner event with amount=0
-    const ownerResponse = await bls.getApp().request('/handle-payment', {
+    const ownerResponse = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -949,7 +949,7 @@ describe('BusinessLogicServer with ownerPubkey integration', () => {
     expect(ownerResponse.status).toBe(200);
 
     // Submit non-owner event with amount=0 (should fail)
-    const nonOwnerFailResponse = await bls.getApp().request('/handle-payment', {
+    const nonOwnerFailResponse = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -961,7 +961,7 @@ describe('BusinessLogicServer with ownerPubkey integration', () => {
     expect(nonOwnerFailResponse.status).toBe(400);
 
     // Submit non-owner event with sufficient payment
-    const nonOwnerSuccessResponse = await bls.getApp().request('/handle-payment', {
+    const nonOwnerSuccessResponse = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -986,7 +986,7 @@ describe('BusinessLogicServer with ownerPubkey integration', () => {
 
     for (const event of events) {
       const base64Data = eventToBase64Toon(event);
-      const response = await bls.getApp().request('/handle-payment', {
+      const response = await bls.getApp().request('/handle-packet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1021,7 +1021,7 @@ describe('BusinessLogicServer with spspMinPrice', () => {
     const event = createValidSignedEvent({ kind: SPSP_REQUEST_KIND, content: 'encrypted-spsp-request' });
     const base64Data = eventToBase64Toon(event);
 
-    const response = await bls.getApp().request('/handle-payment', {
+    const response = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1044,7 +1044,7 @@ describe('BusinessLogicServer with spspMinPrice', () => {
     const event = createValidSignedEvent({ kind: 1, content: 'regular note' });
     const base64Data = eventToBase64Toon(event);
 
-    const response = await bls.getApp().request('/handle-payment', {
+    const response = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1068,7 +1068,7 @@ describe('BusinessLogicServer with spspMinPrice', () => {
     const event = createValidSignedEvent({ kind: 23195, content: 'spsp-response' });
     const base64Data = eventToBase64Toon(event);
 
-    const response = await bls.getApp().request('/handle-payment', {
+    const response = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1092,7 +1092,7 @@ describe('BusinessLogicServer with spspMinPrice', () => {
     const event = createValidSignedEvent({ kind: SPSP_REQUEST_KIND, content: 'encrypted-spsp-request' });
     const base64Data = eventToBase64Toon(event);
 
-    const response = await bls.getApp().request('/handle-payment', {
+    const response = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1116,7 +1116,7 @@ describe('BusinessLogicServer with spspMinPrice', () => {
     const event = createValidSignedEvent({ kind: SPSP_REQUEST_KIND, content: 'encrypted-spsp-request' });
     const base64Data = eventToBase64Toon(event);
 
-    await bls.getApp().request('/handle-payment', {
+    await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1140,7 +1140,7 @@ describe('BusinessLogicServer with spspMinPrice', () => {
     const base64Data = eventToBase64Toon(event);
     const expectedFulfillment = generateFulfillment(event.id);
 
-    const response = await bls.getApp().request('/handle-payment', {
+    const response = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1163,7 +1163,7 @@ describe('BusinessLogicServer with spspMinPrice', () => {
     const base64Data = eventToBase64Toon(event);
 
     // spspMinPrice=50n is less than standard price (bytes * 10n), so 50 should be accepted
-    const response = await bls.getApp().request('/handle-payment', {
+    const response = await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1188,7 +1188,7 @@ describe('BusinessLogicServer with spspMinPrice', () => {
     const event = createValidSignedEvent({ kind: SPSP_REQUEST_KIND, content: 'encrypted-spsp-request' });
     const base64Data = eventToBase64Toon(event);
 
-    await bls.getApp().request('/handle-payment', {
+    await bls.getApp().request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

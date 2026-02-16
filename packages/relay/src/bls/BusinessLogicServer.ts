@@ -5,9 +5,9 @@ import type { EventStore } from '../storage/index.js';
 import { decodeEventFromToon } from '../toon/index.js';
 import type {
   BlsConfig,
-  HandlePaymentRequest,
-  HandlePaymentAcceptResponse,
-  HandlePaymentRejectResponse,
+  HandlePacketRequest,
+  HandlePacketAcceptResponse,
+  HandlePacketRejectResponse,
 } from './types.js';
 import { ILP_ERROR_CODES, BlsError, isValidPubkey, SPSP_REQUEST_KIND } from './types.js';
 
@@ -54,13 +54,13 @@ export class BusinessLogicServer {
    * Set up HTTP routes.
    */
   private setupRoutes(): void {
-    this.app.post('/handle-payment', async (c) => {
+    this.app.post('/handle-packet', async (c) => {
       try {
-        const body = await c.req.json<HandlePaymentRequest>();
-        const response = this.handlePayment(body);
+        const body = await c.req.json<HandlePacketRequest>();
+        const response = this.handlePacket(body);
         return c.json(response, response.accept ? 200 : 400);
       } catch (error) {
-        const response: HandlePaymentRejectResponse = {
+        const response: HandlePacketRejectResponse = {
           accept: false,
           code: ILP_ERROR_CODES.INTERNAL_ERROR,
           message:
@@ -79,11 +79,15 @@ export class BusinessLogicServer {
   }
 
   /**
-   * Process a payment request.
+   * Process a packet request.
+   *
+   * This method is public to support direct connector integration in embedded mode,
+   * where the connector calls this method directly via setPacketHandler() instead
+   * of making HTTP requests.
    */
-  private handlePayment(
-    request: HandlePaymentRequest
-  ): HandlePaymentAcceptResponse | HandlePaymentRejectResponse {
+  public handlePacket(
+    request: HandlePacketRequest
+  ): HandlePacketAcceptResponse | HandlePacketRejectResponse {
     // Validate required fields
     if (!request.amount || !request.destination || !request.data) {
       return {

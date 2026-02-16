@@ -36,9 +36,9 @@ export interface BlsConfig {
 }
 
 /**
- * Incoming payment request from ILP connector.
+ * Incoming packet request from ILP connector.
  */
-export interface HandlePaymentRequest {
+export interface HandlePacketRequest {
   /** Payment amount as string (parsed to bigint) */
   amount: string;
   /** ILP destination address */
@@ -50,9 +50,9 @@ export interface HandlePaymentRequest {
 }
 
 /**
- * Response for accepted payment.
+ * Response for accepted packet.
  */
-export interface HandlePaymentAcceptResponse {
+export interface HandlePacketAcceptResponse {
   accept: true;
   /** @deprecated Agent-runtime computes fulfillment from SHA256(toon_bytes). Will be removed in a future version. */
   fulfillment?: string;
@@ -63,9 +63,9 @@ export interface HandlePaymentAcceptResponse {
 }
 
 /**
- * Response for rejected payment.
+ * Response for rejected packet.
  */
-export interface HandlePaymentRejectResponse {
+export interface HandlePacketRejectResponse {
   accept: false;
   /** ILP error code (F00, F06, etc.) */
   code: string;
@@ -78,11 +78,11 @@ export interface HandlePaymentRejectResponse {
 }
 
 /**
- * Union type for payment response.
+ * Union type for packet response.
  */
-export type HandlePaymentResponse =
-  | HandlePaymentAcceptResponse
-  | HandlePaymentRejectResponse;
+export type HandlePacketResponse =
+  | HandlePacketAcceptResponse
+  | HandlePacketRejectResponse;
 
 /**
  * ILP error code constants.
