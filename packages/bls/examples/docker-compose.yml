@@ -41,7 +41,7 @@ services:
   # (e.g., rafiki, ilp-connector, or a custom implementation).
   #
   # The BLS service is reachable from the connector at:
-  #   http://bls:3100/handle-payment
+  #   http://bls:3100/handle-packet
   # ---------------------------------------------------------------
   ilp-connector:
     image: node:20-alpine

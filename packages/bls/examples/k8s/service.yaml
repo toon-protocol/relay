@@ -1,6 +1,6 @@
 # BLS Service
 # Exposes the BLS within the cluster. Other services (e.g., an ILP connector)
-# can reach the BLS at http://bls:3100/handle-payment when deployed in the
+# can reach the BLS at http://bls:3100/handle-packet when deployed in the
 # same namespace.
 apiVersion: v1
 kind: Service

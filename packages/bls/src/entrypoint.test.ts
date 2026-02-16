@@ -60,14 +60,14 @@ describe('entrypoint health endpoint composition', () => {
     expect(body.timestamp).toBeTypeOf('number');
   });
 
-  it('should still serve handle-payment endpoint from BLS sub-app', async () => {
+  it('should still serve handle-packet endpoint from BLS sub-app', async () => {
     const app = createComposedApp({
       nodeId: 'test-node-1',
       pubkey: 'a'.repeat(64),
       ilpAddress: 'g.agent-society.test',
     });
 
-    const res = await app.request('/handle-payment', {
+    const res = await app.request('/handle-packet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ amount: '100', destination: 'test', data: '' }),

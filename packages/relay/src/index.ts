@@ -32,10 +32,10 @@ export {
 // Business Logic Server
 export type {
   BlsConfig,
-  HandlePaymentRequest,
-  HandlePaymentAcceptResponse,
-  HandlePaymentRejectResponse,
-  HandlePaymentResponse,
+  HandlePacketRequest,
+  HandlePacketAcceptResponse,
+  HandlePacketRejectResponse,
+  HandlePacketResponse,
 } from './bls/index.js';
 export {
   BlsError,
