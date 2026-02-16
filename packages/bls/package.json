@@ -1,6 +1,6 @@
 {
   "name": "@agent-society/bls",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Standalone Business Logic Server for ILP-gated Nostr event storage",
   "type": "module",
   "main": "./dist/index.js",
@@ -26,6 +26,15 @@
     "bls"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ALLiDoizCode/agent-society.git",
+    "directory": "packages/bls"
+  },
+  "author": "ALLiDoizCode",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@hono/node-server": "^1.14.0",
     "@toon-format/toon": "^1.0.0",
