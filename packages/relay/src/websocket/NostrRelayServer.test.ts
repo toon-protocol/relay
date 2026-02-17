@@ -4,6 +4,7 @@ import { existsSync, unlinkSync } from 'fs';
 import type { NostrEvent } from 'nostr-tools/pure';
 import { NostrRelayServer } from './NostrRelayServer.js';
 import { InMemoryEventStore, SqliteEventStore } from '../storage/index.js';
+import { encodeEventToToonString } from '../toon/index.js';
 
 // Suppress console.log during tests
 vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -178,7 +179,7 @@ describe('NostrRelayServer', () => {
 
       // Wait for both EVENT and EOSE
       const messages = await messagesPromise;
-      expect(messages[0]).toEqual(['EVENT', 'mysub', event]);
+      expect(messages[0]).toEqual(['EVENT', 'mysub', encodeEventToToonString(event)]);
       expect(messages[1]).toEqual(['EOSE', 'mysub']);
 
       ws.close();
@@ -250,7 +251,13 @@ describe('NostrRelayServer', () => {
       ws.send(JSON.stringify(['REQ', 'sqlitesub', { kinds: [1] }]));
 
       const messages = await messagesPromise;
-      expect(messages[0]).toEqual(['EVENT', 'sqlitesub', event]);
+      const eventMsg = messages[0] as unknown[];
+      expect(eventMsg[0]).toBe('EVENT');
+      expect(eventMsg[1]).toBe('sqlitesub');
+      // Event payload is a TOON string (field order may differ from SQLite reconstruction)
+      expect(typeof eventMsg[2]).toBe('string');
+      expect(eventMsg[2]).toContain('id: sqliteevent123');
+      expect(eventMsg[2]).toContain('content: stored in sqlite');
       expect(messages[1]).toEqual(['EOSE', 'sqlitesub']);
 
       ws.close();
@@ -277,7 +284,12 @@ describe('NostrRelayServer', () => {
       ws1.send(JSON.stringify(['REQ', 'sub1', {}]));
 
       let messages = await messagesPromise;
-      expect(messages[0]).toEqual(['EVENT', 'sub1', event]);
+      let eventMsg = messages[0] as unknown[];
+      expect(eventMsg[0]).toBe('EVENT');
+      expect(eventMsg[1]).toBe('sub1');
+      expect(typeof eventMsg[2]).toBe('string');
+      expect(eventMsg[2]).toContain('id: persistedevent456');
+      expect(eventMsg[2]).toContain('content: should persist');
       expect(messages[1]).toEqual(['EOSE', 'sub1']);
 
       ws1.close();
@@ -296,7 +308,12 @@ describe('NostrRelayServer', () => {
       ws2.send(JSON.stringify(['REQ', 'sub2', {}]));
 
       messages = await messagesPromise;
-      expect(messages[0]).toEqual(['EVENT', 'sub2', event]);
+      eventMsg = messages[0] as unknown[];
+      expect(eventMsg[0]).toBe('EVENT');
+      expect(eventMsg[1]).toBe('sub2');
+      expect(typeof eventMsg[2]).toBe('string');
+      expect(eventMsg[2]).toContain('id: persistedevent456');
+      expect(eventMsg[2]).toContain('content: should persist');
       expect(messages[1]).toEqual(['EOSE', 'sub2']);
 
       ws2.close();

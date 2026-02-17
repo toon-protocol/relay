@@ -1,2 +1,2 @@
-export { encodeEventToToon, ToonEncodeError } from './encoder.js';
+export { encodeEventToToon, encodeEventToToonString, ToonEncodeError } from './encoder.js';
 export { decodeEventFromToon, ToonError } from './decoder.js';

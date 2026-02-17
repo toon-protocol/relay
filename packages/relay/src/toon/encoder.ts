@@ -36,3 +36,24 @@ export function encodeEventToToon(event: NostrEvent): Uint8Array {
     );
   }
 }
+
+/**
+ * Encode a NostrEvent to TOON format as a string.
+ *
+ * Used for embedding TOON-encoded events in outbound WebSocket messages
+ * where the NIP-01 framing remains JSON but the event payload is TOON.
+ *
+ * @param event - The NostrEvent to encode
+ * @returns TOON-encoded string representation of the event
+ * @throws ToonEncodeError if encoding fails
+ */
+export function encodeEventToToonString(event: NostrEvent): string {
+  try {
+    return encode(event);
+  } catch (error) {
+    throw new ToonEncodeError(
+      `Failed to encode event to TOON: ${error instanceof Error ? error.message : String(error)}`,
+      error instanceof Error ? error : undefined
+    );
+  }
+}
