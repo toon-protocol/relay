@@ -54,6 +54,10 @@ export {
   loadPricingConfigFromFile,
 } from './pricing/index.js';
 
+// Subscriber
+export type { RelaySubscriberConfig } from './subscriber/index.js';
+export { RelaySubscriber } from './subscriber/index.js';
+
 // Re-export from @crosstown/bls for downstream consumers
 export {
   BlsBaseError,
