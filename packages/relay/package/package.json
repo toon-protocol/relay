@@ -1,7 +1,7 @@
 {
-  "name": "@crosstown/bls",
-  "version": "1.1.0",
-  "description": "Standalone Business Logic Server for ILP-gated Nostr event storage",
+  "name": "@crosstown/relay",
+  "version": "1.0.0",
+  "description": "ILP-gated Nostr relay with Business Logic Server",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -21,28 +21,31 @@
   },
   "keywords": [
     "nostr",
+    "relay",
     "ilp",
-    "interledger",
-    "bls"
+    "interledger"
   ],
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/ALLiDoizCode/crosstown.git",
-    "directory": "packages/bls"
+    "directory": "packages/relay"
   },
   "author": "ALLiDoizCode",
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
-    "@hono/node-server": "^1.14.0",
+    "@crosstown/bls": "^1.0.0",
+    "@crosstown/core": "^1.0.0",
     "@toon-format/toon": "^1.0.0",
     "better-sqlite3": "^11.0.0",
     "hono": "^4.0.0",
-    "nostr-tools": "^2.20.0"
+    "nostr-tools": "^2.20.0",
+    "ws": "^8.0.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.0"
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/ws": "^8.0.0"
   }
 }

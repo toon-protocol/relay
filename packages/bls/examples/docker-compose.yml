@@ -1,4 +1,4 @@
-# Docker Compose example for @agent-society/bls
+# Docker Compose example for @crosstown/bls
 # Uses the Compose Specification format (no top-level 'version' key needed).
 #
 # Usage:
@@ -9,7 +9,7 @@
 
 services:
   bls:
-    image: di3twater/agent-society-bls:latest
+    image: di3twater/crosstown-bls:latest
     ports:
       - "3100:3100"
     volumes:

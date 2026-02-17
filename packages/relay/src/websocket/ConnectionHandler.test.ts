@@ -3,6 +3,7 @@ import type { NostrEvent } from 'nostr-tools/pure';
 import type { WebSocket } from 'ws';
 import { ConnectionHandler } from './ConnectionHandler.js';
 import type { EventStore } from '../storage/index.js';
+import { encodeEventToToonString } from '../toon/index.js';
 
 function createMockWebSocket(): WebSocket {
   return {
@@ -63,7 +64,7 @@ describe('ConnectionHandler', () => {
       handler.handleMessage(JSON.stringify(['REQ', 'sub1', {}]));
 
       expect(ws.send).toHaveBeenCalledWith(
-        JSON.stringify(['EVENT', 'sub1', event])
+        JSON.stringify(['EVENT', 'sub1', encodeEventToToonString(event)])
       );
     });
 

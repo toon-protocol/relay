@@ -10,7 +10,7 @@ metadata:
   labels:
     app: bls
     app.kubernetes.io/name: bls
-    app.kubernetes.io/part-of: agent-society
+    app.kubernetes.io/part-of: crosstown
 spec:
   accessModes:
     - ReadWriteOnce

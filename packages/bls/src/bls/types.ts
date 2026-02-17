@@ -3,7 +3,7 @@ import type { PricingService } from '../pricing/index.js';
 
 /**
  * SPSP request event kind (NIP-proposed kind:23194).
- * Defined locally since BLS does not import from @agent-society/core.
+ * Defined locally since BLS does not import from @crosstown/core.
  */
 export const SPSP_REQUEST_KIND = 23194;
 

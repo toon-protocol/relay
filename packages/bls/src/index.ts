@@ -1,5 +1,5 @@
 /**
- * @agent-society/bls
+ * @crosstown/bls
  *
  * Standalone Business Logic Server for ILP-gated Nostr event storage.
  */

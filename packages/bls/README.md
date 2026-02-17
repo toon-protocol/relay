@@ -1,26 +1,26 @@
-# @agent-society/bls
+# @crosstown/bls
 
 Standalone Business Logic Server (BLS) for ILP-gated Nostr event storage.
 
 ## Quick Start
 
 ```bash
-docker pull di3twater/agent-society-bls:latest
+docker pull di3twater/crosstown-bls:latest
 ```
 
 ```bash
 docker run -d \
   -e NODE_ID=my-node \
   -e NOSTR_SECRET_KEY=<64-char-hex-secret-key> \
-  -e ILP_ADDRESS=g.agent-society.my-node \
+  -e ILP_ADDRESS=g.crosstown.my-node \
   -p 3100:3100 \
   -v bls-data:/data \
-  di3twater/agent-society-bls
+  di3twater/crosstown-bls
 ```
 
 ## Docker Hub
 
-Published at [`di3twater/agent-society-bls`](https://hub.docker.com/r/di3twater/agent-society-bls).
+Published at [`di3twater/crosstown-bls`](https://hub.docker.com/r/di3twater/crosstown-bls).
 
 ### Available Tags
 
@@ -118,7 +118,7 @@ patches:
 |----------|----------|---------|-------------|
 | `NODE_ID` | Yes | — | Unique node identifier |
 | `NOSTR_SECRET_KEY` | Yes | — | 64-character hex Nostr secret key |
-| `ILP_ADDRESS` | Yes | — | Node's ILP address (e.g., `g.agent-society.node1`) |
+| `ILP_ADDRESS` | Yes | — | Node's ILP address (e.g., `g.crosstown.node1`) |
 | `BLS_PORT` | No | `3100` | HTTP port to listen on (1–65535) |
 | `BLS_BASE_PRICE_PER_BYTE` | No | `10` | Base price per byte for event storage |
 | `OWNER_PUBKEY` | No | — | 64-char hex pubkey for self-write payment bypass |
@@ -143,7 +143,7 @@ The pricing variables support multiple naming conventions for backwards compatib
 
 **NOSTR_SECRET_KEY** — A 64-character lowercase hex string representing your Nostr private key. The corresponding public key is derived automatically and displayed in logs and health responses. The secret key is never logged.
 
-**ILP_ADDRESS** — Must start with `g.` and contain only alphanumeric characters, dots, and hyphens. Example: `g.agent-society.node1`.
+**ILP_ADDRESS** — Must start with `g.` and contain only alphanumeric characters, dots, and hyphens. Example: `g.crosstown.node1`.
 
 **BLS_PORT** — Integer between 1 and 65535. The container exposes this port for HTTP traffic.
 
@@ -170,7 +170,7 @@ Health check endpoint for container orchestration.
   "status": "healthy",
   "nodeId": "my-node",
   "pubkey": "6a04ab98d9e4774ad806e302dddeb63bea16b5cb5f223ee77478e861bb583eb3",
-  "ilpAddress": "g.agent-society.my-node",
+  "ilpAddress": "g.crosstown.my-node",
   "timestamp": 1234567890
 }
 ```
@@ -183,7 +183,7 @@ Verify an ILP payment and process event storage.
 ```json
 {
   "amount": "1000",
-  "destination": "g.agent-society.my-node",
+  "destination": "g.crosstown.my-node",
   "data": "<base64-encoded TOON event>"
 }
 ```

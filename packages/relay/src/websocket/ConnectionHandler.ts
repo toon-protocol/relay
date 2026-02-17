@@ -4,6 +4,7 @@ import type { NostrEvent } from 'nostr-tools/pure';
 import type { EventStore } from '../storage/index.js';
 import type { RelayConfig } from '../types.js';
 import { DEFAULT_RELAY_CONFIG } from '../types.js';
+import { encodeEventToToonString } from '../toon/index.js';
 
 /**
  * Represents an active subscription from a client.
@@ -161,7 +162,7 @@ export class ConnectionHandler {
   }
 
   private sendEvent(subscriptionId: string, event: NostrEvent): void {
-    this.send(['EVENT', subscriptionId, event]);
+    this.send(['EVENT', subscriptionId, encodeEventToToonString(event)]);
   }
 
   private sendEose(subscriptionId: string): void {

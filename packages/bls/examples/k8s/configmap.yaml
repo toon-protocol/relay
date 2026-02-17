@@ -7,14 +7,14 @@ metadata:
   labels:
     app: bls
     app.kubernetes.io/name: bls
-    app.kubernetes.io/part-of: agent-society
+    app.kubernetes.io/part-of: crosstown
 data:
   # Required: Unique identifier for this node (used in health checks and logging)
   NODE_ID: my-node
 
   # Required: Node's ILP address (must start with "g." and contain only
   # alphanumeric characters, dots, and hyphens)
-  ILP_ADDRESS: g.agent-society.my-node
+  ILP_ADDRESS: g.crosstown.my-node
 
   # Optional: HTTP port (default: 3100, must be 1-65535)
   BLS_PORT: "3100"
