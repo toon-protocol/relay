@@ -46,7 +46,7 @@ describe('entrypoint health endpoint composition', () => {
     const app = createComposedApp({
       nodeId: 'test-node-1',
       pubkey: 'a'.repeat(64),
-      ilpAddress: 'g.agent-society.test',
+      ilpAddress: 'g.crosstown.test',
     });
 
     const res = await app.request('/health');
@@ -56,7 +56,7 @@ describe('entrypoint health endpoint composition', () => {
     expect(body.status).toBe('healthy');
     expect(body.nodeId).toBe('test-node-1');
     expect(body.pubkey).toBe('a'.repeat(64));
-    expect(body.ilpAddress).toBe('g.agent-society.test');
+    expect(body.ilpAddress).toBe('g.crosstown.test');
     expect(body.timestamp).toBeTypeOf('number');
   });
 
@@ -64,7 +64,7 @@ describe('entrypoint health endpoint composition', () => {
     const app = createComposedApp({
       nodeId: 'test-node-1',
       pubkey: 'a'.repeat(64),
-      ilpAddress: 'g.agent-society.test',
+      ilpAddress: 'g.crosstown.test',
     });
 
     const res = await app.request('/handle-packet', {

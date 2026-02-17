@@ -1,5 +1,5 @@
 /**
- * @agent-society/relay
+ * @crosstown/relay
  *
  * ILP-gated Nostr relay with Business Logic Server.
  */
@@ -54,12 +54,12 @@ export {
   loadPricingConfigFromFile,
 } from './pricing/index.js';
 
-// Re-export from @agent-society/bls for downstream consumers
+// Re-export from @crosstown/bls for downstream consumers
 export {
   BlsBaseError,
   createBlsServer,
-} from '@agent-society/bls';
+} from '@crosstown/bls';
 export type {
   CreateBlsServerConfig,
   BlsServerInstance,
-} from '@agent-society/bls';
+} from '@crosstown/bls';

@@ -8,7 +8,7 @@ metadata:
   labels:
     app: bls
     app.kubernetes.io/name: bls
-    app.kubernetes.io/part-of: agent-society
+    app.kubernetes.io/part-of: crosstown
 spec:
   replicas: 1
   selector:
@@ -19,11 +19,11 @@ spec:
       labels:
         app: bls
         app.kubernetes.io/name: bls
-        app.kubernetes.io/part-of: agent-society
+        app.kubernetes.io/part-of: crosstown
     spec:
       containers:
         - name: bls
-          image: di3twater/agent-society-bls:latest
+          image: di3twater/crosstown-bls:latest
           ports:
             - name: http
               containerPort: 3100

@@ -2,7 +2,7 @@
 # Multi-stage build for minimal image size
 #
 # Build from repo root:
-#   docker build -f packages/bls/Dockerfile -t agent-society-bls .
+#   docker build -f packages/bls/Dockerfile -t crosstown-bls .
 
 # ── Stage 1: Builder ─────────────────────────────────────────
 FROM node:20-alpine AS builder
@@ -35,10 +35,10 @@ COPY packages/bls/src/ packages/bls/src/
 COPY packages/bls/tsconfig.json packages/bls/tsup.config.ts packages/bls/
 
 # Build BLS package
-RUN pnpm --filter @agent-society/bls build
+RUN pnpm --filter @crosstown/bls build
 
 # Create production deployment (production deps only, no symlinks)
-RUN pnpm --filter @agent-society/bls deploy --prod /prod
+RUN pnpm --filter @crosstown/bls deploy --prod /prod
 
 # Strip better-sqlite3 build artifacts (deps/ contains SQLite source, src/ contains C++ source)
 RUN rm -rf /prod/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/deps \
