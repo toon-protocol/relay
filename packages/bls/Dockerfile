@@ -10,13 +10,13 @@ FROM node:20-alpine AS builder
 # Install pnpm
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
-# Install native build dependencies for better-sqlite3
-RUN apk add --no-cache python3 make g++
+# Install native build dependencies for better-sqlite3 and WebSocket modules
+RUN apk add --no-cache python3 py3-setuptools make g++
 
 WORKDIR /app
 
 # Copy workspace root files for dependency resolution
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.json ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.json .npmrc ./
 
 # Copy BLS package.json
 COPY packages/bls/package.json packages/bls/
