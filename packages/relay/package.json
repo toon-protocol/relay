@@ -1,6 +1,6 @@
 {
   "name": "@crosstown/relay",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "ILP-gated Nostr relay with Business Logic Server",
   "type": "module",
   "main": "./dist/index.js",

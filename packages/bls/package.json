@@ -1,6 +1,6 @@
 {
   "name": "@crosstown/bls",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Standalone Business Logic Server for ILP-gated Nostr event storage",
   "type": "module",
   "main": "./dist/index.js",
