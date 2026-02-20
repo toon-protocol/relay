@@ -27,6 +27,12 @@ export interface BlsEnvConfig {
   kindOverrides?: Map<number, bigint>;
   /** Optional minimum price for SPSP request events (kind:23194) */
   spspMinPrice?: bigint;
+  /** Optional Forgejo URL for NIP-34 Git integration */
+  forgejoUrl?: string;
+  /** Optional Forgejo API token for NIP-34 Git integration */
+  forgejoToken?: string;
+  /** Optional Forgejo owner/organization for repositories */
+  forgejoOwner?: string;
 }
 
 const HEX_64_REGEX = /^[0-9a-f]{64}$/;
@@ -123,6 +129,11 @@ export function loadBlsConfigFromEnv(): BlsEnvConfig {
   propagateUnprefixedEnvVars();
   const pricingConfig: PricingConfig = loadPricingConfigFromEnv();
 
+  // Optional: NIP-34 Forgejo Git integration
+  const forgejoUrl = process.env['FORGEJO_URL'];
+  const forgejoToken = process.env['FORGEJO_TOKEN'];
+  const forgejoOwner = process.env['FORGEJO_OWNER'];
+
   return {
     nodeId,
     nostrSecretKey,
@@ -134,6 +145,9 @@ export function loadBlsConfigFromEnv(): BlsEnvConfig {
     dataDir,
     kindOverrides: pricingConfig.kindOverrides,
     spspMinPrice,
+    forgejoUrl,
+    forgejoToken,
+    forgejoOwner,
   };
 }
 

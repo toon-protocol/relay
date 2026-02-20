@@ -36,6 +36,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@crosstown/core": "workspace:*",
     "@hono/node-server": "^1.14.0",
     "@toon-format/toon": "^1.0.0",
     "better-sqlite3": "^11.0.0",

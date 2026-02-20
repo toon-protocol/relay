@@ -139,6 +139,27 @@ export class BusinessLogicServer {
         );
       }
 
+      // Trigger NIP-34 handler if configured (async, non-blocking)
+      if (this.config.onNIP34Event) {
+        const isNIP34 =
+          event.kind === 30617 ||
+          event.kind === 1617 ||
+          event.kind === 1618 ||
+          event.kind === 1621 ||
+          (event.kind >= 1630 && event.kind <= 1633);
+
+        if (isNIP34) {
+          this.config
+            .onNIP34Event(event)
+            .catch((error) => {
+              console.error(
+                `NIP-34 handler error for event ${event.id}:`,
+                error
+              );
+            });
+        }
+      }
+
       return {
         accept: true,
         fulfillment: generateFulfillment(event.id),
@@ -201,6 +222,28 @@ export class BusinessLogicServer {
         `Failed to store event: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'STORAGE_ERROR'
       );
+    }
+
+    // Trigger NIP-34 handler if configured (async, non-blocking)
+    if (this.config.onNIP34Event) {
+      // NIP-34 event kinds: 30617, 1617, 1618, 1621, 1630-1633
+      const isNIP34 =
+        event.kind === 30617 ||
+        event.kind === 1617 ||
+        event.kind === 1618 ||
+        event.kind === 1621 ||
+        (event.kind >= 1630 && event.kind <= 1633);
+
+      if (isNIP34) {
+        this.config
+          .onNIP34Event(event)
+          .catch((error) => {
+            console.error(
+              `NIP-34 handler error for event ${event.id}:`,
+              error
+            );
+          });
+      }
     }
 
     // Generate fulfillment and return success

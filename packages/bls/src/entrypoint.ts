@@ -46,6 +46,9 @@ async function main(): Promise<void> {
     dataDir,
     kindOverrides,
     spspMinPrice,
+    forgejoUrl,
+    forgejoToken,
+    forgejoOwner,
   } = config;
 
   // Create event store with automatic fallback
@@ -57,13 +60,50 @@ async function main(): Promise<void> {
     kindOverrides,
   });
 
-  // Create BLS
+  // Initialize NIP-34 handler if Forgejo is configured
+  // Uses dynamic import to avoid loading simple-git unless needed
+  let nip34Handler: any | undefined;
+  if (forgejoUrl && forgejoToken && forgejoOwner) {
+    try {
+      const { NIP34Handler } = await import('@crosstown/core/nip34');
+      nip34Handler = new NIP34Handler({
+        forgejoUrl,
+        forgejoToken,
+        defaultOwner: forgejoOwner,
+        gitConfig: {
+          userName: 'Crosstown Node',
+          userEmail: `${nodeId}@crosstown.nostr`,
+        },
+        verbose: true,
+      });
+    } catch (error) {
+      console.warn('Failed to initialize NIP-34 handler:', error instanceof Error ? error.message : error);
+      console.warn('NIP-34 Git integration will be disabled');
+    }
+  }
+
+  // Create BLS with NIP-34 integration
   const bls = new BusinessLogicServer(
     {
       basePricePerByte,
       pricingService,
       ownerPubkey,
       spspMinPrice,
+
+      // NIP-34 event handler
+      onNIP34Event: nip34Handler ? async (event) => {
+        try {
+          const result = await nip34Handler.handleEvent(event);
+
+          if (result.success) {
+            console.log(`✓ NIP-34 ${result.operation}: ${result.message}`, result.metadata || '');
+          } else {
+            console.error(`✗ NIP-34 ${result.operation}: ${result.message}`);
+          }
+        } catch (error) {
+          console.error('NIP-34 handler error:', error);
+        }
+      } : undefined,
     },
     eventStore
   );
@@ -111,6 +151,11 @@ async function main(): Promise<void> {
       .map(([kind, price]) => `kind ${kind}=${price}`)
       .join(', ');
     console.log(`  Kind Overrides:     ${overridesStr}`);
+  }
+  if (nip34Handler) {
+    console.log(`  NIP-34 Git:         enabled`);
+    console.log(`  Forgejo URL:        ${forgejoUrl}`);
+    console.log(`  Git Owner:          ${forgejoOwner}`);
   }
 
   // Graceful shutdown
