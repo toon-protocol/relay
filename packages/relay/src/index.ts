@@ -58,12 +58,5 @@ export {
 export type { RelaySubscriberConfig } from './subscriber/index.js';
 export { RelaySubscriber } from './subscriber/index.js';
 
-// Re-export from @crosstown/bls for downstream consumers
-export {
-  BlsBaseError,
-  createBlsServer,
-} from '@crosstown/bls';
-export type {
-  CreateBlsServerConfig,
-  BlsServerInstance,
-} from '@crosstown/bls';
+// Re-exports from @crosstown/bls removed to avoid circular dependency
+// Downstream consumers should import directly from @crosstown/bls instead
