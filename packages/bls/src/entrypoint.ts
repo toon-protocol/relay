@@ -38,20 +38,19 @@ import {
   BootstrapService,
   RelayMonitor,
   type IlpPeerInfo,
-  type SettlementNegotiationConfig,
   type SpspRequestSettlementInfo,
   parseSpspRequest,
   buildSpspResponseEvent,
   buildIlpPeerInfoEvent,
   type SpspResponse,
-  negotiateAndOpenChannel,
   SPSP_REQUEST_KIND,
+  ILP_PEER_INFO_KIND,
   type HandlePacketRequest,
   type HandlePacketResponse,
   createHttpChannelClient,
+  createHttpRuntimeClient as createHttpRuntimeClientV1,
+  createHttpConnectorAdmin,
 } from '@crosstown/core';
-import { HttpRuntimeClient, HttpConnectorAdmin } from '@crosstown/client';
-// Note: Using @crosstown/client adapters (NOT @crosstown/core createHttpRuntimeClient!)
 import { SimplePool } from 'nostr-tools/pool';
 
 const BTP_SECRET = process.env['BTP_SECRET'] || 'crosstown-network-secret-2026';
@@ -86,9 +85,24 @@ async function main(): Promise<void> {
   const bootstrapRelays = process.env['BOOTSTRAP_RELAYS']
     ? process.env['BOOTSTRAP_RELAYS'].split(',').filter((s) => s.trim())
     : [];
-  const bootstrapPeers = process.env['BOOTSTRAP_PEERS']
-    ? process.env['BOOTSTRAP_PEERS'].split(',').filter((s) => s.trim())
-    : [];
+  let bootstrapPeers: string[] = [];
+  let bootstrapPeerObjects: { pubkey: string; ilpAddress?: string; btpEndpoint?: string; relay?: string }[] = [];
+  if (process.env['BOOTSTRAP_PEERS']) {
+    const raw = process.env['BOOTSTRAP_PEERS'].trim();
+    if (raw.startsWith('[')) {
+      // JSON array of peer objects
+      try {
+        bootstrapPeerObjects = JSON.parse(raw);
+        bootstrapPeers = bootstrapPeerObjects.map((p) => p.pubkey);
+      } catch {
+        console.warn('⚠️  Failed to parse BOOTSTRAP_PEERS JSON, treating as comma-separated pubkeys');
+        bootstrapPeers = raw.split(',').filter((s) => s.trim());
+      }
+    } else {
+      // Comma-separated pubkeys
+      bootstrapPeers = raw.split(',').filter((s) => s.trim());
+    }
+  }
 
   // Validate required Crosstown config
   if (!connectorAdminUrl) {
@@ -156,19 +170,9 @@ async function main(): Promise<void> {
   // Create Connector Clients (HTTP Mode)
   // -------------------------------------------------------------------------
   // NOTE: Runtime client uses admin URL since /admin/ilp/send is on admin server
-  const runtimeClient = new HttpRuntimeClient({
-    connectorUrl: connectorAdminUrl!,
-    timeout: 30000,
-    maxRetries: 3,
-    retryDelay: 1000,
-  });
+  const runtimeClient = createHttpRuntimeClientV1(connectorAdminUrl!);
 
-  const connectorAdmin = new HttpConnectorAdmin({
-    adminUrl: connectorAdminUrl!,
-    timeout: 30000,
-    maxRetries: 3,
-    retryDelay: 1000,
-  });
+  const connectorAdmin = createHttpConnectorAdmin(connectorAdminUrl!, BTP_SECRET);
 
   // Create HTTP channel client for payment channel operations
   const channelClient = createHttpChannelClient(connectorAdminUrl!);
@@ -231,17 +235,6 @@ async function main(): Promise<void> {
     eventStore
   );
 
-  const settlementNegotiationConfig: SettlementNegotiationConfig = {
-    ownSupportedChains: settlementInfo.supportedChains || [],
-    ownSettlementAddresses: settlementInfo.settlementAddresses || {},
-    ownPreferredTokens: settlementInfo.preferredTokens || {},
-    ownTokenNetworks: settlementInfo.tokenNetworks || {},
-    initialDeposit: process.env['INITIAL_DEPOSIT'] || '100000',
-    settlementTimeout: 86400,
-    channelOpenTimeout: 10000,
-    pollInterval: 500,
-  };
-
   const handlePacket = async (request: HandlePacketRequest): Promise<HandlePacketResponse> => {
     // Decode packet to check if it's an SPSP request
     let event: NostrEvent;
@@ -275,42 +268,50 @@ async function main(): Promise<void> {
       try {
         const spspRequest = parseSpspRequest(event, secretKey, event.pubkey);
 
-        // Negotiate settlement and open payment channel
-        let channelId: string | undefined;
-        let negotiatedChain: string | undefined;
-        let settlementAddress: string | undefined;
-        let tokenAddress: string | undefined;
-        let tokenNetworkAddress: string | undefined;
+        // Settlement info for the SPSP response (channel opening is requester's responsibility)
+        const chain = settlementInfo.supportedChains?.[0] ?? '';
+        const negotiatedChain = chain || undefined;
+        const settlementAddress = settlementInfo.settlementAddresses?.[chain];
+        const tokenAddress = settlementInfo.preferredTokens?.[chain];
+        const tokenNetworkAddress = settlementInfo.tokenNetworks?.[chain];
 
-        // Try to negotiate and open channel, but don't fail if peer is not registered
-        try {
-          const negotiationResult = await negotiateAndOpenChannel({
-            request: spspRequest,
-            config: settlementNegotiationConfig,
-            channelClient, // HTTP channel client with openChannel/getChannelState methods
-            senderPubkey: event.pubkey,
-          });
+        // Register the requesting peer on our connector for bidirectional routing
+        if (connectorAdmin && spspRequest.ilpAddress) {
+          try {
+            const peerId = `nostr-${event.pubkey.slice(0, 16)}`;
 
-          if (negotiationResult) {
-            channelId = negotiationResult.channelId;
-            negotiatedChain = negotiationResult.negotiatedChain;
-            settlementAddress = negotiationResult.settlementAddress;
-            tokenAddress = negotiationResult.tokenAddress;
-            tokenNetworkAddress = negotiationResult.tokenNetworkAddress;
-            console.log(`✅ Payment channel opened: ${channelId}`);
+            // Look up the peer's kind:10032 event to get their BTP endpoint
+            const peerEvents = eventStore.query([{
+              kinds: [ILP_PEER_INFO_KIND],
+              authors: [event.pubkey],
+              limit: 1,
+            }]);
+
+            let btpUrl = '';
+            if (peerEvents.length > 0 && peerEvents[0]) {
+              try {
+                const peerInfo: IlpPeerInfo = JSON.parse(peerEvents[0].content);
+                btpUrl = peerInfo.btpEndpoint;
+              } catch (parseError) {
+                console.warn(`⚠️  Failed to parse peer info event: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`);
+              }
+            }
+
+            // Only register if we have a valid BTP URL
+            if (btpUrl && (btpUrl.startsWith('ws://') || btpUrl.startsWith('wss://'))) {
+              await connectorAdmin.addPeer({
+                id: peerId,
+                url: btpUrl,
+                authToken: '',
+                routes: [{ prefix: spspRequest.ilpAddress }],
+              });
+              console.log(`✅ Registered peer ${peerId} (${spspRequest.ilpAddress}) at ${btpUrl}`);
+            } else {
+              console.warn(`⚠️  Cannot register peer ${peerId}: no valid BTP endpoint found`);
+            }
+          } catch (peerError) {
+            console.warn(`⚠️  Failed to register peer after SPSP handshake: ${peerError instanceof Error ? peerError.message : 'Unknown error'}`);
           }
-        } catch (error) {
-          // Channel opening failed (e.g., peer not registered yet), continue without channel
-          console.log(`⚠️  Channel opening skipped: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        }
-
-        // Fallback to static settlement info
-        if (!negotiatedChain) {
-          const chain = settlementInfo.supportedChains?.[0] ?? '';
-          negotiatedChain = chain || undefined;
-          settlementAddress = settlementInfo.settlementAddresses?.[chain];
-          tokenAddress = settlementInfo.preferredTokens?.[chain];
-          tokenNetworkAddress = settlementInfo.tokenNetworks?.[chain];
         }
 
         // Build SPSP response
@@ -322,7 +323,6 @@ async function main(): Promise<void> {
           settlementAddress,
           tokenAddress,
           tokenNetworkAddress,
-          channelId,
         };
 
         const responseEvent = buildSpspResponseEvent(
@@ -389,11 +389,17 @@ async function main(): Promise<void> {
   // -------------------------------------------------------------------------
   // Create Bootstrap Service and Relay Monitor (HTTP Mode)
   // -------------------------------------------------------------------------
-  const knownPeers = bootstrapPeers.map((pubkey) => ({
-    pubkey,
-    relayUrl: bootstrapRelays[0] || '',
-    btpEndpoint: '', // Will be discovered from kind:10032
-  }));
+  const knownPeers = bootstrapPeerObjects.length > 0
+    ? bootstrapPeerObjects.map((p) => ({
+        pubkey: p.pubkey,
+        relayUrl: p.relay || bootstrapRelays[0] || '',
+        btpEndpoint: p.btpEndpoint || '',
+      }))
+    : bootstrapPeers.map((pubkey) => ({
+        pubkey,
+        relayUrl: bootstrapRelays[0] || '',
+        btpEndpoint: '',
+      }));
 
   const pool = new SimplePool();
 

@@ -30,12 +30,20 @@ COPY docker/package.json docker/
 # Install all dependencies (including devDependencies for building)
 RUN pnpm install --frozen-lockfile
 
+# Copy workspace dependency source code (must be built before BLS)
+COPY packages/core/src/ packages/core/src/
+COPY packages/core/tsconfig.json packages/core/tsup.config.ts packages/core/
+COPY packages/relay/src/ packages/relay/src/
+COPY packages/relay/tsconfig.json packages/relay/tsup.config.ts packages/relay/
+
 # Copy BLS source code
 COPY packages/bls/src/ packages/bls/src/
 COPY packages/bls/tsconfig.json packages/bls/tsup.config.ts packages/bls/
 
-# Build BLS package
-RUN pnpm --filter @crosstown/bls build
+# Build workspace dependencies then BLS
+RUN pnpm --filter @crosstown/core build && \
+    pnpm --filter @crosstown/relay build && \
+    pnpm --filter @crosstown/bls build
 
 # Create production deployment (production deps only, no symlinks)
 RUN pnpm --filter @crosstown/bls deploy --prod /prod
