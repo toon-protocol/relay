@@ -9,6 +9,9 @@ import { encodeEventToToon } from '../toon/index.js';
 import { SqliteEventStore } from '../storage/index.js';
 import { PricingService } from '../pricing/index.js';
 
+/** Deterministic timestamp for reproducible tests (2026-01-01T00:00:00Z) */
+const TEST_CREATED_AT = 1767225600;
+
 /**
  * Helper to create a properly signed test event.
  */
@@ -21,7 +24,7 @@ function createValidSignedEvent(
       kind: 1,
       content: 'test content',
       tags: [],
-      created_at: Math.floor(Date.now() / 1000),
+      created_at: TEST_CREATED_AT,
       ...overrides,
     },
     sk
@@ -60,7 +63,7 @@ function createEventFromKey(
       kind: 1,
       content: 'test content',
       tags: [],
-      created_at: Math.floor(Date.now() / 1000),
+      created_at: TEST_CREATED_AT,
       ...overrides,
     },
     sk
@@ -455,7 +458,7 @@ describe('BusinessLogicServer integration', () => {
         kind: 1,
         content: 'note 1',
         tags: [],
-        created_at: Math.floor(Date.now() / 1000),
+        created_at: TEST_CREATED_AT,
       },
       sk
     );
@@ -464,7 +467,7 @@ describe('BusinessLogicServer integration', () => {
         kind: 1,
         content: 'note 2',
         tags: [],
-        created_at: Math.floor(Date.now() / 1000) + 1,
+        created_at: TEST_CREATED_AT + 1,
       },
       sk
     );
