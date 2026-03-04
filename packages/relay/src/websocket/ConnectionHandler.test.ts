@@ -176,7 +176,10 @@ describe('ConnectionHandler', () => {
       handler.handleMessage(JSON.stringify({ type: 'REQ' }));
 
       expect(ws.send).toHaveBeenCalledWith(
-        JSON.stringify(['NOTICE', 'error: invalid message format, expected JSON array'])
+        JSON.stringify([
+          'NOTICE',
+          'error: invalid message format, expected JSON array',
+        ])
       );
     });
 

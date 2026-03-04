@@ -17,10 +17,7 @@ describe('entrypoint health endpoint composition', () => {
     ilpAddress: string;
   }) {
     const eventStore = new InMemoryEventStore();
-    const bls = new BusinessLogicServer(
-      { basePricePerByte: 10n },
-      eventStore
-    );
+    const bls = new BusinessLogicServer({ basePricePerByte: 10n }, eventStore);
 
     const app = new Hono();
 

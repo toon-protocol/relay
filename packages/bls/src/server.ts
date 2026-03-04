@@ -42,7 +42,9 @@ export interface BlsServerInstance {
  * @param config - Server configuration
  * @returns BlsServerInstance with app, start, and stop methods
  */
-export function createBlsServer(config: CreateBlsServerConfig): BlsServerInstance {
+export function createBlsServer(
+  config: CreateBlsServerConfig
+): BlsServerInstance {
   // Create event store
   const eventStore: EventStore = config.dbPath
     ? new SqliteEventStore(config.dbPath)

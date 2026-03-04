@@ -1,3 +1,4 @@
+import type { NostrEvent } from 'nostr-tools/pure';
 import { BlsBaseError } from '../errors.js';
 import type { PricingService } from '../pricing/index.js';
 
@@ -34,7 +35,7 @@ export interface BlsConfig {
   /** Optional minimum price for SPSP request events (kind:23194). When set to 0n, SPSP requests are accepted without payment. Defaults to standard pricing when undefined. */
   spspMinPrice?: bigint;
   /** Optional callback for handling NIP-34 events after storage */
-  onNIP34Event?: (event: any) => Promise<void>;
+  onNIP34Event?: (event: NostrEvent) => Promise<void>;
 }
 
 /**

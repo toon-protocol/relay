@@ -15,9 +15,10 @@ import { PricingError } from './types.js';
  */
 export function loadPricingConfigFromEnv(): PricingConfig {
   // Parse base price (BLS_ prefix takes precedence over RELAY_)
-  const basePriceStr = process.env['BLS_BASE_PRICE_PER_BYTE']
-    ?? process.env['RELAY_BASE_PRICE_PER_BYTE']
-    ?? '10';
+  const basePriceStr =
+    process.env['BLS_BASE_PRICE_PER_BYTE'] ??
+    process.env['RELAY_BASE_PRICE_PER_BYTE'] ??
+    '10';
   let basePricePerByte: bigint;
   try {
     basePricePerByte = BigInt(basePriceStr);
@@ -36,8 +37,8 @@ export function loadPricingConfigFromEnv(): PricingConfig {
   }
 
   // Parse kind overrides if present (BLS_ prefix takes precedence over RELAY_)
-  const kindOverridesStr = process.env['BLS_KIND_OVERRIDES']
-    ?? process.env['RELAY_KIND_OVERRIDES'];
+  const kindOverridesStr =
+    process.env['BLS_KIND_OVERRIDES'] ?? process.env['RELAY_KIND_OVERRIDES'];
   let kindOverrides: Map<number, bigint> | undefined;
 
   if (kindOverridesStr) {

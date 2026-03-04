@@ -34,7 +34,6 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { generateSecretKey, getPublicKey, finalizeEvent } from 'nostr-tools/pure';
 import WebSocket from 'ws';
 
 // WILL FAIL: @crosstown/town package does not exist yet.
@@ -43,10 +42,11 @@ import WebSocket from 'ws';
 import { startTown, type TownConfig, type TownInstance } from '@crosstown/town';
 
 // For TOON encoding/decoding in test assertions
-import { encodeEventToToon, decodeEventFromToon } from '@crosstown/relay';
+import { decodeEventFromToon } from '@crosstown/relay';
 
 // For blockchain queries to verify payment channels
-import { createPublicClient, http, defineChain, type Hex } from 'viem';
+// viem imports available for future blockchain verification tests
+// import { createPublicClient, http, defineChain, type Hex } from 'viem';
 
 // Infrastructure constants — same as other E2E tests.
 // The town instance under test will bind to NON-DEFAULT ports to avoid
@@ -61,10 +61,12 @@ const GENESIS_RELAY_URL = 'ws://localhost:7100';
 const GENESIS_BLS_URL = 'http://localhost:3100';
 const CONNECTOR_URL = 'http://localhost:8080';
 const ANVIL_RPC = 'http://localhost:8545';
-const GENESIS_PUBKEY = 'aa1857d0ff1fcb1aeb1907b3b98290f3ecb5545473c0b9296fb0b44481deb572';
+const GENESIS_PUBKEY =
+  'aa1857d0ff1fcb1aeb1907b3b98290f3ecb5545473c0b9296fb0b44481deb572';
 
 // Anvil Account #3 (different from the genesis test account to avoid nonce conflicts)
-const TEST_MNEMONIC = 'test test test test test test test test test test test junk';
+const TEST_MNEMONIC =
+  'test test test test test test test test test test test junk';
 
 // Deployed contract addresses (deterministic on Anvil)
 const TOKEN_ADDRESS = '0x5FbDB2315678afecb367f032d93F642f64180aa3';
@@ -73,7 +75,10 @@ const TOKEN_NETWORK_ADDRESS = '0xCafac3dD18aC6c6e92c921884f9E4176737C052c';
 /**
  * Wait for a WebSocket endpoint to become available.
  */
-async function waitForWebSocket(url: string, timeoutMs = 10000): Promise<boolean> {
+async function waitForWebSocket(
+  url: string,
+  timeoutMs = 10000
+): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
@@ -123,7 +128,7 @@ async function waitForHttp(url: string, timeoutMs = 10000): Promise<boolean> {
 /**
  * Subscribe to a Nostr relay and wait for an event by ID.
  */
-function waitForEventOnRelay(
+function _waitForEventOnRelay(
   relayUrl: string,
   eventId: string,
   timeoutMs = 10000
@@ -131,6 +136,7 @@ function waitForEventOnRelay(
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(relayUrl);
     const subId = `town-test-${Date.now()}`;
+    // eslint-disable-next-line prefer-const
     let timer: ReturnType<typeof setTimeout>;
 
     const cleanup = () => {
@@ -225,7 +231,9 @@ describe.skip('@crosstown/town Package Lifecycle (Story 2.5)', () => {
       genesisReady = true;
     } catch (error) {
       console.warn('Genesis infrastructure not available.');
-      console.warn(`Error: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(
+        `Error: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }, 15000);
 
@@ -296,7 +304,7 @@ describe.skip('@crosstown/town Package Lifecycle (Story 2.5)', () => {
 
     // Verify health endpoint reports correct info
     const healthResp = await fetch(`${TOWN_BLS_URL}/health`);
-    const health = await healthResp.json() as Record<string, unknown>;
+    const health = (await healthResp.json()) as Record<string, unknown>;
     expect(health['status']).toBe('healthy');
     expect(health['sdk']).toBe(true);
 
@@ -454,40 +462,48 @@ describe.skip('@crosstown/town Package Lifecycle (Story 2.5)', () => {
       const ws = new WebSocket('ws://localhost:7400');
       const subId = `peer-test-${Date.now()}`;
 
-      const peerInfoEvent = await new Promise<Record<string, unknown> | null>((resolve) => {
-        const timer = setTimeout(() => {
-          ws.close();
-          resolve(null);
-        }, 10000);
+      const peerInfoEvent = await new Promise<Record<string, unknown> | null>(
+        (resolve) => {
+          const timer = setTimeout(() => {
+            ws.close();
+            resolve(null);
+          }, 10000);
 
-        ws.on('open', () => {
-          ws.send(JSON.stringify(['REQ', subId, { kinds: [10032], authors: [ownPubkey], limit: 1 }]));
-        });
+          ws.on('open', () => {
+            ws.send(
+              JSON.stringify([
+                'REQ',
+                subId,
+                { kinds: [10032], authors: [ownPubkey], limit: 1 },
+              ])
+            );
+          });
 
-        ws.on('message', (data: Buffer) => {
-          try {
-            const msg = JSON.parse(data.toString());
-            if (Array.isArray(msg)) {
-              if (msg[0] === 'EVENT' && msg[1] === subId && msg[2]) {
-                const toonBytes = new TextEncoder().encode(msg[2]);
-                const event = decodeEventFromToon(toonBytes);
-                clearTimeout(timer);
-                ws.close();
-                resolve(event as unknown as Record<string, unknown>);
-              } else if (msg[0] === 'EOSE' && msg[1] === subId) {
-                // Wait briefly for late arrivals
+          ws.on('message', (data: Buffer) => {
+            try {
+              const msg = JSON.parse(data.toString());
+              if (Array.isArray(msg)) {
+                if (msg[0] === 'EVENT' && msg[1] === subId && msg[2]) {
+                  const toonBytes = new TextEncoder().encode(msg[2]);
+                  const event = decodeEventFromToon(toonBytes);
+                  clearTimeout(timer);
+                  ws.close();
+                  resolve(event as unknown as Record<string, unknown>);
+                } else if (msg[0] === 'EOSE' && msg[1] === subId) {
+                  // Wait briefly for late arrivals
+                }
               }
+            } catch {
+              // ignore
             }
-          } catch {
-            // ignore
-          }
-        });
+          });
 
-        ws.on('error', () => {
-          clearTimeout(timer);
-          resolve(null);
-        });
-      });
+          ws.on('error', () => {
+            clearTimeout(timer);
+            resolve(null);
+          });
+        }
+      );
 
       // The instance should have published its own ILP peer info
       expect(peerInfoEvent).not.toBeNull();
@@ -601,7 +617,7 @@ describe.skip('@crosstown/town Package Lifecycle (Story 2.5)', () => {
     } catch {
       expect.fail(
         'packages/town/package.json does not exist. ' +
-        'Create the @crosstown/town package with correct dependencies.'
+          'Create the @crosstown/town package with correct dependencies.'
       );
       return;
     }
@@ -610,7 +626,9 @@ describe.skip('@crosstown/town Package Lifecycle (Story 2.5)', () => {
     expect(packageJson['name']).toBe('@crosstown/town');
 
     // Verify required dependencies
-    const deps = packageJson['dependencies'] as Record<string, string> | undefined;
+    const deps = packageJson['dependencies'] as
+      | Record<string, string>
+      | undefined;
     expect(deps).toBeDefined();
 
     // @crosstown/sdk is the core SDK that provides createNode(), handler registry, etc.
@@ -623,7 +641,10 @@ describe.skip('@crosstown/town Package Lifecycle (Story 2.5)', () => {
     expect(deps!['@crosstown/core']).toBeDefined();
 
     // Verify the package has a bin entry for CLI usage
-    const bin = packageJson['bin'] as Record<string, string> | string | undefined;
+    const bin = packageJson['bin'] as
+      | Record<string, string>
+      | string
+      | undefined;
     expect(bin).toBeDefined();
 
     // Verify the package exports startTown

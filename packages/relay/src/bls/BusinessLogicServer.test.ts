@@ -1,9 +1,21 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createHash } from 'crypto';
-import { generateSecretKey, finalizeEvent, getPublicKey } from 'nostr-tools/pure';
+import {
+  generateSecretKey,
+  finalizeEvent,
+  getPublicKey,
+} from 'nostr-tools/pure';
 import type { NostrEvent } from 'nostr-tools/pure';
-import { BusinessLogicServer, generateFulfillment } from './BusinessLogicServer.js';
-import { ILP_ERROR_CODES, BlsError, isValidPubkey, SPSP_REQUEST_KIND } from './types.js';
+import {
+  BusinessLogicServer,
+  generateFulfillment,
+} from './BusinessLogicServer.js';
+import {
+  ILP_ERROR_CODES,
+  BlsError,
+  isValidPubkey,
+  SPSP_REQUEST_KIND,
+} from './types.js';
 import type { EventStore } from '../storage/index.js';
 import { encodeEventToToon } from '../toon/index.js';
 import { SqliteEventStore } from '../storage/index.js';
@@ -511,7 +523,10 @@ describe('BusinessLogicServer with PricingService', () => {
   });
 
   it('should use kind override pricing for kind 0 (free)', async () => {
-    const event = createValidSignedEvent({ kind: 0, content: '{"name":"test"}' });
+    const event = createValidSignedEvent({
+      kind: 0,
+      content: '{"name":"test"}',
+    });
     const base64Data = eventToBase64Toon(event);
 
     // Even with amount 0, it should accept (free profile)
@@ -672,27 +687,32 @@ describe('BusinessLogicServer backwards compatibility', () => {
 
 describe('isValidPubkey', () => {
   it('should return true for valid 64-character lowercase hex pubkey', () => {
-    const validPubkey = '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d';
+    const validPubkey =
+      '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d';
     expect(isValidPubkey(validPubkey)).toBe(true);
   });
 
   it('should return false for uppercase hex characters', () => {
-    const upperPubkey = '3BF0C63FCB93463407AF97A5E5EE64FA883D107EF9E558472C4EB9AAAEFA459D';
+    const upperPubkey =
+      '3BF0C63FCB93463407AF97A5E5EE64FA883D107EF9E558472C4EB9AAAEFA459D';
     expect(isValidPubkey(upperPubkey)).toBe(false);
   });
 
   it('should return false for pubkey with less than 64 characters', () => {
-    const shortPubkey = '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459';
+    const shortPubkey =
+      '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459';
     expect(isValidPubkey(shortPubkey)).toBe(false);
   });
 
   it('should return false for pubkey with more than 64 characters', () => {
-    const longPubkey = '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d0';
+    const longPubkey =
+      '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d0';
     expect(isValidPubkey(longPubkey)).toBe(false);
   });
 
   it('should return false for pubkey with non-hex characters', () => {
-    const invalidPubkey = '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459g';
+    const invalidPubkey =
+      '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459g';
     expect(isValidPubkey(invalidPubkey)).toBe(false);
   });
 
@@ -753,8 +773,8 @@ describe('BusinessLogicServer with ownerPubkey', () => {
     });
 
     expect(mockEventStore.store).toHaveBeenCalledTimes(1);
-    const storedEvent = (mockEventStore.store as ReturnType<typeof vi.fn>)
-      .mock.calls[0][0];
+    const storedEvent = (mockEventStore.store as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
     expect(storedEvent.id).toBe(event.id);
   });
 
@@ -861,7 +881,11 @@ describe('BusinessLogicServer with ownerPubkey', () => {
   it('should throw BlsError for invalid ownerPubkey format (uppercase)', () => {
     expect(() => {
       new BusinessLogicServer(
-        { basePricePerByte: 10n, ownerPubkey: '3BF0C63FCB93463407AF97A5E5EE64FA883D107EF9E558472C4EB9AAAEFA459D' },
+        {
+          basePricePerByte: 10n,
+          ownerPubkey:
+            '3BF0C63FCB93463407AF97A5E5EE64FA883D107EF9E558472C4EB9AAAEFA459D',
+        },
         mockEventStore
       );
     }).toThrow(BlsError);
@@ -870,7 +894,11 @@ describe('BusinessLogicServer with ownerPubkey', () => {
   it('should throw BlsError for invalid ownerPubkey format (non-hex)', () => {
     expect(() => {
       new BusinessLogicServer(
-        { basePricePerByte: 10n, ownerPubkey: 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz' },
+        {
+          basePricePerByte: 10n,
+          ownerPubkey:
+            'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz',
+        },
         mockEventStore
       );
     }).toThrow(BlsError);
@@ -882,7 +910,9 @@ describe('BusinessLogicServer with ownerPubkey', () => {
         { basePricePerByte: 10n, ownerPubkey: 'invalid' },
         mockEventStore
       );
-    }).toThrow('Invalid ownerPubkey format: must be 64 lowercase hex characters');
+    }).toThrow(
+      'Invalid ownerPubkey format: must be 64 lowercase hex characters'
+    );
   });
 });
 
@@ -903,7 +933,9 @@ describe('BusinessLogicServer with ownerPubkey integration', () => {
   });
 
   it('should store and retrieve owner event after bypass', async () => {
-    const event = createEventFromKey(ownerSk, { content: 'owner integration test' });
+    const event = createEventFromKey(ownerSk, {
+      content: 'owner integration test',
+    });
     const base64Data = eventToBase64Toon(event);
 
     const response = await bls.getApp().request('/handle-packet', {
@@ -933,7 +965,9 @@ describe('BusinessLogicServer with ownerPubkey integration', () => {
     const ownerBase64 = eventToBase64Toon(ownerEvent);
 
     // Non-owner event (requires payment)
-    const nonOwnerEvent = createEventFromKey(nonOwnerSk, { content: 'non-owner event' });
+    const nonOwnerEvent = createEventFromKey(nonOwnerSk, {
+      content: 'non-owner event',
+    });
     const nonOwnerBase64 = eventToBase64Toon(nonOwnerEvent);
 
     // Submit owner event with amount=0
@@ -961,15 +995,17 @@ describe('BusinessLogicServer with ownerPubkey integration', () => {
     expect(nonOwnerFailResponse.status).toBe(400);
 
     // Submit non-owner event with sufficient payment
-    const nonOwnerSuccessResponse = await bls.getApp().request('/handle-packet', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        amount: '1000000',
-        destination: 'g.agent.test',
-        data: nonOwnerBase64,
-      }),
-    });
+    const nonOwnerSuccessResponse = await bls
+      .getApp()
+      .request('/handle-packet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: '1000000',
+          destination: 'g.agent.test',
+          data: nonOwnerBase64,
+        }),
+      });
     expect(nonOwnerSuccessResponse.status).toBe(200);
 
     // Verify both events are stored
@@ -1018,7 +1054,10 @@ describe('BusinessLogicServer with spspMinPrice', () => {
       { basePricePerByte: 10n, spspMinPrice: 0n },
       mockEventStore
     );
-    const event = createValidSignedEvent({ kind: SPSP_REQUEST_KIND, content: 'encrypted-spsp-request' });
+    const event = createValidSignedEvent({
+      kind: SPSP_REQUEST_KIND,
+      content: 'encrypted-spsp-request',
+    });
     const base64Data = eventToBase64Toon(event);
 
     const response = await bls.getApp().request('/handle-packet', {
@@ -1065,7 +1104,10 @@ describe('BusinessLogicServer with spspMinPrice', () => {
       { basePricePerByte: 10n },
       mockEventStore
     );
-    const event = createValidSignedEvent({ kind: SPSP_REQUEST_KIND, content: 'encrypted-spsp-request' });
+    const event = createValidSignedEvent({
+      kind: SPSP_REQUEST_KIND,
+      content: 'encrypted-spsp-request',
+    });
     const base64Data = eventToBase64Toon(event);
 
     const response = await bls.getApp().request('/handle-packet', {

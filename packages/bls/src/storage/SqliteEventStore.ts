@@ -105,7 +105,7 @@ export class SqliteEventStore implements EventStore {
       );
 
       this.getByPubkeyKindDTagStmt = this.db.prepare(
-        "SELECT id, created_at FROM events WHERE pubkey = ? AND kind = ? AND tags LIKE ?"
+        'SELECT id, created_at FROM events WHERE pubkey = ? AND kind = ? AND tags LIKE ?'
       );
     } catch (error) {
       throw new BlsBaseError(
@@ -167,10 +167,9 @@ export class SqliteEventStore implements EventStore {
     tagsJson: string,
     receivedAt: number
   ): void {
-    const existing = this.getByPubkeyKindStmt.get(
-      event.pubkey,
-      event.kind
-    ) as { id: string; created_at: number } | undefined;
+    const existing = this.getByPubkeyKindStmt.get(event.pubkey, event.kind) as
+      | { id: string; created_at: number }
+      | undefined;
 
     if (existing) {
       // Only replace if new event is newer, or same time with lower id
@@ -371,7 +370,10 @@ export class SqliteEventStore implements EventStore {
    */
   private buildQuerySql(filters: Filter[]): { sql: string; params: unknown[] } {
     if (filters.length === 0) {
-      return { sql: 'SELECT * FROM events ORDER BY created_at DESC', params: [] };
+      return {
+        sql: 'SELECT * FROM events ORDER BY created_at DESC',
+        params: [],
+      };
     }
 
     const conditions: string[] = [];

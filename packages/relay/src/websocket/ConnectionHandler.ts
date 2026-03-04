@@ -80,7 +80,9 @@ export class ConnectionHandler {
 
     // Check subscription limit (only for new subscriptions)
     if (!this.subscriptions.has(subscriptionId)) {
-      if (this.subscriptions.size >= this.config.maxSubscriptionsPerConnection) {
+      if (
+        this.subscriptions.size >= this.config.maxSubscriptionsPerConnection
+      ) {
         this.sendNotice('error: too many subscriptions');
         return;
       }
@@ -99,13 +101,20 @@ export class ConnectionHandler {
     });
 
     // Query matching events
-    console.log(`[ConnectionHandler] REQ: ${subscriptionId}, filters:`, JSON.stringify(filters).slice(0, 100));
+    console.log(
+      `[ConnectionHandler] REQ: ${subscriptionId}, filters:`,
+      JSON.stringify(filters).slice(0, 100)
+    );
     const events = this.eventStore.query(filters);
-    console.log(`[ConnectionHandler] Query returned ${events.length} events for ${subscriptionId}`);
+    console.log(
+      `[ConnectionHandler] Query returned ${events.length} events for ${subscriptionId}`
+    );
 
     // Send matching events
     for (const event of events) {
-      console.log(`[ConnectionHandler] Sending event ${event.id.slice(0, 16)}... to ${subscriptionId}`);
+      console.log(
+        `[ConnectionHandler] Sending event ${event.id.slice(0, 16)}... to ${subscriptionId}`
+      );
       this.sendEvent(subscriptionId, event);
     }
 
@@ -119,7 +128,9 @@ export class ConnectionHandler {
    * Accepts events for free (no payment required).
    */
   private handleEvent(event: NostrEvent): void {
-    console.log(`[ConnectionHandler] Received EVENT: ${event.id.slice(0, 16)}... kind:${event.kind}`);
+    console.log(
+      `[ConnectionHandler] Received EVENT: ${event.id.slice(0, 16)}... kind:${event.kind}`
+    );
 
     try {
       // Store the event

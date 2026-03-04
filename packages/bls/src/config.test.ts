@@ -5,7 +5,8 @@ import { PricingError } from './pricing/types.js';
 
 // Known test keypair (deterministic)
 const TEST_SECRET_KEY = 'a'.repeat(64);
-const TEST_PUBKEY = '6a04ab98d9e4774ad806e302dddeb63bea16b5cb5f223ee77478e861bb583eb3';
+const TEST_PUBKEY =
+  '6a04ab98d9e4774ad806e302dddeb63bea16b5cb5f223ee77478e861bb583eb3';
 
 /** Set all required env vars for a valid config. */
 function setRequiredEnv(): void {
@@ -73,7 +74,9 @@ describe('loadBlsConfigFromEnv', () => {
     delete process.env['NODE_ID'];
 
     expect(() => loadBlsConfigFromEnv()).toThrow(ConfigError);
-    expect(() => loadBlsConfigFromEnv()).toThrow('NODE_ID: is required but not set');
+    expect(() => loadBlsConfigFromEnv()).toThrow(
+      'NODE_ID: is required but not set'
+    );
   });
 
   // --- NOSTR_SECRET_KEY ---
@@ -83,7 +86,9 @@ describe('loadBlsConfigFromEnv', () => {
     delete process.env['NOSTR_SECRET_KEY'];
 
     expect(() => loadBlsConfigFromEnv()).toThrow(ConfigError);
-    expect(() => loadBlsConfigFromEnv()).toThrow('NOSTR_SECRET_KEY: is required but not set');
+    expect(() => loadBlsConfigFromEnv()).toThrow(
+      'NOSTR_SECRET_KEY: is required but not set'
+    );
   });
 
   it('should throw ConfigError when NOSTR_SECRET_KEY is too short', () => {
@@ -91,7 +96,9 @@ describe('loadBlsConfigFromEnv', () => {
     process.env['NOSTR_SECRET_KEY'] = 'abcd1234';
 
     expect(() => loadBlsConfigFromEnv()).toThrow(ConfigError);
-    expect(() => loadBlsConfigFromEnv()).toThrow('must be a 64-character hex string');
+    expect(() => loadBlsConfigFromEnv()).toThrow(
+      'must be a 64-character hex string'
+    );
   });
 
   it('should throw ConfigError when NOSTR_SECRET_KEY is too long', () => {
@@ -99,7 +106,9 @@ describe('loadBlsConfigFromEnv', () => {
     process.env['NOSTR_SECRET_KEY'] = 'a'.repeat(128);
 
     expect(() => loadBlsConfigFromEnv()).toThrow(ConfigError);
-    expect(() => loadBlsConfigFromEnv()).toThrow('must be a 64-character hex string');
+    expect(() => loadBlsConfigFromEnv()).toThrow(
+      'must be a 64-character hex string'
+    );
   });
 
   it('should throw ConfigError when NOSTR_SECRET_KEY has non-hex characters', () => {
@@ -107,7 +116,9 @@ describe('loadBlsConfigFromEnv', () => {
     process.env['NOSTR_SECRET_KEY'] = 'g'.repeat(64);
 
     expect(() => loadBlsConfigFromEnv()).toThrow(ConfigError);
-    expect(() => loadBlsConfigFromEnv()).toThrow('must be a 64-character hex string');
+    expect(() => loadBlsConfigFromEnv()).toThrow(
+      'must be a 64-character hex string'
+    );
   });
 
   it('should normalize NOSTR_SECRET_KEY to lowercase', () => {
@@ -127,7 +138,9 @@ describe('loadBlsConfigFromEnv', () => {
     delete process.env['ILP_ADDRESS'];
 
     expect(() => loadBlsConfigFromEnv()).toThrow(ConfigError);
-    expect(() => loadBlsConfigFromEnv()).toThrow('ILP_ADDRESS: is required but not set');
+    expect(() => loadBlsConfigFromEnv()).toThrow(
+      'ILP_ADDRESS: is required but not set'
+    );
   });
 
   it('should throw ConfigError when ILP_ADDRESS has invalid format (no g. prefix)', () => {
@@ -170,7 +183,9 @@ describe('loadBlsConfigFromEnv', () => {
     process.env['BLS_PORT'] = '0';
 
     expect(() => loadBlsConfigFromEnv()).toThrow(ConfigError);
-    expect(() => loadBlsConfigFromEnv()).toThrow('must be an integer between 1 and 65535');
+    expect(() => loadBlsConfigFromEnv()).toThrow(
+      'must be an integer between 1 and 65535'
+    );
   });
 
   it('should throw ConfigError when BLS_PORT is 65536', () => {
@@ -178,7 +193,9 @@ describe('loadBlsConfigFromEnv', () => {
     process.env['BLS_PORT'] = '65536';
 
     expect(() => loadBlsConfigFromEnv()).toThrow(ConfigError);
-    expect(() => loadBlsConfigFromEnv()).toThrow('must be an integer between 1 and 65535');
+    expect(() => loadBlsConfigFromEnv()).toThrow(
+      'must be an integer between 1 and 65535'
+    );
   });
 
   it('should throw ConfigError when BLS_PORT is non-numeric', () => {
@@ -186,7 +203,9 @@ describe('loadBlsConfigFromEnv', () => {
     process.env['BLS_PORT'] = 'not-a-port';
 
     expect(() => loadBlsConfigFromEnv()).toThrow(ConfigError);
-    expect(() => loadBlsConfigFromEnv()).toThrow('must be an integer between 1 and 65535');
+    expect(() => loadBlsConfigFromEnv()).toThrow(
+      'must be an integer between 1 and 65535'
+    );
   });
 
   // --- BASE_PRICE_PER_BYTE ---
@@ -243,7 +262,9 @@ describe('loadBlsConfigFromEnv', () => {
     process.env['OWNER_PUBKEY'] = 'too-short';
 
     expect(() => loadBlsConfigFromEnv()).toThrow(ConfigError);
-    expect(() => loadBlsConfigFromEnv()).toThrow('must be a 64-character hex string');
+    expect(() => loadBlsConfigFromEnv()).toThrow(
+      'must be a 64-character hex string'
+    );
   });
 
   // --- DATA_DIR ---
@@ -293,7 +314,9 @@ describe('loadBlsConfigFromEnv', () => {
     process.env['KIND_OVERRIDES'] = 'not valid json';
 
     expect(() => loadBlsConfigFromEnv()).toThrow(PricingError);
-    expect(() => loadBlsConfigFromEnv()).toThrow('Invalid JSON in KIND_OVERRIDES');
+    expect(() => loadBlsConfigFromEnv()).toThrow(
+      'Invalid JSON in KIND_OVERRIDES'
+    );
   });
 
   // --- SPSP_MIN_PRICE ---

@@ -12,7 +12,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { generateSecretKey, getPublicKey, finalizeEvent } from 'nostr-tools/pure';
+import {
+  generateSecretKey,
+  getPublicKey,
+  finalizeEvent,
+} from 'nostr-tools/pure';
 import { nip44 } from 'nostr-tools';
 import type { NostrEvent } from 'nostr-tools/pure';
 import {
@@ -22,7 +26,6 @@ import {
 } from '@crosstown/relay';
 import {
   buildSpspRequestEvent,
-  SPSP_REQUEST_KIND,
   SPSP_RESPONSE_KIND,
   type SpspResponse,
   type SettlementNegotiationConfig,
@@ -32,10 +35,7 @@ import {
 // --- RED PHASE: These imports will fail because @crosstown/sdk does not exist yet ---
 // The SDK handler registers for kind:23194 and processes SPSP handshakes
 // with settlement negotiation and payment channel opening.
-import {
-  createSpspHandshakeHandler,
-  type SpspHandshakeHandlerConfig,
-} from '@crosstown/sdk';
+import { createSpspHandshakeHandler } from '@crosstown/sdk';
 
 // ============================================================================
 // Test Factories
@@ -62,7 +62,7 @@ function createSpspRequest(
     supportedChains?: string[];
     settlementAddresses?: Record<string, string>;
     preferredTokens?: Record<string, string>;
-  },
+  }
 ) {
   return buildSpspRequestEvent(recipientPubkey, senderSk, settlementInfo);
 }
@@ -112,7 +112,7 @@ function createPacketRequest(event: NostrEvent, amount = '0') {
 function decryptSpspResponse(
   responseEvent: NostrEvent,
   recipientSk: Uint8Array,
-  senderPubkey: string,
+  senderPubkey: string
 ): SpspResponse {
   const conversationKey = nip44.getConversationKey(recipientSk, senderPubkey);
   const decrypted = nip44.decrypt(responseEvent.content, conversationKey);
@@ -219,7 +219,9 @@ describe.skip('SpspHandshakeHandler', () => {
     expect(typeof result.data).toBe('string');
 
     // Decode the response event from TOON
-    const responseToonBytes = Uint8Array.from(Buffer.from(result.data!, 'base64'));
+    const responseToonBytes = Uint8Array.from(
+      Buffer.from(result.data!, 'base64')
+    );
     const responseEvent = decodeEventFromToon(responseToonBytes);
 
     // Response should be kind:23195 from the node
@@ -227,7 +229,11 @@ describe.skip('SpspHandshakeHandler', () => {
     expect(responseEvent.pubkey).toBe(nodePubkey);
 
     // Decrypt and verify SPSP response payload
-    const spspResponse = decryptSpspResponse(responseEvent, requesterSk, nodePubkey);
+    const spspResponse = decryptSpspResponse(
+      responseEvent,
+      requesterSk,
+      nodePubkey
+    );
     expect(spspResponse.requestId).toBe(requestId);
     expect(spspResponse.destinationAccount).toMatch(/^g\.test\.node\.spsp\./);
     expect(spspResponse.sharedSecret).toBeDefined();
@@ -255,10 +261,10 @@ describe.skip('SpspHandshakeHandler', () => {
 
     // Decode both responses
     const resp1Event = decodeEventFromToon(
-      Uint8Array.from(Buffer.from(result1.data!, 'base64')),
+      Uint8Array.from(Buffer.from(result1.data!, 'base64'))
     );
     const resp2Event = decodeEventFromToon(
-      Uint8Array.from(Buffer.from(result2.data!, 'base64')),
+      Uint8Array.from(Buffer.from(result2.data!, 'base64'))
     );
 
     const spsp1 = decryptSpspResponse(resp1Event, requesterSk, nodePubkey);
@@ -278,7 +284,7 @@ describe.skip('SpspHandshakeHandler', () => {
   it('should negotiate settlement chain when both parties have overlapping chains', async () => {
     // FAILS because settlement negotiation in the SDK handler is not implemented.
     // Both parties support evm:base:31337, so negotiation should succeed.
-    const { event, requestId } = createSpspRequest(requesterSk, nodePubkey, {
+    const { event } = createSpspRequest(requesterSk, nodePubkey, {
       ilpAddress: 'g.test.requester',
       supportedChains: ['evm:base:31337'],
       settlementAddresses: {
@@ -293,20 +299,24 @@ describe.skip('SpspHandshakeHandler', () => {
 
     // Decode and decrypt response
     const responseEvent = decodeEventFromToon(
-      Uint8Array.from(Buffer.from(result.data!, 'base64')),
+      Uint8Array.from(Buffer.from(result.data!, 'base64'))
     );
-    const spspResponse = decryptSpspResponse(responseEvent, requesterSk, nodePubkey);
+    const spspResponse = decryptSpspResponse(
+      responseEvent,
+      requesterSk,
+      nodePubkey
+    );
 
     // Settlement fields should be populated
     expect(spspResponse.negotiatedChain).toBe('evm:base:31337');
     expect(spspResponse.settlementAddress).toBe(
-      settlementConfig.ownSettlementAddresses['evm:base:31337'],
+      settlementConfig.ownSettlementAddresses['evm:base:31337']
     );
     expect(spspResponse.tokenAddress).toBe(
-      settlementConfig.ownPreferredTokens!['evm:base:31337'],
+      settlementConfig.ownPreferredTokens!['evm:base:31337']
     );
     expect(spspResponse.tokenNetworkAddress).toBe(
-      settlementConfig.ownTokenNetworks!['evm:base:31337'],
+      settlementConfig.ownTokenNetworks!['evm:base:31337']
     );
   });
 
@@ -334,14 +344,18 @@ describe.skip('SpspHandshakeHandler', () => {
         peerAddress: '0xRequesterAddr1234567890abcdef1234567890abcd',
         token: settlementConfig.ownPreferredTokens!['evm:base:31337'],
         tokenNetwork: settlementConfig.ownTokenNetworks!['evm:base:31337'],
-      }),
+      })
     );
 
     // Verify channelId is included in the SPSP response
     const responseEvent = decodeEventFromToon(
-      Uint8Array.from(Buffer.from(result.data!, 'base64')),
+      Uint8Array.from(Buffer.from(result.data!, 'base64'))
     );
-    const spspResponse = decryptSpspResponse(responseEvent, requesterSk, nodePubkey);
+    const spspResponse = decryptSpspResponse(
+      responseEvent,
+      requesterSk,
+      nodePubkey
+    );
     expect(spspResponse.channelId).toBeDefined();
     expect(typeof spspResponse.channelId).toBe('string');
   });
@@ -363,7 +377,7 @@ describe.skip('SpspHandshakeHandler', () => {
     if (!result.accept) throw new Error('unreachable');
 
     const responseEvent = decodeEventFromToon(
-      Uint8Array.from(Buffer.from(result.data!, 'base64')),
+      Uint8Array.from(Buffer.from(result.data!, 'base64'))
     );
 
     // The response should be tagged with the requester's pubkey
@@ -380,7 +394,11 @@ describe.skip('SpspHandshakeHandler', () => {
     expect(() => JSON.parse(responseEvent.content)).toThrow();
 
     // But the requester can decrypt it with their secret key
-    const spspResponse = decryptSpspResponse(responseEvent, requesterSk, nodePubkey);
+    const spspResponse = decryptSpspResponse(
+      responseEvent,
+      requesterSk,
+      nodePubkey
+    );
     expect(spspResponse.requestId).toBe(requestId);
     expect(spspResponse.destinationAccount).toBeDefined();
     expect(spspResponse.sharedSecret).toBeDefined();
@@ -395,8 +413,9 @@ describe.skip('SpspHandshakeHandler', () => {
     // When channel opening fails, the handler should still return basic SPSP
     // parameters without settlement fields.
     const failingChannelClient = createMockChannelClient();
-    (failingChannelClient.openChannel as ReturnType<typeof vi.fn>)
-      .mockRejectedValue(new Error('Channel open timeout'));
+    (
+      failingChannelClient.openChannel as ReturnType<typeof vi.fn>
+    ).mockRejectedValue(new Error('Channel open timeout'));
 
     const failingHandler = createSpspHandshakeHandler({
       secretKey: nodeSk,
@@ -425,9 +444,13 @@ describe.skip('SpspHandshakeHandler', () => {
 
     // Decode and verify the response has basic SPSP fields but no settlement
     const responseEvent = decodeEventFromToon(
-      Uint8Array.from(Buffer.from(result.data!, 'base64')),
+      Uint8Array.from(Buffer.from(result.data!, 'base64'))
     );
-    const spspResponse = decryptSpspResponse(responseEvent, requesterSk, nodePubkey);
+    const spspResponse = decryptSpspResponse(
+      responseEvent,
+      requesterSk,
+      nodePubkey
+    );
 
     // Basic SPSP fields must be present
     expect(spspResponse.requestId).toBe(requestId);
@@ -464,7 +487,7 @@ describe.skip('SpspHandshakeHandler', () => {
         tags: [],
         created_at: Math.floor(Date.now() / 1000),
       },
-      requesterSk,
+      requesterSk
     );
     eventStore.store(peerInfoEvent);
 
@@ -492,7 +515,7 @@ describe.skip('SpspHandshakeHandler', () => {
             prefix: 'g.test.requester',
           }),
         ]),
-      }),
+      })
     );
   });
 });

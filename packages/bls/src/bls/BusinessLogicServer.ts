@@ -9,7 +9,12 @@ import type {
   HandlePacketAcceptResponse,
   HandlePacketRejectResponse,
 } from './types.js';
-import { ILP_ERROR_CODES, BlsError, isValidPubkey, SPSP_REQUEST_KIND } from './types.js';
+import {
+  ILP_ERROR_CODES,
+  BlsError,
+  isValidPubkey,
+  SPSP_REQUEST_KIND,
+} from './types.js';
 
 /**
  * Generate a fulfillment from an event ID.
@@ -38,7 +43,10 @@ export class BusinessLogicServer {
     private eventStore: EventStore
   ) {
     // Validate ownerPubkey format if provided
-    if (config.ownerPubkey !== undefined && !isValidPubkey(config.ownerPubkey)) {
+    if (
+      config.ownerPubkey !== undefined &&
+      !isValidPubkey(config.ownerPubkey)
+    ) {
       throw new BlsError(
         'Invalid ownerPubkey format: must be 64 lowercase hex characters',
         'INVALID_CONFIG'
@@ -149,14 +157,9 @@ export class BusinessLogicServer {
           (event.kind >= 1630 && event.kind <= 1633);
 
         if (isNIP34) {
-          this.config
-            .onNIP34Event(event)
-            .catch((error) => {
-              console.error(
-                `NIP-34 handler error for event ${event.id}:`,
-                error
-              );
-            });
+          this.config.onNIP34Event(event).catch((error) => {
+            console.error(`NIP-34 handler error for event ${event.id}:`, error);
+          });
         }
       }
 
@@ -172,7 +175,10 @@ export class BusinessLogicServer {
 
     // Calculate price: use PricingService if provided, otherwise simple calculation
     let price = this.config.pricingService
-      ? this.config.pricingService.calculatePriceFromBytes(toonBytes, event.kind)
+      ? this.config.pricingService.calculatePriceFromBytes(
+          toonBytes,
+          event.kind
+        )
       : BigInt(toonBytes.length) * this.config.basePricePerByte;
 
     // Apply SPSP min price override if configured and event is SPSP request
@@ -210,8 +216,15 @@ export class BusinessLogicServer {
     }
 
     // Log 0-amount SPSP acceptance
-    if (amount === 0n && event.kind === SPSP_REQUEST_KIND && spspMinPriceApplied) {
-      console.log('INFO: Accepted 0-amount SPSP request from pubkey:', event.pubkey.slice(0, 16));
+    if (
+      amount === 0n &&
+      event.kind === SPSP_REQUEST_KIND &&
+      spspMinPriceApplied
+    ) {
+      console.log(
+        'INFO: Accepted 0-amount SPSP request from pubkey:',
+        event.pubkey.slice(0, 16)
+      );
     }
 
     // Store event
@@ -235,14 +248,9 @@ export class BusinessLogicServer {
         (event.kind >= 1630 && event.kind <= 1633);
 
       if (isNIP34) {
-        this.config
-          .onNIP34Event(event)
-          .catch((error) => {
-            console.error(
-              `NIP-34 handler error for event ${event.id}:`,
-              error
-            );
-          });
+        this.config.onNIP34Event(event).catch((error) => {
+          console.error(`NIP-34 handler error for event ${event.id}:`, error);
+        });
       }
     }
 

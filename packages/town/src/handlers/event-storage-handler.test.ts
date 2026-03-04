@@ -11,20 +11,23 @@
  * signatures. Only the connector transport is mocked.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { generateSecretKey, getPublicKey, finalizeEvent } from 'nostr-tools/pure';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import {
+  generateSecretKey,
+  getPublicKey,
+  finalizeEvent,
+} from 'nostr-tools/pure';
 import type { NostrEvent } from 'nostr-tools/pure';
-import { encodeEventToToon, decodeEventFromToon, SqliteEventStore } from '@crosstown/relay';
-import type { EventStore } from '@crosstown/relay';
+import {
+  encodeEventToToon,
+  decodeEventFromToon,
+  SqliteEventStore,
+} from '@crosstown/relay';
 
 // --- RED PHASE: These imports will fail because @crosstown/sdk does not exist yet ---
 // The SDK handler replaces the BLS HTTP endpoint with a composable function
 // that receives a handler context (ctx) with decode(), accept(), reject() methods.
-import {
-  createEventStorageHandler,
-  type EventStorageHandlerConfig,
-  type HandlerContext,
-} from '@crosstown/sdk';
+import { createEventStorageHandler } from '@crosstown/sdk';
 
 // ============================================================================
 // Test Factories
@@ -39,7 +42,7 @@ const TEST_CREATED_AT = 1767225600;
 
 function createValidSignedEvent(
   overrides: Partial<Omit<NostrEvent, 'id' | 'sig' | 'pubkey'>> = {},
-  secretKey?: Uint8Array,
+  secretKey?: Uint8Array
 ): NostrEvent {
   const sk = secretKey ?? generateSecretKey();
   return finalizeEvent(
@@ -50,7 +53,7 @@ function createValidSignedEvent(
       created_at: TEST_CREATED_AT,
       ...overrides,
     },
-    sk,
+    sk
   );
 }
 
@@ -69,7 +72,7 @@ function eventToBase64Toon(event: NostrEvent): string {
 function createPacketRequest(
   event: NostrEvent,
   amount: string | bigint,
-  destination = 'g.agent.test',
+  destination = 'g.agent.test'
 ) {
   return {
     amount: String(amount),
@@ -185,7 +188,7 @@ describe.skip('EventStorageHandler', () => {
     // The node's own pubkey should be able to write events for free.
     const ownEvent = createValidSignedEvent(
       { content: 'self-write test' },
-      nodeSk,
+      nodeSk
     );
 
     // Send with amount=0 -- should succeed for owner
@@ -211,7 +214,10 @@ describe.skip('EventStorageHandler', () => {
     // the retrieved event produces identical bytes (bit-for-bit roundtrip).
     const event = createValidSignedEvent({
       content: 'TOON fidelity test with unicode: \u00e9\u00e0\u00fc',
-      tags: [['t', 'test'], ['e', 'abc'.repeat(21)]],
+      tags: [
+        ['t', 'test'],
+        ['e', 'abc'.repeat(21)],
+      ],
     });
     const originalToon = encodeEventToToon(event);
     const price = calculatePrice(event, BASE_PRICE_PER_BYTE);
@@ -225,8 +231,9 @@ describe.skip('EventStorageHandler', () => {
     const reEncodedToon = encodeEventToToon(stored!);
 
     // TOON bytes must be identical (TOON-native: no lossy JSON intermediate)
-    expect(Buffer.from(reEncodedToon).toString('base64'))
-      .toBe(Buffer.from(originalToon).toString('base64'));
+    expect(Buffer.from(reEncodedToon).toString('base64')).toBe(
+      Buffer.from(originalToon).toString('base64')
+    );
   });
 
   it('should return eventId and storedAt in accept response', async () => {

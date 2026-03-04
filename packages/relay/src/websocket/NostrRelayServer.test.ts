@@ -179,7 +179,11 @@ describe('NostrRelayServer', () => {
 
       // Wait for both EVENT and EOSE
       const messages = await messagesPromise;
-      expect(messages[0]).toEqual(['EVENT', 'mysub', encodeEventToToonString(event)]);
+      expect(messages[0]).toEqual([
+        'EVENT',
+        'mysub',
+        encodeEventToToonString(event),
+      ]);
       expect(messages[1]).toEqual(['EOSE', 'mysub']);
 
       ws.close();

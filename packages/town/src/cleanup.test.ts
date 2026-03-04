@@ -77,7 +77,7 @@ describe('Story 2.4: packages/git-proxy removal', () => {
     const gitProxyDir = join(repoRoot(), 'packages', 'git-proxy');
     expect(
       existsSync(gitProxyDir),
-      `Expected packages/git-proxy to be removed, but it still exists at: ${gitProxyDir}`,
+      `Expected packages/git-proxy to be removed, but it still exists at: ${gitProxyDir}`
     ).toBe(false);
   });
 
@@ -93,7 +93,11 @@ describe('Story 2.4: packages/git-proxy removal', () => {
       const pkg = readJsonFile(pkgPath);
       if (!pkg) continue;
 
-      const depSections = ['dependencies', 'devDependencies', 'peerDependencies'] as const;
+      const depSections = [
+        'dependencies',
+        'devDependencies',
+        'peerDependencies',
+      ] as const;
       for (const section of depSections) {
         const deps = pkg[section] as Record<string, string> | undefined;
         if (deps && '@crosstown/git-proxy' in deps) {
@@ -104,7 +108,7 @@ describe('Story 2.4: packages/git-proxy removal', () => {
 
     expect(
       dependingPackages,
-      `Found packages depending on @crosstown/git-proxy:\n${dependingPackages.join('\n')}`,
+      `Found packages depending on @crosstown/git-proxy:\n${dependingPackages.join('\n')}`
     ).toHaveLength(0);
   });
 
@@ -120,7 +124,7 @@ describe('Story 2.4: packages/git-proxy removal', () => {
     const content = readFileSync(workspacePath, 'utf-8');
     expect(
       content,
-      'pnpm-workspace.yaml should not reference git-proxy',
+      'pnpm-workspace.yaml should not reference git-proxy'
     ).not.toMatch(/git-proxy/);
   });
 });
@@ -138,7 +142,7 @@ describe('Story 2.4: SDK relay entrypoint', () => {
 
     expect(
       existsSync(sdkPackageJson),
-      `Expected @crosstown/sdk package to exist at: ${sdkDir}`,
+      `Expected @crosstown/sdk package to exist at: ${sdkDir}`
     ).toBe(true);
 
     // Verify the package has the expected name
