@@ -125,7 +125,7 @@ describe('BusinessLogicServer', () => {
       });
 
       expect(response.status).toBe(200);
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.accept).toBe(true);
       expect(json.fulfillment).toBeDefined();
       expect(json.metadata?.eventId).toBe(event.id);
@@ -148,8 +148,8 @@ describe('BusinessLogicServer', () => {
 
       expect(mockEventStore.store).toHaveBeenCalledTimes(1);
       const storedEvent = (mockEventStore.store as ReturnType<typeof vi.fn>)
-        .mock.calls[0][0];
-      expect(storedEvent.id).toBe(event.id);
+        .mock.calls[0]![0];
+      expect(storedEvent!.id).toBe(event.id);
     });
 
     it('should reject insufficient payment with F06', async () => {
@@ -167,7 +167,7 @@ describe('BusinessLogicServer', () => {
       });
 
       expect(response.status).toBe(400);
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.accept).toBe(false);
       expect(json.code).toBe(ILP_ERROR_CODES.INSUFFICIENT_AMOUNT);
       expect(json.message).toBe('Insufficient payment amount');
@@ -204,7 +204,7 @@ describe('BusinessLogicServer', () => {
       });
 
       expect(response.status).toBe(400);
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.accept).toBe(false);
       expect(json.code).toBe(ILP_ERROR_CODES.BAD_REQUEST);
     });
@@ -226,7 +226,7 @@ describe('BusinessLogicServer', () => {
       });
 
       expect(response.status).toBe(400);
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.accept).toBe(false);
       expect(json.code).toBe(ILP_ERROR_CODES.BAD_REQUEST);
       expect(json.message).toContain('Invalid TOON data');
@@ -250,7 +250,7 @@ describe('BusinessLogicServer', () => {
       });
 
       expect(response.status).toBe(400);
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.accept).toBe(false);
       expect(json.code).toBe(ILP_ERROR_CODES.BAD_REQUEST);
       expect(json.message).toBe('Invalid event signature');
@@ -285,7 +285,7 @@ describe('BusinessLogicServer', () => {
       });
 
       expect(response.status).toBe(400);
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.accept).toBe(false);
       expect(json.code).toBe(ILP_ERROR_CODES.BAD_REQUEST);
       expect(json.message).toContain('Missing required fields');
@@ -306,7 +306,7 @@ describe('BusinessLogicServer', () => {
         }),
       });
 
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.fulfillment).toBe(expectedFulfillment);
     });
 
@@ -327,7 +327,7 @@ describe('BusinessLogicServer', () => {
         }),
       });
 
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.accept).toBe(true);
     });
 
@@ -348,7 +348,7 @@ describe('BusinessLogicServer', () => {
         }),
       });
 
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.accept).toBe(false);
       expect(json.code).toBe(ILP_ERROR_CODES.INSUFFICIENT_AMOUNT);
     });
@@ -361,7 +361,7 @@ describe('BusinessLogicServer', () => {
       });
 
       expect(response.status).toBe(200);
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.status).toBe('healthy');
       expect(json.timestamp).toBeTypeOf('number');
     });
@@ -373,7 +373,7 @@ describe('BusinessLogicServer', () => {
       });
       const after = Date.now();
 
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.timestamp).toBeGreaterThanOrEqual(before);
       expect(json.timestamp).toBeLessThanOrEqual(after);
     });
@@ -541,7 +541,7 @@ describe('BusinessLogicServer with PricingService', () => {
     });
 
     expect(response.status).toBe(200);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(true);
   });
 
@@ -563,7 +563,7 @@ describe('BusinessLogicServer with PricingService', () => {
     });
 
     expect(response.status).toBe(200);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(true);
   });
 
@@ -585,7 +585,7 @@ describe('BusinessLogicServer with PricingService', () => {
     });
 
     expect(response.status).toBe(400);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(false);
     expect(json.code).toBe(ILP_ERROR_CODES.INSUFFICIENT_AMOUNT);
   });
@@ -607,7 +607,7 @@ describe('BusinessLogicServer with PricingService', () => {
     });
 
     expect(response.status).toBe(200);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(true);
   });
 
@@ -628,7 +628,7 @@ describe('BusinessLogicServer with PricingService', () => {
     });
 
     expect(response.status).toBe(200);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(true);
   });
 
@@ -649,7 +649,7 @@ describe('BusinessLogicServer with PricingService', () => {
     });
 
     expect(response.status).toBe(400);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(false);
     expect(json.code).toBe(ILP_ERROR_CODES.INSUFFICIENT_AMOUNT);
   });
@@ -680,7 +680,7 @@ describe('BusinessLogicServer backwards compatibility', () => {
     });
 
     expect(response.status).toBe(200);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(true);
   });
 });
@@ -752,7 +752,7 @@ describe('BusinessLogicServer with ownerPubkey', () => {
     });
 
     expect(response.status).toBe(200);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(true);
     expect(json.fulfillment).toBeDefined();
     expect(json.metadata?.eventId).toBe(event.id);
@@ -774,8 +774,8 @@ describe('BusinessLogicServer with ownerPubkey', () => {
 
     expect(mockEventStore.store).toHaveBeenCalledTimes(1);
     const storedEvent = (mockEventStore.store as ReturnType<typeof vi.fn>).mock
-      .calls[0][0];
-    expect(storedEvent.id).toBe(event.id);
+      .calls[0]![0];
+    expect(storedEvent!.id).toBe(event.id);
   });
 
   it('should still require valid signature for owner events', async () => {
@@ -795,7 +795,7 @@ describe('BusinessLogicServer with ownerPubkey', () => {
     });
 
     expect(response.status).toBe(400);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(false);
     expect(json.code).toBe(ILP_ERROR_CODES.BAD_REQUEST);
     expect(json.message).toBe('Invalid event signature');
@@ -818,7 +818,7 @@ describe('BusinessLogicServer with ownerPubkey', () => {
     });
 
     expect(response.status).toBe(400);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(false);
     expect(json.code).toBe(ILP_ERROR_CODES.INSUFFICIENT_AMOUNT);
     expect(mockEventStore.store).not.toHaveBeenCalled();
@@ -840,7 +840,7 @@ describe('BusinessLogicServer with ownerPubkey', () => {
     });
 
     expect(response.status).toBe(200);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(true);
     expect(mockEventStore.store).toHaveBeenCalledTimes(1);
   });
@@ -864,7 +864,7 @@ describe('BusinessLogicServer with ownerPubkey', () => {
     });
 
     expect(response.status).toBe(400);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(false);
     expect(json.code).toBe(ILP_ERROR_CODES.INSUFFICIENT_AMOUNT);
   });
@@ -1071,7 +1071,7 @@ describe('BusinessLogicServer with spspMinPrice', () => {
     });
 
     expect(response.status).toBe(200);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(true);
   });
 
@@ -1094,7 +1094,7 @@ describe('BusinessLogicServer with spspMinPrice', () => {
     });
 
     expect(response.status).toBe(400);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(false);
     expect(json.code).toBe(ILP_ERROR_CODES.INSUFFICIENT_AMOUNT);
   });
@@ -1121,7 +1121,7 @@ describe('BusinessLogicServer with spspMinPrice', () => {
     });
 
     expect(response.status).toBe(400);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(false);
     expect(json.code).toBe(ILP_ERROR_CODES.INSUFFICIENT_AMOUNT);
   });

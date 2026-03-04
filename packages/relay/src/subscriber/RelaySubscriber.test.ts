@@ -34,7 +34,7 @@ vi.mock('nostr-tools/pool', () => ({
 }));
 
 // Mock verifyEvent — default to returning true
-const mockVerifyEvent = vi.fn(() => true);
+const mockVerifyEvent = vi.fn((..._args: unknown[]) => true);
 vi.mock('nostr-tools/pure', async () => {
   const actual: Record<string, unknown> =
     await vi.importActual('nostr-tools/pure');

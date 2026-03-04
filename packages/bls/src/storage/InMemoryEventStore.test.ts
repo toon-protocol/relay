@@ -135,22 +135,22 @@ describe('InMemoryEventStore', () => {
 
     it('should return events sorted by created_at desc', () => {
       const results = store.query([]);
-      expect(results[0].id).toBe('event4');
-      expect(results[1].id).toBe('event3');
-      expect(results[2].id).toBe('event2');
-      expect(results[3].id).toBe('event1');
+      expect(results[0]!.id).toBe('event4');
+      expect(results[1]!.id).toBe('event3');
+      expect(results[2]!.id).toBe('event2');
+      expect(results[3]!.id).toBe('event1');
     });
 
     it('should return events sorted by created_at desc with limit', () => {
       const results = store.query([{ limit: 2 }]);
-      expect(results[0].id).toBe('event4');
-      expect(results[1].id).toBe('event3');
+      expect(results[0]!.id).toBe('event4');
+      expect(results[1]!.id).toBe('event3');
     });
 
     it('should combine filters with AND logic', () => {
       const results = store.query([{ kinds: [1], authors: ['alice'] }]);
       expect(results).toHaveLength(1);
-      expect(results[0].id).toBe('event1');
+      expect(results[0]!.id).toBe('event1');
     });
 
     it('should combine multiple filter objects with OR logic', () => {

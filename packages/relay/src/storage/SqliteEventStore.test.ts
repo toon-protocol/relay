@@ -45,7 +45,7 @@ describe('SqliteEventStore', () => {
         .all() as { name: string }[];
       db.close();
       expect(tables).toHaveLength(1);
-      expect(tables[0].name).toBe('events');
+      expect(tables[0]!.name).toBe('events');
     });
 
     it('should create all indexes', () => {
@@ -720,9 +720,9 @@ describe('SqliteEventStore', () => {
       store.store(event3);
 
       const results = store.query([]);
-      expect(results[0].created_at).toBe(3000);
-      expect(results[1].created_at).toBe(2000);
-      expect(results[2].created_at).toBe(1000);
+      expect(results[0]!.created_at).toBe(3000);
+      expect(results[1]!.created_at).toBe(2000);
+      expect(results[2]!.created_at).toBe(1000);
     });
   });
 
