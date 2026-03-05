@@ -1,5 +1,6 @@
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
+import type { NostrEvent } from 'nostr-tools/pure';
 import { BusinessLogicServer } from './bls/index.js';
 import type { BlsEnvConfig } from './config.js';
 import { loadBlsConfigFromEnv } from './config.js';
@@ -7,6 +8,16 @@ import { ConfigError } from './errors.js';
 import { PricingService } from './pricing/index.js';
 import { PricingError } from './pricing/types.js';
 import { createEventStore } from './storage/index.js';
+
+/** Minimal interface for dynamically imported NIP34Handler */
+interface NIP34HandlerLike {
+  handleEvent(event: NostrEvent): Promise<{
+    success: boolean;
+    operation: string;
+    message: string;
+    metadata?: unknown;
+  }>;
+}
 
 /**
  * Standalone Docker entrypoint for the BLS.
@@ -31,7 +42,9 @@ async function main(): Promise<void> {
     if (error instanceof ConfigError || error instanceof PricingError) {
       console.error(`ERROR: ${error.message}`);
     } else {
-      console.error(`ERROR: Configuration failed: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(
+        `ERROR: Configuration failed: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
     process.exit(1);
   }
@@ -62,7 +75,7 @@ async function main(): Promise<void> {
 
   // Initialize NIP-34 handler if Forgejo is configured
   // Uses dynamic import to avoid loading simple-git unless needed
-  let nip34Handler: any | undefined;
+  let nip34Handler: NIP34HandlerLike | undefined;
   if (forgejoUrl && forgejoToken && forgejoOwner) {
     try {
       const { NIP34Handler } = await import('@crosstown/core/nip34');
@@ -77,7 +90,10 @@ async function main(): Promise<void> {
         verbose: true,
       });
     } catch (error) {
-      console.warn('Failed to initialize NIP-34 handler:', error instanceof Error ? error.message : error);
+      console.warn(
+        'Failed to initialize NIP-34 handler:',
+        error instanceof Error ? error.message : error
+      );
       console.warn('NIP-34 Git integration will be disabled');
     }
   }
@@ -91,19 +107,26 @@ async function main(): Promise<void> {
       spspMinPrice,
 
       // NIP-34 event handler
-      onNIP34Event: nip34Handler ? async (event) => {
-        try {
-          const result = await nip34Handler.handleEvent(event);
+      onNIP34Event: nip34Handler
+        ? async (event) => {
+            try {
+              const result = await nip34Handler.handleEvent(event);
 
-          if (result.success) {
-            console.log(`✓ NIP-34 ${result.operation}: ${result.message}`, result.metadata || '');
-          } else {
-            console.error(`✗ NIP-34 ${result.operation}: ${result.message}`);
+              if (result.success) {
+                console.log(
+                  `✓ NIP-34 ${result.operation}: ${result.message}`,
+                  result.metadata || ''
+                );
+              } else {
+                console.error(
+                  `✗ NIP-34 ${result.operation}: ${result.message}`
+                );
+              }
+            } catch (error) {
+              console.error('NIP-34 handler error:', error);
+            }
           }
-        } catch (error) {
-          console.error('NIP-34 handler error:', error);
-        }
-      } : undefined,
+        : undefined,
     },
     eventStore
   );

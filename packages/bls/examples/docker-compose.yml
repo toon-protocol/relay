@@ -11,7 +11,7 @@ services:
   bls:
     image: di3twater/crosstown-bls:latest
     ports:
-      - "3100:3100"
+      - '3100:3100'
     volumes:
       - bls-data:/data
     environment:
@@ -26,7 +26,7 @@ services:
       # DATA_DIR: ${DATA_DIR:-/data}
       # BLS_KIND_OVERRIDES: ${BLS_KIND_OVERRIDES}
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3100/health"]
+      test: ['CMD', 'wget', '-q', '--spider', 'http://localhost:3100/health']
       interval: 30s
       timeout: 5s
       start_period: 10s
@@ -46,7 +46,12 @@ services:
   ilp-connector:
     image: node:20-alpine
     # Replace this command with your actual connector entrypoint
-    command: ["sh", "-c", "echo 'Replace this with your ILP connector' && sleep infinity"]
+    command:
+      [
+        'sh',
+        '-c',
+        "echo 'Replace this with your ILP connector' && sleep infinity",
+      ]
     depends_on:
       bls:
         condition: service_healthy

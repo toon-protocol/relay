@@ -25,9 +25,18 @@
 
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
-import { WebSocketServer } from 'ws';
-import { getPublicKey, type Event as NostrEvent } from 'nostr-tools/pure';
+import type { Event as NostrEvent } from 'nostr-tools/pure';
 import { BusinessLogicServer } from './bls/index.js';
+
+/** Minimal interface for dynamically imported NIP34Handler */
+interface NIP34HandlerLike {
+  handleEvent(event: NostrEvent): Promise<{
+    success: boolean;
+    operation: string;
+    message: string;
+    metadata?: unknown;
+  }>;
+}
 import { loadBlsConfigFromEnv } from './config.js';
 import { ConfigError } from './errors.js';
 import { PricingService } from './pricing/index.js';
@@ -73,7 +82,10 @@ async function main(): Promise<void> {
   // secretKey not in BlsEnvConfig, load directly
   const secretKeyHex = process.env['NOSTR_SECRET_KEY'];
   if (!secretKeyHex) {
-    throw new ConfigError('NOSTR_SECRET_KEY', 'Missing required environment variable');
+    throw new ConfigError(
+      'NOSTR_SECRET_KEY',
+      'Missing required environment variable'
+    );
   }
   const secretKey = Uint8Array.from(Buffer.from(secretKeyHex, 'hex'));
 
@@ -86,7 +98,12 @@ async function main(): Promise<void> {
     ? process.env['BOOTSTRAP_RELAYS'].split(',').filter((s) => s.trim())
     : [];
   let bootstrapPeers: string[] = [];
-  let bootstrapPeerObjects: { pubkey: string; ilpAddress?: string; btpEndpoint?: string; relay?: string }[] = [];
+  let bootstrapPeerObjects: {
+    pubkey: string;
+    ilpAddress?: string;
+    btpEndpoint?: string;
+    relay?: string;
+  }[] = [];
   if (process.env['BOOTSTRAP_PEERS']) {
     const raw = process.env['BOOTSTRAP_PEERS'].trim();
     if (raw.startsWith('[')) {
@@ -95,7 +112,9 @@ async function main(): Promise<void> {
         bootstrapPeerObjects = JSON.parse(raw);
         bootstrapPeers = bootstrapPeerObjects.map((p) => p.pubkey);
       } catch {
-        console.warn('⚠️  Failed to parse BOOTSTRAP_PEERS JSON, treating as comma-separated pubkeys');
+        console.warn(
+          '⚠️  Failed to parse BOOTSTRAP_PEERS JSON, treating as comma-separated pubkeys'
+        );
         bootstrapPeers = raw.split(',').filter((s) => s.trim());
       }
     } else {
@@ -106,13 +125,22 @@ async function main(): Promise<void> {
 
   // Validate required Crosstown config
   if (!connectorAdminUrl) {
-    throw new ConfigError('CONNECTOR_ADMIN_URL', 'Missing required environment variable');
+    throw new ConfigError(
+      'CONNECTOR_ADMIN_URL',
+      'Missing required environment variable'
+    );
   }
   if (!connectorUrl) {
-    throw new ConfigError('CONNECTOR_URL', 'Missing required environment variable');
+    throw new ConfigError(
+      'CONNECTOR_URL',
+      'Missing required environment variable'
+    );
   }
   if (!btpEndpoint) {
-    throw new ConfigError('BTP_ENDPOINT', 'Missing required environment variable');
+    throw new ConfigError(
+      'BTP_ENDPOINT',
+      'Missing required environment variable'
+    );
   }
 
   console.log('🚀 Starting Crosstown Node with Bootstrap...\n');
@@ -159,10 +187,14 @@ async function main(): Promise<void> {
       'evm:base:31337': process.env['PEER_EVM_ADDRESS'] || '',
     },
     preferredTokens: {
-      'evm:base:31337': process.env['M2M_TOKEN_ADDRESS'] || '0x5FbDB2315678afecb367f032d93F642f64180aa3',
+      'evm:base:31337':
+        process.env['M2M_TOKEN_ADDRESS'] ||
+        '0x5FbDB2315678afecb367f032d93F642f64180aa3',
     },
     tokenNetworks: {
-      'evm:base:31337': process.env['TOKEN_NETWORK_REGISTRY'] || '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512',
+      'evm:base:31337':
+        process.env['TOKEN_NETWORK_REGISTRY'] ||
+        '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512',
     },
   };
 
@@ -170,12 +202,14 @@ async function main(): Promise<void> {
   // Create Connector Clients (HTTP Mode)
   // -------------------------------------------------------------------------
   // NOTE: Runtime client uses admin URL since /admin/ilp/send is on admin server
-  const runtimeClient = createHttpRuntimeClientV1(connectorAdminUrl!);
+  // connectorAdminUrl is guaranteed non-null by the validation above
+  const adminUrl = connectorAdminUrl as string;
+  const runtimeClient = createHttpRuntimeClientV1(adminUrl);
 
-  const connectorAdmin = createHttpConnectorAdmin(connectorAdminUrl!, BTP_SECRET);
+  const connectorAdmin = createHttpConnectorAdmin(adminUrl, BTP_SECRET);
 
   // Create HTTP channel client for payment channel operations
-  const channelClient = createHttpChannelClient(connectorAdminUrl!);
+  const channelClient = createHttpChannelClient(adminUrl);
 
   // -------------------------------------------------------------------------
   // Initialize NIP-34 Handler (Git Operations via Nostr)
@@ -184,7 +218,7 @@ async function main(): Promise<void> {
   const forgejoToken = process.env['FORGEJO_TOKEN'];
   const forgejoOwner = process.env['FORGEJO_OWNER'];
 
-  let nip34Handler: any | undefined;
+  let nip34Handler: NIP34HandlerLike | undefined;
   if (forgejoUrl && forgejoToken && forgejoOwner) {
     try {
       const { NIP34Handler } = await import('@crosstown/core/nip34');
@@ -200,11 +234,16 @@ async function main(): Promise<void> {
       });
       console.log(`✅ NIP-34 Git integration enabled (Forgejo: ${forgejoUrl})`);
     } catch (error) {
-      console.warn('⚠️  Failed to initialize NIP-34 handler:', error instanceof Error ? error.message : error);
+      console.warn(
+        '⚠️  Failed to initialize NIP-34 handler:',
+        error instanceof Error ? error.message : error
+      );
       console.warn('   NIP-34 Git integration will be disabled');
     }
   } else {
-    console.log('📝 NIP-34 Git integration disabled (set FORGEJO_URL, FORGEJO_TOKEN, FORGEJO_OWNER to enable)');
+    console.log(
+      '📝 NIP-34 Git integration disabled (set FORGEJO_URL, FORGEJO_TOKEN, FORGEJO_OWNER to enable)'
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -218,24 +257,33 @@ async function main(): Promise<void> {
       spspMinPrice,
 
       // NIP-34 event handler
-      onNIP34Event: nip34Handler ? async (event) => {
-        try {
-          const result = await nip34Handler.handleEvent(event);
+      onNIP34Event: nip34Handler
+        ? async (event) => {
+            try {
+              const result = await nip34Handler.handleEvent(event);
 
-          if (result.success) {
-            console.log(`✅ NIP-34 ${result.operation}: ${result.message}`, result.metadata || '');
-          } else {
-            console.error(`❌ NIP-34 ${result.operation}: ${result.message}`);
+              if (result.success) {
+                console.log(
+                  `✅ NIP-34 ${result.operation}: ${result.message}`,
+                  result.metadata || ''
+                );
+              } else {
+                console.error(
+                  `❌ NIP-34 ${result.operation}: ${result.message}`
+                );
+              }
+            } catch (error) {
+              console.error('❌ NIP-34 handler error:', error);
+            }
           }
-        } catch (error) {
-          console.error('❌ NIP-34 handler error:', error);
-        }
-      } : undefined,
+        : undefined,
     },
     eventStore
   );
 
-  const handlePacket = async (request: HandlePacketRequest): Promise<HandlePacketResponse> => {
+  const handlePacket = async (
+    request: HandlePacketRequest
+  ): Promise<HandlePacketResponse> => {
     // Decode packet to check if it's an SPSP request
     let event: NostrEvent;
     let toonBytes: Uint8Array;
@@ -253,11 +301,14 @@ async function main(): Promise<void> {
 
       // Enforce pricing: use spspMinPrice if defined (including 0 for genesis peers)
       const calculatedPrice = BigInt(toonBytes.length) * basePricePerByte;
-      const price = spspMinPrice !== undefined ? BigInt(spspMinPrice) : calculatedPrice;
+      const price =
+        spspMinPrice !== undefined ? BigInt(spspMinPrice) : calculatedPrice;
 
       const amount = BigInt(request.amount);
       if (amount < price) {
-        console.log(`❌ SPSP rejected: insufficient payment (${amount} < ${price})`);
+        console.log(
+          `❌ SPSP rejected: insufficient payment (${amount} < ${price})`
+        );
         return {
           accept: false,
           code: 'F04',
@@ -281,11 +332,13 @@ async function main(): Promise<void> {
             const peerId = `nostr-${event.pubkey.slice(0, 16)}`;
 
             // Look up the peer's kind:10032 event to get their BTP endpoint
-            const peerEvents = eventStore.query([{
-              kinds: [ILP_PEER_INFO_KIND],
-              authors: [event.pubkey],
-              limit: 1,
-            }]);
+            const peerEvents = eventStore.query([
+              {
+                kinds: [ILP_PEER_INFO_KIND],
+                authors: [event.pubkey],
+                limit: 1,
+              },
+            ]);
 
             let btpUrl = '';
             if (peerEvents.length > 0 && peerEvents[0]) {
@@ -293,24 +346,35 @@ async function main(): Promise<void> {
                 const peerInfo: IlpPeerInfo = JSON.parse(peerEvents[0].content);
                 btpUrl = peerInfo.btpEndpoint;
               } catch (parseError) {
-                console.warn(`⚠️  Failed to parse peer info event: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`);
+                console.warn(
+                  `⚠️  Failed to parse peer info event: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`
+                );
               }
             }
 
             // Only register if we have a valid BTP URL
-            if (btpUrl && (btpUrl.startsWith('ws://') || btpUrl.startsWith('wss://'))) {
+            if (
+              btpUrl &&
+              (btpUrl.startsWith('ws://') || btpUrl.startsWith('wss://'))
+            ) {
               await connectorAdmin.addPeer({
                 id: peerId,
                 url: btpUrl,
                 authToken: '',
                 routes: [{ prefix: spspRequest.ilpAddress }],
               });
-              console.log(`✅ Registered peer ${peerId} (${spspRequest.ilpAddress}) at ${btpUrl}`);
+              console.log(
+                `✅ Registered peer ${peerId} (${spspRequest.ilpAddress}) at ${btpUrl}`
+              );
             } else {
-              console.warn(`⚠️  Cannot register peer ${peerId}: no valid BTP endpoint found`);
+              console.warn(
+                `⚠️  Cannot register peer ${peerId}: no valid BTP endpoint found`
+              );
             }
           } catch (peerError) {
-            console.warn(`⚠️  Failed to register peer after SPSP handshake: ${peerError instanceof Error ? peerError.message : 'Unknown error'}`);
+            console.warn(
+              `⚠️  Failed to register peer after SPSP handshake: ${peerError instanceof Error ? peerError.message : 'Unknown error'}`
+            );
           }
         }
 
@@ -318,7 +382,9 @@ async function main(): Promise<void> {
         const response: SpspResponse = {
           requestId: spspRequest.requestId,
           destinationAccount: ilpAddress,
-          sharedSecret: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64'),
+          sharedSecret: Buffer.from(
+            crypto.getRandomValues(new Uint8Array(32))
+          ).toString('base64'),
           negotiatedChain,
           settlementAddress,
           tokenAddress,
@@ -334,7 +400,8 @@ async function main(): Promise<void> {
 
         // TOON-encode response
         const responseToonBytes = encodeEventToToon(responseEvent);
-        const responseBase64 = Buffer.from(responseToonBytes).toString('base64');
+        const responseBase64 =
+          Buffer.from(responseToonBytes).toString('base64');
 
         // Store SPSP request
         eventStore.store(event);
@@ -371,13 +438,16 @@ async function main(): Promise<void> {
   // Create ILP Peer Info
   // -------------------------------------------------------------------------
   // Construct BLS HTTP endpoint from environment or infer from hostname
-  const blsHttpEndpoint = process.env['BLS_HTTP_ENDPOINT'] ||
-    (process.env['NODE_ID'] ? `http://crosstown-${process.env['NODE_ID']}:${blsPort}` : undefined);
+  const blsHttpEndpoint =
+    process.env['BLS_HTTP_ENDPOINT'] ||
+    (process.env['NODE_ID']
+      ? `http://crosstown-${process.env['NODE_ID']}:${blsPort}`
+      : undefined);
 
   const ilpInfo: IlpPeerInfo = {
     ilpAddress,
     btpEndpoint,
-    blsHttpEndpoint,  // For bootstrap direct packet delivery
+    blsHttpEndpoint, // For bootstrap direct packet delivery
     assetCode: 'USD',
     assetScale: 6,
     supportedChains: settlementInfo.supportedChains || [],
@@ -389,17 +459,18 @@ async function main(): Promise<void> {
   // -------------------------------------------------------------------------
   // Create Bootstrap Service and Relay Monitor (HTTP Mode)
   // -------------------------------------------------------------------------
-  const knownPeers = bootstrapPeerObjects.length > 0
-    ? bootstrapPeerObjects.map((p) => ({
-        pubkey: p.pubkey,
-        relayUrl: p.relay || bootstrapRelays[0] || '',
-        btpEndpoint: p.btpEndpoint || '',
-      }))
-    : bootstrapPeers.map((pubkey) => ({
-        pubkey,
-        relayUrl: bootstrapRelays[0] || '',
-        btpEndpoint: '',
-      }));
+  const knownPeers =
+    bootstrapPeerObjects.length > 0
+      ? bootstrapPeerObjects.map((p) => ({
+          pubkey: p.pubkey,
+          relayUrl: p.relay || bootstrapRelays[0] || '',
+          btpEndpoint: p.btpEndpoint || '',
+        }))
+      : bootstrapPeers.map((pubkey) => ({
+          pubkey,
+          relayUrl: bootstrapRelays[0] || '',
+          btpEndpoint: '',
+        }));
 
   const pool = new SimplePool();
 
@@ -462,7 +533,9 @@ async function main(): Promise<void> {
   if (bootstrapPeers.length === 0) {
     const ilpInfoEvent = buildIlpPeerInfoEvent(ilpInfo, secretKey);
     eventStore.store(ilpInfoEvent);
-    console.log(`✅ Genesis peer: Published ILP info (kind:10032) to local relay`);
+    console.log(
+      `✅ Genesis peer: Published ILP info (kind:10032) to local relay`
+    );
     console.log(`   Event ID: ${ilpInfoEvent.id}`);
   }
 

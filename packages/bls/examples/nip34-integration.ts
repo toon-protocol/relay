@@ -8,7 +8,7 @@
 
 import { BusinessLogicServer } from '../src/bls/BusinessLogicServer.js';
 import { InMemoryEventStore } from '../src/storage/InMemoryEventStore.js';
-import { NIP34Handler } from '@crosstown/core';
+import { NIP34Handler } from '@crosstown/core/nip34';
 
 /**
  * Example configuration for NIP-34 integration
@@ -16,9 +16,9 @@ import { NIP34Handler } from '@crosstown/core';
 async function createBLSWithNIP34() {
   // Initialize NIP-34 handler
   const nip34Handler = new NIP34Handler({
-    forgejoUrl: process.env.FORGEJO_URL || 'http://forgejo:3000',
-    forgejoToken: process.env.FORGEJO_TOKEN || '',
-    defaultOwner: process.env.FORGEJO_OWNER || 'crosstown',
+    forgejoUrl: process.env["FORGEJO_URL"] || 'http://forgejo:3000',
+    forgejoToken: process.env["FORGEJO_TOKEN"] || '',
+    defaultOwner: process.env["FORGEJO_OWNER"] || 'crosstown',
     gitConfig: {
       userName: 'Crosstown Node',
       userEmail: 'node@crosstown.nostr',
@@ -31,7 +31,7 @@ async function createBLSWithNIP34() {
     {
       basePricePerByte: 10n,
       spspMinPrice: 0n, // Free SPSP requests
-      ownerPubkey: process.env.OWNER_PUBKEY, // Optional: bypass payment for owner
+      ownerPubkey: process.env["OWNER_PUBKEY"], // Optional: bypass payment for owner
 
       // NIP-34 integration: called after storing NIP-34 events
       onNIP34Event: async (event) => {

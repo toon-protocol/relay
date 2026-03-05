@@ -1,13 +1,28 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createHash } from 'crypto';
-import { generateSecretKey, finalizeEvent, getPublicKey } from 'nostr-tools/pure';
+import {
+  generateSecretKey,
+  finalizeEvent,
+  getPublicKey,
+} from 'nostr-tools/pure';
 import type { NostrEvent } from 'nostr-tools/pure';
-import { BusinessLogicServer, generateFulfillment } from './BusinessLogicServer.js';
-import { ILP_ERROR_CODES, BlsError, isValidPubkey, SPSP_REQUEST_KIND } from './types.js';
+import {
+  BusinessLogicServer,
+  generateFulfillment,
+} from './BusinessLogicServer.js';
+import {
+  ILP_ERROR_CODES,
+  BlsError,
+  isValidPubkey,
+  SPSP_REQUEST_KIND,
+} from './types.js';
 import type { EventStore } from '../storage/index.js';
 import { encodeEventToToon } from '../toon/index.js';
 import { SqliteEventStore } from '../storage/index.js';
 import { PricingService } from '../pricing/index.js';
+
+/** Deterministic timestamp for reproducible tests (2026-01-01T00:00:00Z) */
+const TEST_CREATED_AT = 1767225600;
 
 /**
  * Helper to create a properly signed test event.
@@ -21,7 +36,7 @@ function createValidSignedEvent(
       kind: 1,
       content: 'test content',
       tags: [],
-      created_at: Math.floor(Date.now() / 1000),
+      created_at: TEST_CREATED_AT,
       ...overrides,
     },
     sk
@@ -60,7 +75,7 @@ function createEventFromKey(
       kind: 1,
       content: 'test content',
       tags: [],
-      created_at: Math.floor(Date.now() / 1000),
+      created_at: TEST_CREATED_AT,
       ...overrides,
     },
     sk
@@ -113,7 +128,7 @@ describe('BusinessLogicServer', () => {
       });
 
       expect(response.status).toBe(200);
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.accept).toBe(true);
       expect(json.fulfillment).toBeDefined();
       expect(json.metadata?.eventId).toBe(event.id);
@@ -136,8 +151,8 @@ describe('BusinessLogicServer', () => {
 
       expect(mockEventStore.store).toHaveBeenCalledTimes(1);
       const storedEvent = (mockEventStore.store as ReturnType<typeof vi.fn>)
-        .mock.calls[0][0];
-      expect(storedEvent.id).toBe(event.id);
+        .mock.calls[0]![0];
+      expect(storedEvent!.id).toBe(event.id);
     });
 
     it('should reject insufficient payment with F06', async () => {
@@ -155,7 +170,7 @@ describe('BusinessLogicServer', () => {
       });
 
       expect(response.status).toBe(400);
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.accept).toBe(false);
       expect(json.code).toBe(ILP_ERROR_CODES.INSUFFICIENT_AMOUNT);
       expect(json.message).toBe('Insufficient payment amount');
@@ -192,7 +207,7 @@ describe('BusinessLogicServer', () => {
       });
 
       expect(response.status).toBe(400);
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.accept).toBe(false);
       expect(json.code).toBe(ILP_ERROR_CODES.BAD_REQUEST);
     });
@@ -214,7 +229,7 @@ describe('BusinessLogicServer', () => {
       });
 
       expect(response.status).toBe(400);
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.accept).toBe(false);
       expect(json.code).toBe(ILP_ERROR_CODES.BAD_REQUEST);
       expect(json.message).toContain('Invalid TOON data');
@@ -238,7 +253,7 @@ describe('BusinessLogicServer', () => {
       });
 
       expect(response.status).toBe(400);
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.accept).toBe(false);
       expect(json.code).toBe(ILP_ERROR_CODES.BAD_REQUEST);
       expect(json.message).toBe('Invalid event signature');
@@ -273,7 +288,7 @@ describe('BusinessLogicServer', () => {
       });
 
       expect(response.status).toBe(400);
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.accept).toBe(false);
       expect(json.code).toBe(ILP_ERROR_CODES.BAD_REQUEST);
       expect(json.message).toContain('Missing required fields');
@@ -294,7 +309,7 @@ describe('BusinessLogicServer', () => {
         }),
       });
 
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.fulfillment).toBe(expectedFulfillment);
     });
 
@@ -315,7 +330,7 @@ describe('BusinessLogicServer', () => {
         }),
       });
 
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.accept).toBe(true);
     });
 
@@ -336,7 +351,7 @@ describe('BusinessLogicServer', () => {
         }),
       });
 
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.accept).toBe(false);
       expect(json.code).toBe(ILP_ERROR_CODES.INSUFFICIENT_AMOUNT);
     });
@@ -349,7 +364,7 @@ describe('BusinessLogicServer', () => {
       });
 
       expect(response.status).toBe(200);
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.status).toBe('healthy');
       expect(json.timestamp).toBeTypeOf('number');
     });
@@ -361,7 +376,7 @@ describe('BusinessLogicServer', () => {
       });
       const after = Date.now();
 
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.timestamp).toBeGreaterThanOrEqual(before);
       expect(json.timestamp).toBeLessThanOrEqual(after);
     });
@@ -455,7 +470,7 @@ describe('BusinessLogicServer integration', () => {
         kind: 1,
         content: 'note 1',
         tags: [],
-        created_at: Math.floor(Date.now() / 1000),
+        created_at: TEST_CREATED_AT,
       },
       sk
     );
@@ -464,7 +479,7 @@ describe('BusinessLogicServer integration', () => {
         kind: 1,
         content: 'note 2',
         tags: [],
-        created_at: Math.floor(Date.now() / 1000) + 1,
+        created_at: TEST_CREATED_AT + 1,
       },
       sk
     );
@@ -511,7 +526,10 @@ describe('BusinessLogicServer with PricingService', () => {
   });
 
   it('should use kind override pricing for kind 0 (free)', async () => {
-    const event = createValidSignedEvent({ kind: 0, content: '{"name":"test"}' });
+    const event = createValidSignedEvent({
+      kind: 0,
+      content: '{"name":"test"}',
+    });
     const base64Data = eventToBase64Toon(event);
 
     // Even with amount 0, it should accept (free profile)
@@ -526,7 +544,7 @@ describe('BusinessLogicServer with PricingService', () => {
     });
 
     expect(response.status).toBe(200);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(true);
   });
 
@@ -548,7 +566,7 @@ describe('BusinessLogicServer with PricingService', () => {
     });
 
     expect(response.status).toBe(200);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(true);
   });
 
@@ -570,7 +588,7 @@ describe('BusinessLogicServer with PricingService', () => {
     });
 
     expect(response.status).toBe(400);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(false);
     expect(json.code).toBe(ILP_ERROR_CODES.INSUFFICIENT_AMOUNT);
   });
@@ -592,7 +610,7 @@ describe('BusinessLogicServer with PricingService', () => {
     });
 
     expect(response.status).toBe(200);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(true);
   });
 
@@ -613,7 +631,7 @@ describe('BusinessLogicServer with PricingService', () => {
     });
 
     expect(response.status).toBe(200);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(true);
   });
 
@@ -634,7 +652,7 @@ describe('BusinessLogicServer with PricingService', () => {
     });
 
     expect(response.status).toBe(400);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(false);
     expect(json.code).toBe(ILP_ERROR_CODES.INSUFFICIENT_AMOUNT);
   });
@@ -665,34 +683,39 @@ describe('BusinessLogicServer backwards compatibility', () => {
     });
 
     expect(response.status).toBe(200);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(true);
   });
 });
 
 describe('isValidPubkey', () => {
   it('should return true for valid 64-character lowercase hex pubkey', () => {
-    const validPubkey = '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d';
+    const validPubkey =
+      '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d';
     expect(isValidPubkey(validPubkey)).toBe(true);
   });
 
   it('should return false for uppercase hex characters', () => {
-    const upperPubkey = '3BF0C63FCB93463407AF97A5E5EE64FA883D107EF9E558472C4EB9AAAEFA459D';
+    const upperPubkey =
+      '3BF0C63FCB93463407AF97A5E5EE64FA883D107EF9E558472C4EB9AAAEFA459D';
     expect(isValidPubkey(upperPubkey)).toBe(false);
   });
 
   it('should return false for pubkey with less than 64 characters', () => {
-    const shortPubkey = '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459';
+    const shortPubkey =
+      '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459';
     expect(isValidPubkey(shortPubkey)).toBe(false);
   });
 
   it('should return false for pubkey with more than 64 characters', () => {
-    const longPubkey = '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d0';
+    const longPubkey =
+      '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d0';
     expect(isValidPubkey(longPubkey)).toBe(false);
   });
 
   it('should return false for pubkey with non-hex characters', () => {
-    const invalidPubkey = '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459g';
+    const invalidPubkey =
+      '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459g';
     expect(isValidPubkey(invalidPubkey)).toBe(false);
   });
 
@@ -732,7 +755,7 @@ describe('BusinessLogicServer with ownerPubkey', () => {
     });
 
     expect(response.status).toBe(200);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(true);
     expect(json.fulfillment).toBeDefined();
     expect(json.metadata?.eventId).toBe(event.id);
@@ -753,9 +776,9 @@ describe('BusinessLogicServer with ownerPubkey', () => {
     });
 
     expect(mockEventStore.store).toHaveBeenCalledTimes(1);
-    const storedEvent = (mockEventStore.store as ReturnType<typeof vi.fn>)
-      .mock.calls[0][0];
-    expect(storedEvent.id).toBe(event.id);
+    const storedEvent = (mockEventStore.store as ReturnType<typeof vi.fn>).mock
+      .calls[0]![0];
+    expect(storedEvent!.id).toBe(event.id);
   });
 
   it('should still require valid signature for owner events', async () => {
@@ -775,7 +798,7 @@ describe('BusinessLogicServer with ownerPubkey', () => {
     });
 
     expect(response.status).toBe(400);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(false);
     expect(json.code).toBe(ILP_ERROR_CODES.BAD_REQUEST);
     expect(json.message).toBe('Invalid event signature');
@@ -798,7 +821,7 @@ describe('BusinessLogicServer with ownerPubkey', () => {
     });
 
     expect(response.status).toBe(400);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(false);
     expect(json.code).toBe(ILP_ERROR_CODES.INSUFFICIENT_AMOUNT);
     expect(mockEventStore.store).not.toHaveBeenCalled();
@@ -820,7 +843,7 @@ describe('BusinessLogicServer with ownerPubkey', () => {
     });
 
     expect(response.status).toBe(200);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(true);
     expect(mockEventStore.store).toHaveBeenCalledTimes(1);
   });
@@ -844,7 +867,7 @@ describe('BusinessLogicServer with ownerPubkey', () => {
     });
 
     expect(response.status).toBe(400);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(false);
     expect(json.code).toBe(ILP_ERROR_CODES.INSUFFICIENT_AMOUNT);
   });
@@ -861,7 +884,11 @@ describe('BusinessLogicServer with ownerPubkey', () => {
   it('should throw BlsError for invalid ownerPubkey format (uppercase)', () => {
     expect(() => {
       new BusinessLogicServer(
-        { basePricePerByte: 10n, ownerPubkey: '3BF0C63FCB93463407AF97A5E5EE64FA883D107EF9E558472C4EB9AAAEFA459D' },
+        {
+          basePricePerByte: 10n,
+          ownerPubkey:
+            '3BF0C63FCB93463407AF97A5E5EE64FA883D107EF9E558472C4EB9AAAEFA459D',
+        },
         mockEventStore
       );
     }).toThrow(BlsError);
@@ -870,7 +897,11 @@ describe('BusinessLogicServer with ownerPubkey', () => {
   it('should throw BlsError for invalid ownerPubkey format (non-hex)', () => {
     expect(() => {
       new BusinessLogicServer(
-        { basePricePerByte: 10n, ownerPubkey: 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz' },
+        {
+          basePricePerByte: 10n,
+          ownerPubkey:
+            'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz',
+        },
         mockEventStore
       );
     }).toThrow(BlsError);
@@ -882,7 +913,9 @@ describe('BusinessLogicServer with ownerPubkey', () => {
         { basePricePerByte: 10n, ownerPubkey: 'invalid' },
         mockEventStore
       );
-    }).toThrow('Invalid ownerPubkey format: must be 64 lowercase hex characters');
+    }).toThrow(
+      'Invalid ownerPubkey format: must be 64 lowercase hex characters'
+    );
   });
 });
 
@@ -903,7 +936,9 @@ describe('BusinessLogicServer with ownerPubkey integration', () => {
   });
 
   it('should store and retrieve owner event after bypass', async () => {
-    const event = createEventFromKey(ownerSk, { content: 'owner integration test' });
+    const event = createEventFromKey(ownerSk, {
+      content: 'owner integration test',
+    });
     const base64Data = eventToBase64Toon(event);
 
     const response = await bls.getApp().request('/handle-packet', {
@@ -933,7 +968,9 @@ describe('BusinessLogicServer with ownerPubkey integration', () => {
     const ownerBase64 = eventToBase64Toon(ownerEvent);
 
     // Non-owner event (requires payment)
-    const nonOwnerEvent = createEventFromKey(nonOwnerSk, { content: 'non-owner event' });
+    const nonOwnerEvent = createEventFromKey(nonOwnerSk, {
+      content: 'non-owner event',
+    });
     const nonOwnerBase64 = eventToBase64Toon(nonOwnerEvent);
 
     // Submit owner event with amount=0
@@ -961,15 +998,17 @@ describe('BusinessLogicServer with ownerPubkey integration', () => {
     expect(nonOwnerFailResponse.status).toBe(400);
 
     // Submit non-owner event with sufficient payment
-    const nonOwnerSuccessResponse = await bls.getApp().request('/handle-packet', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        amount: '1000000',
-        destination: 'g.agent.test',
-        data: nonOwnerBase64,
-      }),
-    });
+    const nonOwnerSuccessResponse = await bls
+      .getApp()
+      .request('/handle-packet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: '1000000',
+          destination: 'g.agent.test',
+          data: nonOwnerBase64,
+        }),
+      });
     expect(nonOwnerSuccessResponse.status).toBe(200);
 
     // Verify both events are stored
@@ -1018,7 +1057,10 @@ describe('BusinessLogicServer with spspMinPrice', () => {
       { basePricePerByte: 10n, spspMinPrice: 0n },
       mockEventStore
     );
-    const event = createValidSignedEvent({ kind: SPSP_REQUEST_KIND, content: 'encrypted-spsp-request' });
+    const event = createValidSignedEvent({
+      kind: SPSP_REQUEST_KIND,
+      content: 'encrypted-spsp-request',
+    });
     const base64Data = eventToBase64Toon(event);
 
     const response = await bls.getApp().request('/handle-packet', {
@@ -1032,7 +1074,7 @@ describe('BusinessLogicServer with spspMinPrice', () => {
     });
 
     expect(response.status).toBe(200);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(true);
   });
 
@@ -1055,7 +1097,7 @@ describe('BusinessLogicServer with spspMinPrice', () => {
     });
 
     expect(response.status).toBe(400);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(false);
     expect(json.code).toBe(ILP_ERROR_CODES.INSUFFICIENT_AMOUNT);
   });
@@ -1065,7 +1107,10 @@ describe('BusinessLogicServer with spspMinPrice', () => {
       { basePricePerByte: 10n, spspMinPrice: 0n },
       mockEventStore
     );
-    const event = createValidSignedEvent({ kind: 23195, content: 'spsp-response' });
+    const event = createValidSignedEvent({
+      kind: 23195,
+      content: 'spsp-response',
+    });
     const base64Data = eventToBase64Toon(event);
 
     const response = await bls.getApp().request('/handle-packet', {
@@ -1079,7 +1124,7 @@ describe('BusinessLogicServer with spspMinPrice', () => {
     });
 
     expect(response.status).toBe(400);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(false);
     expect(json.code).toBe(ILP_ERROR_CODES.INSUFFICIENT_AMOUNT);
   });
@@ -1089,7 +1134,10 @@ describe('BusinessLogicServer with spspMinPrice', () => {
       { basePricePerByte: 10n },
       mockEventStore
     );
-    const event = createValidSignedEvent({ kind: SPSP_REQUEST_KIND, content: 'encrypted-spsp-request' });
+    const event = createValidSignedEvent({
+      kind: SPSP_REQUEST_KIND,
+      content: 'encrypted-spsp-request',
+    });
     const base64Data = eventToBase64Toon(event);
 
     const response = await bls.getApp().request('/handle-packet', {
@@ -1103,7 +1151,7 @@ describe('BusinessLogicServer with spspMinPrice', () => {
     });
 
     expect(response.status).toBe(400);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(false);
     expect(json.code).toBe(ILP_ERROR_CODES.INSUFFICIENT_AMOUNT);
   });
@@ -1113,7 +1161,10 @@ describe('BusinessLogicServer with spspMinPrice', () => {
       { basePricePerByte: 10n, spspMinPrice: 0n },
       mockEventStore
     );
-    const event = createValidSignedEvent({ kind: SPSP_REQUEST_KIND, content: 'encrypted-spsp-request' });
+    const event = createValidSignedEvent({
+      kind: SPSP_REQUEST_KIND,
+      content: 'encrypted-spsp-request',
+    });
     const base64Data = eventToBase64Toon(event);
 
     await bls.getApp().request('/handle-packet', {
@@ -1127,8 +1178,9 @@ describe('BusinessLogicServer with spspMinPrice', () => {
     });
 
     expect(mockEventStore.store).toHaveBeenCalledTimes(1);
-    const storedEvent = (mockEventStore.store as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(storedEvent.id).toBe(event.id);
+    const storedEvent = (mockEventStore.store as ReturnType<typeof vi.fn>).mock
+      .calls[0]![0];
+    expect(storedEvent!.id).toBe(event.id);
   });
 
   it('should return correct fulfillment for 0-amount SPSP request', async () => {
@@ -1136,7 +1188,10 @@ describe('BusinessLogicServer with spspMinPrice', () => {
       { basePricePerByte: 10n, spspMinPrice: 0n },
       mockEventStore
     );
-    const event = createValidSignedEvent({ kind: SPSP_REQUEST_KIND, content: 'encrypted-spsp-request' });
+    const event = createValidSignedEvent({
+      kind: SPSP_REQUEST_KIND,
+      content: 'encrypted-spsp-request',
+    });
     const base64Data = eventToBase64Toon(event);
     const expectedFulfillment = generateFulfillment(event.id);
 
@@ -1150,7 +1205,7 @@ describe('BusinessLogicServer with spspMinPrice', () => {
       }),
     });
 
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.fulfillment).toBe(expectedFulfillment);
   });
 
@@ -1159,7 +1214,10 @@ describe('BusinessLogicServer with spspMinPrice', () => {
       { basePricePerByte: 10n, spspMinPrice: 50n },
       mockEventStore
     );
-    const event = createValidSignedEvent({ kind: SPSP_REQUEST_KIND, content: 'encrypted-spsp-request' });
+    const event = createValidSignedEvent({
+      kind: SPSP_REQUEST_KIND,
+      content: 'encrypted-spsp-request',
+    });
     const base64Data = eventToBase64Toon(event);
 
     // spspMinPrice=50n is less than standard price (bytes * 10n), so 50 should be accepted
@@ -1174,18 +1232,20 @@ describe('BusinessLogicServer with spspMinPrice', () => {
     });
 
     expect(response.status).toBe(200);
-    const json = await response.json();
+    const json = (await response.json()) as any;
     expect(json.accept).toBe(true);
   });
 
   it('should log INFO when 0-amount SPSP request is accepted', async () => {
-    // eslint-disable-next-line @typescript-eslint/no-empty-function
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const bls = new BusinessLogicServer(
       { basePricePerByte: 10n, spspMinPrice: 0n },
       mockEventStore
     );
-    const event = createValidSignedEvent({ kind: SPSP_REQUEST_KIND, content: 'encrypted-spsp-request' });
+    const event = createValidSignedEvent({
+      kind: SPSP_REQUEST_KIND,
+      content: 'encrypted-spsp-request',
+    });
     const base64Data = eventToBase64Toon(event);
 
     await bls.getApp().request('/handle-packet', {

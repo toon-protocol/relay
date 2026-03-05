@@ -40,7 +40,11 @@ export class RelaySubscriber {
    * @param eventStore - Storage backend to write events into
    * @param pool - Optional SimplePool instance (creates new one if not provided)
    */
-  constructor(config: RelaySubscriberConfig, eventStore: EventStore, pool?: SimplePool) {
+  constructor(
+    config: RelaySubscriberConfig,
+    eventStore: EventStore,
+    pool?: SimplePool
+  ) {
     this.config = config;
     this.eventStore = eventStore;
     this.pool = pool ?? new SimplePool();

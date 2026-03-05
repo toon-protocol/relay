@@ -24,11 +24,11 @@ Published at [`di3twater/crosstown-bls`](https://hub.docker.com/r/di3twater/cros
 
 ### Available Tags
 
-| Tag | Description |
-|-----|-------------|
-| `latest` | Most recent build from `main` branch |
-| `X.Y.Z` | Semantic version (from `bls-vX.Y.Z` git tags) |
-| `sha-<short>` | Git commit SHA for traceability |
+| Tag           | Description                                   |
+| ------------- | --------------------------------------------- |
+| `latest`      | Most recent build from `main` branch          |
+| `X.Y.Z`       | Semantic version (from `bls-vX.Y.Z` git tags) |
+| `sha-<short>` | Git commit SHA for traceability               |
 
 ## Docker Compose
 
@@ -103,27 +103,27 @@ patches:
 
 ### What's Included
 
-| Manifest | Purpose |
-|----------|---------|
-| `deployment.yaml` | BLS Deployment with resource limits, probes, and volume mount |
-| `service.yaml` | ClusterIP Service exposing port 3100 |
-| `configmap.yaml` | Non-secret configuration (NODE_ID, ILP_ADDRESS, etc.) |
-| `secret.yaml` | Template for secrets (NOSTR_SECRET_KEY) |
-| `pvc.yaml` | PersistentVolumeClaim for SQLite event storage |
-| `kustomization.yaml` | Kustomize base for easy customization |
+| Manifest             | Purpose                                                       |
+| -------------------- | ------------------------------------------------------------- |
+| `deployment.yaml`    | BLS Deployment with resource limits, probes, and volume mount |
+| `service.yaml`       | ClusterIP Service exposing port 3100                          |
+| `configmap.yaml`     | Non-secret configuration (NODE_ID, ILP_ADDRESS, etc.)         |
+| `secret.yaml`        | Template for secrets (NOSTR_SECRET_KEY)                       |
+| `pvc.yaml`           | PersistentVolumeClaim for SQLite event storage                |
+| `kustomization.yaml` | Kustomize base for easy customization                         |
 
 ## Environment Variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `NODE_ID` | Yes | — | Unique node identifier |
-| `NOSTR_SECRET_KEY` | Yes | — | 64-character hex Nostr secret key |
-| `ILP_ADDRESS` | Yes | — | Node's ILP address (e.g., `g.crosstown.node1`) |
-| `BLS_PORT` | No | `3100` | HTTP port to listen on (1–65535) |
-| `BLS_BASE_PRICE_PER_BYTE` | No | `10` | Base price per byte for event storage |
-| `OWNER_PUBKEY` | No | — | 64-char hex pubkey for self-write payment bypass |
-| `DATA_DIR` | No | `/data` | Directory for SQLite database storage |
-| `BLS_KIND_OVERRIDES` | No | — | JSON object mapping event kinds to prices |
+| Variable                  | Required | Default | Description                                      |
+| ------------------------- | -------- | ------- | ------------------------------------------------ |
+| `NODE_ID`                 | Yes      | —       | Unique node identifier                           |
+| `NOSTR_SECRET_KEY`        | Yes      | —       | 64-character hex Nostr secret key                |
+| `ILP_ADDRESS`             | Yes      | —       | Node's ILP address (e.g., `g.crosstown.node1`)   |
+| `BLS_PORT`                | No       | `3100`  | HTTP port to listen on (1–65535)                 |
+| `BLS_BASE_PRICE_PER_BYTE` | No       | `10`    | Base price per byte for event storage            |
+| `OWNER_PUBKEY`            | No       | —       | 64-char hex pubkey for self-write payment bypass |
+| `DATA_DIR`                | No       | `/data` | Directory for SQLite database storage            |
+| `BLS_KIND_OVERRIDES`      | No       | —       | JSON object mapping event kinds to prices        |
 
 ### Pricing Variable Aliases
 
@@ -165,6 +165,7 @@ BLS_KIND_OVERRIDES='{"0":"0","30023":"100"}'
 Health check endpoint for container orchestration.
 
 **Response (200 OK):**
+
 ```json
 {
   "status": "healthy",
@@ -180,6 +181,7 @@ Health check endpoint for container orchestration.
 Verify an ILP payment and process event storage.
 
 **Request Body:**
+
 ```json
 {
   "amount": "1000",
@@ -189,6 +191,7 @@ Verify an ILP payment and process event storage.
 ```
 
 **Success Response (200 OK):**
+
 ```json
 {
   "accept": true,
@@ -201,6 +204,7 @@ Verify an ILP payment and process event storage.
 ```
 
 **Rejection Response (400/500):**
+
 ```json
 {
   "accept": false,
@@ -215,8 +219,8 @@ Verify an ILP payment and process event storage.
 
 ### ILP Error Codes
 
-| Code | Name | Description |
-|------|------|-------------|
-| `F00` | BAD_REQUEST | Malformed request or invalid TOON data |
-| `F06` | INSUFFICIENT_AMOUNT | Payment amount below required price |
-| `T00` | INTERNAL_ERROR | Server-side error during processing |
+| Code  | Name                | Description                            |
+| ----- | ------------------- | -------------------------------------- |
+| `F00` | BAD_REQUEST         | Malformed request or invalid TOON data |
+| `F06` | INSUFFICIENT_AMOUNT | Payment amount below required price    |
+| `T00` | INTERNAL_ERROR      | Server-side error during processing    |

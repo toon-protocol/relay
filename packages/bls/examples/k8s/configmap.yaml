@@ -17,7 +17,7 @@ data:
   ILP_ADDRESS: g.crosstown.my-node
 
   # Optional: HTTP port (default: 3100, must be 1-65535)
-  BLS_PORT: "3100"
+  BLS_PORT: '3100'
 
   # Optional: Directory for SQLite database storage (default: /data)
   DATA_DIR: /data

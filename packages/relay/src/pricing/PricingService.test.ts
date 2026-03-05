@@ -24,12 +24,12 @@ function createTestEvent(kind: number, content: string): NostrEvent {
 describe('PricingService', () => {
   describe('constructor validation', () => {
     it('should throw PricingError for negative basePricePerByte', () => {
-      expect(
-        () => new PricingService({ basePricePerByte: -1n })
-      ).toThrowError(PricingError);
-      expect(
-        () => new PricingService({ basePricePerByte: -1n })
-      ).toThrowError('basePricePerByte must be non-negative');
+      expect(() => new PricingService({ basePricePerByte: -1n })).toThrowError(
+        PricingError
+      );
+      expect(() => new PricingService({ basePricePerByte: -1n })).toThrowError(
+        'basePricePerByte must be non-negative'
+      );
     });
 
     it('should throw PricingError for negative kind override values', () => {

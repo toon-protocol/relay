@@ -12,7 +12,11 @@ export { DEFAULT_RELAY_CONFIG } from './types.js';
 
 // Storage
 export type { EventStore } from './storage/index.js';
-export { InMemoryEventStore, SqliteEventStore, RelayError } from './storage/index.js';
+export {
+  InMemoryEventStore,
+  SqliteEventStore,
+  RelayError,
+} from './storage/index.js';
 
 // Filters
 export { matchFilter } from './filters/index.js';

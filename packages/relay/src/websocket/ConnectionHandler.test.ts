@@ -76,7 +76,7 @@ describe('ConnectionHandler', () => {
       handler.handleMessage(JSON.stringify(['REQ', 'sub1', {}]));
 
       const calls = (ws.send as ReturnType<typeof vi.fn>).mock.calls;
-      const lastCall = calls[calls.length - 1];
+      const lastCall = calls[calls.length - 1]!;
       expect(lastCall[0]).toBe(JSON.stringify(['EOSE', 'sub1']));
     });
 
@@ -176,7 +176,10 @@ describe('ConnectionHandler', () => {
       handler.handleMessage(JSON.stringify({ type: 'REQ' }));
 
       expect(ws.send).toHaveBeenCalledWith(
-        JSON.stringify(['NOTICE', 'error: invalid message format, expected JSON array'])
+        JSON.stringify([
+          'NOTICE',
+          'error: invalid message format, expected JSON array',
+        ])
       );
     });
 
@@ -202,7 +205,7 @@ describe('ConnectionHandler', () => {
 
   describe('closed connection', () => {
     it('should not send if WebSocket is not open', () => {
-      ws.readyState = 3; // CLOSED
+      (ws as any).readyState = 3; // CLOSED
 
       handler.handleMessage(JSON.stringify(['REQ', 'sub1', {}]));
 

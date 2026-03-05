@@ -139,7 +139,7 @@ describe('SqliteEventStore persistence', () => {
       )
       .all() as { name: string }[];
     expect(tables).toHaveLength(1);
-    expect(tables[0].name).toBe('events');
+    expect(tables[0]!.name).toBe('events');
 
     // Verify all indexes exist
     const indexes = db

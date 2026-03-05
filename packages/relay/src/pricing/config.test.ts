@@ -2,7 +2,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { writeFileSync, unlinkSync, mkdtempSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { loadPricingConfigFromEnv, loadPricingConfigFromFile } from './config.js';
+import {
+  loadPricingConfigFromEnv,
+  loadPricingConfigFromFile,
+} from './config.js';
 import { PricingError } from './types.js';
 
 describe('loadPricingConfigFromEnv', () => {
@@ -131,7 +134,12 @@ describe('loadPricingConfigFromFile', () => {
   afterEach(() => {
     // Clean up temp files
     try {
-      const files = ['valid.json', 'invalid.json', 'negative.json', 'missing-base.json'];
+      const files = [
+        'valid.json',
+        'invalid.json',
+        'negative.json',
+        'missing-base.json',
+      ];
       for (const file of files) {
         try {
           unlinkSync(join(tempDir, file));

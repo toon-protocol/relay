@@ -17,10 +17,7 @@ describe('entrypoint health endpoint composition', () => {
     ilpAddress: string;
   }) {
     const eventStore = new InMemoryEventStore();
-    const bls = new BusinessLogicServer(
-      { basePricePerByte: 10n },
-      eventStore
-    );
+    const bls = new BusinessLogicServer({ basePricePerByte: 10n }, eventStore);
 
     const app = new Hono();
 
@@ -52,7 +49,7 @@ describe('entrypoint health endpoint composition', () => {
     const res = await app.request('/health');
     expect(res.status).toBe(200);
 
-    const body = await res.json();
+    const body = (await res.json()) as any;
     expect(body.status).toBe('healthy');
     expect(body.nodeId).toBe('test-node-1');
     expect(body.pubkey).toBe('a'.repeat(64));
@@ -85,7 +82,7 @@ describe('entrypoint health endpoint composition', () => {
     });
 
     const res = await app.request('/health');
-    const body = await res.json();
+    const body = (await res.json()) as any;
 
     // Verify it's the enhanced version, not the basic one
     expect(body).toHaveProperty('nodeId');

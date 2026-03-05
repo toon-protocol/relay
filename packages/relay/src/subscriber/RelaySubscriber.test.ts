@@ -18,7 +18,11 @@ let mockCloser: { close: Mock };
 vi.mock('nostr-tools/pool', () => ({
   SimplePool: vi.fn(() => ({
     subscribeMany: vi.fn(
-      (relays: string[], filter: Filter, opts: { onevent: (event: NostrEvent) => void }) => {
+      (
+        relays: string[],
+        filter: Filter,
+        opts: { onevent: (event: NostrEvent) => void }
+      ) => {
         capturedRelays = relays;
         capturedFilter = filter;
         capturedOnevent = opts.onevent;
@@ -30,9 +34,10 @@ vi.mock('nostr-tools/pool', () => ({
 }));
 
 // Mock verifyEvent — default to returning true
-const mockVerifyEvent = vi.fn(() => true);
+const mockVerifyEvent = vi.fn((..._args: unknown[]) => true);
 vi.mock('nostr-tools/pure', async () => {
-  const actual = await vi.importActual<typeof import('nostr-tools/pure')>('nostr-tools/pure');
+  const actual: Record<string, unknown> =
+    await vi.importActual('nostr-tools/pure');
   return {
     ...actual,
     verifyEvent: (...args: unknown[]) => mockVerifyEvent(...args),
@@ -84,7 +89,10 @@ describe('RelaySubscriber', () => {
     const subscriber = new RelaySubscriber(defaultConfig, mockStore);
     subscriber.start();
 
-    expect(capturedRelays).toEqual(['wss://relay1.example.com', 'wss://relay2.example.com']);
+    expect(capturedRelays).toEqual([
+      'wss://relay1.example.com',
+      'wss://relay2.example.com',
+    ]);
     expect(capturedFilter).toEqual({ kinds: [1] });
   });
 
