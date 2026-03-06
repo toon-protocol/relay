@@ -30,7 +30,7 @@ import { describe, it, expect } from 'vitest';
 /**
  * Creates a mock health config with sensible defaults.
  */
-function createHealthConfig(overrides: Record<string, unknown> = {}) {
+function _createHealthConfig(overrides: Record<string, unknown> = {}) {
   return {
     peerCount: 5,
     channelCount: 3,

@@ -26,7 +26,7 @@
  * - Layered pre-flight validation — 6 free checks before gas (Party Mode)
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi as _vi } from 'vitest';
 
 // These imports DO NOT EXIST yet — will cause module-not-found errors
 // until implementation is created.
@@ -72,7 +72,7 @@ function createToonPayload(overrides: Record<string, unknown> = {}) {
 /**
  * Creates a mock x402 request with X-PAYMENT header.
  */
-function createX402Request(overrides: Record<string, unknown> = {}) {
+function _createX402Request(overrides: Record<string, unknown> = {}) {
   return {
     method: 'GET',
     path: '/publish',

@@ -1,14 +1,17 @@
 /**
  * Tests for Story 2.2: SPSP Handshake Handler
  *
- * RED PHASE: All tests use describe.skip() because they import from
- * @crosstown/sdk which does not exist yet. The SDK will expose an
- * SpspHandshakeHandler that reimplements the SPSP request/response flow
+ * GREEN PHASE: All tests pass. The handler lives in @crosstown/town
+ * (not @crosstown/sdk) and reimplements the SPSP request/response flow
  * as a kind-based handler (kind:23194), replacing the inline SPSP logic
  * in docker/src/entrypoint.ts.
  *
  * Infrastructure: Real NIP-44 encryption, real nostr-tools key generation,
  * real TOON codec. Connector transport is mocked.
+ *
+ * Test approach: Approach A (unit) -- build HandlerContext via
+ * createTestContext() helper, call handler directly. Tests handler logic
+ * in isolation. Pipeline integration tested in Story 2.3.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -22,20 +25,25 @@ import type { NostrEvent } from 'nostr-tools/pure';
 import {
   encodeEventToToon,
   decodeEventFromToon,
-  SqliteEventStore,
-} from '@crosstown/relay';
+  shallowParseToon,
+} from '@crosstown/core/toon';
+import { SqliteEventStore } from '@crosstown/relay';
 import {
   buildSpspRequestEvent,
   SPSP_RESPONSE_KIND,
   type SpspResponse,
   type SettlementNegotiationConfig,
   type ConnectorChannelClient,
+  type ConnectorAdminClient,
 } from '@crosstown/core';
+import {
+  createHandlerContext,
+  type Handler,
+  type HandlerContext,
+} from '@crosstown/sdk';
 
-// --- RED PHASE: These imports will fail because @crosstown/sdk does not exist yet ---
-// The SDK handler registers for kind:23194 and processes SPSP handshakes
-// with settlement negotiation and payment channel opening.
-import { createSpspHandshakeHandler } from '@crosstown/sdk';
+// Import from the local module under test (Town package)
+import { createSpspHandshakeHandler } from './spsp-handshake-handler.js';
 
 // ============================================================================
 // Test Factories
@@ -87,11 +95,11 @@ function createMockChannelClient(): ConnectorChannelClient {
 /**
  * Create a mock ConnectorAdminClient for peer registration tests.
  */
-function createMockAdminClient() {
+function createMockAdminClient(): ConnectorAdminClient {
   return {
     addPeer: vi.fn().mockResolvedValue(undefined),
     removePeer: vi.fn().mockResolvedValue(undefined),
-  };
+  } as unknown as ConnectorAdminClient;
 }
 
 /**
@@ -120,18 +128,49 @@ function decryptSpspResponse(
 }
 
 // ============================================================================
+// Test Helper: Build HandlerContext from request data (Approach A)
+// ============================================================================
+
+/**
+ * Build a HandlerContext suitable for calling the handler directly.
+ * This bypasses the SDK pipeline (no pricing, no signature verification).
+ * Used for unit-level tests (Approach A) that test handler logic in isolation.
+ */
+function createTestContext(request: {
+  amount: string;
+  destination: string;
+  data: string;
+}): HandlerContext {
+  const toonBytes = Buffer.from(request.data, 'base64');
+  const meta = shallowParseToon(toonBytes);
+  return createHandlerContext({
+    toon: request.data,
+    meta,
+    amount: BigInt(request.amount),
+    destination: request.destination,
+    toonDecoder: (toon: string) => {
+      const bytes = Buffer.from(toon, 'base64');
+      return decodeEventFromToon(bytes);
+    },
+  });
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
 /**
- * SKIP: @crosstown/sdk does not exist yet.
+ * SpspHandshakeHandler tests.
  *
- * These tests describe the SpspHandshakeHandler that will be created as part
- * of the SDK. The handler intercepts kind:23194 events from incoming ILP
- * packets, generates fresh SPSP parameters, optionally negotiates settlement
+ * The handler intercepts kind:23194 events from incoming ILP packets,
+ * generates fresh SPSP parameters, optionally negotiates settlement
  * chains, opens payment channels, and returns an encrypted kind:23195 response.
+ *
+ * The handler returns { accept: true, fulfillment: 'default-fulfillment', data }
+ * directly (bypasses ctx.accept()) because the TOON-encoded SPSP response must
+ * be in the top-level `data` field for the connector to relay it back.
  */
-describe.skip('SpspHandshakeHandler', () => {
+describe('SpspHandshakeHandler', () => {
   // Node identity (the "responder" in SPSP handshake)
   let nodeSk: Uint8Array;
   let nodePubkey: string;
@@ -144,7 +183,7 @@ describe.skip('SpspHandshakeHandler', () => {
   let eventStore: SqliteEventStore;
   let mockChannelClient: ReturnType<typeof createMockChannelClient>;
   let mockAdminClient: ReturnType<typeof createMockAdminClient>;
-  let handler: ReturnType<typeof createSpspHandshakeHandler>;
+  let handler: Handler;
 
   // Settlement config for this node
   const settlementConfig: SettlementNegotiationConfig = {
@@ -178,14 +217,11 @@ describe.skip('SpspHandshakeHandler', () => {
     mockChannelClient = createMockChannelClient();
     mockAdminClient = createMockAdminClient();
 
-    // Create the SDK handler under test
-    // WILL FAIL: createSpspHandshakeHandler does not exist yet
+    // Create the handler under test (lives in @crosstown/town, not SDK)
     handler = createSpspHandshakeHandler({
       secretKey: nodeSk,
       ilpAddress: nodeIlpAddress,
       eventStore,
-      toonEncoder: encodeEventToToon,
-      toonDecoder: decodeEventFromToon,
       settlementConfig,
       channelClient: mockChannelClient,
       adminClient: mockAdminClient,
@@ -201,7 +237,6 @@ describe.skip('SpspHandshakeHandler', () => {
   // ---------------------------------------------------------------------------
 
   it('should process kind:23194 SPSP request and return encrypted response', async () => {
-    // FAILS because createSpspHandshakeHandler is not implemented.
     // Builds a real NIP-44 encrypted SPSP request and verifies the handler
     // returns an accept response with encrypted SPSP response data.
     const { event, requestId } = createSpspRequest(requesterSk, nodePubkey, {
@@ -209,7 +244,7 @@ describe.skip('SpspHandshakeHandler', () => {
     });
     const request = createPacketRequest(event);
 
-    const result = await handler(request);
+    const result = await handler(createTestContext(request));
 
     expect(result.accept).toBe(true);
     if (!result.accept) throw new Error('unreachable');
@@ -243,7 +278,6 @@ describe.skip('SpspHandshakeHandler', () => {
   });
 
   it('should generate unique SPSP parameters per request', async () => {
-    // FAILS because the SDK handler does not exist yet.
     // Each SPSP request must receive a unique destinationAccount and sharedSecret.
     const { event: event1 } = createSpspRequest(requesterSk, nodePubkey, {
       ilpAddress: 'g.test.requester',
@@ -252,8 +286,12 @@ describe.skip('SpspHandshakeHandler', () => {
       ilpAddress: 'g.test.requester',
     });
 
-    const result1 = await handler(createPacketRequest(event1));
-    const result2 = await handler(createPacketRequest(event2));
+    const result1 = await handler(
+      createTestContext(createPacketRequest(event1))
+    );
+    const result2 = await handler(
+      createTestContext(createPacketRequest(event2))
+    );
 
     expect(result1.accept).toBe(true);
     expect(result2.accept).toBe(true);
@@ -282,7 +320,6 @@ describe.skip('SpspHandshakeHandler', () => {
   // ---------------------------------------------------------------------------
 
   it('should negotiate settlement chain when both parties have overlapping chains', async () => {
-    // FAILS because settlement negotiation in the SDK handler is not implemented.
     // Both parties support evm:base:31337, so negotiation should succeed.
     const { event } = createSpspRequest(requesterSk, nodePubkey, {
       ilpAddress: 'g.test.requester',
@@ -293,7 +330,7 @@ describe.skip('SpspHandshakeHandler', () => {
     });
     const request = createPacketRequest(event);
 
-    const result = await handler(request);
+    const result = await handler(createTestContext(request));
     expect(result.accept).toBe(true);
     if (!result.accept) throw new Error('unreachable');
 
@@ -318,10 +355,12 @@ describe.skip('SpspHandshakeHandler', () => {
     expect(spspResponse.tokenNetworkAddress).toBe(
       settlementConfig.ownTokenNetworks!['evm:base:31337']
     );
+    expect(spspResponse.settlementTimeout).toBe(
+      settlementConfig.settlementTimeout
+    );
   });
 
   it('should open payment channel when chains intersect', async () => {
-    // FAILS because the SDK handler channel opening is not implemented.
     const { event } = createSpspRequest(requesterSk, nodePubkey, {
       ilpAddress: 'g.test.requester',
       supportedChains: ['evm:base:31337'],
@@ -331,7 +370,7 @@ describe.skip('SpspHandshakeHandler', () => {
     });
     const request = createPacketRequest(event);
 
-    const result = await handler(request);
+    const result = await handler(createTestContext(request));
     expect(result.accept).toBe(true);
     if (!result.accept) throw new Error('unreachable');
 
@@ -365,14 +404,13 @@ describe.skip('SpspHandshakeHandler', () => {
   // ---------------------------------------------------------------------------
 
   it('should build NIP-44 encrypted response with SPSP fields', async () => {
-    // FAILS because the SDK handler NIP-44 encryption is not implemented.
     // The response event content must be NIP-44 encrypted for the requester.
     const { event, requestId } = createSpspRequest(requesterSk, nodePubkey, {
       ilpAddress: 'g.test.requester',
     });
     const request = createPacketRequest(event);
 
-    const result = await handler(request);
+    const result = await handler(createTestContext(request));
     expect(result.accept).toBe(true);
     if (!result.accept) throw new Error('unreachable');
 
@@ -409,9 +447,10 @@ describe.skip('SpspHandshakeHandler', () => {
   // ---------------------------------------------------------------------------
 
   it('should gracefully degrade to basic SPSP response on settlement failure', async () => {
-    // FAILS because the SDK handler graceful degradation is not implemented.
     // When channel opening fails, the handler should still return basic SPSP
     // parameters without settlement fields.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
     const failingChannelClient = createMockChannelClient();
     (
       failingChannelClient.openChannel as ReturnType<typeof vi.fn>
@@ -421,8 +460,6 @@ describe.skip('SpspHandshakeHandler', () => {
       secretKey: nodeSk,
       ilpAddress: nodeIlpAddress,
       eventStore,
-      toonEncoder: encodeEventToToon,
-      toonDecoder: decodeEventFromToon,
       settlementConfig,
       channelClient: failingChannelClient,
       adminClient: mockAdminClient,
@@ -438,7 +475,7 @@ describe.skip('SpspHandshakeHandler', () => {
     const request = createPacketRequest(event);
 
     // Should NOT reject -- should gracefully degrade
-    const result = await failingHandler(request);
+    const result = await failingHandler(createTestContext(request));
     expect(result.accept).toBe(true);
     if (!result.accept) throw new Error('unreachable');
 
@@ -461,6 +498,8 @@ describe.skip('SpspHandshakeHandler', () => {
     expect(spspResponse.negotiatedChain).toBeUndefined();
     expect(spspResponse.channelId).toBeUndefined();
     expect(spspResponse.settlementAddress).toBeUndefined();
+
+    warnSpy.mockRestore();
   });
 
   // ---------------------------------------------------------------------------
@@ -468,7 +507,6 @@ describe.skip('SpspHandshakeHandler', () => {
   // ---------------------------------------------------------------------------
 
   it('should register peer with connector after successful handshake', async () => {
-    // FAILS because the SDK handler peer registration is not implemented.
     // After a successful SPSP handshake, the handler should register the
     // requester as a peer with the connector admin API.
 
@@ -476,7 +514,7 @@ describe.skip('SpspHandshakeHandler', () => {
     // can look up their BTP endpoint for peer registration.
     const requesterIlpInfo = {
       ilpAddress: 'g.test.requester',
-      btpEndpoint: 'ws://requester-node:3000',
+      btpEndpoint: 'ws://requester-node:3000', // nosemgrep: detect-insecure-websocket
       assetCode: 'USD',
       assetScale: 6,
     };
@@ -501,7 +539,7 @@ describe.skip('SpspHandshakeHandler', () => {
     });
     const request = createPacketRequest(event);
 
-    const result = await handler(request);
+    const result = await handler(createTestContext(request));
     expect(result.accept).toBe(true);
 
     // Verify the admin client was called to register the peer
@@ -509,7 +547,7 @@ describe.skip('SpspHandshakeHandler', () => {
     expect(mockAdminClient.addPeer).toHaveBeenCalledWith(
       expect.objectContaining({
         id: expect.stringContaining('nostr-'),
-        url: 'ws://requester-node:3000',
+        url: 'ws://requester-node:3000', // nosemgrep: detect-insecure-websocket
         routes: expect.arrayContaining([
           expect.objectContaining({
             prefix: 'g.test.requester',
@@ -517,5 +555,366 @@ describe.skip('SpspHandshakeHandler', () => {
         ]),
       })
     );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Coverage gap tests: AC #1 -- Response structure and edge cases
+  // ---------------------------------------------------------------------------
+
+  it('should return default-fulfillment in accept response', async () => {
+    // Verifies the exact fulfillment value is 'default-fulfillment' as required
+    // by the handler's direct response pattern (bypasses ctx.accept()).
+    const { event } = createSpspRequest(requesterSk, nodePubkey, {
+      ilpAddress: 'g.test.requester',
+    });
+    const request = createPacketRequest(event);
+
+    const result = await handler(createTestContext(request));
+
+    expect(result.accept).toBe(true);
+    if (!result.accept) throw new Error('unreachable');
+    expect(result.fulfillment).toBe('default-fulfillment');
+  });
+
+  it('should work without settlement config', async () => {
+    // When no settlementConfig is provided, the handler should still process
+    // the SPSP request and return a basic response with no settlement fields.
+    const minimalHandler = createSpspHandshakeHandler({
+      secretKey: nodeSk,
+      ilpAddress: nodeIlpAddress,
+      eventStore,
+      // No settlementConfig, no channelClient, no adminClient
+    });
+
+    const { event, requestId } = createSpspRequest(requesterSk, nodePubkey, {
+      ilpAddress: 'g.test.requester',
+      supportedChains: ['evm:base:31337'],
+      settlementAddresses: {
+        'evm:base:31337': '0xRequesterAddr1234567890abcdef1234567890abcd',
+      },
+    });
+    const request = createPacketRequest(event);
+
+    const result = await minimalHandler(createTestContext(request));
+
+    expect(result.accept).toBe(true);
+    if (!result.accept) throw new Error('unreachable');
+    expect(result.data).toBeDefined();
+
+    // Decode and verify basic SPSP fields present, no settlement fields
+    const responseEvent = decodeEventFromToon(
+      Uint8Array.from(Buffer.from(result.data!, 'base64'))
+    );
+    const spspResponse = decryptSpspResponse(
+      responseEvent,
+      requesterSk,
+      nodePubkey
+    );
+
+    expect(spspResponse.requestId).toBe(requestId);
+    expect(spspResponse.destinationAccount).toMatch(/^g\.test\.node\.spsp\./);
+    expect(spspResponse.sharedSecret).toBeDefined();
+    expect(spspResponse.negotiatedChain).toBeUndefined();
+    expect(spspResponse.channelId).toBeUndefined();
+  });
+
+  it('should return basic SPSP response when request has no supportedChains', async () => {
+    // When the SPSP request does not include supportedChains, the handler
+    // should skip settlement negotiation entirely and return basic params.
+    const { event, requestId } = createSpspRequest(requesterSk, nodePubkey, {
+      ilpAddress: 'g.test.requester',
+      // No supportedChains, no settlementAddresses
+    });
+    const request = createPacketRequest(event);
+
+    const result = await handler(createTestContext(request));
+
+    expect(result.accept).toBe(true);
+    if (!result.accept) throw new Error('unreachable');
+
+    const responseEvent = decodeEventFromToon(
+      Uint8Array.from(Buffer.from(result.data!, 'base64'))
+    );
+    const spspResponse = decryptSpspResponse(
+      responseEvent,
+      requesterSk,
+      nodePubkey
+    );
+
+    // Basic SPSP fields present
+    expect(spspResponse.requestId).toBe(requestId);
+    expect(spspResponse.destinationAccount).toBeDefined();
+    expect(spspResponse.sharedSecret).toBeDefined();
+
+    // No settlement negotiation attempted
+    expect(spspResponse.negotiatedChain).toBeUndefined();
+    expect(spspResponse.channelId).toBeUndefined();
+    expect(spspResponse.settlementAddress).toBeUndefined();
+
+    // Channel client should NOT have been called
+    expect(mockChannelClient.openChannel).not.toHaveBeenCalled();
+  });
+
+  it('should return basic SPSP response when chains do not overlap', async () => {
+    // When the requester's supported chains have no overlap with the node's
+    // chains, negotiateAndOpenChannel returns null and the response should
+    // contain only basic SPSP fields (no settlement).
+    const { event, requestId } = createSpspRequest(requesterSk, nodePubkey, {
+      ilpAddress: 'g.test.requester',
+      supportedChains: ['evm:polygon:137'], // Node only supports evm:base:31337
+      settlementAddresses: {
+        'evm:polygon:137': '0xRequesterAddr1234567890abcdef1234567890abcd',
+      },
+    });
+    const request = createPacketRequest(event);
+
+    const result = await handler(createTestContext(request));
+
+    expect(result.accept).toBe(true);
+    if (!result.accept) throw new Error('unreachable');
+
+    const responseEvent = decodeEventFromToon(
+      Uint8Array.from(Buffer.from(result.data!, 'base64'))
+    );
+    const spspResponse = decryptSpspResponse(
+      responseEvent,
+      requesterSk,
+      nodePubkey
+    );
+
+    // Basic SPSP fields present
+    expect(spspResponse.requestId).toBe(requestId);
+    expect(spspResponse.destinationAccount).toBeDefined();
+    expect(spspResponse.sharedSecret).toBeDefined();
+
+    // Settlement fields absent (no chain overlap)
+    expect(spspResponse.negotiatedChain).toBeUndefined();
+    expect(spspResponse.channelId).toBeUndefined();
+    expect(spspResponse.settlementAddress).toBeUndefined();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Coverage gap tests: AC #2 -- Graceful degradation warning log
+  // ---------------------------------------------------------------------------
+
+  it('should log warning when settlement negotiation fails', async () => {
+    // Verifies that console.warn is called when settlement negotiation
+    // throws, as required by AC #2 (graceful degradation with warning).
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const failingChannelClient = createMockChannelClient();
+    (
+      failingChannelClient.openChannel as ReturnType<typeof vi.fn>
+    ).mockRejectedValue(new Error('Blockchain unavailable'));
+
+    const failingHandler = createSpspHandshakeHandler({
+      secretKey: nodeSk,
+      ilpAddress: nodeIlpAddress,
+      eventStore,
+      settlementConfig,
+      channelClient: failingChannelClient,
+      adminClient: mockAdminClient,
+    });
+
+    const { event } = createSpspRequest(requesterSk, nodePubkey, {
+      ilpAddress: 'g.test.requester',
+      supportedChains: ['evm:base:31337'],
+      settlementAddresses: {
+        'evm:base:31337': '0xRequesterAddr1234567890abcdef1234567890abcd',
+      },
+    });
+    const request = createPacketRequest(event);
+
+    await failingHandler(createTestContext(request));
+
+    // Verify console.warn was called with settlement failure message
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Settlement negotiation failed'),
+      expect.stringContaining('Blockchain unavailable')
+    );
+
+    warnSpy.mockRestore();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Coverage gap tests: AC #3 -- Peer registration edge cases
+  // ---------------------------------------------------------------------------
+
+  it('should skip peer registration when no kind:10032 event exists in EventStore', async () => {
+    // When the requester does not have a kind:10032 event stored, the handler
+    // should still succeed but skip peer registration (no addPeer call).
+    // EventStore is empty -- no kind:10032 event for the requester.
+    const { event } = createSpspRequest(requesterSk, nodePubkey, {
+      ilpAddress: 'g.test.requester',
+    });
+    const request = createPacketRequest(event);
+
+    const result = await handler(createTestContext(request));
+
+    expect(result.accept).toBe(true);
+    // addPeer should NOT have been called (no kind:10032 to look up)
+    expect(mockAdminClient.addPeer).not.toHaveBeenCalled();
+  });
+
+  it('should succeed without adminClient in config', async () => {
+    // When no adminClient is provided, the handler should skip peer
+    // registration entirely and still return a successful SPSP response.
+    const noAdminHandler = createSpspHandshakeHandler({
+      secretKey: nodeSk,
+      ilpAddress: nodeIlpAddress,
+      eventStore,
+      settlementConfig,
+      channelClient: mockChannelClient,
+      // No adminClient
+    });
+
+    // Store a kind:10032 event that would trigger peer registration if
+    // adminClient were present
+    const peerInfoEvent = finalizeEvent(
+      {
+        kind: 10032,
+        content: JSON.stringify({
+          ilpAddress: 'g.test.requester',
+          btpEndpoint: 'ws://requester-node:3000', // nosemgrep: detect-insecure-websocket
+          assetCode: 'USD',
+          assetScale: 6,
+        }),
+        tags: [],
+        created_at: Math.floor(Date.now() / 1000),
+      },
+      requesterSk
+    );
+    eventStore.store(peerInfoEvent);
+
+    const { event, requestId } = createSpspRequest(requesterSk, nodePubkey, {
+      ilpAddress: 'g.test.requester',
+    });
+    const request = createPacketRequest(event);
+
+    const result = await noAdminHandler(createTestContext(request));
+
+    expect(result.accept).toBe(true);
+    if (!result.accept) throw new Error('unreachable');
+
+    // Verify the response is still valid
+    const responseEvent = decodeEventFromToon(
+      Uint8Array.from(Buffer.from(result.data!, 'base64'))
+    );
+    const spspResponse = decryptSpspResponse(
+      responseEvent,
+      requesterSk,
+      nodePubkey
+    );
+    expect(spspResponse.requestId).toBe(requestId);
+    expect(spspResponse.destinationAccount).toBeDefined();
+    expect(spspResponse.sharedSecret).toBeDefined();
+  });
+
+  it('should skip peer registration when kind:10032 content has wrong shape', async () => {
+    // When the kind:10032 event has valid JSON but is missing required fields
+    // (btpEndpoint, ilpAddress), the handler should skip peer registration,
+    // log a warning, and still return a successful SPSP response.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    // Store a kind:10032 event with valid JSON but missing btpEndpoint/ilpAddress
+    const malformedPeerInfoEvent = finalizeEvent(
+      {
+        kind: 10032,
+        content: JSON.stringify({ someField: 'value', assetCode: 'USD' }),
+        tags: [],
+        created_at: Math.floor(Date.now() / 1000),
+      },
+      requesterSk
+    );
+    eventStore.store(malformedPeerInfoEvent);
+
+    const { event } = createSpspRequest(requesterSk, nodePubkey, {
+      ilpAddress: 'g.test.requester',
+    });
+    const request = createPacketRequest(event);
+
+    const result = await handler(createTestContext(request));
+
+    expect(result.accept).toBe(true);
+    // addPeer should NOT have been called (missing required fields)
+    expect(mockAdminClient.addPeer).not.toHaveBeenCalled();
+    // Should have logged a warning about missing fields
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('missing required fields')
+    );
+
+    warnSpy.mockRestore();
+  });
+
+  it('should not reject when peer registration fails', async () => {
+    // When adminClient.addPeer() throws, the handler should catch the error,
+    // log a warning, and still return the successful SPSP response (non-fatal).
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const failingAdminClient = createMockAdminClient();
+    (failingAdminClient.addPeer as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('Connector admin unreachable')
+    );
+
+    const failingPeerHandler = createSpspHandshakeHandler({
+      secretKey: nodeSk,
+      ilpAddress: nodeIlpAddress,
+      eventStore,
+      settlementConfig,
+      channelClient: mockChannelClient,
+      adminClient: failingAdminClient,
+    });
+
+    // Store kind:10032 so peer registration is attempted
+    const peerInfoEvent = finalizeEvent(
+      {
+        kind: 10032,
+        content: JSON.stringify({
+          ilpAddress: 'g.test.requester',
+          btpEndpoint: 'ws://requester-node:3000', // nosemgrep: detect-insecure-websocket
+          assetCode: 'USD',
+          assetScale: 6,
+        }),
+        tags: [],
+        created_at: Math.floor(Date.now() / 1000),
+      },
+      requesterSk
+    );
+    eventStore.store(peerInfoEvent);
+
+    const { event, requestId } = createSpspRequest(requesterSk, nodePubkey, {
+      ilpAddress: 'g.test.requester',
+    });
+    const request = createPacketRequest(event);
+
+    // Should NOT throw despite peer registration failure
+    const result = await failingPeerHandler(createTestContext(request));
+
+    expect(result.accept).toBe(true);
+    if (!result.accept) throw new Error('unreachable');
+
+    // The SPSP response should still be valid
+    const responseEvent = decodeEventFromToon(
+      Uint8Array.from(Buffer.from(result.data!, 'base64'))
+    );
+    const spspResponse = decryptSpspResponse(
+      responseEvent,
+      requesterSk,
+      nodePubkey
+    );
+    expect(spspResponse.requestId).toBe(requestId);
+    expect(spspResponse.destinationAccount).toBeDefined();
+    expect(spspResponse.sharedSecret).toBeDefined();
+
+    // Verify addPeer was attempted
+    expect(failingAdminClient.addPeer).toHaveBeenCalledTimes(1);
+
+    // Verify warning was logged
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Peer registration failed'),
+      expect.stringContaining('Connector admin unreachable')
+    );
+
+    warnSpy.mockRestore();
   });
 });
