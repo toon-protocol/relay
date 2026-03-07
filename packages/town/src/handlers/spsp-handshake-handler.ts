@@ -127,7 +127,7 @@ export function createSpspHandshakeHandler(
           spspResponse.channelId = result.channelId;
           spspResponse.settlementTimeout = result.settlementTimeout;
         }
-      } catch (err) {
+      } catch (err: unknown) {
         // Graceful degradation (AC #2): log warning and continue with basic response
         console.warn(
           'Settlement negotiation failed, continuing with basic SPSP response:',
@@ -166,7 +166,7 @@ export function createSpspHandshakeHandler(
           let peerInfo: IlpPeerInfo;
           try {
             peerInfo = JSON.parse(peerInfoEvent.content) as IlpPeerInfo;
-          } catch (parseErr) {
+          } catch (parseErr: unknown) {
             console.warn(
               'Failed to parse peer info event:',
               parseErr instanceof Error ? parseErr.message : String(parseErr)
@@ -218,7 +218,7 @@ export function createSpspHandshakeHandler(
             );
           }
         }
-      } catch (err) {
+      } catch (err: unknown) {
         // Peer registration is non-fatal: log and continue
         console.warn(
           'Peer registration failed:',

@@ -1,9 +1,14 @@
 /**
  * @crosstown/town
  *
- * SDK-based relay handlers for ILP-gated Nostr services.
- * Provides handler implementations that run on top of @crosstown/sdk.
+ * SDK-based relay with startTown() API and CLI for ILP-gated Nostr services.
+ * Provides handler implementations and a one-call programmatic API for
+ * starting a Crosstown relay node.
  */
+
+// Town lifecycle API
+export { startTown } from './town.js';
+export type { TownConfig, TownInstance, ResolvedTownConfig } from './town.js';
 
 // Event storage handler
 export { createEventStorageHandler } from './handlers/event-storage-handler.js';
