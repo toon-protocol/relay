@@ -178,6 +178,11 @@ describe('TownInstance type surface (AC #5)', () => {
     const mockInstance: TownInstance = {
       isRunning: () => true,
       stop: async () => {},
+      subscribe: () => ({
+        close: () => {},
+        relayUrl: 'wss://mock.example.com',
+        isActive: () => true,
+      }),
       pubkey: 'a'.repeat(64),
       evmAddress: '0x' + 'b'.repeat(40),
       config: {
@@ -293,6 +298,5 @@ describe('Module exports from @crosstown/town (AC #2)', () => {
     const townModule = await import('./index.js');
 
     expect(typeof townModule.createEventStorageHandler).toBe('function');
-    expect(typeof townModule.createSpspHandshakeHandler).toBe('function');
   });
 });

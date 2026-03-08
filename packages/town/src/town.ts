@@ -36,7 +36,6 @@ import type {
   NodeIdentity,
 } from '@crosstown/sdk';
 import { createEventStorageHandler } from './handlers/event-storage-handler.js';
-import { createSpspHandshakeHandler } from './handlers/spsp-handshake-handler.js';
 import {
   BootstrapService,
   RelayMonitor,
@@ -45,25 +44,28 @@ import {
   createHttpChannelClient,
   SocialPeerDiscovery,
   buildIlpPeerInfoEvent,
-  SPSP_REQUEST_KIND,
 } from '@crosstown/core';
 import type {
   ConnectorChannelClient,
-  SettlementNegotiationConfig,
   BootstrapEvent,
   IlpPeerInfo,
   HandlePacketRequest,
   ConnectorAdminClient,
   AgentRuntimeClient,
-  SpspRequestSettlementInfo,
+  SettlementConfig,
 } from '@crosstown/core';
 import {
   shallowParseToon,
   decodeEventFromToon,
   encodeEventToToon,
 } from '@crosstown/core/toon';
-import { SqliteEventStore, NostrRelayServer } from '@crosstown/relay';
+import {
+  SqliteEventStore,
+  NostrRelayServer,
+  RelaySubscriber,
+} from '@crosstown/relay';
 import type { EventStore } from '@crosstown/relay';
+import type { Filter } from 'nostr-tools/filter';
 
 // ---------- SDK Pipeline Constants ----------
 const MAX_PAYLOAD_BASE64_LENGTH = 1_048_576;
@@ -184,6 +186,17 @@ export interface TownInstance {
   /** Gracefully stop the relay and release all resources. */
   stop(): Promise<void>;
 
+  /**
+   * Subscribe to a remote Nostr relay. Received events are stored in the
+   * Town's EventStore. Returns a handle for lifecycle management.
+   *
+   * @param relayUrl - WebSocket URL of the relay to subscribe to.
+   * @param filter - Nostr filter (kinds, authors, etc.).
+   * @returns A TownSubscription handle.
+   * @throws If the town is not running.
+   */
+  subscribe(relayUrl: string, filter: Filter): TownSubscription;
+
   /** The node's Nostr x-only public key (64-char hex). */
   pubkey: string;
 
@@ -198,6 +211,19 @@ export interface TownInstance {
     peerCount: number;
     channelCount: number;
   };
+}
+
+/**
+ * Handle for managing an outbound subscription to a remote Nostr relay.
+ * Returned by `TownInstance.subscribe()`.
+ */
+export interface TownSubscription {
+  /** Close the subscription and disconnect from the relay. */
+  close(): void;
+  /** The relay URL this subscription is connected to. */
+  relayUrl: string;
+  /** Whether this subscription is still active. */
+  isActive(): boolean;
 }
 
 // ---------- Internal Helpers ----------
@@ -237,6 +263,59 @@ async function waitForConnector(url: string, timeoutMs = 60000): Promise<void> {
   throw new Error(
     `Connector health check timed out after ${timeoutMs}ms: ${url}`
   );
+}
+
+// ---------- Subscription Helper ----------
+
+/**
+ * Create a subscription to a remote Nostr relay, storing received events
+ * in the local EventStore. Returns a TownSubscription handle.
+ *
+ * @internal Exported for unit testing only. Use `TownInstance.subscribe()` instead.
+ */
+export function createSubscription(
+  relayUrl: string,
+  filter: Filter,
+  eventStore: EventStore,
+  activeSubscriptions: Set<TownSubscription>
+): TownSubscription {
+  // Validate WebSocket URL scheme to provide clear errors and prevent
+  // non-WebSocket URLs from reaching SimplePool (consistency with BTP URL
+  // validation convention in project-context.md).
+  if (!relayUrl.startsWith('ws://') && !relayUrl.startsWith('wss://')) {
+    throw new Error(
+      `Invalid relay URL: "${relayUrl}" -- must use ws:// or wss:// scheme`
+    );
+  }
+
+  const subscriber = new RelaySubscriber(
+    { relayUrls: [relayUrl], filter },
+    eventStore
+  );
+  const handle = subscriber.start();
+
+  let active = true;
+  // Track last-seen timestamp for future reconnection with `since:` filter.
+  // Currently unused -- SimplePool handles reconnection internally.
+  // eslint-disable-next-line prefer-const -- will be reassigned in future story
+  let _lastSeenTimestamp = 0;
+  void _lastSeenTimestamp;
+
+  const subscription: TownSubscription = {
+    close() {
+      if (!active) return;
+      active = false;
+      handle.unsubscribe();
+      activeSubscriptions.delete(subscription);
+    },
+    relayUrl,
+    isActive() {
+      return active;
+    },
+  };
+
+  activeSubscriptions.add(subscription);
+  return subscription;
 }
 
 // ---------- Main API ----------
@@ -332,9 +411,8 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   const eventStore: EventStore = new SqliteEventStore(dbPath);
 
   // --- 6. Settlement configuration ---
-  let settlementConfig: SettlementNegotiationConfig | undefined;
   let channelClient: ConnectorChannelClient | undefined;
-  let settlementInfo: SpspRequestSettlementInfo | undefined;
+  let settlementInfo: SettlementConfig | undefined;
 
   const hasSettlement =
     config.chainRpcUrls || config.tokenNetworks || config.preferredTokens;
@@ -355,22 +433,10 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     }
 
     settlementInfo = {
-      ilpAddress,
       supportedChains,
       settlementAddresses,
       preferredTokens: config.preferredTokens,
       tokenNetworks: config.tokenNetworks,
-    };
-
-    settlementConfig = {
-      ownSupportedChains: supportedChains,
-      ownSettlementAddresses: settlementAddresses,
-      ownPreferredTokens: config.preferredTokens,
-      ownTokenNetworks: config.tokenNetworks,
-      initialDeposit: '0',
-      settlementTimeout: 86400,
-      channelOpenTimeout: 30000,
-      pollInterval: 1000,
     };
 
     channelClient = createHttpChannelClient(connectorAdminUrl);
@@ -388,24 +454,10 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   const pricer = createPricingValidator({
     basePricePerByte,
     ownPubkey: identity.pubkey,
-    kindPricing: {
-      [SPSP_REQUEST_KIND]: basePricePerByte / 2n,
-    },
   });
 
   const registry = new HandlerRegistry();
   registry.onDefault(createEventStorageHandler({ eventStore }));
-  registry.on(
-    SPSP_REQUEST_KIND,
-    createSpspHandshakeHandler({
-      secretKey: identity.secretKey,
-      ilpAddress,
-      eventStore,
-      settlementConfig,
-      channelClient,
-      adminClient,
-    })
-  );
 
   const toonDecoder = (toon: string) => {
     const bytes = Buffer.from(toon, 'base64');
@@ -562,6 +614,9 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
 
   // --- 13. Bootstrap ---
   bootstrapService.setConnectorAdmin(adminClient);
+  if (channelClient) {
+    bootstrapService.setChannelClient(channelClient);
+  }
 
   const agentRuntimeClient: AgentRuntimeClient =
     createHttpRuntimeClient(connectorAdminUrl);
@@ -665,6 +720,9 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     relayMonitor.setAgentRuntimeClient(
       createHttpRuntimeClient(connectorAdminUrl)
     );
+    if (channelClient) {
+      relayMonitor.setChannelClient(channelClient);
+    }
     relayMonitor.on((event: BootstrapEvent) => {
       if (event.type === 'bootstrap:peer-registered') {
         peerCount++;
@@ -683,15 +741,37 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   );
   const socialSubscription = socialDiscovery.start();
 
-  // --- 14. Build TownInstance ---
+  // --- 14. Outbound subscription tracking ---
+  const activeSubscriptions = new Set<TownSubscription>();
+
+  // --- 15. Build TownInstance ---
   const instance: TownInstance = {
     isRunning() {
       return running;
     },
 
+    subscribe(subscribeRelayUrl: string, filter: Filter): TownSubscription {
+      if (!running) {
+        throw new Error('Cannot subscribe: town is not running');
+      }
+
+      return createSubscription(
+        subscribeRelayUrl,
+        filter,
+        eventStore,
+        activeSubscriptions
+      );
+    },
+
     async stop() {
       if (!running) return;
       running = false;
+
+      // Close outbound subscriptions first
+      for (const sub of activeSubscriptions) {
+        sub.close();
+      }
+      activeSubscriptions.clear();
 
       if (relayMonitorSubscription) {
         relayMonitorSubscription.unsubscribe();

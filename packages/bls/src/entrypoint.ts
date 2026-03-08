@@ -1,10 +1,10 @@
 /**
- * Crosstown Node with Nostr SPSP Bootstrap
+ * Crosstown Node with Bootstrap
  *
  * This entrypoint creates a complete Crosstown node with:
  * - BLS (Business Logic Server) for ILP packet handling
  * - Nostr Relay for peer discovery
- * - Bootstrap Service for automatic peer discovery via Nostr SPSP
+ * - Bootstrap Service for automatic peer discovery
  * - Connector integration for ILP routing
  *
  * Environment Variables:
@@ -19,7 +19,6 @@
  * - BOOTSTRAP_RELAYS: Comma-separated relay URLs (e.g., "ws://peer1:7100,ws://peer2:7100")
  * - BOOTSTRAP_PEERS: Comma-separated peer pubkeys to bootstrap with
  * - BASE_PRICE_PER_BYTE: Base price per byte (default: 10)
- * - SPSP_MIN_PRICE: Minimum price for SPSP requests (genesis=0, joiners=undefined)
  * - DATA_DIR: Data directory for persistent storage
  */
 
@@ -47,13 +46,8 @@ import {
   BootstrapService,
   RelayMonitor,
   type IlpPeerInfo,
-  type SpspRequestSettlementInfo,
-  parseSpspRequest,
-  buildSpspResponseEvent,
+  type SettlementConfig,
   buildIlpPeerInfoEvent,
-  type SpspResponse,
-  SPSP_REQUEST_KIND,
-  ILP_PEER_INFO_KIND,
   type HandlePacketRequest,
   type HandlePacketResponse,
   createHttpChannelClient,
@@ -76,7 +70,6 @@ async function main(): Promise<void> {
     ownerPubkey,
     dataDir,
     kindOverrides,
-    spspMinPrice,
   } = config;
 
   // secretKey not in BlsEnvConfig, load directly
@@ -157,9 +150,6 @@ async function main(): Promise<void> {
   if (bootstrapPeers.length > 0) {
     console.log(`  Bootstrap Peers:    ${bootstrapPeers.length} peer(s)`);
   }
-  if (spspMinPrice !== undefined) {
-    console.log(`  SPSP Min Price:     ${spspMinPrice} (genesis peer)`);
-  }
   console.log('');
 
   // -------------------------------------------------------------------------
@@ -180,8 +170,7 @@ async function main(): Promise<void> {
   // Create Settlement Info
   // -------------------------------------------------------------------------
   // TODO: Read from environment (EVM address, token address, chain ID)
-  const settlementInfo: SpspRequestSettlementInfo = {
-    ilpAddress,
+  const settlementInfo: SettlementConfig = {
     supportedChains: ['evm:base:31337'],
     settlementAddresses: {
       'evm:base:31337': process.env['PEER_EVM_ADDRESS'] || '',
@@ -247,14 +236,13 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
-  // Create Packet Handler (BLS + SPSP Interceptor + NIP-34)
+  // Create Packet Handler (BLS + NIP-34)
   // -------------------------------------------------------------------------
   const bls = new BusinessLogicServer(
     {
       basePricePerByte,
       pricingService,
       ownerPubkey,
-      spspMinPrice,
 
       // NIP-34 event handler
       onNIP34Event: nip34Handler
@@ -284,146 +272,6 @@ async function main(): Promise<void> {
   const handlePacket = async (
     request: HandlePacketRequest
   ): Promise<HandlePacketResponse> => {
-    // Decode packet to check if it's an SPSP request
-    let event: NostrEvent;
-    let toonBytes: Uint8Array;
-    try {
-      toonBytes = Uint8Array.from(Buffer.from(request.data, 'base64'));
-      event = decodeEventFromToon(toonBytes);
-    } catch {
-      // Not a valid TOON event, pass to BLS
-      return bls.handlePacket(request);
-    }
-
-    // Intercept SPSP requests (kind:23194)
-    if (event.kind === SPSP_REQUEST_KIND) {
-      console.log(`📨 SPSP request from ${event.pubkey.slice(0, 16)}...`);
-
-      // Enforce pricing: use spspMinPrice if defined (including 0 for genesis peers)
-      const calculatedPrice = BigInt(toonBytes.length) * basePricePerByte;
-      const price =
-        spspMinPrice !== undefined ? BigInt(spspMinPrice) : calculatedPrice;
-
-      const amount = BigInt(request.amount);
-      if (amount < price) {
-        console.log(
-          `❌ SPSP rejected: insufficient payment (${amount} < ${price})`
-        );
-        return {
-          accept: false,
-          code: 'F04',
-          message: 'Insufficient payment amount',
-        };
-      }
-
-      try {
-        const spspRequest = parseSpspRequest(event, secretKey, event.pubkey);
-
-        // Settlement info for the SPSP response (channel opening is requester's responsibility)
-        const chain = settlementInfo.supportedChains?.[0] ?? '';
-        const negotiatedChain = chain || undefined;
-        const settlementAddress = settlementInfo.settlementAddresses?.[chain];
-        const tokenAddress = settlementInfo.preferredTokens?.[chain];
-        const tokenNetworkAddress = settlementInfo.tokenNetworks?.[chain];
-
-        // Register the requesting peer on our connector for bidirectional routing
-        if (connectorAdmin && spspRequest.ilpAddress) {
-          try {
-            const peerId = `nostr-${event.pubkey.slice(0, 16)}`;
-
-            // Look up the peer's kind:10032 event to get their BTP endpoint
-            const peerEvents = eventStore.query([
-              {
-                kinds: [ILP_PEER_INFO_KIND],
-                authors: [event.pubkey],
-                limit: 1,
-              },
-            ]);
-
-            let btpUrl = '';
-            if (peerEvents.length > 0 && peerEvents[0]) {
-              try {
-                const peerInfo: IlpPeerInfo = JSON.parse(peerEvents[0].content);
-                btpUrl = peerInfo.btpEndpoint;
-              } catch (parseError) {
-                console.warn(
-                  `⚠️  Failed to parse peer info event: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`
-                );
-              }
-            }
-
-            // Only register if we have a valid BTP URL
-            if (
-              btpUrl &&
-              (btpUrl.startsWith('ws://') || btpUrl.startsWith('wss://'))
-            ) {
-              await connectorAdmin.addPeer({
-                id: peerId,
-                url: btpUrl,
-                authToken: '',
-                routes: [{ prefix: spspRequest.ilpAddress }],
-              });
-              console.log(
-                `✅ Registered peer ${peerId} (${spspRequest.ilpAddress}) at ${btpUrl}`
-              );
-            } else {
-              console.warn(
-                `⚠️  Cannot register peer ${peerId}: no valid BTP endpoint found`
-              );
-            }
-          } catch (peerError) {
-            console.warn(
-              `⚠️  Failed to register peer after SPSP handshake: ${peerError instanceof Error ? peerError.message : 'Unknown error'}`
-            );
-          }
-        }
-
-        // Build SPSP response
-        const response: SpspResponse = {
-          requestId: spspRequest.requestId,
-          destinationAccount: ilpAddress,
-          sharedSecret: Buffer.from(
-            crypto.getRandomValues(new Uint8Array(32))
-          ).toString('base64'),
-          negotiatedChain,
-          settlementAddress,
-          tokenAddress,
-          tokenNetworkAddress,
-        };
-
-        const responseEvent = buildSpspResponseEvent(
-          response,
-          event.pubkey,
-          secretKey,
-          event.id
-        );
-
-        // TOON-encode response
-        const responseToonBytes = encodeEventToToon(responseEvent);
-        const responseBase64 =
-          Buffer.from(responseToonBytes).toString('base64');
-
-        // Store SPSP request
-        eventStore.store(event);
-
-        console.log(`✅ SPSP response sent to ${event.pubkey.slice(0, 16)}...`);
-
-        return {
-          accept: true,
-          fulfillment: Buffer.from(new Uint8Array(32)).toString('base64'),
-          data: responseBase64,
-        } as HandlePacketResponse & { data: string };
-      } catch (error) {
-        console.error(`❌ SPSP handler error:`, error);
-        return {
-          accept: false,
-          code: 'T00',
-          message: `SPSP handler error: ${error instanceof Error ? error.message : 'Unknown'}`,
-        };
-      }
-    }
-
-    // Not SPSP: delegate to BLS
     return bls.handlePacket(request);
   };
 
@@ -554,7 +402,7 @@ async function main(): Promise<void> {
     });
   });
 
-  // Custom /handle-packet endpoint with SPSP interception
+  // Custom /handle-packet endpoint
   app.post('/handle-packet', async (c) => {
     const request = await c.req.json();
     const response = await handlePacket(request as HandlePacketRequest);

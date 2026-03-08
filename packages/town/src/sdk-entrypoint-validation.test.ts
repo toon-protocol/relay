@@ -243,17 +243,9 @@ describe('Story 2.3: SDK-based entrypoint validation (static)', () => {
       /import\s+\{[^}]*createEventStorageHandler[^}]*\}\s+from\s+['"]@crosstown\/town['"]/
     );
 
-    // Must import createSpspHandshakeHandler from @crosstown/town
-    expect(
-      source,
-      'Must import createSpspHandshakeHandler from @crosstown/town'
-    ).toMatch(
-      /import\s+\{[^}]*createSpspHandshakeHandler[^}]*\}\s+from\s+['"]@crosstown\/town['"]/
-    );
-
     // Must NOT import handler implementations from @crosstown/sdk
     const sdkHandlerImportPattern =
-      /import\s+\{[^}]*(?:createEventStorageHandler|createSpspHandshakeHandler)[^}]*\}\s+from\s+['"]@crosstown\/sdk['"]/;
+      /import\s+\{[^}]*createEventStorageHandler[^}]*\}\s+from\s+['"]@crosstown\/sdk['"]/;
     expect(
       sdkHandlerImportPattern.test(source),
       'Must NOT import handler implementations from @crosstown/sdk (they are throwing stubs)'

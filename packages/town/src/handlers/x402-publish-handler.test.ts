@@ -7,7 +7,7 @@
  * Validates:
  * - Pre-flight validation firewall (6 free checks before on-chain tx)
  * - x402 happy path (402→payment→200)
- * - Packet equivalence (x402 vs SPSP produce identical ILP PREPARE)
+ * - Packet equivalence (x402 vs ILP produce identical ILP PREPARE)
  * - Settlement atomicity — revert scenario
  * - No refund on REJECT (payment is for routing attempt, not delivery)
  * - EIP-3009 forged signature rejection
@@ -147,11 +147,11 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
   });
 
   // --------------------------------------------------------------------------
-  // 3.3-INT-003 [P0]: Packet equivalence (x402 vs SPSP)
+  // 3.3-INT-003 [P0]: Packet equivalence (x402 vs ILP)
   // Risk: E3-R003
   // --------------------------------------------------------------------------
   describe('Packet equivalence (3.3-INT-003)', () => {
-    it.skip('[P0] x402 and SPSP paths produce identical ILP PREPARE packets via shared buildIlpPrepare()', () => {
+    it.skip('[P0] x402 and ILP paths produce identical ILP PREPARE packets via shared buildIlpPrepare()', () => {
       // Arrange
       // const toonPayload = createToonPayload();
       // const destination = 'g.crosstown.test-relay';
@@ -165,8 +165,8 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
       //   expiresAt: new Date(Date.now() + 30000),
       // });
 
-      // Act — build PREPARE via SPSP path (same function)
-      // const spspPrepare = buildIlpPrepare({
+      // Act — build PREPARE via ILP path (same function)
+      // const ilpPrepare = buildIlpPrepare({
       //   destination,
       //   amount,
       //   data: Buffer.from(toonPayload.toonData),
@@ -174,7 +174,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
       // });
 
       // Assert — byte-exact comparison
-      // expect(Buffer.compare(x402Prepare, spspPrepare)).toBe(0);
+      // expect(Buffer.compare(x402Prepare, ilpPrepare)).toBe(0);
       expect(true).toBe(false); // Placeholder — remove when implementing
     });
   });

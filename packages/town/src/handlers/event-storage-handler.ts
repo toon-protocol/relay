@@ -3,7 +3,7 @@
  *
  * Stores incoming Nostr events in the EventStore after decoding from TOON.
  * This is the "default" handler for the relay -- it processes all event kinds
- * except those handled by kind-specific handlers (e.g., SPSP kind:23194).
+ * except those handled by kind-specific handlers.
  *
  * The handler is intentionally simple (~15 lines of logic). The SDK pipeline
  * handles signature verification, pricing validation, and self-write bypass

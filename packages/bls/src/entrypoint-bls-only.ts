@@ -58,7 +58,6 @@ async function main(): Promise<void> {
     ownerPubkey,
     dataDir,
     kindOverrides,
-    spspMinPrice,
     forgejoUrl,
     forgejoToken,
     forgejoOwner,
@@ -104,7 +103,6 @@ async function main(): Promise<void> {
       basePricePerByte,
       pricingService,
       ownerPubkey,
-      spspMinPrice,
 
       // NIP-34 event handler
       onNIP34Event: nip34Handler
@@ -163,9 +161,6 @@ async function main(): Promise<void> {
   console.log(`  Data Dir:           ${dataDir}`);
   console.log(`  Storage:            ${storageSummary}`);
   console.log(`  Base Price/Byte:    ${basePricePerByte}`);
-  if (spspMinPrice !== undefined) {
-    console.log(`  SPSP Min Price:     ${spspMinPrice}`);
-  }
   if (ownerPubkey) {
     console.log(`  Owner Pubkey:       ${ownerPubkey}`);
   }

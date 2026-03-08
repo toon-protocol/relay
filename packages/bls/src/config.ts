@@ -15,7 +15,7 @@ export interface BlsEnvConfig {
   pubkey: string;
   /** Node's ILP address */
   ilpAddress: string;
-  /** HTTP port (1–65535) */
+  /** HTTP port (1-65535) */
   port: number;
   /** Base price per byte for event storage */
   basePricePerByte: bigint;
@@ -25,8 +25,6 @@ export interface BlsEnvConfig {
   dataDir: string;
   /** Optional kind-specific price overrides */
   kindOverrides?: Map<number, bigint>;
-  /** Optional minimum price for SPSP request events (kind:23194) */
-  spspMinPrice?: bigint;
   /** Optional Forgejo URL for NIP-34 Git integration */
   forgejoUrl?: string;
   /** Optional Forgejo API token for NIP-34 Git integration */
@@ -51,7 +49,7 @@ const ILP_ADDRESS_REGEX = /^g\.[a-zA-Z0-9.-]+$/;
  * - BLS_BASE_PRICE_PER_BYTE / RELAY_BASE_PRICE_PER_BYTE / BASE_PRICE_PER_BYTE: Pricing rate (default: 10)
  * - OWNER_PUBKEY: Pubkey for self-write bypass
  * - DATA_DIR: SQLite data directory (default: /data)
- * - BLS_KIND_OVERRIDES / RELAY_KIND_OVERRIDES / KIND_OVERRIDES: JSON kind→price map
+ * - BLS_KIND_OVERRIDES / RELAY_KIND_OVERRIDES / KIND_OVERRIDES: JSON kind->price map
  *
  * @returns Validated BlsEnvConfig
  * @throws ConfigError if any required variable is missing or invalid
@@ -105,26 +103,6 @@ export function loadBlsConfigFromEnv(): BlsEnvConfig {
   // Optional: DATA_DIR (default /data)
   const dataDir = process.env['DATA_DIR'] ?? '/data';
 
-  // Optional: SPSP_MIN_PRICE (bigint, non-negative)
-  let spspMinPrice: bigint | undefined;
-  const rawSpspMinPrice = process.env['SPSP_MIN_PRICE'];
-  if (rawSpspMinPrice !== undefined && rawSpspMinPrice !== '') {
-    try {
-      spspMinPrice = BigInt(rawSpspMinPrice);
-    } catch {
-      throw new ConfigError(
-        'SPSP_MIN_PRICE',
-        `must be a valid integer, got "${rawSpspMinPrice}"`
-      );
-    }
-    if (spspMinPrice < 0n) {
-      throw new ConfigError(
-        'SPSP_MIN_PRICE',
-        `must be non-negative, got "${rawSpspMinPrice}"`
-      );
-    }
-  }
-
   // Pricing: delegate to loadPricingConfigFromEnv() with unprefixed fallbacks
   propagateUnprefixedEnvVars();
   const pricingConfig: PricingConfig = loadPricingConfigFromEnv();
@@ -144,7 +122,6 @@ export function loadBlsConfigFromEnv(): BlsEnvConfig {
     ownerPubkey,
     dataDir,
     kindOverrides: pricingConfig.kindOverrides,
-    spspMinPrice,
     forgejoUrl,
     forgejoToken,
     forgejoOwner,
@@ -163,7 +140,7 @@ function requireEnv(name: string): string {
 }
 
 /**
- * Parse and validate BLS_PORT. Default 3100, must be 1–65535.
+ * Parse and validate BLS_PORT. Default 3100, must be 1-65535.
  */
 function parsePort(): number {
   const portStr = process.env['BLS_PORT'];

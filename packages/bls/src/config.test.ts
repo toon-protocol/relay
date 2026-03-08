@@ -34,7 +34,6 @@ describe('loadBlsConfigFromEnv', () => {
     delete process.env['BLS_KIND_OVERRIDES'];
     delete process.env['RELAY_KIND_OVERRIDES'];
     delete process.env['KIND_OVERRIDES'];
-    delete process.env['SPSP_MIN_PRICE'];
   });
 
   afterEach(() => {
@@ -317,49 +316,5 @@ describe('loadBlsConfigFromEnv', () => {
     expect(() => loadBlsConfigFromEnv()).toThrow(
       'Invalid JSON in KIND_OVERRIDES'
     );
-  });
-
-  // --- SPSP_MIN_PRICE ---
-
-  it('should set spspMinPrice to 0n when SPSP_MIN_PRICE=0', () => {
-    setRequiredEnv();
-    process.env['SPSP_MIN_PRICE'] = '0';
-
-    const config = loadBlsConfigFromEnv();
-
-    expect(config.spspMinPrice).toBe(0n);
-  });
-
-  it('should set spspMinPrice to 100n when SPSP_MIN_PRICE=100', () => {
-    setRequiredEnv();
-    process.env['SPSP_MIN_PRICE'] = '100';
-
-    const config = loadBlsConfigFromEnv();
-
-    expect(config.spspMinPrice).toBe(100n);
-  });
-
-  it('should leave spspMinPrice undefined when SPSP_MIN_PRICE is not set', () => {
-    setRequiredEnv();
-
-    const config = loadBlsConfigFromEnv();
-
-    expect(config.spspMinPrice).toBeUndefined();
-  });
-
-  it('should throw ConfigError when SPSP_MIN_PRICE is negative', () => {
-    setRequiredEnv();
-    process.env['SPSP_MIN_PRICE'] = '-1';
-
-    expect(() => loadBlsConfigFromEnv()).toThrow(ConfigError);
-    expect(() => loadBlsConfigFromEnv()).toThrow('must be non-negative');
-  });
-
-  it('should throw ConfigError when SPSP_MIN_PRICE is not a number', () => {
-    setRequiredEnv();
-    process.env['SPSP_MIN_PRICE'] = 'not-a-number';
-
-    expect(() => loadBlsConfigFromEnv()).toThrow(ConfigError);
-    expect(() => loadBlsConfigFromEnv()).toThrow('must be a valid integer');
   });
 });

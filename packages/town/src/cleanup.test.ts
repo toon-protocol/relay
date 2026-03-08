@@ -133,7 +133,7 @@ describe('Story 2.4: SDK relay entrypoint', () => {
   it('SDK relay entrypoint should import from @crosstown/sdk (not manual wiring)', () => {
     // P2: The new SDK-based entrypoint (packages/town/src/index.ts or similar)
     // should import handler creation functions from @crosstown/sdk rather than
-    // manually wiring BLS, SPSP server, and bootstrap logic.
+    // manually wiring BLS, event handling, and bootstrap logic.
     //
     // This test verifies that the SDK package exists and exports the expected
     // handler factories. It will FAIL until @crosstown/sdk is created.

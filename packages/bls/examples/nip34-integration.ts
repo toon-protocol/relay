@@ -30,7 +30,6 @@ async function createBLSWithNIP34() {
   const bls = new BusinessLogicServer(
     {
       basePricePerByte: 10n,
-      spspMinPrice: 0n, // Free SPSP requests
       ownerPubkey: process.env["OWNER_PUBKEY"], // Optional: bypass payment for owner
 
       // NIP-34 integration: called after storing NIP-34 events
@@ -131,7 +130,6 @@ OWNER_PUBKEY=your-nostr-pubkey-hex
 # BLS Configuration
 BLS_PORT=3100
 BASE_PRICE_PER_BYTE=10
-SPSP_MIN_PRICE=0
   `.trim();
 }
 
