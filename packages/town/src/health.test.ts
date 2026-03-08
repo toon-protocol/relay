@@ -33,6 +33,7 @@ import { describe, it, expect } from 'vitest';
 function _createHealthConfig(overrides: Record<string, unknown> = {}) {
   return {
     peerCount: 5,
+    discoveredPeerCount: 12,
     channelCount: 3,
     basePricePerByte: 10,
     currency: 'USDC',

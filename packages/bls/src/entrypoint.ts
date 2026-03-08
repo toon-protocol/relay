@@ -44,7 +44,8 @@ import { encodeEventToToon, decodeEventFromToon } from './toon/index.js';
 import { NostrRelayServer } from '@crosstown/relay';
 import {
   BootstrapService,
-  RelayMonitor,
+  createDiscoveryTracker,
+  ILP_PEER_INFO_KIND,
   type IlpPeerInfo,
   type SettlementConfig,
   buildIlpPeerInfoEvent,
@@ -346,31 +347,22 @@ async function main(): Promise<void> {
   bootstrapService.setConnectorAdmin(connectorAdmin);
   bootstrapService.setChannelClient(channelClient);
 
-  // Create RelayMonitor
-  const relayMonitor = new RelayMonitor(
-    {
-      relayUrl: bootstrapRelays[0] || `ws://127.0.0.1:${wsPort}`,
-      secretKey,
-      toonEncoder: encodeEventToToon,
-      toonDecoder: decodeEventFromToon,
-      basePricePerByte,
-      settlementInfo,
-      defaultTimeout: 30_000,
-    },
-    pool
-  );
+  // Create DiscoveryTracker
+  const discoveryTracker = createDiscoveryTracker({
+    secretKey,
+    settlementInfo,
+  });
 
-  // Wire HTTP clients into relay monitor
-  relayMonitor.setAgentRuntimeClient(runtimeClient);
-  relayMonitor.setConnectorAdmin(connectorAdmin);
+  // Wire clients into discovery tracker
+  discoveryTracker.setConnectorAdmin(connectorAdmin);
 
   // Listen to bootstrap events
   bootstrapService.on((event) => {
     console.log(`🔔 Bootstrap event: ${event.type}`, event);
   });
 
-  relayMonitor.on((event) => {
-    console.log(`🔔 Relay monitor event: ${event.type}`, event);
+  discoveryTracker.on((event) => {
+    console.log(`🔔 Discovery tracker event: ${event.type}`, event);
   });
 
   // Start bootstrap
@@ -406,6 +398,16 @@ async function main(): Promise<void> {
   app.post('/handle-packet', async (c) => {
     const request = await c.req.json();
     const response = await handlePacket(request as HandlePacketRequest);
+    // Feed accepted kind:10032 events to discovery tracker for peer discovery
+    if (response.accept) {
+      try {
+        const toonBytes = Buffer.from((request as HandlePacketRequest).data, 'base64');
+        const decoded = decodeEventFromToon(toonBytes);
+        if (decoded && decoded.kind === ILP_PEER_INFO_KIND) {
+          discoveryTracker.processEvent(decoded);
+        }
+      } catch { /* decode failed, ignore */ }
+    }
     return c.json(response);
   });
 

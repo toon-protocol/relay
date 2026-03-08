@@ -38,7 +38,8 @@ import type {
 import { createEventStorageHandler } from './handlers/event-storage-handler.js';
 import {
   BootstrapService,
-  RelayMonitor,
+  createDiscoveryTracker,
+  ILP_PEER_INFO_KIND,
   createHttpRuntimeClient,
   createHttpConnectorAdmin,
   createHttpChannelClient,
@@ -566,7 +567,11 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       timestamp: Date.now(),
       sdk: true,
       ...(bootstrapPhase && { bootstrapPhase }),
-      ...(bootstrapPhase === 'ready' && { peerCount, channelCount }),
+      ...(bootstrapPhase === 'ready' && {
+        peerCount: discoveryTracker.getPeerCount() + peerCount,
+        discoveredPeerCount: discoveryTracker.getDiscoveredCount(),
+        channelCount,
+      }),
     });
   });
 
@@ -587,6 +592,16 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
         );
       }
       const result = await handlePacket(body);
+      // Feed accepted kind:10032 events to discovery tracker for peer discovery
+      if (result.accept) {
+        try {
+          const toonBytes = Buffer.from(body.data, 'base64');
+          const decoded = decodeEventFromToon(toonBytes);
+          if (decoded && decoded.kind === ILP_PEER_INFO_KIND) {
+            discoveryTracker.processEvent(decoded);
+          }
+        } catch { /* decode failed, ignore */ }
+      }
       return c.json(result, result.accept ? 200 : 400);
     } catch (error: unknown) {
       // Log the full error server-side for debugging, but return a generic
@@ -648,7 +663,17 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     throw connectorError;
   }
 
-  let relayMonitorSubscription: { unsubscribe(): void } | undefined;
+  // Create DiscoveryTracker
+  const discoveryTracker = createDiscoveryTracker({
+    secretKey: identity.secretKey,
+    settlementInfo,
+  });
+  discoveryTracker.setConnectorAdmin(adminClient);
+  if (channelClient) {
+    discoveryTracker.setChannelClient(channelClient);
+  }
+  // discoveryTracker peer count is read live via getPeerCount() in the
+  // health endpoint — no need for a separate counter here.
 
   try {
     const results = await bootstrapService.bootstrap();
@@ -704,32 +729,9 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       console.warn('[Town] Failed to publish ILP info:', error);
     }
 
-    // Start RelayMonitor
-    const firstPeer = knownPeers[0];
-    const monitorRelayUrl =
-      firstPeer?.relayUrl ?? `ws://localhost:${relayPort}`;
-    const relayMonitor = new RelayMonitor({
-      relayUrl: monitorRelayUrl,
-      secretKey: identity.secretKey,
-      toonEncoder: encodeEventToToon,
-      toonDecoder: decodeEventFromToon,
-      basePricePerByte,
-      settlementInfo,
-    });
-    relayMonitor.setConnectorAdmin(adminClient);
-    relayMonitor.setAgentRuntimeClient(
-      createHttpRuntimeClient(connectorAdminUrl)
-    );
-    if (channelClient) {
-      relayMonitor.setChannelClient(channelClient);
-    }
-    relayMonitor.on((event: BootstrapEvent) => {
-      if (event.type === 'bootstrap:peer-registered') {
-        peerCount++;
-      }
-    });
+    // Exclude already-bootstrapped peers from discovery
     const bootstrapPeerPubkeys = results.map((r) => r.knownPeer.pubkey);
-    relayMonitorSubscription = relayMonitor.start(bootstrapPeerPubkeys);
+    discoveryTracker.addExcludedPubkeys(bootstrapPeerPubkeys);
   } catch (error: unknown) {
     console.error('[Town] Bootstrap failed:', error);
   }
@@ -773,9 +775,6 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       }
       activeSubscriptions.clear();
 
-      if (relayMonitorSubscription) {
-        relayMonitorSubscription.unsubscribe();
-      }
       if (socialSubscription) {
         socialSubscription.unsubscribe();
       }
