@@ -9,12 +9,7 @@ import type {
   HandlePacketAcceptResponse,
   HandlePacketRejectResponse,
 } from './types.js';
-import {
-  ILP_ERROR_CODES,
-  BlsError,
-  isValidPubkey,
-  SPSP_REQUEST_KIND,
-} from './types.js';
+import { ILP_ERROR_CODES, BlsError, isValidPubkey } from './types.js';
 
 /**
  * Generate a fulfillment from an event ID.
@@ -23,7 +18,7 @@ import {
  * Note: The sender must use SHA256(SHA256(eventId)) as the condition
  * in their ILP Prepare packet.
  *
- * @deprecated Agent-runtime computes fulfillment from SHA256(toon_bytes). BLS should not generate fulfillment.
+ * @deprecated Connector computes fulfillment from SHA256(toon_bytes). BLS should not generate fulfillment.
  */
 export function generateFulfillment(eventId: string): string {
   const hash = createHash('sha256').update(eventId).digest();
@@ -160,22 +155,12 @@ export class BusinessLogicServer {
     }
 
     // Calculate price: use PricingService if provided, otherwise simple calculation
-    let price = this.config.pricingService
+    const price = this.config.pricingService
       ? this.config.pricingService.calculatePriceFromBytes(
           toonBytes,
           event.kind
         )
       : BigInt(toonBytes.length) * this.config.basePricePerByte;
-
-    // Apply SPSP min price override if configured and event is SPSP request
-    const { spspMinPrice } = this.config;
-    const spspMinPriceApplied =
-      spspMinPrice !== undefined &&
-      event.kind === SPSP_REQUEST_KIND &&
-      spspMinPrice < price;
-    if (spspMinPriceApplied) {
-      price = spspMinPrice;
-    }
 
     // Parse and compare amounts
     let amount: bigint;
@@ -199,18 +184,6 @@ export class BusinessLogicServer {
           received: amount.toString(),
         },
       };
-    }
-
-    // Log 0-amount SPSP acceptance
-    if (
-      amount === 0n &&
-      event.kind === SPSP_REQUEST_KIND &&
-      spspMinPriceApplied
-    ) {
-      console.log(
-        'INFO: Accepted 0-amount SPSP request from pubkey:',
-        event.pubkey.slice(0, 16)
-      );
     }
 
     // Store event

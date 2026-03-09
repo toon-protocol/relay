@@ -1,7 +1,7 @@
 /**
  * Subscribe to upstream relays and propagate events into the local EventStore.
  *
- * Follows the same lifecycle pattern as core's RelayMonitor and SocialPeerDiscovery:
+ * Follows the same lifecycle pattern as core's discovery tracker and SocialPeerDiscovery:
  * - Accept optional SimplePool for testability
  * - start() returns { unsubscribe } cleanup handle
  * - isUnsubscribed guard prevents processing after teardown

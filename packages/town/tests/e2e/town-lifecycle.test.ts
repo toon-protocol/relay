@@ -17,12 +17,11 @@
  *    cd packages/town && pnpm build
  *    ```
  *
- * **Why this is RED phase (describe.skip):**
- * - @crosstown/town package does not exist yet (no packages/town/)
- * - @crosstown/sdk package does not exist yet (dependency of town)
- * - startTown() function is unimplemented
- * - TownConfig type is undefined
- * - stopTown() / lifecycle cleanup is unimplemented
+ * **GREEN phase (Story 2.5 implementation complete):**
+ * - startTown() implemented in packages/town/src/town.ts
+ * - TownConfig and TownInstance types exported from @crosstown/town
+ * - CLI entrypoint at packages/town/src/cli.ts
+ * - package.json bin entry added
  *
  * **What this validates:**
  * - FR-RELAY-1: Published as @crosstown/town with startTown(config) and CLI
@@ -36,9 +35,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import WebSocket from 'ws';
 
-// WILL FAIL: @crosstown/town package does not exist yet.
-// These imports define the expected public API surface of the town package.
-// When the package is created, it must export these symbols.
+// Public API surface of the town package (Story 2.5).
 import { startTown, type TownConfig, type TownInstance } from '@crosstown/town';
 
 // For TOON encoding/decoding in test assertions
@@ -125,71 +122,20 @@ async function waitForHttp(url: string, timeoutMs = 10000): Promise<boolean> {
   return false;
 }
 
-/**
- * Subscribe to a Nostr relay and wait for an event by ID.
- */
-function _waitForEventOnRelay(
-  relayUrl: string,
-  eventId: string,
-  timeoutMs = 10000
-): Promise<Record<string, unknown> | null> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(relayUrl);
-    const subId = `town-test-${Date.now()}`;
-    // eslint-disable-next-line prefer-const
-    let timer: ReturnType<typeof setTimeout>;
-
-    const cleanup = () => {
-      clearTimeout(timer);
-      try {
-        ws.close();
-      } catch {
-        // ignore
-      }
-    };
-
-    timer = setTimeout(() => {
-      cleanup();
-      resolve(null);
-    }, timeoutMs);
-
-    ws.on('open', () => {
-      ws.send(JSON.stringify(['REQ', subId, { ids: [eventId] }]));
-    });
-
-    ws.on('message', (data: Buffer) => {
-      try {
-        const msg = JSON.parse(data.toString());
-        if (Array.isArray(msg)) {
-          if (msg[0] === 'EVENT' && msg[1] === subId && msg[2]) {
-            const toonBytes = new TextEncoder().encode(msg[2]);
-            const event = decodeEventFromToon(toonBytes);
-            cleanup();
-            resolve(event as unknown as Record<string, unknown>);
-          }
-        }
-      } catch {
-        // ignore parse errors
-      }
-    });
-
-    ws.on('error', (err: Error) => {
-      cleanup();
-      reject(err);
-    });
-  });
-}
 
 // ============================================================================
-// describe.skip() — RED PHASE
+// GREEN PHASE -- Story 2.5 implementation complete.
 //
-// WILL FAIL because: @crosstown/town package does not exist. The import of
-// `startTown` and `TownConfig` from '@crosstown/town' will fail at module
-// resolution time. Once packages/town/ is created with the correct exports,
-// these tests define the expected behavior of the package.
+// startTown() is exported from @crosstown/town. Tests require genesis node
+// infrastructure (Anvil, Connector, Relay) to be running for E2E tests.
+// Tests gracefully skip if infrastructure is not available.
+//
+// Test adjustments applied (Story 2.5 review):
+// - connectorUrl: CONNECTOR_URL added to all startTown() calls (required)
+// - blsPort: 3500 -> 3550 in T-2.5-05 (avoids Faucet port conflict)
 // ============================================================================
 
-describe.skip('@crosstown/town Package Lifecycle (Story 2.5)', () => {
+describe('@crosstown/town Package Lifecycle (Story 2.5)', () => {
   let genesisReady = false;
   let townInstance: TownInstance | null = null;
 
@@ -229,7 +175,7 @@ describe.skip('@crosstown/town Package Lifecycle (Story 2.5)', () => {
       }
 
       genesisReady = true;
-    } catch (error) {
+    } catch (error: unknown) {
       console.warn('Genesis infrastructure not available.');
       console.warn(
         `Error: ${error instanceof Error ? error.message : String(error)}`
@@ -257,10 +203,8 @@ describe.skip('@crosstown/town Package Lifecycle (Story 2.5)', () => {
   // ---------------------------------------------------------------------------
 
   it('should start relay with minimal mnemonic config and accept events', async () => {
-    // WILL FAIL: startTown() does not exist. The @crosstown/town package has not
-    // been created yet. This test defines the minimal config surface: a mnemonic
-    // and a bootstrap peer. The town instance should start a relay, BLS, and
-    // connector, then accept paid events.
+    // Validates AC #2/#3: startTown() with mnemonic config starts relay, BLS,
+    // and connector, then accepts subscriptions (EOSE).
     if (!genesisReady) {
       console.log('Skipping: Genesis infrastructure not ready');
       return;
@@ -269,6 +213,7 @@ describe.skip('@crosstown/town Package Lifecycle (Story 2.5)', () => {
     // Start a town instance with minimal config
     townInstance = await startTown({
       mnemonic: TEST_MNEMONIC,
+      connectorUrl: CONNECTOR_URL,
       relayPort: TOWN_RELAY_PORT,
       blsPort: TOWN_BLS_PORT,
       knownPeers: [
@@ -349,9 +294,7 @@ describe.skip('@crosstown/town Package Lifecycle (Story 2.5)', () => {
   // ---------------------------------------------------------------------------
 
   it('should export startTown() and TownConfig from @crosstown/town', async () => {
-    // WILL FAIL: @crosstown/town package does not exist yet. This test validates
-    // that the package exports match the expected public API surface defined in
-    // FR-RELAY-1.
+    // Validates AC #2: package exports startTown() and TownConfig type.
 
     // Verify startTown is a function
     expect(typeof startTown).toBe('function');
@@ -360,22 +303,22 @@ describe.skip('@crosstown/town Package Lifecycle (Story 2.5)', () => {
     // At runtime, we verify the function accepts a config object
     const config: TownConfig = {
       mnemonic: TEST_MNEMONIC,
+      connectorUrl: CONNECTOR_URL,
     };
     expect(config.mnemonic).toBe(TEST_MNEMONIC);
+    expect(config.connectorUrl).toBe(CONNECTOR_URL);
   }, 10000);
 
   it('should use default ports (7100 relay, 3100 BLS) when not specified', async () => {
-    // WILL FAIL: startTown() does not exist. This test verifies that when relayPort
-    // and blsPort are omitted from TownConfig, the defaults are 7100 and 3100
-    // respectively, matching the existing genesis node convention.
-    //
-    // NOTE: We cannot actually start on default ports if genesis is running,
-    // so this test only verifies the config defaults are applied correctly.
-    // We do this by checking the TownInstance metadata without actually binding.
+    // Validates AC #3: config defaults and explicit port propagation.
+    // NOTE: Cannot bind to default ports if genesis is running, so this test
+    // verifies config defaults are undefined at TownConfig level and that
+    // explicit ports are propagated to ResolvedTownConfig correctly.
 
     // Verify default config values
     const config: TownConfig = {
       mnemonic: TEST_MNEMONIC,
+      connectorUrl: CONNECTOR_URL,
     };
 
     // The config object should have undefined ports (defaults applied internally)
@@ -392,6 +335,7 @@ describe.skip('@crosstown/town Package Lifecycle (Story 2.5)', () => {
     // Use non-conflicting ports for this test
     const testInstance = await startTown({
       mnemonic: TEST_MNEMONIC,
+      connectorUrl: CONNECTOR_URL,
       relayPort: 7300,
       blsPort: 3300,
       knownPeers: [
@@ -413,9 +357,7 @@ describe.skip('@crosstown/town Package Lifecycle (Story 2.5)', () => {
   }, 60000);
 
   it('should run bootstrap and discover peers on start', async () => {
-    // WILL FAIL: The town package must integrate BootstrapService from
-    // @crosstown/core to discover and handshake with peers during start().
-    // This requires the SDK (which provides the composition) to exist.
+    // Validates AC #3: bootstrap runs, peers discovered, own kind:10032 published.
     if (!genesisReady) {
       console.log('Skipping: Genesis infrastructure not ready');
       return;
@@ -423,6 +365,7 @@ describe.skip('@crosstown/town Package Lifecycle (Story 2.5)', () => {
 
     const instance = await startTown({
       mnemonic: TEST_MNEMONIC,
+      connectorUrl: CONNECTOR_URL,
       relayPort: 7400,
       blsPort: 3400,
       knownPeers: [
@@ -519,10 +462,7 @@ describe.skip('@crosstown/town Package Lifecycle (Story 2.5)', () => {
   }, 60000);
 
   it('should stop cleanly via lifecycle stop', async () => {
-    // WILL FAIL: stopTown() / TownInstance.stop() does not exist. The town
-    // package must implement graceful shutdown: stop relay WebSocket server,
-    // stop BLS HTTP server, unsubscribe relay monitor, stop bootstrap service,
-    // and clean up connector resources.
+    // Validates AC #5: stop() shuts down relay, BLS, and releases ports.
     if (!genesisReady) {
       console.log('Skipping: Genesis infrastructure not ready');
       return;
@@ -530,8 +470,9 @@ describe.skip('@crosstown/town Package Lifecycle (Story 2.5)', () => {
 
     const instance = await startTown({
       mnemonic: TEST_MNEMONIC,
+      connectorUrl: CONNECTOR_URL,
       relayPort: 7500,
-      blsPort: 3500,
+      blsPort: 3550, // NOTE: 3500 conflicts with Faucet service on genesis infra
       knownPeers: [
         {
           pubkey: GENESIS_PUBKEY,
@@ -549,7 +490,7 @@ describe.skip('@crosstown/town Package Lifecycle (Story 2.5)', () => {
     expect(relayUp).toBe(true);
 
     // Verify BLS is healthy
-    const blsUp = await waitForHttp('http://localhost:3500/health', 15000);
+    const blsUp = await waitForHttp('http://localhost:3550/health', 15000);
     expect(blsUp).toBe(true);
 
     // Stop the instance
@@ -581,7 +522,7 @@ describe.skip('@crosstown/town Package Lifecycle (Story 2.5)', () => {
     // Verify BLS is no longer responding
     let blsDown = false;
     try {
-      await fetch('http://localhost:3500/health', {
+      await fetch('http://localhost:3550/health', {
         signal: AbortSignal.timeout(2000),
       });
       // If we get a response, the server is still up
@@ -598,16 +539,14 @@ describe.skip('@crosstown/town Package Lifecycle (Story 2.5)', () => {
   // ---------------------------------------------------------------------------
 
   it('package.json should depend on @crosstown/sdk, @crosstown/relay, @crosstown/core', async () => {
-    // WILL FAIL: packages/town/package.json does not exist. Once the package is
-    // created, this test validates that the dependency graph is correct per the
-    // architecture decision document.
+    // Validates AC #1: correct dependencies, bin entry, ESM, type:module.
 
     const fs = await import('fs');
     const path = await import('path');
 
     const packageJsonPath = path.resolve(
       import.meta.dirname,
-      '../../../package.json'
+      '../../package.json'
     );
 
     let packageJson: Record<string, unknown>;

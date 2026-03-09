@@ -1,0 +1,65 @@
+{
+  "name": "@crosstown/town",
+  "version": "0.1.1",
+  "description": "Crosstown Town - SDK-based relay with startTown() API and CLI for ILP-gated Nostr services",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "crosstown-town": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts"
+  },
+  "keywords": [
+    "crosstown",
+    "nostr",
+    "ilp",
+    "interledger",
+    "relay",
+    "town"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ALLiDoizCode/crosstown.git",
+    "directory": "packages/town"
+  },
+  "author": "ALLiDoizCode",
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@crosstown/sdk": "workspace:*",
+    "@crosstown/core": "workspace:*",
+    "@crosstown/relay": "workspace:*",
+    "@hono/node-server": "^1.0.0",
+    "better-sqlite3": "^11.0.0",
+    "hono": "^4.0.0",
+    "nostr-tools": "^2.20.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.0.0",
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0",
+    "ws": "^8.0.0"
+  }
+}

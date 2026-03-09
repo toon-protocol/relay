@@ -5,6 +5,7 @@ import type { EventStore } from '../storage/index.js';
 import type { RelayConfig } from '../types.js';
 import { DEFAULT_RELAY_CONFIG } from '../types.js';
 import { encodeEventToToonString } from '../toon/index.js';
+import { matchFilter } from '../filters/index.js';
 
 /**
  * Represents an active subscription from a client.
@@ -156,6 +157,19 @@ export class ConnectionHandler {
   private handleClose(subscriptionId: string): void {
     // Silently remove subscription (no error if it doesn't exist per NIP-01)
     this.subscriptions.delete(subscriptionId);
+  }
+
+  /**
+   * Push a new event to all matching subscriptions on this connection.
+   * Used when events are stored outside the WebSocket flow (e.g., via ILP).
+   */
+  notifyNewEvent(event: NostrEvent): void {
+    for (const sub of this.subscriptions.values()) {
+      const matches = sub.filters.some((f) => matchFilter(event, f));
+      if (matches) {
+        this.sendEvent(sub.id, event);
+      }
+    }
   }
 
   /**

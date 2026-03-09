@@ -164,7 +164,7 @@ describe('PricingService', () => {
         basePricePerByte: 10n,
         kindOverrides: new Map([
           [10032, 20n], // ILP Peer Info
-          [10047, 15n], // SPSP Info
+          [10047, 15n], // Custom kind override
         ]),
       });
     });
@@ -176,15 +176,15 @@ describe('PricingService', () => {
       expect(service.calculatePrice(event)).toBe(expectedPrice);
     });
 
-    it('should handle kind 10047 (SPSP Info)', () => {
+    it('should handle kind 10047 with custom override', () => {
       const event = createTestEvent(10047, '{"destination_account":"g.test"}');
       const toonBytes = encodeEventToToon(event);
       const expectedPrice = BigInt(toonBytes.length) * 15n;
       expect(service.calculatePrice(event)).toBe(expectedPrice);
     });
 
-    it('should handle kind 23194 (SPSP Request) with base price', () => {
-      const event = createTestEvent(23194, '{}');
+    it('should handle arbitrary kind with base price (no override)', () => {
+      const event = createTestEvent(30023, '{}');
       const toonBytes = encodeEventToToon(event);
       const expectedPrice = BigInt(toonBytes.length) * 10n;
       expect(service.calculatePrice(event)).toBe(expectedPrice);

@@ -1,5 +1,6 @@
 import type { WebSocket } from 'ws';
 import { WebSocketServer } from 'ws';
+import type { NostrEvent } from 'nostr-tools/pure';
 import type { EventStore } from '../storage/index.js';
 import type { RelayConfig } from '../types.js';
 import { DEFAULT_RELAY_CONFIG } from '../types.js';
@@ -92,6 +93,17 @@ export class NostrRelayServer {
    */
   getClientCount(): number {
     return this.handlers.size;
+  }
+
+  /**
+   * Broadcast an event to all connected clients with matching subscriptions.
+   * Call this after storing an event outside the WebSocket flow (e.g., via ILP)
+   * so that discovery subscribers are notified.
+   */
+  broadcastEvent(event: NostrEvent): void {
+    for (const handler of this.handlers.values()) {
+      handler.notifyNewEvent(event);
+    }
   }
 
   private handleConnection(ws: WebSocket): void {
