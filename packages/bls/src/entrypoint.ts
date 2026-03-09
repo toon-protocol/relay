@@ -343,7 +343,7 @@ async function main(): Promise<void> {
   );
 
   // Wire HTTP clients into bootstrap service
-  bootstrapService.setAgentRuntimeClient(runtimeClient);
+  bootstrapService.setIlpClient(runtimeClient);
   bootstrapService.setConnectorAdmin(connectorAdmin);
   bootstrapService.setChannelClient(channelClient);
 

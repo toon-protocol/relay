@@ -18,7 +18,7 @@ import { ILP_ERROR_CODES, BlsError, isValidPubkey } from './types.js';
  * Note: The sender must use SHA256(SHA256(eventId)) as the condition
  * in their ILP Prepare packet.
  *
- * @deprecated Agent-runtime computes fulfillment from SHA256(toon_bytes). BLS should not generate fulfillment.
+ * @deprecated Connector computes fulfillment from SHA256(toon_bytes). BLS should not generate fulfillment.
  */
 export function generateFulfillment(eventId: string): string {
   const hash = createHash('sha256').update(eventId).digest();

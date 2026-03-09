@@ -40,7 +40,7 @@ import {
   BootstrapService,
   createDiscoveryTracker,
   ILP_PEER_INFO_KIND,
-  createHttpRuntimeClient,
+  createHttpIlpClient,
   createHttpConnectorAdmin,
   createHttpChannelClient,
   SocialPeerDiscovery,
@@ -52,7 +52,7 @@ import type {
   IlpPeerInfo,
   HandlePacketRequest,
   ConnectorAdminClient,
-  AgentRuntimeClient,
+  IlpClient,
   SettlementConfig,
 } from '@crosstown/core';
 import {
@@ -633,9 +633,9 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     bootstrapService.setChannelClient(channelClient);
   }
 
-  const agentRuntimeClient: AgentRuntimeClient =
-    createHttpRuntimeClient(connectorAdminUrl);
-  bootstrapService.setAgentRuntimeClient(agentRuntimeClient);
+  const ilpClient: IlpClient =
+    createHttpIlpClient(connectorAdminUrl);
+  bootstrapService.setIlpClient(ilpClient);
 
   bootstrapService.on((event: BootstrapEvent) => {
     switch (event.type) {
@@ -714,7 +714,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
         const base64Toon = Buffer.from(toonBytes).toString('base64');
         const ilpAmount = String(BigInt(toonBytes.length) * basePricePerByte);
 
-        agentRuntimeClient
+        ilpClient
           .sendIlpPacket({
             destination: genesisIlpAddress,
             amount: ilpAmount,
