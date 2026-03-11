@@ -11,11 +11,12 @@
  * process-level signals (SIGINT/SIGTERM), while `startTown()` returns a
  * `TownInstance` with an explicit `.stop()` method.
  *
- * ## External vs Embedded Connector
+ * ## Deployment Modes
  *
- * The initial implementation requires `connectorUrl` -- the node connects to
- * an external connector via HTTP. Embedded connector mode (where `startTown()`
- * creates and manages its own connector process) is deferred to a future story.
+ * - **Embedded** (`connector`): Pass an `EmbeddableConnectorLike` directly.
+ *   Zero-latency packet delivery via direct function calls.
+ * - **Standalone** (`connectorUrl`): Connect to an external connector via HTTP.
+ *   The connector runs as a separate process or container.
  */
 
 import { mkdirSync } from 'node:fs';
@@ -43,6 +44,9 @@ import {
   createHttpIlpClient,
   createHttpConnectorAdmin,
   createHttpChannelClient,
+  createDirectIlpClient,
+  createDirectConnectorAdmin,
+  createDirectChannelClient,
   SocialPeerDiscovery,
   buildIlpPeerInfoEvent,
 } from '@crosstown/core';
@@ -54,6 +58,7 @@ import type {
   ConnectorAdminClient,
   IlpClient,
   SettlementConfig,
+  EmbeddableConnectorLike,
 } from '@crosstown/core';
 import {
   shallowParseToon,
@@ -76,12 +81,13 @@ const MAX_PAYLOAD_BASE64_LENGTH = 1_048_576;
 /**
  * Configuration for starting a Crosstown relay node via `startTown()`.
  *
- * Exactly one of `mnemonic` or `secretKey` must be provided. All other fields
- * have sensible defaults.
+ * Exactly one of `mnemonic` or `secretKey` must be provided.
+ * Exactly one of `connector` or `connectorUrl` must be provided.
  *
- * **Note:** `connectorUrl` is required for the initial implementation. The node
- * connects to an external ILP connector via HTTP. Embedded connector mode
- * (where `startTown()` manages its own connector) is deferred to a future story.
+ * - **Embedded mode** (`connector`): Pass an `EmbeddableConnectorLike` directly
+ *   for zero-latency packet delivery. No HTTP overhead.
+ * - **Standalone mode** (`connectorUrl`): Connect to an external connector via
+ *   HTTP. The connector runs as a separate process.
  */
 export interface TownConfig {
   // --- Identity (exactly one required) ---
@@ -90,6 +96,25 @@ export interface TownConfig {
   mnemonic?: string;
   /** 32-byte secp256k1 secret key. */
   secretKey?: Uint8Array;
+
+  // --- Connector (exactly one required) ---
+
+  /**
+   * Embedded connector instance for zero-latency mode.
+   * Exactly one of `connector` or `connectorUrl` is required.
+   */
+  connector?: EmbeddableConnectorLike;
+  /**
+   * External connector URL (e.g., "http://localhost:8080").
+   * Exactly one of `connector` or `connectorUrl` is required.
+   */
+  connectorUrl?: string;
+  /**
+   * External connector admin URL (e.g., "http://localhost:8081").
+   * Defaults to the connectorUrl with port incremented by 1.
+   * Only used in standalone mode (with `connectorUrl`).
+   */
+  connectorAdminUrl?: string;
 
   // --- Network ---
 
@@ -101,17 +126,6 @@ export interface TownConfig {
   ilpAddress?: string;
   /** BTP WebSocket endpoint (default: ws://localhost:3000). */
   btpEndpoint?: string;
-  /**
-   * External connector URL (e.g., "http://localhost:8080").
-   * **Required** for the initial implementation. Embedded connector mode
-   * is deferred to a future story.
-   */
-  connectorUrl: string;
-  /**
-   * External connector admin URL (e.g., "http://localhost:8081").
-   * Defaults to the connectorUrl with port incremented by 1.
-   */
-  connectorAdminUrl?: string;
 
   // --- Pricing ---
 
@@ -163,8 +177,10 @@ export interface ResolvedTownConfig {
   blsPort: number;
   ilpAddress: string;
   btpEndpoint: string;
-  connectorUrl: string;
-  connectorAdminUrl: string;
+  /** Connector URL (standalone mode only). */
+  connectorUrl?: string;
+  /** Connector admin URL (standalone mode only). */
+  connectorAdminUrl?: string;
   basePricePerByte: bigint;
   knownPeers: { pubkey: string; relayUrl: string; btpEndpoint: string }[];
   dataDir: string;
@@ -328,26 +344,30 @@ export function createSubscription(
  * and starts the relay WebSocket server, BLS HTTP server, bootstrap service,
  * and relay monitor. Returns a `TownInstance` for lifecycle management.
  *
- * @param config - Node configuration. `connectorUrl` and one of
- *   `mnemonic`/`secretKey` are required; all other fields have defaults.
+ * Supports two deployment modes:
+ * - **Embedded** (`connector`): Pass an EmbeddableConnectorLike directly for
+ *   zero-latency packet delivery. No HTTP overhead.
+ * - **Standalone** (`connectorUrl`): Connect to an external connector via HTTP.
+ *
+ * @param config - Node configuration. One of `connector`/`connectorUrl` and one
+ *   of `mnemonic`/`secretKey` are required; all other fields have defaults.
  * @returns A running TownInstance.
  * @throws If both or neither of mnemonic/secretKey are provided.
- * @throws If connectorUrl is missing.
+ * @throws If both or neither of connector/connectorUrl are provided.
  *
  * @example
  * ```typescript
- * import { startTown } from '@crosstown/town';
- *
+ * // Standalone mode (external connector)
  * const town = await startTown({
  *   mnemonic: 'abandon abandon abandon ...',
  *   connectorUrl: 'http://localhost:8080',
  * });
  *
- * console.log(`Relay running on ws://localhost:${town.config.relayPort}`);
- * console.log(`Pubkey: ${town.pubkey}`);
- *
- * // Later...
- * await town.stop();
+ * // Embedded mode (zero-latency)
+ * const town = await startTown({
+ *   mnemonic: 'abandon abandon abandon ...',
+ *   connector: myConnectorNode,
+ * });
  * ```
  */
 export async function startTown(config: TownConfig): Promise<TownInstance> {
@@ -364,6 +384,22 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     throw new Error('TownConfig: one of mnemonic or secretKey is required');
   }
 
+  // --- 1b. Validate connector mode ---
+  const hasConnector = config.connector !== undefined;
+  const hasConnectorUrl = config.connectorUrl !== undefined;
+
+  if (hasConnector && hasConnectorUrl) {
+    throw new Error(
+      'TownConfig: provide either connector or connectorUrl, not both'
+    );
+  }
+  if (!hasConnector && !hasConnectorUrl) {
+    throw new Error(
+      'TownConfig: one of connector or connectorUrl is required'
+    );
+  }
+  const embeddedMode = hasConnector;
+
   // --- 2. Derive identity ---
   const identity: NodeIdentity = hasMnemonic
     ? fromMnemonic(config.mnemonic as string)
@@ -376,8 +412,9 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   const ilpAddress = config.ilpAddress ?? `g.crosstown.${pubkeyShort}`;
   const btpEndpoint = config.btpEndpoint ?? 'ws://localhost:3000';
   const connectorUrl = config.connectorUrl;
-  const connectorAdminUrl =
-    config.connectorAdminUrl ?? deriveAdminUrl(connectorUrl);
+  const connectorAdminUrl = connectorUrl
+    ? (config.connectorAdminUrl ?? deriveAdminUrl(connectorUrl))
+    : undefined;
   const basePricePerByte = config.basePricePerByte ?? 10n;
   const knownPeers = config.knownPeers ?? [];
   const dataDir = config.dataDir ?? './data';
@@ -392,8 +429,8 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     blsPort,
     ilpAddress,
     btpEndpoint,
-    connectorUrl,
-    connectorAdminUrl,
+    ...(connectorUrl && { connectorUrl }),
+    ...(connectorAdminUrl && { connectorAdminUrl }),
     basePricePerByte,
     knownPeers,
     dataDir,
@@ -440,14 +477,24 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       tokenNetworks: config.tokenNetworks,
     };
 
-    channelClient = createHttpChannelClient(connectorAdminUrl);
+    if (embeddedMode) {
+      const conn = config.connector!;
+      if (conn.openChannel && conn.getChannelState) {
+        channelClient = createDirectChannelClient(
+          conn as Required<
+            Pick<EmbeddableConnectorLike, 'openChannel' | 'getChannelState'>
+          >
+        );
+      }
+    } else {
+      channelClient = createHttpChannelClient(connectorAdminUrl!);
+    }
   }
 
   // --- 7. Connector admin client ---
-  const adminClient: ConnectorAdminClient = createHttpConnectorAdmin(
-    connectorAdminUrl,
-    ''
-  );
+  const adminClient: ConnectorAdminClient = embeddedMode
+    ? createDirectConnectorAdmin(config.connector!)
+    : createHttpConnectorAdmin(connectorAdminUrl!, '');
 
   // --- 8. SDK Pipeline ---
   const verifier = createVerificationPipeline({ devMode });
@@ -633,8 +680,11 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     bootstrapService.setChannelClient(channelClient);
   }
 
-  const ilpClient: IlpClient =
-    createHttpIlpClient(connectorAdminUrl);
+  const ilpClient: IlpClient = embeddedMode
+    ? createDirectIlpClient(config.connector!, {
+        toonDecoder: (bytes: Uint8Array) => decodeEventFromToon(bytes),
+      })
+    : createHttpIlpClient(connectorAdminUrl!);
   bootstrapService.setIlpClient(ilpClient);
 
   bootstrapService.on((event: BootstrapEvent) => {
@@ -651,16 +701,47 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     }
   });
 
-  // Wait for connector health.
-  // If the connector is unreachable, clean up already-started servers before
-  // propagating the error so we don't leak listening ports.
-  try {
-    await waitForConnector(connectorUrl);
-  } catch (connectorError: unknown) {
-    blsServer.close();
-    await wsRelay.stop();
-    eventStore.close?.();
-    throw connectorError;
+  // In embedded mode, wire the packet handler directly to the connector.
+  // Mutable ref for discovery tracker (created below, used in handler callback).
+  const discoveryTrackerRef: {
+    current?: ReturnType<typeof createDiscoveryTracker>;
+  } = {};
+
+  if (embeddedMode && config.connector!.setPacketHandler) {
+    config.connector!.setPacketHandler(async (request) => {
+      const result = await handlePacket(request as HandlePacketRequest);
+      // Feed accepted kind:10032 events to discovery tracker
+      if (result.accept && discoveryTrackerRef.current) {
+        try {
+          const toonBytes = Buffer.from(
+            (request as HandlePacketRequest).data,
+            'base64'
+          );
+          const decoded = decodeEventFromToon(toonBytes);
+          if (decoded && decoded.kind === ILP_PEER_INFO_KIND) {
+            discoveryTrackerRef.current.processEvent(decoded);
+          }
+        } catch {
+          /* decode failed, ignore */
+        }
+      }
+      return result;
+    });
+  }
+
+  // Wait for connector health (standalone mode only).
+  // In embedded mode, the connector is in-process — no health check needed.
+  if (!embeddedMode) {
+    // If the connector is unreachable, clean up already-started servers before
+    // propagating the error so we don't leak listening ports.
+    try {
+      await waitForConnector(connectorUrl!);
+    } catch (connectorError: unknown) {
+      blsServer.close();
+      await wsRelay.stop();
+      eventStore.close?.();
+      throw connectorError;
+    }
   }
 
   // Create DiscoveryTracker
@@ -672,6 +753,8 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   if (channelClient) {
     discoveryTracker.setChannelClient(channelClient);
   }
+  // Wire discovery tracker ref for embedded mode packet handler
+  discoveryTrackerRef.current = discoveryTracker;
   // discoveryTracker peer count is read live via getPeerCount() in the
   // health endpoint — no need for a separate counter here.
 
