@@ -478,7 +478,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     };
 
     if (embeddedMode) {
-      const conn = config.connector!;
+      const conn = config.connector as NonNullable<typeof config.connector>;
       if (conn.openChannel && conn.getChannelState) {
         channelClient = createDirectChannelClient(
           conn as Required<
@@ -487,14 +487,14 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
         );
       }
     } else {
-      channelClient = createHttpChannelClient(connectorAdminUrl!);
+      channelClient = createHttpChannelClient(connectorAdminUrl as string);
     }
   }
 
   // --- 7. Connector admin client ---
   const adminClient: ConnectorAdminClient = embeddedMode
-    ? createDirectConnectorAdmin(config.connector!)
-    : createHttpConnectorAdmin(connectorAdminUrl!, '');
+    ? createDirectConnectorAdmin(config.connector as NonNullable<typeof config.connector>)
+    : createHttpConnectorAdmin(connectorAdminUrl as string, '');
 
   // --- 8. SDK Pipeline ---
   const verifier = createVerificationPipeline({ devMode });
@@ -681,10 +681,10 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   }
 
   const ilpClient: IlpClient = embeddedMode
-    ? createDirectIlpClient(config.connector!, {
+    ? createDirectIlpClient(config.connector as NonNullable<typeof config.connector>, {
         toonDecoder: (bytes: Uint8Array) => decodeEventFromToon(bytes),
       })
-    : createHttpIlpClient(connectorAdminUrl!);
+    : createHttpIlpClient(connectorAdminUrl as string);
   bootstrapService.setIlpClient(ilpClient);
 
   bootstrapService.on((event: BootstrapEvent) => {
@@ -707,8 +707,9 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     current?: ReturnType<typeof createDiscoveryTracker>;
   } = {};
 
-  if (embeddedMode && config.connector!.setPacketHandler) {
-    config.connector!.setPacketHandler(async (request) => {
+  const connector = config.connector;
+  if (embeddedMode && connector?.setPacketHandler) {
+    connector.setPacketHandler(async (request) => {
       const result = await handlePacket(request as HandlePacketRequest);
       // Feed accepted kind:10032 events to discovery tracker
       if (result.accept && discoveryTrackerRef.current) {
@@ -735,7 +736,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     // If the connector is unreachable, clean up already-started servers before
     // propagating the error so we don't leak listening ports.
     try {
-      await waitForConnector(connectorUrl!);
+      await waitForConnector(connectorUrl as string);
     } catch (connectorError: unknown) {
       blsServer.close();
       await wsRelay.stop();
