@@ -1,6 +1,6 @@
 {
   "name": "@crosstown/town",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Crosstown Town - SDK-based relay with startTown() API and CLI for ILP-gated Nostr services",
   "type": "module",
   "main": "./dist/index.js",
