@@ -179,7 +179,7 @@ async function main(): Promise<void> {
     preferredTokens: {
       'evm:base:31337':
         process.env['M2M_TOKEN_ADDRESS'] ||
-        '0x5FbDB2315678afecb367f032d93F642f64180aa3',
+        '0x5FbDB2315678afecb367f032d93F642f64180aa3', // Mock USDC (Anvil deterministic address)
     },
     tokenNetworks: {
       'evm:base:31337':
