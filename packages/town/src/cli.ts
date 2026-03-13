@@ -45,6 +45,11 @@ Environment Variables:
   CROSSTOWN_CONNECTOR_ADMIN_URL  Same as --connector-admin-url
   CROSSTOWN_KNOWN_PEERS        Same as --known-peers
   CROSSTOWN_DEV_MODE           Same as --dev-mode (set to "true")
+
+Security:
+  Prefer CROSSTOWN_MNEMONIC or CROSSTOWN_SECRET_KEY environment variables
+  over --mnemonic / --secret-key CLI flags. CLI arguments are visible to
+  other users on the system via process listings (e.g. ps aux). See CWE-214.
 `.trim()
   );
 }
@@ -73,6 +78,20 @@ function parseCli(): TownConfig {
   }
 
   // Resolve: CLI flags override env vars
+
+  // Warn about process-listing exposure (CWE-214) when secrets are passed via CLI flags
+  if (values.mnemonic) {
+    console.warn(
+      'Warning: --mnemonic is visible in process listings. ' +
+        'Prefer CROSSTOWN_MNEMONIC environment variable for production use.'
+    );
+  }
+  if (values['secret-key']) {
+    console.warn(
+      'Warning: --secret-key is visible in process listings. ' +
+        'Prefer CROSSTOWN_SECRET_KEY environment variable for production use.'
+    );
+  }
 
   const mnemonic =
     values.mnemonic ?? process.env['CROSSTOWN_MNEMONIC'] ?? undefined;

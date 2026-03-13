@@ -394,9 +394,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     );
   }
   if (!hasConnector && !hasConnectorUrl) {
-    throw new Error(
-      'TownConfig: one of connector or connectorUrl is required'
-    );
+    throw new Error('TownConfig: one of connector or connectorUrl is required');
   }
   const embeddedMode = hasConnector;
 
@@ -493,7 +491,9 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
 
   // --- 7. Connector admin client ---
   const adminClient: ConnectorAdminClient = embeddedMode
-    ? createDirectConnectorAdmin(config.connector as NonNullable<typeof config.connector>)
+    ? createDirectConnectorAdmin(
+        config.connector as NonNullable<typeof config.connector>
+      )
     : createHttpConnectorAdmin(connectorAdminUrl as string, '');
 
   // --- 8. SDK Pipeline ---
@@ -647,7 +647,9 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
           if (decoded && decoded.kind === ILP_PEER_INFO_KIND) {
             discoveryTracker.processEvent(decoded);
           }
-        } catch { /* decode failed, ignore */ }
+        } catch {
+          /* decode failed, ignore */
+        }
       }
       return c.json(result, result.accept ? 200 : 400);
     } catch (error: unknown) {
@@ -681,9 +683,12 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   }
 
   const ilpClient: IlpClient = embeddedMode
-    ? createDirectIlpClient(config.connector as NonNullable<typeof config.connector>, {
-        toonDecoder: (bytes: Uint8Array) => decodeEventFromToon(bytes),
-      })
+    ? createDirectIlpClient(
+        config.connector as NonNullable<typeof config.connector>,
+        {
+          toonDecoder: (bytes: Uint8Array) => decodeEventFromToon(bytes),
+        }
+      )
     : createHttpIlpClient(connectorAdminUrl as string);
   bootstrapService.setIlpClient(ilpClient);
 

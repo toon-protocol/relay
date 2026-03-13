@@ -401,12 +401,17 @@ async function main(): Promise<void> {
     // Feed accepted kind:10032 events to discovery tracker for peer discovery
     if (response.accept) {
       try {
-        const toonBytes = Buffer.from((request as HandlePacketRequest).data, 'base64');
+        const toonBytes = Buffer.from(
+          (request as HandlePacketRequest).data,
+          'base64'
+        );
         const decoded = decodeEventFromToon(toonBytes);
         if (decoded && decoded.kind === ILP_PEER_INFO_KIND) {
           discoveryTracker.processEvent(decoded);
         }
-      } catch { /* decode failed, ignore */ }
+      } catch {
+        /* decode failed, ignore */
+      }
     }
     return c.json(response);
   });
