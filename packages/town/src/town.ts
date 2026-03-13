@@ -49,6 +49,7 @@ import {
   createDirectChannelClient,
   SocialPeerDiscovery,
   buildIlpPeerInfoEvent,
+  resolveChainConfig,
 } from '@crosstown/core';
 import type {
   ConnectorChannelClient,
@@ -137,8 +138,10 @@ export interface TownConfig {
   /** Known peers to bootstrap with. */
   knownPeers?: { pubkey: string; relayUrl: string; btpEndpoint: string }[];
 
-  // --- Settlement (all optional -- omit to disable settlement) ---
+  // --- Chain / Settlement ---
 
+  /** Chain preset name (default: 'anvil'). See resolveChainConfig(). */
+  chain?: string;
   /** Chain ID -> RPC URL mapping (e.g., { 'evm:base:31337': 'http://localhost:8545' }). */
   chainRpcUrls?: Record<string, string>;
   /** Chain ID -> TokenNetwork contract address. */
@@ -446,19 +449,37 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   const dbPath = join(dataDir, 'events.db');
   const eventStore: EventStore = new SqliteEventStore(dbPath);
 
+  // --- 5b. Resolve chain preset and auto-populate settlement defaults ---
+  const chainConfig = resolveChainConfig(config.chain);
+  const chainKey = `evm:base:${chainConfig.chainId}`;
+
+  // Auto-populate settlement fields from chain preset when not explicitly set.
+  // Explicit config values always win over chain preset defaults.
+  const effectiveChainRpcUrls = config.chainRpcUrls ?? {
+    [chainKey]: chainConfig.rpcUrl,
+  };
+  const effectivePreferredTokens = config.preferredTokens ?? {
+    [chainKey]: chainConfig.usdcAddress,
+  };
+  const effectiveTokenNetworks =
+    config.tokenNetworks ??
+    (chainConfig.tokenNetworkAddress
+      ? { [chainKey]: chainConfig.tokenNetworkAddress }
+      : undefined);
+
   // --- 6. Settlement configuration ---
   let channelClient: ConnectorChannelClient | undefined;
   let settlementInfo: SettlementConfig | undefined;
 
   const hasSettlement =
-    config.chainRpcUrls || config.tokenNetworks || config.preferredTokens;
+    effectiveChainRpcUrls || effectiveTokenNetworks || effectivePreferredTokens;
 
   if (hasSettlement) {
     const supportedChains = Array.from(
       new Set([
-        ...Object.keys(config.chainRpcUrls ?? {}),
-        ...Object.keys(config.tokenNetworks ?? {}),
-        ...Object.keys(config.preferredTokens ?? {}),
+        ...Object.keys(effectiveChainRpcUrls ?? {}),
+        ...Object.keys(effectiveTokenNetworks ?? {}),
+        ...Object.keys(effectivePreferredTokens ?? {}),
       ])
     );
 
@@ -471,8 +492,8 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     settlementInfo = {
       supportedChains,
       settlementAddresses,
-      preferredTokens: config.preferredTokens,
-      tokenNetworks: config.tokenNetworks,
+      preferredTokens: effectivePreferredTokens,
+      tokenNetworks: effectiveTokenNetworks,
     };
 
     if (embeddedMode) {
