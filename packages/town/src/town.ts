@@ -37,6 +37,7 @@ import type {
   NodeIdentity,
 } from '@crosstown/sdk';
 import { createEventStorageHandler } from './handlers/event-storage-handler.js';
+import { createX402Handler } from './handlers/x402-publish-handler.js';
 import {
   BootstrapService,
   createDiscoveryTracker,
@@ -132,6 +133,15 @@ export interface TownConfig {
 
   /** Base price per byte in ILP units (default: 10n). */
   basePricePerByte?: bigint;
+  /** Routing buffer percentage for x402 multi-hop overhead (default: 10). */
+  routingBufferPercent?: number;
+
+  // --- x402 ---
+
+  /** Enable x402 /publish endpoint (default: false). */
+  x402Enabled?: boolean;
+  /** Facilitator EVM address for x402 payments. Defaults to the node's EVM address. */
+  facilitatorAddress?: string;
 
   // --- Peers ---
 
@@ -185,6 +195,8 @@ export interface ResolvedTownConfig {
   /** Connector admin URL (standalone mode only). */
   connectorAdminUrl?: string;
   basePricePerByte: bigint;
+  routingBufferPercent: number;
+  x402Enabled: boolean;
   knownPeers: { pubkey: string; relayUrl: string; btpEndpoint: string }[];
   dataDir: string;
   devMode: boolean;
@@ -417,6 +429,8 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     ? (config.connectorAdminUrl ?? deriveAdminUrl(connectorUrl))
     : undefined;
   const basePricePerByte = config.basePricePerByte ?? 10n;
+  const routingBufferPercent = config.routingBufferPercent ?? 10;
+  const x402Enabled = config.x402Enabled ?? false;
   const knownPeers = config.knownPeers ?? [];
   const dataDir = config.dataDir ?? './data';
   const devMode = config.devMode ?? false;
@@ -433,6 +447,8 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     ...(connectorUrl && { connectorUrl }),
     ...(connectorAdminUrl && { connectorAdminUrl }),
     basePricePerByte,
+    routingBufferPercent,
+    x402Enabled,
     knownPeers,
     dataDir,
     devMode,
@@ -684,6 +700,33 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     }
   });
 
+  // --- 10b. ILP client (created before x402 handler so it can be wired in) ---
+  const ilpClient: IlpClient = embeddedMode
+    ? createDirectIlpClient(
+        config.connector as NonNullable<typeof config.connector>,
+        {
+          toonDecoder: (bytes: Uint8Array) => decodeEventFromToon(bytes),
+        }
+      )
+    : createHttpIlpClient(connectorAdminUrl as string);
+
+  // --- 10c. x402 /publish route ---
+  const x402Handler = createX402Handler({
+    x402Enabled,
+    chainConfig,
+    basePricePerByte,
+    routingBufferPercent,
+    facilitatorAddress: config.facilitatorAddress ?? identity.evmAddress,
+    ownPubkey: identity.pubkey,
+    devMode,
+    eventStore,
+    ilpClient,
+  });
+
+  // Register /publish for both GET and POST methods
+  app.get('/publish', (c: Context) => x402Handler.handlePublish(c));
+  app.post('/publish', (c: Context) => x402Handler.handlePublish(c));
+
   const blsServer: ServerType = serve({
     fetch: app.fetch,
     port: blsPort,
@@ -703,14 +746,6 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     bootstrapService.setChannelClient(channelClient);
   }
 
-  const ilpClient: IlpClient = embeddedMode
-    ? createDirectIlpClient(
-        config.connector as NonNullable<typeof config.connector>,
-        {
-          toonDecoder: (bytes: Uint8Array) => decodeEventFromToon(bytes),
-        }
-      )
-    : createHttpIlpClient(connectorAdminUrl as string);
   bootstrapService.setIlpClient(ilpClient);
 
   bootstrapService.on((event: BootstrapEvent) => {

@@ -33,6 +33,7 @@ Options:
   --connector-admin-url <url>  Connector admin URL (default: connectorUrl port+1)
   --known-peers <json>     Known peers as JSON array
   --dev-mode               Enable dev mode (skip verification)
+  --x402-enabled           Enable x402 /publish endpoint (default: false)
   --help                   Show this help message
 
 Environment Variables:
@@ -45,6 +46,7 @@ Environment Variables:
   CROSSTOWN_CONNECTOR_ADMIN_URL  Same as --connector-admin-url
   CROSSTOWN_KNOWN_PEERS        Same as --known-peers
   CROSSTOWN_DEV_MODE           Same as --dev-mode (set to "true")
+  CROSSTOWN_X402_ENABLED       Same as --x402-enabled (set to "true")
 
 Security:
   Prefer CROSSTOWN_MNEMONIC or CROSSTOWN_SECRET_KEY environment variables
@@ -66,6 +68,7 @@ function parseCli(): TownConfig {
       'connector-admin-url': { type: 'string' },
       'known-peers': { type: 'string' },
       'dev-mode': { type: 'boolean' },
+      'x402-enabled': { type: 'boolean' },
       help: { type: 'boolean' },
     },
     strict: true,
@@ -154,6 +157,10 @@ function parseCli(): TownConfig {
     values['dev-mode'] ??
     (process.env['CROSSTOWN_DEV_MODE'] === 'true' ? true : undefined);
 
+  const x402Enabled =
+    values['x402-enabled'] ??
+    (process.env['CROSSTOWN_X402_ENABLED'] === 'true' ? true : undefined);
+
   const knownPeersJson =
     values['known-peers'] ?? process.env['CROSSTOWN_KNOWN_PEERS'] ?? undefined;
 
@@ -201,6 +208,7 @@ function parseCli(): TownConfig {
     ...(connectorAdminUrl && { connectorAdminUrl }),
     ...(knownPeers && { knownPeers }),
     ...(devMode !== undefined && { devMode }),
+    ...(x402Enabled !== undefined && { x402Enabled }),
   };
 
   return config;
