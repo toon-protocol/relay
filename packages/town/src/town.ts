@@ -53,7 +53,10 @@ import {
   resolveChainConfig,
   SeedRelayDiscovery,
   publishSeedRelayEntry,
+  buildServiceDiscoveryEvent,
+  VERSION,
 } from '@crosstown/core';
+import type { ServiceDiscoveryContent } from '@crosstown/core';
 import type {
   ConnectorChannelClient,
   BootstrapEvent,
@@ -225,6 +228,8 @@ export interface ResolvedTownConfig {
   publishSeedEntry: boolean;
   /** External WebSocket URL of this relay (for seed entry publishing). */
   externalRelayUrl?: string;
+  /** Chain preset name (e.g., 'anvil', 'arbitrum-one'). */
+  chain: string;
 }
 
 /**
@@ -468,6 +473,10 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   const publishSeedEntryFlag = config.publishSeedEntry ?? false;
   const externalRelayUrl = config.externalRelayUrl;
 
+  // --- 3b. Resolve chain preset early (needed for resolvedConfig and settlement) ---
+  const chainConfig = resolveChainConfig(config.chain);
+  const chainKey = `evm:base:${chainConfig.chainId}`;
+
   const resolvedConfig: ResolvedTownConfig = {
     relayPort,
     blsPort,
@@ -489,6 +498,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     seedRelays,
     publishSeedEntry: publishSeedEntryFlag,
     ...(externalRelayUrl && { externalRelayUrl }),
+    chain: chainConfig.name,
   };
 
   // --- 4. Create data directory ---
@@ -498,9 +508,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   const dbPath = join(dataDir, 'events.db');
   const eventStore: EventStore = new SqliteEventStore(dbPath);
 
-  // --- 5b. Resolve chain preset and auto-populate settlement defaults ---
-  const chainConfig = resolveChainConfig(config.chain);
-  const chainKey = `evm:base:${chainConfig.chainId}`;
+  // --- 5b. Auto-populate settlement defaults from chain preset ---
 
   // Auto-populate settlement fields from chain preset when not explicitly set.
   // Explicit config values always win over chain preset defaults.
@@ -944,6 +952,64 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       }
     } catch (error: unknown) {
       console.warn('[Town] Failed to publish ILP info:', error);
+    }
+
+    // Self-write: publish own kind:10035 (Service Discovery)
+    try {
+      const serviceDiscoveryContent: ServiceDiscoveryContent = {
+        serviceType: 'relay',
+        ilpAddress,
+        pricing: {
+          basePricePerByte: Number(basePricePerByte),
+          currency: 'USDC',
+        },
+        supportedKinds: [1, 10032, 10035, 10036],
+        capabilities: x402Enabled ? ['relay', 'x402'] : ['relay'],
+        chain: chainConfig.name,
+        version: VERSION,
+      };
+
+      // Only include x402 field when enabled (AC #3: omit entirely when disabled)
+      if (x402Enabled) {
+        serviceDiscoveryContent.x402 = {
+          enabled: true,
+          endpoint: '/publish',
+        };
+      }
+
+      const serviceDiscoveryEvent = buildServiceDiscoveryEvent(
+        serviceDiscoveryContent,
+        identity.secretKey
+      );
+      eventStore.store(serviceDiscoveryEvent);
+
+      // Publish to peers via ILP (fire-and-forget, same pattern as kind:10032)
+      const firstPeer = knownPeers[0];
+      const genesisResult = results[0];
+      if (firstPeer && genesisResult) {
+        const genesisIlpAddress = genesisResult.peerInfo.ilpAddress;
+        const sdToonBytes = encodeEventToToon(serviceDiscoveryEvent);
+        const sdBase64Toon = Buffer.from(sdToonBytes).toString('base64');
+        const sdIlpAmount = String(
+          BigInt(sdToonBytes.length) * basePricePerByte
+        );
+
+        ilpClient
+          .sendIlpPacket({
+            destination: genesisIlpAddress,
+            amount: sdIlpAmount,
+            data: sdBase64Toon,
+          })
+          .catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : 'Unknown';
+            console.warn(
+              '[Town] Failed to publish service discovery via ILP:',
+              msg
+            );
+          });
+      }
+    } catch (error: unknown) {
+      console.warn('[Town] Failed to publish service discovery:', error);
     }
 
     // Exclude already-bootstrapped peers from discovery

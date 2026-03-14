@@ -154,6 +154,7 @@ describe('TownConfig type surface (AC #2)', () => {
       discovery: 'genesis',
       seedRelays: [],
       publishSeedEntry: false,
+      chain: 'anvil',
     };
 
     // All fields must be defined (non-optional in ResolvedTownConfig)
@@ -176,6 +177,8 @@ describe('TownConfig type surface (AC #2)', () => {
     expect(resolved.seedRelays).toEqual([]);
     expect(resolved.publishSeedEntry).toBe(false);
     expect(resolved.externalRelayUrl).toBeUndefined();
+    // Story 3.5: Chain field
+    expect(resolved.chain).toBe('anvil');
   });
 });
 
@@ -217,6 +220,7 @@ describe('TownInstance type surface (AC #5)', () => {
         discovery: 'genesis',
         seedRelays: [],
         publishSeedEntry: false,
+        chain: 'anvil',
       },
       bootstrapResult: {
         peerCount: 0,
@@ -404,6 +408,7 @@ describe('ResolvedTownConfig seed relay defaults (Story 3.4 AC #4)', () => {
       discovery: 'genesis',
       seedRelays: [],
       publishSeedEntry: false,
+      chain: 'anvil',
     };
 
     expect(resolved.discovery).toBe('genesis');
@@ -431,6 +436,7 @@ describe('ResolvedTownConfig seed relay defaults (Story 3.4 AC #4)', () => {
       seedRelays: ['wss://relay.damus.io'],
       publishSeedEntry: true,
       externalRelayUrl: 'wss://my-relay.example.com',
+      chain: 'anvil',
     };
 
     expect(resolved.discovery).toBe('seed-list');
@@ -471,6 +477,7 @@ describe('TownInstance.discoveryMode (Story 3.4 AC #1, #4)', () => {
         discovery: 'genesis',
         seedRelays: [],
         publishSeedEntry: false,
+        chain: 'anvil',
       },
       bootstrapResult: { peerCount: 0, channelCount: 0 },
       discoveryMode: 'genesis',
@@ -509,6 +516,7 @@ describe('TownInstance.discoveryMode (Story 3.4 AC #1, #4)', () => {
         seedRelays: ['wss://relay.example.com'],
         publishSeedEntry: true,
         externalRelayUrl: 'wss://my-relay.example.com',
+        chain: 'anvil',
       },
       bootstrapResult: { peerCount: 0, channelCount: 0 },
       discoveryMode: 'seed-list',
@@ -555,5 +563,170 @@ describe('startTown() seed relay integration -- static analysis (Story 3.4)', ()
 
     // Verify discoveryMode is set on the instance
     expect(source).toContain('discoveryMode');
+  });
+});
+
+// ============================================================================
+// Story 3.5: Service Discovery -- chain field on TownConfig / ResolvedTownConfig
+// ============================================================================
+
+describe('TownConfig supports chain field (T-3.5-10)', () => {
+  it('[P2] TownConfig accepts chain field', () => {
+    // Given: a TownConfig with the chain field set
+    const config: TownConfig = {
+      mnemonic: 'test test test test test test test test test test test junk',
+      connectorUrl: 'http://localhost:8080',
+      chain: 'arbitrum-one',
+    };
+
+    // Then: chain field is accepted by TypeScript and holds the value
+    expect(config.chain).toBe('arbitrum-one');
+  });
+
+  it('[P2] TownConfig chain field defaults to undefined', () => {
+    // Given: a minimal TownConfig without chain
+    const config: TownConfig = {
+      mnemonic: 'test test test test test test test test test test test junk',
+      connectorUrl: 'http://localhost:8080',
+    };
+
+    // Then: chain is undefined (resolved to 'anvil' by startTown)
+    expect(config.chain).toBeUndefined();
+  });
+});
+
+describe('ResolvedTownConfig includes chain field (T-3.5-11)', () => {
+  it('[P2] ResolvedTownConfig accepts chain field with string value', () => {
+    // Given: a ResolvedTownConfig with chain field populated
+    const resolved: ResolvedTownConfig = {
+      relayPort: 7100,
+      blsPort: 3100,
+      ilpAddress: 'g.crosstown.test',
+      btpEndpoint: 'ws://localhost:3000',
+      connectorUrl: 'http://localhost:8080',
+      connectorAdminUrl: 'http://localhost:8081',
+      basePricePerByte: 10n,
+      routingBufferPercent: 10,
+      x402Enabled: false,
+      knownPeers: [],
+      dataDir: './data',
+      devMode: false,
+      ardriveEnabled: false,
+      relayUrls: [],
+      assetCode: 'USD',
+      assetScale: 6,
+      discovery: 'genesis',
+      seedRelays: [],
+      publishSeedEntry: false,
+      chain: 'anvil',
+    };
+
+    // Then: chain field holds the value
+    expect(resolved.chain).toBe('anvil');
+  });
+
+  it('[P2] ResolvedTownConfig chain field accepts production preset names', () => {
+    // Given: a ResolvedTownConfig with a production chain preset
+    const resolved: ResolvedTownConfig = {
+      relayPort: 7100,
+      blsPort: 3100,
+      ilpAddress: 'g.crosstown.test',
+      btpEndpoint: 'ws://localhost:3000',
+      connectorUrl: 'http://localhost:8080',
+      connectorAdminUrl: 'http://localhost:8081',
+      basePricePerByte: 10n,
+      routingBufferPercent: 10,
+      x402Enabled: true,
+      knownPeers: [],
+      dataDir: './data',
+      devMode: false,
+      ardriveEnabled: false,
+      relayUrls: [],
+      assetCode: 'USD',
+      assetScale: 6,
+      discovery: 'seed-list',
+      seedRelays: ['wss://relay.damus.io'],
+      publishSeedEntry: true,
+      externalRelayUrl: 'wss://my-relay.example.com',
+      chain: 'arbitrum-one',
+    };
+
+    // Then: chain field accepts production preset name
+    expect(resolved.chain).toBe('arbitrum-one');
+  });
+});
+
+// ============================================================================
+// Story 3.5: Service Discovery -- startTown() integration (static analysis)
+// ============================================================================
+
+describe('startTown() kind:10035 integration -- static analysis (Story 3.5)', () => {
+  it('town.ts imports buildServiceDiscoveryEvent from @crosstown/core', () => {
+    const sourcePath = resolve(__dirname, 'town.ts');
+    const source = readFileSync(sourcePath, 'utf-8');
+
+    // AC #1: verify builder function is imported
+    expect(source).toContain('buildServiceDiscoveryEvent');
+  });
+
+  it('town.ts imports ServiceDiscoveryContent type from @crosstown/core', () => {
+    const sourcePath = resolve(__dirname, 'town.ts');
+    const source = readFileSync(sourcePath, 'utf-8');
+
+    // AC #2: verify the content type is imported for type safety
+    expect(source).toContain('ServiceDiscoveryContent');
+  });
+
+  it('town.ts imports VERSION from @crosstown/core', () => {
+    const sourcePath = resolve(__dirname, 'town.ts');
+    const source = readFileSync(sourcePath, 'utf-8');
+
+    // AC #2: version field comes from the VERSION constant
+    expect(source).toContain('VERSION');
+  });
+
+  it('town.ts stores kind:10035 event via eventStore.store()', () => {
+    const sourcePath = resolve(__dirname, 'town.ts');
+    const source = readFileSync(sourcePath, 'utf-8');
+
+    // AC #1: verify the service discovery event is stored locally
+    expect(source).toContain('eventStore.store(serviceDiscoveryEvent)');
+  });
+
+  it('town.ts publishes kind:10035 via ILP fire-and-forget', () => {
+    const sourcePath = resolve(__dirname, 'town.ts');
+    const source = readFileSync(sourcePath, 'utf-8');
+
+    // AC #1: verify the service discovery event is published to peers
+    expect(source).toContain('Failed to publish service discovery via ILP');
+  });
+
+  it('town.ts conditionally includes x402 field only when x402Enabled (AC #3)', () => {
+    const sourcePath = resolve(__dirname, 'town.ts');
+    const source = readFileSync(sourcePath, 'utf-8');
+
+    // AC #3: x402 field omitted entirely when disabled
+    expect(source).toMatch(/if\s*\(x402Enabled\)\s*\{/);
+    expect(source).toContain('serviceDiscoveryContent.x402');
+  });
+
+  it('town.ts uses chainConfig.name for service discovery chain field', () => {
+    const sourcePath = resolve(__dirname, 'town.ts');
+    const source = readFileSync(sourcePath, 'utf-8');
+
+    // AC #2: chain field sourced from resolved chain config
+    expect(source).toContain('chainConfig.name');
+  });
+
+  it('town.ts publishes kind:10035 after kind:10032 (ordering)', () => {
+    const sourcePath = resolve(__dirname, 'town.ts');
+    const source = readFileSync(sourcePath, 'utf-8');
+
+    // AC #1: service discovery published after ILP peer info
+    const kind10032Idx = source.indexOf('kind:10032');
+    const kind10035Idx = source.indexOf('kind:10035');
+    expect(kind10032Idx).toBeGreaterThan(-1);
+    expect(kind10035Idx).toBeGreaterThan(-1);
+    expect(kind10035Idx).toBeGreaterThan(kind10032Idx);
   });
 });
