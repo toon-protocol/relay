@@ -38,6 +38,7 @@ import type {
 } from '@crosstown/sdk';
 import { createEventStorageHandler } from './handlers/event-storage-handler.js';
 import { createX402Handler } from './handlers/x402-publish-handler.js';
+import { createHealthResponse } from './health.js';
 import {
   BootstrapService,
   createDiscoveryTracker,
@@ -685,19 +686,19 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   const app = new Hono();
   app.get('/health', (c: Context) => {
     const bootstrapPhase = bootstrapService.getPhase();
-    return c.json({
-      status: 'healthy',
-      pubkey: identity.pubkey,
-      ilpAddress,
-      timestamp: Date.now(),
-      sdk: true,
-      ...(bootstrapPhase && { bootstrapPhase }),
-      ...(bootstrapPhase === 'ready' && {
+    return c.json(
+      createHealthResponse({
+        phase: bootstrapPhase,
+        pubkey: identity.pubkey,
+        ilpAddress,
         peerCount: discoveryTracker.getPeerCount() + peerCount,
         discoveredPeerCount: discoveryTracker.getDiscoveredCount(),
         channelCount,
-      }),
-    });
+        basePricePerByte,
+        x402Enabled,
+        chain: chainConfig.name,
+      })
+    );
   });
 
   app.post('/handle-packet', async (c: Context) => {

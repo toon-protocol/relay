@@ -15,6 +15,10 @@ export type {
   ResolvedTownConfig,
 } from './town.js';
 
+// Health response (Story 3.6)
+export { createHealthResponse } from './health.js';
+export type { HealthConfig, HealthResponse } from './health.js';
+
 // Event storage handler
 export { createEventStorageHandler } from './handlers/event-storage-handler.js';
 export type { EventStorageHandlerConfig } from './handlers/event-storage-handler.js';

@@ -730,3 +730,27 @@ describe('startTown() kind:10035 integration -- static analysis (Story 3.5)', ()
     expect(kind10035Idx).toBeGreaterThan(kind10032Idx);
   });
 });
+
+// ============================================================================
+// Story 3.6: Enriched Health Endpoint -- startTown() integration (static analysis)
+// ============================================================================
+
+describe('startTown() enriched health integration -- static analysis (Story 3.6)', () => {
+  it('town.ts imports createHealthResponse from ./health.js (T-3.6-12)', () => {
+    const sourcePath = resolve(__dirname, 'town.ts');
+    const source = readFileSync(sourcePath, 'utf-8');
+
+    // AC #1: verify createHealthResponse is imported from the health module
+    expect(source).toMatch(
+      /import\s*\{[^}]*createHealthResponse[^}]*\}\s*from\s*['"]\.\/health\.js['"]/
+    );
+  });
+
+  it('town.ts health endpoint calls createHealthResponse (T-3.6-13)', () => {
+    const sourcePath = resolve(__dirname, 'town.ts');
+    const source = readFileSync(sourcePath, 'utf-8');
+
+    // AC #1: verify the /health handler delegates to createHealthResponse()
+    expect(source).toContain('createHealthResponse(');
+  });
+});
