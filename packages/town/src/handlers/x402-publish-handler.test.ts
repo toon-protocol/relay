@@ -46,6 +46,7 @@ import type { PreflightConfig } from './x402-preflight.js';
 import type { Eip3009Authorization } from './x402-types.js';
 import { EIP_3009_TYPES, USDC_EIP712_DOMAIN } from './x402-types.js';
 import type { X402SettlementResult } from './x402-settlement.js';
+import type { NostrEvent } from 'nostr-tools/pure';
 
 // ============================================================================
 // Factories
@@ -126,8 +127,7 @@ function createX402Config(
 // Anvil account #0 private key (deterministic -- safe for tests only)
 const TEST_PRIVATE_KEY =
   '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80' as const;
-const TEST_USDC_ADDRESS =
-  '0x5FbDB2315678afecb367f032d93F642f64180aa3' as const;
+const TEST_USDC_ADDRESS = '0x5FbDB2315678afecb367f032d93F642f64180aa3' as const;
 const TEST_CHAIN_ID = 31337;
 
 /**
@@ -144,7 +144,7 @@ async function createSignedEip3009Authorization(
   const validAfter = overrides['validAfter'] ?? 0;
   const validBefore =
     overrides['validBefore'] ?? Math.floor(Date.now() / 1000) + 3600;
-  const nonce = (overrides['nonce'] as string) ?? ('0x' + 'c'.repeat(64));
+  const nonce = (overrides['nonce'] as string) ?? '0x' + 'c'.repeat(64);
 
   const domain = {
     ...USDC_EIP712_DOMAIN,
@@ -1556,9 +1556,8 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
       const authorization = await createSignedEip3009Authorization();
 
       // And: invalid TOON data (not valid TOON-encoded)
-      const invalidToonBase64 = Buffer.from('not valid toon {{{').toString(
-        'base64'
-      );
+      const invalidToonBase64 =
+        Buffer.from('not valid toon {{{').toString('base64');
 
       // And: preflight config without publicClient (skips checks 2-3)
       const preflightConfig: PreflightConfig = {
@@ -1611,7 +1610,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
         created_at: 1234567890,
       };
       const toonBytes = encodeEventToToon(
-        incompleteEvent as unknown as import('nostr-tools/pure').NostrEvent
+        incompleteEvent as unknown as NostrEvent
       );
       const toonBase64 = Buffer.from(toonBytes).toString('base64');
 
@@ -1847,9 +1846,11 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
 
       // And: mock EventStore with kind:10032 events present
       const mockEventStore = {
-        query: vi.fn().mockReturnValue([
-          { kind: 10032, content: '{}', pubkey: 'a'.repeat(64) },
-        ]),
+        query: vi
+          .fn()
+          .mockReturnValue([
+            { kind: 10032, content: '{}', pubkey: 'a'.repeat(64) },
+          ]),
       };
 
       const preflightConfig: PreflightConfig = {

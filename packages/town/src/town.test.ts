@@ -12,6 +12,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import { startTown, deriveAdminUrl } from './town.js';
 import type { TownConfig, TownInstance, ResolvedTownConfig } from './town.js';
@@ -140,6 +142,8 @@ describe('TownConfig type surface (AC #2)', () => {
       connectorUrl: 'http://localhost:8080',
       connectorAdminUrl: 'http://localhost:8081',
       basePricePerByte: 10n,
+      routingBufferPercent: 10,
+      x402Enabled: false,
       knownPeers: [],
       dataDir: './data',
       devMode: false,
@@ -147,6 +151,9 @@ describe('TownConfig type surface (AC #2)', () => {
       relayUrls: [],
       assetCode: 'USD',
       assetScale: 6,
+      discovery: 'genesis',
+      seedRelays: [],
+      publishSeedEntry: false,
     };
 
     // All fields must be defined (non-optional in ResolvedTownConfig)
@@ -164,6 +171,11 @@ describe('TownConfig type surface (AC #2)', () => {
     expect(resolved.relayUrls).toEqual([]);
     expect(resolved.assetCode).toBe('USD');
     expect(resolved.assetScale).toBe(6);
+    // Story 3.4: Seed relay discovery fields
+    expect(resolved.discovery).toBe('genesis');
+    expect(resolved.seedRelays).toEqual([]);
+    expect(resolved.publishSeedEntry).toBe(false);
+    expect(resolved.externalRelayUrl).toBeUndefined();
   });
 });
 
@@ -193,6 +205,8 @@ describe('TownInstance type surface (AC #5)', () => {
         connectorUrl: 'http://localhost:8080',
         connectorAdminUrl: 'http://localhost:8081',
         basePricePerByte: 10n,
+        routingBufferPercent: 10,
+        x402Enabled: false,
         knownPeers: [],
         dataDir: './data',
         devMode: false,
@@ -200,11 +214,15 @@ describe('TownInstance type surface (AC #5)', () => {
         relayUrls: [],
         assetCode: 'USD',
         assetScale: 6,
+        discovery: 'genesis',
+        seedRelays: [],
+        publishSeedEntry: false,
       },
       bootstrapResult: {
         peerCount: 0,
         channelCount: 0,
       },
+      discoveryMode: 'genesis',
     };
 
     // Verify all required members exist
@@ -298,5 +316,244 @@ describe('Module exports from @crosstown/town (AC #2)', () => {
     const townModule = await import('./index.js');
 
     expect(typeof townModule.createEventStorageHandler).toBe('function');
+  });
+});
+
+// ============================================================================
+// Story 3.4: Seed Relay Discovery -- TownConfig integration (AC #4)
+// ============================================================================
+
+describe('TownConfig seed relay discovery fields (Story 3.4 AC #4)', () => {
+  it('discovery defaults to undefined (resolved to "genesis" in startTown)', () => {
+    // Given: a minimal TownConfig without discovery field
+    const config: TownConfig = {
+      mnemonic: 'test test test test test test test test test test test junk',
+      connectorUrl: 'http://localhost:8080',
+    };
+
+    // Then: discovery is undefined, will be resolved to 'genesis' by startTown
+    expect(config.discovery).toBeUndefined();
+  });
+
+  it('TownConfig accepts discovery: "seed-list"', () => {
+    const config: TownConfig = {
+      mnemonic: 'test test test test test test test test test test test junk',
+      connectorUrl: 'http://localhost:8080',
+      discovery: 'seed-list',
+      seedRelays: ['wss://relay.damus.io', 'wss://relay.nostr.band'],
+    };
+
+    expect(config.discovery).toBe('seed-list');
+    expect(config.seedRelays).toHaveLength(2);
+  });
+
+  it('TownConfig accepts discovery: "genesis"', () => {
+    const config: TownConfig = {
+      mnemonic: 'test test test test test test test test test test test junk',
+      connectorUrl: 'http://localhost:8080',
+      discovery: 'genesis',
+    };
+
+    expect(config.discovery).toBe('genesis');
+  });
+
+  it('TownConfig accepts publishSeedEntry and externalRelayUrl', () => {
+    const config: TownConfig = {
+      mnemonic: 'test test test test test test test test test test test junk',
+      connectorUrl: 'http://localhost:8080',
+      discovery: 'seed-list',
+      seedRelays: ['wss://relay.damus.io'],
+      publishSeedEntry: true,
+      externalRelayUrl: 'wss://my-relay.example.com',
+    };
+
+    expect(config.publishSeedEntry).toBe(true);
+    expect(config.externalRelayUrl).toBe('wss://my-relay.example.com');
+  });
+
+  it('seedRelays, publishSeedEntry, externalRelayUrl default to undefined', () => {
+    const config: TownConfig = {
+      mnemonic: 'test test test test test test test test test test test junk',
+      connectorUrl: 'http://localhost:8080',
+    };
+
+    expect(config.seedRelays).toBeUndefined();
+    expect(config.publishSeedEntry).toBeUndefined();
+    expect(config.externalRelayUrl).toBeUndefined();
+  });
+});
+
+describe('ResolvedTownConfig seed relay defaults (Story 3.4 AC #4)', () => {
+  it('discovery defaults to "genesis" in ResolvedTownConfig', () => {
+    // Verify that the resolved config defaults discovery to 'genesis'
+    const resolved: ResolvedTownConfig = {
+      relayPort: 7100,
+      blsPort: 3100,
+      ilpAddress: 'g.crosstown.test',
+      btpEndpoint: 'ws://localhost:3000',
+      basePricePerByte: 10n,
+      routingBufferPercent: 10,
+      x402Enabled: false,
+      knownPeers: [],
+      dataDir: './data',
+      devMode: false,
+      ardriveEnabled: false,
+      relayUrls: [],
+      assetCode: 'USD',
+      assetScale: 6,
+      discovery: 'genesis',
+      seedRelays: [],
+      publishSeedEntry: false,
+    };
+
+    expect(resolved.discovery).toBe('genesis');
+    expect(resolved.seedRelays).toEqual([]);
+    expect(resolved.publishSeedEntry).toBe(false);
+  });
+
+  it('ResolvedTownConfig accepts seed-list discovery mode', () => {
+    const resolved: ResolvedTownConfig = {
+      relayPort: 7100,
+      blsPort: 3100,
+      ilpAddress: 'g.crosstown.test',
+      btpEndpoint: 'ws://localhost:3000',
+      basePricePerByte: 10n,
+      routingBufferPercent: 10,
+      x402Enabled: false,
+      knownPeers: [],
+      dataDir: './data',
+      devMode: false,
+      ardriveEnabled: false,
+      relayUrls: [],
+      assetCode: 'USD',
+      assetScale: 6,
+      discovery: 'seed-list',
+      seedRelays: ['wss://relay.damus.io'],
+      publishSeedEntry: true,
+      externalRelayUrl: 'wss://my-relay.example.com',
+    };
+
+    expect(resolved.discovery).toBe('seed-list');
+    expect(resolved.seedRelays).toEqual(['wss://relay.damus.io']);
+    expect(resolved.publishSeedEntry).toBe(true);
+    expect(resolved.externalRelayUrl).toBe('wss://my-relay.example.com');
+  });
+});
+
+describe('TownInstance.discoveryMode (Story 3.4 AC #1, #4)', () => {
+  it('TownInstance interface includes discoveryMode property', () => {
+    // Verify TownInstance has discoveryMode via compile-time type check
+    const mockInstance: TownInstance = {
+      isRunning: () => true,
+      stop: async () => {},
+      subscribe: () => ({
+        close: () => {},
+        relayUrl: 'wss://mock.example.com',
+        isActive: () => true,
+      }),
+      pubkey: 'a'.repeat(64),
+      evmAddress: '0x' + 'b'.repeat(40),
+      config: {
+        relayPort: 7100,
+        blsPort: 3100,
+        ilpAddress: 'g.crosstown.test',
+        btpEndpoint: 'ws://localhost:3000',
+        basePricePerByte: 10n,
+        routingBufferPercent: 10,
+        x402Enabled: false,
+        knownPeers: [],
+        dataDir: './data',
+        devMode: false,
+        ardriveEnabled: false,
+        relayUrls: [],
+        assetCode: 'USD',
+        assetScale: 6,
+        discovery: 'genesis',
+        seedRelays: [],
+        publishSeedEntry: false,
+      },
+      bootstrapResult: { peerCount: 0, channelCount: 0 },
+      discoveryMode: 'genesis',
+    };
+
+    expect(mockInstance.discoveryMode).toBe('genesis');
+  });
+
+  it('TownInstance.discoveryMode can be "seed-list"', () => {
+    const mockInstance: TownInstance = {
+      isRunning: () => true,
+      stop: async () => {},
+      subscribe: () => ({
+        close: () => {},
+        relayUrl: 'wss://mock.example.com',
+        isActive: () => true,
+      }),
+      pubkey: 'a'.repeat(64),
+      evmAddress: '0x' + 'b'.repeat(40),
+      config: {
+        relayPort: 7100,
+        blsPort: 3100,
+        ilpAddress: 'g.crosstown.test',
+        btpEndpoint: 'ws://localhost:3000',
+        basePricePerByte: 10n,
+        routingBufferPercent: 10,
+        x402Enabled: false,
+        knownPeers: [],
+        dataDir: './data',
+        devMode: false,
+        ardriveEnabled: false,
+        relayUrls: [],
+        assetCode: 'USD',
+        assetScale: 6,
+        discovery: 'seed-list',
+        seedRelays: ['wss://relay.example.com'],
+        publishSeedEntry: true,
+        externalRelayUrl: 'wss://my-relay.example.com',
+      },
+      bootstrapResult: { peerCount: 0, channelCount: 0 },
+      discoveryMode: 'seed-list',
+    };
+
+    expect(mockInstance.discoveryMode).toBe('seed-list');
+  });
+});
+
+// ============================================================================
+// Story 3.4: startTown() integration -- static analysis (AC #1, #4)
+// ============================================================================
+
+describe('startTown() seed relay integration -- static analysis (Story 3.4)', () => {
+  it('town.ts imports SeedRelayDiscovery from @crosstown/core', () => {
+    const sourcePath = resolve(__dirname, 'town.ts');
+    const source = readFileSync(sourcePath, 'utf-8');
+
+    // Verify SeedRelayDiscovery is imported
+    expect(source).toContain('SeedRelayDiscovery');
+    // Verify publishSeedRelayEntry is imported
+    expect(source).toContain('publishSeedRelayEntry');
+  });
+
+  it('town.ts uses discovery === "seed-list" guard before SeedRelayDiscovery', () => {
+    const sourcePath = resolve(__dirname, 'town.ts');
+    const source = readFileSync(sourcePath, 'utf-8');
+
+    // Verify that SeedRelayDiscovery is only used when discovery is 'seed-list'
+    expect(source).toMatch(/discovery\s*===\s*['"]seed-list['"]/);
+  });
+
+  it('town.ts defaults discovery to "genesis" (backward compat)', () => {
+    const sourcePath = resolve(__dirname, 'town.ts');
+    const source = readFileSync(sourcePath, 'utf-8');
+
+    // Verify the default is 'genesis': config.discovery ?? 'genesis'
+    expect(source).toMatch(/config\.discovery\s*\?\?\s*['"]genesis['"]/);
+  });
+
+  it('town.ts sets TownInstance.discoveryMode from resolved config', () => {
+    const sourcePath = resolve(__dirname, 'town.ts');
+    const source = readFileSync(sourcePath, 'utf-8');
+
+    // Verify discoveryMode is set on the instance
+    expect(source).toContain('discoveryMode');
   });
 });

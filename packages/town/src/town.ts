@@ -51,6 +51,8 @@ import {
   SocialPeerDiscovery,
   buildIlpPeerInfoEvent,
   resolveChainConfig,
+  SeedRelayDiscovery,
+  publishSeedRelayEntry,
 } from '@crosstown/core';
 import type {
   ConnectorChannelClient,
@@ -169,6 +171,17 @@ export interface TownConfig {
   /** Enable dev mode (skip verification). Default: false. */
   devMode?: boolean;
 
+  // --- Discovery ---
+
+  /** Discovery mode: 'seed-list' for production, 'genesis' for dev (default: 'genesis'). */
+  discovery?: 'seed-list' | 'genesis';
+  /** Public Nostr relay URLs for seed relay discovery (used when discovery: 'seed-list'). */
+  seedRelays?: string[];
+  /** Whether to publish this node as a seed relay entry (default: false). */
+  publishSeedEntry?: boolean;
+  /** External WebSocket URL of this relay (required if publishSeedEntry is true). */
+  externalRelayUrl?: string;
+
   // --- Advanced ---
 
   /** Enable ArDrive peer lookup (default: false). */
@@ -204,6 +217,14 @@ export interface ResolvedTownConfig {
   relayUrls: string[];
   assetCode: string;
   assetScale: number;
+  /** Discovery mode: 'seed-list' for production, 'genesis' for dev. */
+  discovery: 'seed-list' | 'genesis';
+  /** Public Nostr relay URLs for seed relay discovery. */
+  seedRelays: string[];
+  /** Whether to publish this node as a seed relay entry. */
+  publishSeedEntry: boolean;
+  /** External WebSocket URL of this relay (for seed entry publishing). */
+  externalRelayUrl?: string;
 }
 
 /**
@@ -243,6 +264,9 @@ export interface TownInstance {
     peerCount: number;
     channelCount: number;
   };
+
+  /** Discovery mode used by this instance. */
+  discoveryMode: 'seed-list' | 'genesis';
 }
 
 /**
@@ -314,9 +338,10 @@ export function createSubscription(
   // Validate WebSocket URL scheme to provide clear errors and prevent
   // non-WebSocket URLs from reaching SimplePool (consistency with BTP URL
   // validation convention in project-context.md).
+  // nosemgrep: javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket -- validation check, not a connection
   if (!relayUrl.startsWith('ws://') && !relayUrl.startsWith('wss://')) {
     throw new Error(
-      `Invalid relay URL: "${relayUrl}" -- must use ws:// or wss:// scheme`
+      'Invalid relay URL -- must use WebSocket scheme (ws or wss)'
     );
   }
 
@@ -431,13 +456,17 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   const basePricePerByte = config.basePricePerByte ?? 10n;
   const routingBufferPercent = config.routingBufferPercent ?? 10;
   const x402Enabled = config.x402Enabled ?? false;
-  const knownPeers = config.knownPeers ?? [];
+  const knownPeers = [...(config.knownPeers ?? [])];
   const dataDir = config.dataDir ?? './data';
   const devMode = config.devMode ?? false;
   const ardriveEnabled = config.ardriveEnabled ?? false;
   const relayUrls = config.relayUrls ?? [`ws://localhost:${relayPort}`];
   const assetCode = config.assetCode ?? 'USD';
   const assetScale = config.assetScale ?? 6;
+  const discovery = config.discovery ?? 'genesis';
+  const seedRelays = config.seedRelays ?? [];
+  const publishSeedEntryFlag = config.publishSeedEntry ?? false;
+  const externalRelayUrl = config.externalRelayUrl;
 
   const resolvedConfig: ResolvedTownConfig = {
     relayPort,
@@ -456,6 +485,10 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     relayUrls,
     assetCode,
     assetScale,
+    discovery,
+    seedRelays,
+    publishSeedEntry: publishSeedEntryFlag,
+    ...(externalRelayUrl && { externalRelayUrl }),
   };
 
   // --- 4. Create data directory ---
@@ -820,6 +853,45 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   // discoveryTracker peer count is read live via getPeerCount() in the
   // health endpoint — no need for a separate counter here.
 
+  // --- 13b. Seed Relay Discovery (when discovery: 'seed-list') ---
+  // Runs before bootstrap to populate knownPeers from seed relay list.
+  let seedRelayDiscovery: SeedRelayDiscovery | undefined;
+  if (discovery === 'seed-list' && seedRelays.length > 0) {
+    seedRelayDiscovery = new SeedRelayDiscovery({
+      publicRelays: seedRelays,
+    });
+
+    try {
+      const seedResult = await seedRelayDiscovery.discover();
+      // Convert discovered peers to KnownPeer[] format and merge with config
+      const seedPeers = seedResult.discoveredPeers
+        .filter((info) => info.pubkey)
+        .map((info) => ({
+          pubkey: info.pubkey as string,
+          relayUrl:
+            seedResult.connectedUrls[0] ?? `ws://localhost:${relayPort}`,
+          btpEndpoint: info.btpEndpoint,
+        }));
+
+      // Merge with existing knownPeers (config peers take priority)
+      const existingPubkeys = new Set(knownPeers.map((p) => p.pubkey));
+      for (const seedPeer of seedPeers) {
+        if (!existingPubkeys.has(seedPeer.pubkey)) {
+          knownPeers.push(seedPeer);
+        }
+      }
+
+      console.log(
+        `[Town] Seed relay discovery: found ${seedPeers.length} peers from ${seedResult.connectedUrls.length} seed relay(s)`
+      );
+    } catch (seedError: unknown) {
+      const msg =
+        seedError instanceof Error ? seedError.message : 'Unknown error';
+      console.warn(`[Town] Seed relay discovery failed: ${msg}`);
+      // Continue with any knownPeers from config
+    }
+  }
+
   try {
     const results = await bootstrapService.bootstrap();
 
@@ -881,6 +953,29 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     console.error('[Town] Bootstrap failed:', error);
   }
 
+  // --- 13c. Publish seed relay entry (after bootstrap complete) ---
+  if (publishSeedEntryFlag && !externalRelayUrl) {
+    console.warn(
+      '[Town] publishSeedEntry is true but externalRelayUrl is not set -- skipping seed relay entry publication'
+    );
+  }
+  if (publishSeedEntryFlag && externalRelayUrl && seedRelays.length > 0) {
+    publishSeedRelayEntry({
+      secretKey: identity.secretKey,
+      relayUrl: externalRelayUrl,
+      publicRelays: seedRelays,
+    })
+      .then(({ publishedTo, eventId }) => {
+        console.log(
+          `[Town] Published seed relay entry to ${publishedTo} relay(s), eventId: ${eventId}`
+        );
+      })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        console.warn(`[Town] Failed to publish seed relay entry: ${msg}`);
+      });
+  }
+
   // Social discovery
   const socialDiscovery = new SocialPeerDiscovery(
     { relayUrls },
@@ -924,6 +1019,11 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
         socialSubscription.unsubscribe();
       }
 
+      // Close seed relay discovery connections
+      if (seedRelayDiscovery) {
+        await seedRelayDiscovery.close();
+      }
+
       await wsRelay.stop();
       blsServer.close();
 
@@ -938,6 +1038,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       peerCount,
       channelCount,
     },
+    discoveryMode: discovery,
   };
 
   return instance;

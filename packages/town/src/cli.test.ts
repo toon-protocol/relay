@@ -93,6 +93,7 @@ describe('CLI source structure (AC #4)', () => {
   it('cli.ts should support all documented CLI flags', () => {
     // AC #4 requires: --mnemonic, --secret-key, --relay-port, --bls-port,
     // --data-dir, --connector-url, --known-peers, --dev-mode, --help
+    // Story 3.4 adds: --discovery, --seed-relays, --publish-seed-entry, --external-relay-url
     const source = readFileSync(cliSourcePath(), 'utf-8');
 
     // Flags appear as property keys in the parseArgs options object.
@@ -108,6 +109,11 @@ describe('CLI source structure (AC #4)', () => {
       'known-peers',
       'dev-mode',
       'help',
+      // Story 3.4: seed relay discovery flags
+      'discovery',
+      'seed-relays',
+      'publish-seed-entry',
+      'external-relay-url',
     ];
 
     for (const flag of requiredFlags) {
@@ -117,6 +123,8 @@ describe('CLI source structure (AC #4)', () => {
 
   it('cli.ts should support all documented environment variables', () => {
     // AC #4 requires env var support matching CLI flags
+    // Story 3.4 adds: CROSSTOWN_DISCOVERY, CROSSTOWN_SEED_RELAYS,
+    // CROSSTOWN_PUBLISH_SEED_ENTRY, CROSSTOWN_EXTERNAL_RELAY_URL
     const source = readFileSync(cliSourcePath(), 'utf-8');
 
     const requiredEnvVars = [
@@ -128,6 +136,11 @@ describe('CLI source structure (AC #4)', () => {
       'CROSSTOWN_CONNECTOR_URL',
       'CROSSTOWN_KNOWN_PEERS',
       'CROSSTOWN_DEV_MODE',
+      // Story 3.4: seed relay discovery env vars
+      'CROSSTOWN_DISCOVERY',
+      'CROSSTOWN_SEED_RELAYS',
+      'CROSSTOWN_PUBLISH_SEED_ENTRY',
+      'CROSSTOWN_EXTERNAL_RELAY_URL',
     ];
 
     for (const envVar of requiredEnvVars) {
@@ -357,5 +370,124 @@ describe('CLI bin entry in package.json (AC #4)', () => {
     // Verify the built file has shebang
     const content = readFileSync(cliPath, 'utf-8');
     expect(content.startsWith('#!/usr/bin/env node')).toBe(true);
+  });
+});
+
+// ============================================================================
+// Story 3.4: Seed relay discovery CLI flags (AC #4)
+// ============================================================================
+
+describe('CLI seed relay discovery flags (Story 3.4 AC #4)', () => {
+  it('--help should list seed relay discovery flags', () => {
+    const cliPath = cliDistPath();
+    if (!existsSync(cliPath)) {
+      console.log('Skipping: dist/cli.js not built. Run pnpm build first.');
+      return;
+    }
+
+    const output = execFileSync('node', [cliPath, '--help'], {
+      encoding: 'utf-8',
+      timeout: 5000,
+    });
+
+    // Story 3.4 flags must appear in help output
+    expect(output).toContain('--discovery');
+    expect(output).toContain('--seed-relays');
+    expect(output).toContain('--publish-seed-entry');
+    expect(output).toContain('--external-relay-url');
+
+    // Story 3.4 env vars must appear in help output
+    expect(output).toContain('CROSSTOWN_DISCOVERY');
+    expect(output).toContain('CROSSTOWN_SEED_RELAYS');
+    expect(output).toContain('CROSSTOWN_PUBLISH_SEED_ENTRY');
+    expect(output).toContain('CROSSTOWN_EXTERNAL_RELAY_URL');
+  });
+
+  it('cli.ts validates --discovery accepts only "seed-list" or "genesis"', () => {
+    const source = readFileSync(cliSourcePath(), 'utf-8');
+
+    // Verify discovery mode validation
+    expect(source).toContain("'seed-list'");
+    expect(source).toContain("'genesis'");
+    // Verify error message for invalid discovery mode
+    expect(source).toMatch(/--discovery.*must.*seed-list.*genesis/i);
+  });
+
+  it('cli.ts parses --seed-relays as comma-separated list', () => {
+    const source = readFileSync(cliSourcePath(), 'utf-8');
+
+    // Verify comma-splitting logic for seed relays
+    expect(source).toMatch(/split\s*\(\s*['"],['"].*\)/);
+    // Verify the flag is wired into the TownConfig
+    expect(source).toContain('seedRelays');
+  });
+
+  it('cli.ts passes seed relay config fields to TownConfig', () => {
+    const source = readFileSync(cliSourcePath(), 'utf-8');
+
+    // Verify all seed relay config fields are included in the returned config
+    expect(source).toContain('discovery: discoveryMode');
+    expect(source).toContain('seedRelays');
+    expect(source).toContain('publishSeedEntry');
+    expect(source).toContain('externalRelayUrl');
+  });
+});
+
+// ============================================================================
+// Story 3.4: Docker env var parsing for seed relay discovery
+// ============================================================================
+
+describe('Docker shared.ts seed relay env vars (Story 3.4)', () => {
+  it('shared.ts parses CROSSTOWN_DISCOVERY env var', () => {
+    const sharedPath = resolve(repoRoot(), 'docker', 'src', 'shared.ts');
+    const source = readFileSync(sharedPath, 'utf-8');
+
+    expect(source).toContain('CROSSTOWN_DISCOVERY');
+    expect(source).toContain('discoveryMode');
+  });
+
+  it('shared.ts parses CROSSTOWN_SEED_RELAYS as comma-separated list', () => {
+    const sharedPath = resolve(repoRoot(), 'docker', 'src', 'shared.ts');
+    const source = readFileSync(sharedPath, 'utf-8');
+
+    expect(source).toContain('CROSSTOWN_SEED_RELAYS');
+    // Verify comma-splitting logic
+    expect(source).toMatch(/split\s*\(\s*['"],['"].*\)/);
+    expect(source).toContain('seedRelays');
+  });
+
+  it('shared.ts parses CROSSTOWN_PUBLISH_SEED_ENTRY env var', () => {
+    const sharedPath = resolve(repoRoot(), 'docker', 'src', 'shared.ts');
+    const source = readFileSync(sharedPath, 'utf-8');
+
+    expect(source).toContain('CROSSTOWN_PUBLISH_SEED_ENTRY');
+    expect(source).toContain('publishSeedEntry');
+  });
+
+  it('shared.ts parses CROSSTOWN_EXTERNAL_RELAY_URL env var', () => {
+    const sharedPath = resolve(repoRoot(), 'docker', 'src', 'shared.ts');
+    const source = readFileSync(sharedPath, 'utf-8');
+
+    expect(source).toContain('CROSSTOWN_EXTERNAL_RELAY_URL');
+    expect(source).toContain('externalRelayUrl');
+  });
+
+  it('shared.ts defaults discoveryMode to "genesis"', () => {
+    const sharedPath = resolve(repoRoot(), 'docker', 'src', 'shared.ts');
+    const source = readFileSync(sharedPath, 'utf-8');
+
+    // Verify default value is 'genesis'
+    expect(source).toMatch(/'genesis'/);
+  });
+
+  it('shared.ts Config interface includes seed relay discovery fields', () => {
+    const sharedPath = resolve(repoRoot(), 'docker', 'src', 'shared.ts');
+    const source = readFileSync(sharedPath, 'utf-8');
+
+    // Verify the Config interface includes seed relay discovery fields
+    expect(source).toContain("discoveryMode: 'seed-list' | 'genesis'");
+    expect(source).toContain('seedRelays: string[]');
+    expect(source).toContain('publishSeedEntry: boolean');
+    expect(source).toContain('externalRelayUrl: string | undefined');
   });
 });
