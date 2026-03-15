@@ -438,3 +438,213 @@ describe('Story 3.6: Enriched /health Endpoint', () => {
     });
   });
 });
+
+// ============================================================================
+// Story 4.2: TEE Attestation Health Tests (T-4.2-06)
+// These tests validate the tee field in the health response.
+// Placed here because core cannot import from @crosstown/town.
+// ============================================================================
+
+describe('Story 4.2: /health TEE attestation field (T-4.2-06)', () => {
+  it('[P1] includes tee field in health response when tee config is provided (T-4.2-06)', () => {
+    // Arrange: simulate TEE_ENABLED=true by passing tee config
+    const config = _createHealthConfig({
+      x402Enabled: false,
+      tee: {
+        attested: true,
+        enclaveType: 'aws-nitro',
+        lastAttestation: Math.floor(Date.now() / 1000),
+        pcr0: 'a'.repeat(96),
+        state: 'valid' as const,
+      },
+    });
+    const response = createHealthResponse(config);
+
+    // Assert: tee field present with correct structure
+    expect(response.tee).toBeDefined();
+    expect(response.tee!.attested).toBe(true);
+    expect(response.tee!.enclaveType).toBe('aws-nitro');
+    expect(response.tee!.state).toBe('valid');
+    expect(response.tee!.pcr0).toBe('a'.repeat(96));
+    expect(response.tee!.lastAttestation).toBeGreaterThan(0);
+  });
+
+  it('[P1] omits tee field in health response when tee config is not provided (T-4.2-06)', () => {
+    // Arrange: simulate TEE_ENABLED not set (no tee config passed)
+    const config = _createHealthConfig({
+      x402Enabled: false,
+      // NOTE: no tee field -- enforcement guideline 12
+    });
+    const response = createHealthResponse(config);
+
+    // Assert: tee field entirely absent (enforcement guideline 12)
+    expect(response.tee).toBeUndefined();
+    expect('tee' in response).toBe(false);
+  });
+
+  it('[P1] tee field has stale state when attestation is expired', () => {
+    // Arrange: tee with stale state
+    const config = _createHealthConfig({
+      x402Enabled: false,
+      tee: {
+        attested: true,
+        enclaveType: 'marlin-oyster',
+        lastAttestation: Math.floor(Date.now() / 1000) - 600,
+        pcr0: '0'.repeat(96),
+        state: 'stale' as const,
+      },
+    });
+    const response = createHealthResponse(config);
+
+    // Assert: tee field reflects stale state
+    expect(response.tee).toBeDefined();
+    expect(response.tee!.state).toBe('stale');
+    expect(response.tee!.enclaveType).toBe('marlin-oyster');
+  });
+
+  it('[P1] tee field has unattested state when no attestation published yet', () => {
+    // Arrange: tee with unattested state
+    const config = _createHealthConfig({
+      x402Enabled: false,
+      tee: {
+        attested: false,
+        enclaveType: 'aws-nitro',
+        lastAttestation: 0,
+        pcr0: '',
+        state: 'unattested' as const,
+      },
+    });
+    const response = createHealthResponse(config);
+
+    // Assert: tee field reflects unattested state
+    expect(response.tee).toBeDefined();
+    expect(response.tee!.state).toBe('unattested');
+    expect(response.tee!.attested).toBe(false);
+  });
+
+  // --------------------------------------------------------------------------
+  // Gap-fill: Schema strictness with tee field (AC #4)
+  // --------------------------------------------------------------------------
+  it('[P1] response has exactly the expected keys when tee is provided (schema strictness)', () => {
+    // Arrange: x402 disabled, tee enabled
+    const config = _createHealthConfig({
+      x402Enabled: false,
+      tee: {
+        attested: true,
+        enclaveType: 'aws-nitro',
+        lastAttestation: Math.floor(Date.now() / 1000),
+        pcr0: 'a'.repeat(96),
+        state: 'valid' as const,
+      },
+    });
+
+    // Act
+    const response = createHealthResponse(config);
+
+    // Assert: key set includes 'tee' field
+    const keys = Object.keys(response).sort();
+    expect(keys).toEqual(
+      [
+        'capabilities',
+        'chain',
+        'channelCount',
+        'discoveredPeerCount',
+        'ilpAddress',
+        'peerCount',
+        'phase',
+        'pricing',
+        'pubkey',
+        'sdk',
+        'status',
+        'tee',
+        'timestamp',
+        'version',
+      ].sort()
+    );
+  });
+
+  it('[P1] response has expected keys when both x402 and tee are provided', () => {
+    // Arrange: both x402 and tee enabled
+    const config = _createHealthConfig({
+      x402Enabled: true,
+      tee: {
+        attested: true,
+        enclaveType: 'marlin-oyster',
+        lastAttestation: Math.floor(Date.now() / 1000),
+        pcr0: 'f'.repeat(96),
+        state: 'valid' as const,
+      },
+    });
+
+    // Act
+    const response = createHealthResponse(config);
+
+    // Assert: key set includes both 'x402' and 'tee'
+    const keys = Object.keys(response).sort();
+    expect(keys).toEqual(
+      [
+        'capabilities',
+        'chain',
+        'channelCount',
+        'discoveredPeerCount',
+        'ilpAddress',
+        'peerCount',
+        'phase',
+        'pricing',
+        'pubkey',
+        'sdk',
+        'status',
+        'tee',
+        'timestamp',
+        'version',
+        'x402',
+      ].sort()
+    );
+  });
+
+  it('[P1] tee field has exact TeeHealthInfo shape', () => {
+    // Arrange: tee with all fields
+    const tee = {
+      attested: true,
+      enclaveType: 'aws-nitro',
+      lastAttestation: 1710450000,
+      pcr0: 'a'.repeat(96),
+      state: 'valid' as const,
+    };
+    const config = _createHealthConfig({
+      x402Enabled: false,
+      tee,
+    });
+
+    // Act
+    const response = createHealthResponse(config);
+
+    // Assert: tee field has exactly the 5 TeeHealthInfo fields
+    expect(response.tee).toBeDefined();
+    const teeKeys = Object.keys(response.tee!).sort();
+    expect(teeKeys).toEqual(
+      ['attested', 'enclaveType', 'lastAttestation', 'pcr0', 'state'].sort()
+    );
+  });
+
+  it('[P1] capabilities array does NOT include tee when tee is provided', () => {
+    // Arrange: tee enabled -- capabilities should still be based on x402, not tee
+    const config = _createHealthConfig({
+      x402Enabled: false,
+      tee: {
+        attested: true,
+        enclaveType: 'aws-nitro',
+        lastAttestation: Math.floor(Date.now() / 1000),
+        pcr0: 'a'.repeat(96),
+        state: 'valid' as const,
+      },
+    });
+
+    // Act
+    const response = createHealthResponse(config);
+
+    // Assert: tee does not appear in capabilities (it's a separate field, not a capability)
+    expect(response.capabilities).toEqual(['relay']);
+    expect(response.capabilities).not.toContain('tee');
+  });
+});

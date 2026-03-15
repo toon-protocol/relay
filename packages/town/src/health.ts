@@ -14,6 +14,20 @@
 import { VERSION } from '@crosstown/core';
 import type { BootstrapPhase } from '@crosstown/core';
 
+/** TEE attestation state for the health response (enforcement guideline 12). */
+export interface TeeHealthInfo {
+  /** Whether a valid attestation has been published. */
+  attested: boolean;
+  /** Enclave type identifier (e.g., 'aws-nitro', 'marlin-oyster'). */
+  enclaveType: string;
+  /** Unix timestamp of the last attestation event. */
+  lastAttestation: number;
+  /** Platform Configuration Register 0 (SHA-384 hex, 96 chars). */
+  pcr0: string;
+  /** Attestation validity state. */
+  state: 'valid' | 'stale' | 'unattested';
+}
+
 /** Configuration for building a health response. */
 export interface HealthConfig {
   /** Current bootstrap phase. */
@@ -37,6 +51,11 @@ export interface HealthConfig {
   x402Enabled: boolean;
   /** Chain preset name. */
   chain: string;
+  /**
+   * TEE attestation info.
+   * Omit entirely when not running in a TEE (enforcement guideline 12).
+   */
+  tee?: TeeHealthInfo;
 }
 
 /** The enriched health response shape. */
@@ -56,6 +75,12 @@ export interface HealthResponse {
     enabled: true;
     endpoint: string;
   };
+  /**
+   * TEE attestation info. Only present when running in a TEE enclave.
+   * Entirely absent when not in TEE (enforcement guideline 12 --
+   * never `{ attested: false }`, simply omit the field).
+   */
+  tee?: TeeHealthInfo;
   capabilities: string[];
   chain: string;
   version: string;
@@ -101,6 +126,11 @@ export function createHealthResponse(config: HealthConfig): HealthResponse {
       enabled: true,
       endpoint: '/publish',
     };
+  }
+
+  // TEE attestation info (enforcement guideline 12: omit entirely when not in TEE)
+  if (config.tee) {
+    response.tee = config.tee;
   }
 
   return response;
