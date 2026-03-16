@@ -754,3 +754,70 @@ describe('startTown() enriched health integration -- static analysis (Story 3.6)
     expect(source).toContain('createHealthResponse(');
   });
 });
+
+// ============================================================================
+// Quick-Spec: Wire viem clients in startTown() for production x402
+// ============================================================================
+
+describe('startTown() x402 viem client wiring -- static analysis', () => {
+  const sourcePath = resolve(__dirname, 'town.ts');
+  const source = readFileSync(sourcePath, 'utf-8');
+
+  it('imports createPublicClient and createWalletClient from viem', () => {
+    expect(source).toContain('createPublicClient');
+    expect(source).toContain('createWalletClient');
+    expect(source).toMatch(/from 'viem'/);
+  });
+
+  it('imports privateKeyToAccount from viem/accounts', () => {
+    expect(source).toContain('privateKeyToAccount');
+    expect(source).toMatch(/from 'viem\/accounts'/);
+  });
+
+  it('imports WalletClient and PublicClient types from viem', () => {
+    expect(source).toMatch(/import type\s*\{[^}]*WalletClient[^}]*\}\s*from 'viem'/);
+    expect(source).toMatch(/import type\s*\{[^}]*PublicClient[^}]*\}\s*from 'viem'/);
+  });
+
+  it('creates viem clients inside x402Enabled conditional, after ILP client and before handler', () => {
+    // Use call-site patterns (with '(') to skip import-level occurrences
+    const ilpClientIdx = source.indexOf('createHttpIlpClient(');
+    const viemBlockIdx = source.indexOf('privateKeyToAccount(');
+    const handlerIdx = source.indexOf('createX402Handler({');
+    expect(ilpClientIdx).toBeGreaterThan(-1);
+    expect(viemBlockIdx).toBeGreaterThan(-1);
+    expect(handlerIdx).toBeGreaterThan(-1);
+    // Ordering: ILP client call < viem block call < x402 handler call
+    expect(viemBlockIdx).toBeGreaterThan(ilpClientIdx);
+    expect(handlerIdx).toBeGreaterThan(viemBlockIdx);
+  });
+
+  it('passes x402WalletClient and x402PublicClient to createX402Handler', () => {
+    expect(source).toMatch(/walletClient:\s*x402WalletClient/);
+    expect(source).toMatch(/publicClient:\s*x402PublicClient/);
+  });
+
+  it('zeroes key material buffer in finally block', () => {
+    // Verify fill(0) appears after the finally keyword, not just anywhere in the file
+    const finallyIdx = source.indexOf('finally {', source.indexOf('viem clients for x402 settlement'));
+    expect(finallyIdx).toBeGreaterThan(-1);
+    const fillIdx = source.indexOf('keyBuffer.fill(0)', finallyIdx);
+    expect(fillIdx).toBeGreaterThan(finallyIdx);
+  });
+
+  it('wraps privateKeyToAccount in try/catch with descriptive error', () => {
+    expect(source).toContain('x402 initialization failed');
+  });
+
+  it('viem client creation is inside x402Enabled guard, not top-level', () => {
+    // Anchor on the unique section comment, then find the guard after it
+    const sectionAnchor = source.indexOf('viem clients for x402 settlement');
+    expect(sectionAnchor).toBeGreaterThan(-1);
+    const x402CondIdx = source.indexOf('if (x402Enabled) {', sectionAnchor);
+    expect(x402CondIdx).toBeGreaterThan(sectionAnchor);
+    const createPublicIdx = source.indexOf('createPublicClient({', x402CondIdx);
+    const createWalletIdx = source.indexOf('createWalletClient({', x402CondIdx);
+    expect(createPublicIdx).toBeGreaterThan(x402CondIdx);
+    expect(createWalletIdx).toBeGreaterThan(x402CondIdx);
+  });
+});

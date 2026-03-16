@@ -80,6 +80,9 @@ import {
 } from '@crosstown/relay';
 import type { EventStore } from '@crosstown/relay';
 import type { Filter } from 'nostr-tools/filter';
+import { createPublicClient, createWalletClient, defineChain, http } from 'viem';
+import type { WalletClient, PublicClient } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
 
 // ---------- SDK Pipeline Constants ----------
 const MAX_PAYLOAD_BASE64_LENGTH = 1_048_576;
@@ -752,7 +755,41 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       )
     : createHttpIlpClient(connectorAdminUrl as string);
 
-  // --- 10c. x402 /publish route ---
+  // --- 10c. viem clients for x402 settlement (conditional) ---
+  let x402WalletClient: WalletClient | undefined;
+  let x402PublicClient: PublicClient | undefined;
+
+  if (x402Enabled) {
+    // Derive EVM private key from node identity (same secp256k1 key)
+    // Best-effort zeroing of intermediate Buffer; hex string is immutable
+    // and cannot be zeroed (JS limitation, same as fromMnemonic pattern).
+    let keyBuffer: Buffer | undefined;
+    try {
+      // Buffer.from(TypedArray) copies the data — identity.secretKey is not aliased.
+      keyBuffer = Buffer.from(identity.secretKey);
+      const privateKeyHex = `0x${keyBuffer.toString('hex')}` as `0x${string}`;
+      const account = privateKeyToAccount(privateKeyHex);
+      const viemChain = defineChain({
+        id: chainConfig.chainId,
+        name: chainConfig.name,
+        nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+        rpcUrls: { default: { http: [] } },
+      });
+
+      x402PublicClient = createPublicClient({ chain: viemChain, transport: http(chainConfig.rpcUrl) });
+      x402WalletClient = createWalletClient({ account, chain: viemChain, transport: http(chainConfig.rpcUrl) });
+    } catch (error: unknown) {
+      throw new Error(
+        `x402 initialization failed: could not derive EVM account from identity key: ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      if (keyBuffer) {
+        keyBuffer.fill(0);
+      }
+    }
+  }
+
+  // --- 10d. x402 /publish route ---
   const x402Handler = createX402Handler({
     x402Enabled,
     chainConfig,
@@ -763,6 +800,8 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     devMode,
     eventStore,
     ilpClient,
+    walletClient: x402WalletClient,
+    publicClient: x402PublicClient,
   });
 
   // Register /publish for both GET and POST methods
