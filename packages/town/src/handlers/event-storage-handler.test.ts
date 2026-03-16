@@ -647,3 +647,218 @@ describe('EventStorageHandler (pipeline integration)', () => {
     expect(stored).toBeUndefined();
   });
 });
+
+// ============================================================================
+// DVM Event Storage and Provider Subscription Tests (Story 5.2, ACs 1 + 3)
+// ============================================================================
+
+describe('EventStorageHandler DVM Events (Story 5.2)', () => {
+  let eventStore: SqliteEventStore;
+  let handler: Handler;
+
+  beforeEach(() => {
+    eventStore = new SqliteEventStore(':memory:');
+    handler = createEventStorageHandler({ eventStore });
+  });
+
+  afterEach(() => {
+    eventStore.close();
+  });
+
+  // AC 1: relay stores the DVM event
+  it('[P0] AC-1: Kind 5100 DVM job request event is stored by createEventStorageHandler()', async () => {
+    // Arrange -- create a Kind 5100 DVM event with NIP-90 tags
+    const sk = generateSecretKey();
+    const dvmEvent = createValidSignedEvent(
+      {
+        kind: 5100,
+        content: 'Summarize this article',
+        tags: [
+          ['i', 'Quantum computing breakthrough in 2026', 'text'],
+          ['bid', '5000000', 'usdc'],
+          ['output', 'text/plain'],
+          ['p', 'de'.repeat(32)],
+          ['param', 'model', 'claude-3'],
+          ['param', 'max_tokens', '1000'],
+          ['relays', 'wss://relay1.example.com', 'wss://relay2.example.com'],
+        ],
+      },
+      sk
+    );
+
+    const ctx = createTestContext({
+      amount: '1000000',
+      destination: 'g.crosstown.relay',
+      data: eventToBase64Toon(dvmEvent),
+    });
+
+    // Act
+    const result = await handler(ctx);
+
+    // Assert -- handler accepts
+    expect(result.accept).toBe(true);
+
+    // Assert -- DVM event is stored
+    const stored = eventStore.get(dvmEvent.id);
+    expect(stored).toBeDefined();
+    expect(stored?.kind).toBe(5100);
+    expect(stored?.content).toBe('Summarize this article');
+
+    // Assert -- all DVM tags survive storage
+    const iTag = stored?.tags.find((t: string[]) => t[0] === 'i');
+    expect(iTag).toBeDefined();
+    expect(iTag?.[1]).toBe('Quantum computing breakthrough in 2026');
+    expect(iTag?.[2]).toBe('text');
+
+    const bidTag = stored?.tags.find((t: string[]) => t[0] === 'bid');
+    expect(bidTag).toBeDefined();
+    expect(bidTag?.[1]).toBe('5000000');
+    expect(bidTag?.[2]).toBe('usdc');
+
+    const outputTag = stored?.tags.find((t: string[]) => t[0] === 'output');
+    expect(outputTag?.[1]).toBe('text/plain');
+
+    const pTag = stored?.tags.find((t: string[]) => t[0] === 'p');
+    expect(pTag?.[1]).toBe('de'.repeat(32));
+
+    const paramTags = stored?.tags.filter((t: string[]) => t[0] === 'param');
+    expect(paramTags).toHaveLength(2);
+
+    const relaysTag = stored?.tags.find((t: string[]) => t[0] === 'relays');
+    expect(relaysTag).toBeDefined();
+    expect(relaysTag?.[1]).toBe('wss://relay1.example.com');
+  });
+
+  // AC 3 / T-5.2-07: provider can query stored DVM events by kind filter
+  it('[P1] T-5.2-07: provider can query stored DVM events by kind filter (subscription backing)', async () => {
+    // Arrange -- store a mix of regular and DVM events
+    const sk = generateSecretKey();
+
+    const regularEvent = createValidSignedEvent(
+      { kind: 1, content: 'Regular note' },
+      sk
+    );
+    const dvmEvent5100 = createValidSignedEvent(
+      {
+        kind: 5100,
+        content: 'Text gen request',
+        tags: [
+          ['i', 'Test input', 'text'],
+          ['bid', '1000', 'usdc'],
+          ['output', 'text/plain'],
+        ],
+      },
+      sk
+    );
+    const dvmEvent5200 = createValidSignedEvent(
+      {
+        kind: 5200,
+        content: 'Image gen request',
+        tags: [
+          ['i', 'Generate a cat', 'text'],
+          ['bid', '2000', 'usdc'],
+          ['output', 'image/png'],
+        ],
+      },
+      sk
+    );
+
+    // Store all events via handler
+    for (const event of [regularEvent, dvmEvent5100, dvmEvent5200]) {
+      const ctx = createTestContext({
+        amount: '1000000',
+        destination: 'g.crosstown.relay',
+        data: eventToBase64Toon(event),
+      });
+      const result = await handler(ctx);
+      expect(result.accept).toBe(true);
+    }
+
+    // Act -- provider queries for Kind 5100 only (filter by kind)
+    const kind5100Results = eventStore.query([{ kinds: [5100] }]);
+
+    // Assert -- only Kind 5100 events returned
+    expect(kind5100Results).toHaveLength(1);
+    expect(kind5100Results[0]?.kind).toBe(5100);
+    expect(kind5100Results[0]?.id).toBe(dvmEvent5100.id);
+
+    // Act -- provider queries for all DVM request kinds (5100, 5200)
+    const allDvmResults = eventStore.query([{ kinds: [5100, 5200] }]);
+
+    // Assert -- both DVM events returned, not the regular event
+    expect(allDvmResults).toHaveLength(2);
+    const returnedKinds = allDvmResults.map((e) => e.kind);
+    expect(returnedKinds).toContain(5100);
+    expect(returnedKinds).toContain(5200);
+
+    // Act -- provider queries for Kind 1 (regular notes only)
+    const regularResults = eventStore.query([{ kinds: [1] }]);
+
+    // Assert -- only regular events returned
+    expect(regularResults).toHaveLength(1);
+    expect(regularResults[0]?.kind).toBe(1);
+  });
+
+  // AC 3: DVM events stored via pipeline are queryable by kind
+  it('[P1] AC-3: DVM event stored via pipeline is queryable by kind (provider subscription simulation)', async () => {
+    // Arrange -- use pipeline approach (Approach B) for full fidelity
+    const nodeSk = generateSecretKey();
+    const mockConnector = createMockConnector();
+
+    const node = createNode({
+      secretKey: nodeSk,
+      connector: mockConnector,
+      defaultHandler: handler,
+      basePricePerByte: 10n,
+      knownPeers: [],
+    });
+
+    await node.start();
+    expect(mockConnector.packetHandler).not.toBeNull();
+
+    // Create a DVM event signed by a different key
+    const customerSk = generateSecretKey();
+    const dvmEvent = createValidSignedEvent(
+      {
+        kind: 5100,
+        content: 'Pipeline stored DVM event',
+        tags: [
+          ['i', 'Test pipeline storage', 'text'],
+          ['bid', '5000000', 'usdc'],
+          ['output', 'text/plain'],
+        ],
+      },
+      customerSk
+    );
+    const exactPrice = calculatePrice(dvmEvent, 10n);
+
+    // Act -- send through pipeline
+    const result = await mockConnector.packetHandler!({
+      amount: exactPrice.toString(),
+      destination: 'g.crosstown.relay',
+      data: eventToBase64Toon(dvmEvent),
+    });
+
+    // Assert -- pipeline accepts
+    expect(result.accept).toBe(true);
+
+    // Assert -- provider can query the stored DVM event by kind
+    const queryResults = eventStore.query([{ kinds: [5100] }]);
+    expect(queryResults).toHaveLength(1);
+    expect(queryResults[0]?.id).toBe(dvmEvent.id);
+    expect(queryResults[0]?.kind).toBe(5100);
+    expect(queryResults[0]?.content).toBe('Pipeline stored DVM event');
+
+    // Assert -- DVM tags survived pipeline + storage
+    const iTag = queryResults[0]?.tags.find((t: string[]) => t[0] === 'i');
+    expect(iTag?.[1]).toBe('Test pipeline storage');
+    expect(iTag?.[2]).toBe('text');
+
+    const bidTag = queryResults[0]?.tags.find((t: string[]) => t[0] === 'bid');
+    expect(bidTag?.[1]).toBe('5000000');
+    expect(bidTag?.[2]).toBe('usdc');
+
+    // Cleanup
+    await node.stop();
+  });
+});
