@@ -775,8 +775,12 @@ describe('startTown() x402 viem client wiring -- static analysis', () => {
   });
 
   it('imports WalletClient and PublicClient types from viem', () => {
-    expect(source).toMatch(/import type\s*\{[^}]*WalletClient[^}]*\}\s*from 'viem'/);
-    expect(source).toMatch(/import type\s*\{[^}]*PublicClient[^}]*\}\s*from 'viem'/);
+    expect(source).toMatch(
+      /import type\s*\{[^}]*WalletClient[^}]*\}\s*from 'viem'/
+    );
+    expect(source).toMatch(
+      /import type\s*\{[^}]*PublicClient[^}]*\}\s*from 'viem'/
+    );
   });
 
   it('creates viem clients inside x402Enabled conditional, after ILP client and before handler', () => {
@@ -799,7 +803,10 @@ describe('startTown() x402 viem client wiring -- static analysis', () => {
 
   it('zeroes key material buffer in finally block', () => {
     // Verify fill(0) appears after the finally keyword, not just anywhere in the file
-    const finallyIdx = source.indexOf('finally {', source.indexOf('viem clients for x402 settlement'));
+    const finallyIdx = source.indexOf(
+      'finally {',
+      source.indexOf('viem clients for x402 settlement')
+    );
     expect(finallyIdx).toBeGreaterThan(-1);
     const fillIdx = source.indexOf('keyBuffer.fill(0)', finallyIdx);
     expect(fillIdx).toBeGreaterThan(finallyIdx);

@@ -177,6 +177,8 @@ describe('Story 2.3: SDK-based entrypoint validation (static)', () => {
   it('SDK relay entrypoint should include sdk:true in health response', () => {
     // The SDK-based relay health endpoint must include `sdk: true` so E2E
     // tests can detect SDK mode vs the old entrypoint.
+    // The entrypoint delegates to createHealthResponse() from @crosstown/town
+    // which always includes `sdk: true` in the response.
     const entrypointPath = resolve(
       repoRoot(),
       'docker',
@@ -185,10 +187,11 @@ describe('Story 2.3: SDK-based entrypoint validation (static)', () => {
     );
     const source = readFileSync(entrypointPath, 'utf-8');
 
-    // The health endpoint JSON must include sdk: true
-    expect(source, 'Health endpoint must include sdk: true').toMatch(
-      /sdk:\s*true/
-    );
+    // The health endpoint must use createHealthResponse (which sets sdk: true)
+    expect(
+      source,
+      'Health endpoint must use createHealthResponse from @crosstown/town'
+    ).toMatch(/createHealthResponse/);
   });
 
   // --------------------------------------------------------------------------

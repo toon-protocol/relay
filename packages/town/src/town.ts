@@ -80,7 +80,12 @@ import {
 } from '@crosstown/relay';
 import type { EventStore } from '@crosstown/relay';
 import type { Filter } from 'nostr-tools/filter';
-import { createPublicClient, createWalletClient, defineChain, http } from 'viem';
+import {
+  createPublicClient,
+  createWalletClient,
+  defineChain,
+  http,
+} from 'viem';
 import type { WalletClient, PublicClient } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
@@ -776,8 +781,15 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
         rpcUrls: { default: { http: [] } },
       });
 
-      x402PublicClient = createPublicClient({ chain: viemChain, transport: http(chainConfig.rpcUrl) });
-      x402WalletClient = createWalletClient({ account, chain: viemChain, transport: http(chainConfig.rpcUrl) });
+      x402PublicClient = createPublicClient({
+        chain: viemChain,
+        transport: http(chainConfig.rpcUrl),
+      });
+      x402WalletClient = createWalletClient({
+        account,
+        chain: viemChain,
+        transport: http(chainConfig.rpcUrl),
+      });
     } catch (error: unknown) {
       throw new Error(
         `x402 initialization failed: could not derive EVM account from identity key: ${error instanceof Error ? error.message : String(error)}`
