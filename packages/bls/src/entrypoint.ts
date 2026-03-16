@@ -179,7 +179,7 @@ async function main(): Promise<void> {
     preferredTokens: {
       'evm:base:31337':
         process.env['M2M_TOKEN_ADDRESS'] ||
-        '0x5FbDB2315678afecb367f032d93F642f64180aa3',
+        '0x5FbDB2315678afecb367f032d93F642f64180aa3', // Mock USDC (Anvil deterministic address)
     },
     tokenNetworks: {
       'evm:base:31337':
@@ -401,12 +401,17 @@ async function main(): Promise<void> {
     // Feed accepted kind:10032 events to discovery tracker for peer discovery
     if (response.accept) {
       try {
-        const toonBytes = Buffer.from((request as HandlePacketRequest).data, 'base64');
+        const toonBytes = Buffer.from(
+          (request as HandlePacketRequest).data,
+          'base64'
+        );
         const decoded = decodeEventFromToon(toonBytes);
         if (decoded && decoded.kind === ILP_PEER_INFO_KIND) {
           discoveryTracker.processEvent(decoded);
         }
-      } catch { /* decode failed, ignore */ }
+      } catch {
+        /* decode failed, ignore */
+      }
     }
     return c.json(response);
   });

@@ -134,91 +134,9 @@ describe('Story 2.3: SDK-based entrypoint validation (static)', () => {
     ).toBeLessThan(100);
   });
 
-  it('SDK relay entrypoint handler logic should be significantly smaller than old entrypoint', () => {
-    // The SDK-based handler code should be less than 50% of the old
-    // entrypoint's total non-blank, non-comment, non-import lines.
-
-    const entrypointPath = resolve(
-      repoRoot(),
-      'docker',
-      'src',
-      'entrypoint-town.ts'
-    );
-    const oldEntrypointPath = resolve(
-      repoRoot(),
-      'docker',
-      'src',
-      'entrypoint.ts'
-    );
-
-    expect(existsSync(entrypointPath), 'entrypoint-town.ts must exist').toBe(
-      true
-    );
-    expect(existsSync(oldEntrypointPath), 'entrypoint.ts must exist').toBe(
-      true
-    );
-
-    // Count handler lines in new entrypoint (same logic as above)
-    const source = readFileSync(entrypointPath, 'utf-8');
-    const lines = source.split('\n');
-    let inHandlerSection = false;
-    let foundFirstBrace = false;
-    let braceDepth = 0;
-    const handlerLines: string[] = [];
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith('function createPipelineHandler(')) {
-        inHandlerSection = true;
-      }
-      if (inHandlerSection) {
-        for (const ch of trimmed) {
-          if (ch === '{') {
-            braceDepth++;
-            foundFirstBrace = true;
-          }
-          if (ch === '}') braceDepth--;
-        }
-        if (trimmed === '') {
-          /* skip */
-        } else if (trimmed.startsWith('//')) {
-          /* skip */
-        } else if (trimmed.startsWith('/*') || trimmed.startsWith('*')) {
-          /* skip */
-        } else if (trimmed.startsWith('import ')) {
-          /* skip */
-        } else if (trimmed === '}' || trimmed === '};' || trimmed === '},') {
-          /* skip */
-        } else {
-          handlerLines.push(trimmed);
-        }
-        if (foundFirstBrace && braceDepth === 0) {
-          inHandlerSection = false;
-        }
-      }
-    }
-    const pipelineConstLines = lines.filter((l) =>
-      l.trim().startsWith('const MAX_PAYLOAD_BASE64_LENGTH')
-    );
-    const totalHandlerLines = handlerLines.length + pipelineConstLines.length;
-
-    // Count all non-blank, non-comment, non-import lines in the old entrypoint
-    const oldSource = readFileSync(oldEntrypointPath, 'utf-8');
-    const oldLines = oldSource.split('\n').filter((line) => {
-      const trimmed = line.trim();
-      if (trimmed === '') return false;
-      if (trimmed.startsWith('//')) return false;
-      if (trimmed.startsWith('/*') || trimmed.startsWith('*')) return false;
-      if (trimmed.startsWith('import ')) return false;
-      return true;
-    });
-
-    // SDK handler code should be significantly smaller than old entrypoint
-    expect(
-      totalHandlerLines,
-      `Handler logic (${totalHandlerLines} lines) must be < 50% of old entrypoint (${oldLines.length} lines)`
-    ).toBeLessThan(oldLines.length * 0.5);
-  });
+  // NOTE: Comparison test against legacy docker/src/entrypoint.ts removed --
+  // the legacy entrypoint was deleted as part of A12 cleanup. The preceding
+  // test already validates the SDK entrypoint has < 100 lines of handler logic.
 
   // --------------------------------------------------------------------------
   // Import validation: handlers from @crosstown/town, not @crosstown/sdk
@@ -259,6 +177,8 @@ describe('Story 2.3: SDK-based entrypoint validation (static)', () => {
   it('SDK relay entrypoint should include sdk:true in health response', () => {
     // The SDK-based relay health endpoint must include `sdk: true` so E2E
     // tests can detect SDK mode vs the old entrypoint.
+    // The entrypoint delegates to createHealthResponse() from @crosstown/town
+    // which always includes `sdk: true` in the response.
     const entrypointPath = resolve(
       repoRoot(),
       'docker',
@@ -267,10 +187,11 @@ describe('Story 2.3: SDK-based entrypoint validation (static)', () => {
     );
     const source = readFileSync(entrypointPath, 'utf-8');
 
-    // The health endpoint JSON must include sdk: true
-    expect(source, 'Health endpoint must include sdk: true').toMatch(
-      /sdk:\s*true/
-    );
+    // The health endpoint must use createHealthResponse (which sets sdk: true)
+    expect(
+      source,
+      'Health endpoint must use createHealthResponse from @crosstown/town'
+    ).toMatch(/createHealthResponse/);
   });
 
   // --------------------------------------------------------------------------

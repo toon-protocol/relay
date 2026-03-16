@@ -37,6 +37,8 @@ import type {
   NodeIdentity,
 } from '@crosstown/sdk';
 import { createEventStorageHandler } from './handlers/event-storage-handler.js';
+import { createX402Handler } from './handlers/x402-publish-handler.js';
+import { createHealthResponse } from './health.js';
 import {
   BootstrapService,
   createDiscoveryTracker,
@@ -49,7 +51,13 @@ import {
   createDirectChannelClient,
   SocialPeerDiscovery,
   buildIlpPeerInfoEvent,
+  resolveChainConfig,
+  SeedRelayDiscovery,
+  publishSeedRelayEntry,
+  buildServiceDiscoveryEvent,
+  VERSION,
 } from '@crosstown/core';
+import type { ServiceDiscoveryContent } from '@crosstown/core';
 import type {
   ConnectorChannelClient,
   BootstrapEvent,
@@ -72,6 +80,14 @@ import {
 } from '@crosstown/relay';
 import type { EventStore } from '@crosstown/relay';
 import type { Filter } from 'nostr-tools/filter';
+import {
+  createPublicClient,
+  createWalletClient,
+  defineChain,
+  http,
+} from 'viem';
+import type { WalletClient, PublicClient } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
 
 // ---------- SDK Pipeline Constants ----------
 const MAX_PAYLOAD_BASE64_LENGTH = 1_048_576;
@@ -131,14 +147,25 @@ export interface TownConfig {
 
   /** Base price per byte in ILP units (default: 10n). */
   basePricePerByte?: bigint;
+  /** Routing buffer percentage for x402 multi-hop overhead (default: 10). */
+  routingBufferPercent?: number;
+
+  // --- x402 ---
+
+  /** Enable x402 /publish endpoint (default: false). */
+  x402Enabled?: boolean;
+  /** Facilitator EVM address for x402 payments. Defaults to the node's EVM address. */
+  facilitatorAddress?: string;
 
   // --- Peers ---
 
   /** Known peers to bootstrap with. */
   knownPeers?: { pubkey: string; relayUrl: string; btpEndpoint: string }[];
 
-  // --- Settlement (all optional -- omit to disable settlement) ---
+  // --- Chain / Settlement ---
 
+  /** Chain preset name (default: 'anvil'). See resolveChainConfig(). */
+  chain?: string;
   /** Chain ID -> RPC URL mapping (e.g., { 'evm:base:31337': 'http://localhost:8545' }). */
   chainRpcUrls?: Record<string, string>;
   /** Chain ID -> TokenNetwork contract address. */
@@ -155,6 +182,17 @@ export interface TownConfig {
 
   /** Enable dev mode (skip verification). Default: false. */
   devMode?: boolean;
+
+  // --- Discovery ---
+
+  /** Discovery mode: 'seed-list' for production, 'genesis' for dev (default: 'genesis'). */
+  discovery?: 'seed-list' | 'genesis';
+  /** Public Nostr relay URLs for seed relay discovery (used when discovery: 'seed-list'). */
+  seedRelays?: string[];
+  /** Whether to publish this node as a seed relay entry (default: false). */
+  publishSeedEntry?: boolean;
+  /** External WebSocket URL of this relay (required if publishSeedEntry is true). */
+  externalRelayUrl?: string;
 
   // --- Advanced ---
 
@@ -182,6 +220,8 @@ export interface ResolvedTownConfig {
   /** Connector admin URL (standalone mode only). */
   connectorAdminUrl?: string;
   basePricePerByte: bigint;
+  routingBufferPercent: number;
+  x402Enabled: boolean;
   knownPeers: { pubkey: string; relayUrl: string; btpEndpoint: string }[];
   dataDir: string;
   devMode: boolean;
@@ -189,6 +229,16 @@ export interface ResolvedTownConfig {
   relayUrls: string[];
   assetCode: string;
   assetScale: number;
+  /** Discovery mode: 'seed-list' for production, 'genesis' for dev. */
+  discovery: 'seed-list' | 'genesis';
+  /** Public Nostr relay URLs for seed relay discovery. */
+  seedRelays: string[];
+  /** Whether to publish this node as a seed relay entry. */
+  publishSeedEntry: boolean;
+  /** External WebSocket URL of this relay (for seed entry publishing). */
+  externalRelayUrl?: string;
+  /** Chain preset name (e.g., 'anvil', 'arbitrum-one'). */
+  chain: string;
 }
 
 /**
@@ -228,6 +278,9 @@ export interface TownInstance {
     peerCount: number;
     channelCount: number;
   };
+
+  /** Discovery mode used by this instance. */
+  discoveryMode: 'seed-list' | 'genesis';
 }
 
 /**
@@ -299,9 +352,10 @@ export function createSubscription(
   // Validate WebSocket URL scheme to provide clear errors and prevent
   // non-WebSocket URLs from reaching SimplePool (consistency with BTP URL
   // validation convention in project-context.md).
+  // nosemgrep: javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket -- validation check, not a connection
   if (!relayUrl.startsWith('ws://') && !relayUrl.startsWith('wss://')) {
     throw new Error(
-      `Invalid relay URL: "${relayUrl}" -- must use ws:// or wss:// scheme`
+      'Invalid relay URL -- must use WebSocket scheme (ws or wss)'
     );
   }
 
@@ -394,9 +448,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     );
   }
   if (!hasConnector && !hasConnectorUrl) {
-    throw new Error(
-      'TownConfig: one of connector or connectorUrl is required'
-    );
+    throw new Error('TownConfig: one of connector or connectorUrl is required');
   }
   const embeddedMode = hasConnector;
 
@@ -416,13 +468,23 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     ? (config.connectorAdminUrl ?? deriveAdminUrl(connectorUrl))
     : undefined;
   const basePricePerByte = config.basePricePerByte ?? 10n;
-  const knownPeers = config.knownPeers ?? [];
+  const routingBufferPercent = config.routingBufferPercent ?? 10;
+  const x402Enabled = config.x402Enabled ?? false;
+  const knownPeers = [...(config.knownPeers ?? [])];
   const dataDir = config.dataDir ?? './data';
   const devMode = config.devMode ?? false;
   const ardriveEnabled = config.ardriveEnabled ?? false;
   const relayUrls = config.relayUrls ?? [`ws://localhost:${relayPort}`];
   const assetCode = config.assetCode ?? 'USD';
   const assetScale = config.assetScale ?? 6;
+  const discovery = config.discovery ?? 'genesis';
+  const seedRelays = config.seedRelays ?? [];
+  const publishSeedEntryFlag = config.publishSeedEntry ?? false;
+  const externalRelayUrl = config.externalRelayUrl;
+
+  // --- 3b. Resolve chain preset early (needed for resolvedConfig and settlement) ---
+  const chainConfig = resolveChainConfig(config.chain);
+  const chainKey = `evm:base:${chainConfig.chainId}`;
 
   const resolvedConfig: ResolvedTownConfig = {
     relayPort,
@@ -432,6 +494,8 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     ...(connectorUrl && { connectorUrl }),
     ...(connectorAdminUrl && { connectorAdminUrl }),
     basePricePerByte,
+    routingBufferPercent,
+    x402Enabled,
     knownPeers,
     dataDir,
     devMode,
@@ -439,6 +503,11 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     relayUrls,
     assetCode,
     assetScale,
+    discovery,
+    seedRelays,
+    publishSeedEntry: publishSeedEntryFlag,
+    ...(externalRelayUrl && { externalRelayUrl }),
+    chain: chainConfig.name,
   };
 
   // --- 4. Create data directory ---
@@ -448,19 +517,35 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   const dbPath = join(dataDir, 'events.db');
   const eventStore: EventStore = new SqliteEventStore(dbPath);
 
+  // --- 5b. Auto-populate settlement defaults from chain preset ---
+
+  // Auto-populate settlement fields from chain preset when not explicitly set.
+  // Explicit config values always win over chain preset defaults.
+  const effectiveChainRpcUrls = config.chainRpcUrls ?? {
+    [chainKey]: chainConfig.rpcUrl,
+  };
+  const effectivePreferredTokens = config.preferredTokens ?? {
+    [chainKey]: chainConfig.usdcAddress,
+  };
+  const effectiveTokenNetworks =
+    config.tokenNetworks ??
+    (chainConfig.tokenNetworkAddress
+      ? { [chainKey]: chainConfig.tokenNetworkAddress }
+      : undefined);
+
   // --- 6. Settlement configuration ---
   let channelClient: ConnectorChannelClient | undefined;
   let settlementInfo: SettlementConfig | undefined;
 
   const hasSettlement =
-    config.chainRpcUrls || config.tokenNetworks || config.preferredTokens;
+    effectiveChainRpcUrls || effectiveTokenNetworks || effectivePreferredTokens;
 
   if (hasSettlement) {
     const supportedChains = Array.from(
       new Set([
-        ...Object.keys(config.chainRpcUrls ?? {}),
-        ...Object.keys(config.tokenNetworks ?? {}),
-        ...Object.keys(config.preferredTokens ?? {}),
+        ...Object.keys(effectiveChainRpcUrls ?? {}),
+        ...Object.keys(effectiveTokenNetworks ?? {}),
+        ...Object.keys(effectivePreferredTokens ?? {}),
       ])
     );
 
@@ -473,8 +558,8 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     settlementInfo = {
       supportedChains,
       settlementAddresses,
-      preferredTokens: config.preferredTokens,
-      tokenNetworks: config.tokenNetworks,
+      preferredTokens: effectivePreferredTokens,
+      tokenNetworks: effectiveTokenNetworks,
     };
 
     if (embeddedMode) {
@@ -493,7 +578,9 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
 
   // --- 7. Connector admin client ---
   const adminClient: ConnectorAdminClient = embeddedMode
-    ? createDirectConnectorAdmin(config.connector as NonNullable<typeof config.connector>)
+    ? createDirectConnectorAdmin(
+        config.connector as NonNullable<typeof config.connector>
+      )
     : createHttpConnectorAdmin(connectorAdminUrl as string, '');
 
   // --- 8. SDK Pipeline ---
@@ -607,19 +694,19 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   const app = new Hono();
   app.get('/health', (c: Context) => {
     const bootstrapPhase = bootstrapService.getPhase();
-    return c.json({
-      status: 'healthy',
-      pubkey: identity.pubkey,
-      ilpAddress,
-      timestamp: Date.now(),
-      sdk: true,
-      ...(bootstrapPhase && { bootstrapPhase }),
-      ...(bootstrapPhase === 'ready' && {
+    return c.json(
+      createHealthResponse({
+        phase: bootstrapPhase,
+        pubkey: identity.pubkey,
+        ilpAddress,
         peerCount: discoveryTracker.getPeerCount() + peerCount,
         discoveredPeerCount: discoveryTracker.getDiscoveredCount(),
         channelCount,
-      }),
-    });
+        basePricePerByte,
+        x402Enabled,
+        chain: chainConfig.name,
+      })
+    );
   });
 
   app.post('/handle-packet', async (c: Context) => {
@@ -647,7 +734,9 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
           if (decoded && decoded.kind === ILP_PEER_INFO_KIND) {
             discoveryTracker.processEvent(decoded);
           }
-        } catch { /* decode failed, ignore */ }
+        } catch {
+          /* decode failed, ignore */
+        }
       }
       return c.json(result, result.accept ? 200 : 400);
     } catch (error: unknown) {
@@ -660,6 +749,76 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       );
     }
   });
+
+  // --- 10b. ILP client (created before x402 handler so it can be wired in) ---
+  const ilpClient: IlpClient = embeddedMode
+    ? createDirectIlpClient(
+        config.connector as NonNullable<typeof config.connector>,
+        {
+          toonDecoder: (bytes: Uint8Array) => decodeEventFromToon(bytes),
+        }
+      )
+    : createHttpIlpClient(connectorAdminUrl as string);
+
+  // --- 10c. viem clients for x402 settlement (conditional) ---
+  let x402WalletClient: WalletClient | undefined;
+  let x402PublicClient: PublicClient | undefined;
+
+  if (x402Enabled) {
+    // Derive EVM private key from node identity (same secp256k1 key)
+    // Best-effort zeroing of intermediate Buffer; hex string is immutable
+    // and cannot be zeroed (JS limitation, same as fromMnemonic pattern).
+    let keyBuffer: Buffer | undefined;
+    try {
+      // Buffer.from(TypedArray) copies the data — identity.secretKey is not aliased.
+      keyBuffer = Buffer.from(identity.secretKey);
+      const privateKeyHex = `0x${keyBuffer.toString('hex')}` as `0x${string}`;
+      const account = privateKeyToAccount(privateKeyHex);
+      const viemChain = defineChain({
+        id: chainConfig.chainId,
+        name: chainConfig.name,
+        nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+        rpcUrls: { default: { http: [] } },
+      });
+
+      x402PublicClient = createPublicClient({
+        chain: viemChain,
+        transport: http(chainConfig.rpcUrl),
+      });
+      x402WalletClient = createWalletClient({
+        account,
+        chain: viemChain,
+        transport: http(chainConfig.rpcUrl),
+      });
+    } catch (error: unknown) {
+      throw new Error(
+        `x402 initialization failed: could not derive EVM account from identity key: ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      if (keyBuffer) {
+        keyBuffer.fill(0);
+      }
+    }
+  }
+
+  // --- 10d. x402 /publish route ---
+  const x402Handler = createX402Handler({
+    x402Enabled,
+    chainConfig,
+    basePricePerByte,
+    routingBufferPercent,
+    facilitatorAddress: config.facilitatorAddress ?? identity.evmAddress,
+    ownPubkey: identity.pubkey,
+    devMode,
+    eventStore,
+    ilpClient,
+    walletClient: x402WalletClient,
+    publicClient: x402PublicClient,
+  });
+
+  // Register /publish for both GET and POST methods
+  app.get('/publish', (c: Context) => x402Handler.handlePublish(c));
+  app.post('/publish', (c: Context) => x402Handler.handlePublish(c));
 
   const blsServer: ServerType = serve({
     fetch: app.fetch,
@@ -680,11 +839,6 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     bootstrapService.setChannelClient(channelClient);
   }
 
-  const ilpClient: IlpClient = embeddedMode
-    ? createDirectIlpClient(config.connector as NonNullable<typeof config.connector>, {
-        toonDecoder: (bytes: Uint8Array) => decodeEventFromToon(bytes),
-      })
-    : createHttpIlpClient(connectorAdminUrl as string);
   bootstrapService.setIlpClient(ilpClient);
 
   bootstrapService.on((event: BootstrapEvent) => {
@@ -759,6 +913,45 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   // discoveryTracker peer count is read live via getPeerCount() in the
   // health endpoint — no need for a separate counter here.
 
+  // --- 13b. Seed Relay Discovery (when discovery: 'seed-list') ---
+  // Runs before bootstrap to populate knownPeers from seed relay list.
+  let seedRelayDiscovery: SeedRelayDiscovery | undefined;
+  if (discovery === 'seed-list' && seedRelays.length > 0) {
+    seedRelayDiscovery = new SeedRelayDiscovery({
+      publicRelays: seedRelays,
+    });
+
+    try {
+      const seedResult = await seedRelayDiscovery.discover();
+      // Convert discovered peers to KnownPeer[] format and merge with config
+      const seedPeers = seedResult.discoveredPeers
+        .filter((info) => info.pubkey)
+        .map((info) => ({
+          pubkey: info.pubkey as string,
+          relayUrl:
+            seedResult.connectedUrls[0] ?? `ws://localhost:${relayPort}`,
+          btpEndpoint: info.btpEndpoint,
+        }));
+
+      // Merge with existing knownPeers (config peers take priority)
+      const existingPubkeys = new Set(knownPeers.map((p) => p.pubkey));
+      for (const seedPeer of seedPeers) {
+        if (!existingPubkeys.has(seedPeer.pubkey)) {
+          knownPeers.push(seedPeer);
+        }
+      }
+
+      console.log(
+        `[Town] Seed relay discovery: found ${seedPeers.length} peers from ${seedResult.connectedUrls.length} seed relay(s)`
+      );
+    } catch (seedError: unknown) {
+      const msg =
+        seedError instanceof Error ? seedError.message : 'Unknown error';
+      console.warn(`[Town] Seed relay discovery failed: ${msg}`);
+      // Continue with any knownPeers from config
+    }
+  }
+
   try {
     const results = await bootstrapService.bootstrap();
 
@@ -813,11 +1006,92 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       console.warn('[Town] Failed to publish ILP info:', error);
     }
 
+    // Self-write: publish own kind:10035 (Service Discovery)
+    try {
+      const serviceDiscoveryContent: ServiceDiscoveryContent = {
+        serviceType: 'relay',
+        ilpAddress,
+        pricing: {
+          basePricePerByte: Number(basePricePerByte),
+          currency: 'USDC',
+        },
+        supportedKinds: [1, 10032, 10035, 10036],
+        capabilities: x402Enabled ? ['relay', 'x402'] : ['relay'],
+        chain: chainConfig.name,
+        version: VERSION,
+      };
+
+      // Only include x402 field when enabled (AC #3: omit entirely when disabled)
+      if (x402Enabled) {
+        serviceDiscoveryContent.x402 = {
+          enabled: true,
+          endpoint: '/publish',
+        };
+      }
+
+      const serviceDiscoveryEvent = buildServiceDiscoveryEvent(
+        serviceDiscoveryContent,
+        identity.secretKey
+      );
+      eventStore.store(serviceDiscoveryEvent);
+
+      // Publish to peers via ILP (fire-and-forget, same pattern as kind:10032)
+      const firstPeer = knownPeers[0];
+      const genesisResult = results[0];
+      if (firstPeer && genesisResult) {
+        const genesisIlpAddress = genesisResult.peerInfo.ilpAddress;
+        const sdToonBytes = encodeEventToToon(serviceDiscoveryEvent);
+        const sdBase64Toon = Buffer.from(sdToonBytes).toString('base64');
+        const sdIlpAmount = String(
+          BigInt(sdToonBytes.length) * basePricePerByte
+        );
+
+        ilpClient
+          .sendIlpPacket({
+            destination: genesisIlpAddress,
+            amount: sdIlpAmount,
+            data: sdBase64Toon,
+          })
+          .catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : 'Unknown';
+            console.warn(
+              '[Town] Failed to publish service discovery via ILP:',
+              msg
+            );
+          });
+      }
+    } catch (error: unknown) {
+      console.warn('[Town] Failed to publish service discovery:', error);
+    }
+
     // Exclude already-bootstrapped peers from discovery
     const bootstrapPeerPubkeys = results.map((r) => r.knownPeer.pubkey);
     discoveryTracker.addExcludedPubkeys(bootstrapPeerPubkeys);
   } catch (error: unknown) {
     console.error('[Town] Bootstrap failed:', error);
+  }
+
+  // --- 13c. Publish seed relay entry (after bootstrap complete) ---
+  if (publishSeedEntryFlag && !externalRelayUrl) {
+    console.warn(
+      '[Town] publishSeedEntry is true but externalRelayUrl is not set -- skipping seed relay entry publication'
+    );
+  }
+  if (publishSeedEntryFlag && externalRelayUrl && seedRelays.length > 0) {
+    publishSeedRelayEntry({
+      secretKey: identity.secretKey,
+      relayUrl: externalRelayUrl,
+      publicRelays: seedRelays,
+    })
+      .then(({ publishedTo, eventId }) => {
+        console.log(
+          `[Town] Published seed relay entry to ${publishedTo} relay(s), eventId: ${eventId}`
+        );
+      })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        console.warn(`[Town] Failed to publish seed relay entry: ${msg}`);
+      });
   }
 
   // Social discovery
@@ -863,6 +1137,11 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
         socialSubscription.unsubscribe();
       }
 
+      // Close seed relay discovery connections
+      if (seedRelayDiscovery) {
+        await seedRelayDiscovery.close();
+      }
+
       await wsRelay.stop();
       blsServer.close();
 
@@ -877,6 +1156,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       peerCount,
       channelCount,
     },
+    discoveryMode: discovery,
   };
 
   return instance;

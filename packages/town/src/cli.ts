@@ -33,6 +33,11 @@ Options:
   --connector-admin-url <url>  Connector admin URL (default: connectorUrl port+1)
   --known-peers <json>     Known peers as JSON array
   --dev-mode               Enable dev mode (skip verification)
+  --x402-enabled           Enable x402 /publish endpoint (default: false)
+  --discovery <mode>       Discovery mode: 'seed-list' or 'genesis' (default: 'genesis')
+  --seed-relays <urls>     Comma-separated public Nostr relay URLs for seed discovery
+  --publish-seed-entry     Publish this node as a seed relay entry (default: false)
+  --external-relay-url <url>  External WebSocket URL of this relay
   --help                   Show this help message
 
 Environment Variables:
@@ -45,6 +50,16 @@ Environment Variables:
   CROSSTOWN_CONNECTOR_ADMIN_URL  Same as --connector-admin-url
   CROSSTOWN_KNOWN_PEERS        Same as --known-peers
   CROSSTOWN_DEV_MODE           Same as --dev-mode (set to "true")
+  CROSSTOWN_X402_ENABLED       Same as --x402-enabled (set to "true")
+  CROSSTOWN_DISCOVERY          Same as --discovery
+  CROSSTOWN_SEED_RELAYS        Same as --seed-relays
+  CROSSTOWN_PUBLISH_SEED_ENTRY Same as --publish-seed-entry (set to "true")
+  CROSSTOWN_EXTERNAL_RELAY_URL Same as --external-relay-url
+
+Security:
+  Prefer CROSSTOWN_MNEMONIC or CROSSTOWN_SECRET_KEY environment variables
+  over --mnemonic / --secret-key CLI flags. CLI arguments are visible to
+  other users on the system via process listings (e.g. ps aux). See CWE-214.
 `.trim()
   );
 }
@@ -61,6 +76,11 @@ function parseCli(): TownConfig {
       'connector-admin-url': { type: 'string' },
       'known-peers': { type: 'string' },
       'dev-mode': { type: 'boolean' },
+      'x402-enabled': { type: 'boolean' },
+      discovery: { type: 'string' },
+      'seed-relays': { type: 'string' },
+      'publish-seed-entry': { type: 'boolean' },
+      'external-relay-url': { type: 'string' },
       help: { type: 'boolean' },
     },
     strict: true,
@@ -73,6 +93,20 @@ function parseCli(): TownConfig {
   }
 
   // Resolve: CLI flags override env vars
+
+  // Warn about process-listing exposure (CWE-214) when secrets are passed via CLI flags
+  if (values.mnemonic) {
+    console.warn(
+      'Warning: --mnemonic is visible in process listings. ' +
+        'Prefer CROSSTOWN_MNEMONIC environment variable for production use.'
+    );
+  }
+  if (values['secret-key']) {
+    console.warn(
+      'Warning: --secret-key is visible in process listings. ' +
+        'Prefer CROSSTOWN_SECRET_KEY environment variable for production use.'
+    );
+  }
 
   const mnemonic =
     values.mnemonic ?? process.env['CROSSTOWN_MNEMONIC'] ?? undefined;
@@ -135,6 +169,10 @@ function parseCli(): TownConfig {
     values['dev-mode'] ??
     (process.env['CROSSTOWN_DEV_MODE'] === 'true' ? true : undefined);
 
+  const x402Enabled =
+    values['x402-enabled'] ??
+    (process.env['CROSSTOWN_X402_ENABLED'] === 'true' ? true : undefined);
+
   const knownPeersJson =
     values['known-peers'] ?? process.env['CROSSTOWN_KNOWN_PEERS'] ?? undefined;
 
@@ -172,6 +210,52 @@ function parseCli(): TownConfig {
     process.exit(1);
   }
 
+  // Discovery mode
+  const discoveryStr =
+    values.discovery ?? process.env['CROSSTOWN_DISCOVERY'] ?? undefined;
+  let discoveryMode: 'seed-list' | 'genesis' | undefined;
+  if (discoveryStr) {
+    if (discoveryStr !== 'seed-list' && discoveryStr !== 'genesis') {
+      console.error('Error: --discovery must be "seed-list" or "genesis"');
+      process.exit(1);
+    }
+    discoveryMode = discoveryStr;
+  }
+
+  // Seed relays (comma-separated list of public Nostr relay URLs)
+  const seedRelaysStr =
+    values['seed-relays'] ?? process.env['CROSSTOWN_SEED_RELAYS'] ?? undefined;
+  const seedRelaysArr = seedRelaysStr
+    ? seedRelaysStr
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : undefined;
+
+  // Validate seed relay URLs have WebSocket scheme (CWE-20)
+  if (seedRelaysArr) {
+    for (const url of seedRelaysArr) {
+      // nosemgrep: javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket -- validation check, not a connection
+      if (!url.startsWith('ws://') && !url.startsWith('wss://')) {
+        console.error(
+          'Error: --seed-relays contains invalid URL -- must use WebSocket scheme (ws or wss)'
+        );
+        process.exit(1);
+      }
+    }
+  }
+
+  // Publish seed entry flag
+  const publishSeedEntry =
+    values['publish-seed-entry'] ??
+    (process.env['CROSSTOWN_PUBLISH_SEED_ENTRY'] === 'true' ? true : undefined);
+
+  // External relay URL
+  const externalRelayUrl =
+    values['external-relay-url'] ??
+    process.env['CROSSTOWN_EXTERNAL_RELAY_URL'] ??
+    undefined;
+
   const config: TownConfig = {
     connectorUrl,
     ...(mnemonic && { mnemonic }),
@@ -182,6 +266,11 @@ function parseCli(): TownConfig {
     ...(connectorAdminUrl && { connectorAdminUrl }),
     ...(knownPeers && { knownPeers }),
     ...(devMode !== undefined && { devMode }),
+    ...(x402Enabled !== undefined && { x402Enabled }),
+    ...(discoveryMode && { discovery: discoveryMode }),
+    ...(seedRelaysArr && { seedRelays: seedRelaysArr }),
+    ...(publishSeedEntry !== undefined && { publishSeedEntry }),
+    ...(externalRelayUrl && { externalRelayUrl }),
   };
 
   return config;
