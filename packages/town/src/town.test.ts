@@ -828,3 +828,42 @@ describe('startTown() x402 viem client wiring -- static analysis', () => {
     expect(createWalletIdx).toBeGreaterThan(x402CondIdx);
   });
 });
+
+// ============================================================================
+// Story 5.4: Skill Descriptors -- startTown() integration (static analysis)
+// ============================================================================
+
+describe('startTown() skill descriptor integration -- static analysis (Story 5.4)', () => {
+  const sourcePath = resolve(__dirname, 'town.ts');
+  const source = readFileSync(sourcePath, 'utf-8');
+
+  it('TownConfig accepts optional skill field (T-5.4-06)', () => {
+    // AC #5: TownConfig should include an optional skill property
+    expect(source).toMatch(/skill\??\s*:\s*SkillDescriptor/);
+  });
+
+  it('town.ts imports SkillDescriptor type from @crosstown/core', () => {
+    // Verify the SkillDescriptor type is imported for type safety
+    expect(source).toContain('SkillDescriptor');
+    expect(source).toMatch(/from\s+['"]@crosstown\/core['"]/);
+  });
+
+  it('town.ts conditionally includes skill field in kind:10035 content (T-5.4-06)', () => {
+    // AC #5: skill descriptor is included in service discovery when configured
+    expect(source).toMatch(/if\s*\(config\.skill\)\s*\{/);
+    expect(source).toContain('serviceDiscoveryContent.skill = config.skill');
+  });
+
+  it('skill wiring is positioned after x402 guard and before buildServiceDiscoveryEvent (T-5.4-06)', () => {
+    // Verify ordering: x402 guard -> skill wiring -> buildServiceDiscoveryEvent
+    const x402Idx = source.indexOf('serviceDiscoveryContent.x402');
+    const skillIdx = source.indexOf('serviceDiscoveryContent.skill');
+    const buildIdx = source.indexOf('buildServiceDiscoveryEvent(');
+    expect(x402Idx).toBeGreaterThan(-1);
+    expect(skillIdx).toBeGreaterThan(-1);
+    expect(buildIdx).toBeGreaterThan(-1);
+    // skill wiring comes after x402 and before build
+    expect(skillIdx).toBeGreaterThan(x402Idx);
+    expect(buildIdx).toBeGreaterThan(skillIdx);
+  });
+});
