@@ -57,7 +57,7 @@ import {
   buildServiceDiscoveryEvent,
   VERSION,
 } from '@crosstown/core';
-import type { ServiceDiscoveryContent } from '@crosstown/core';
+import type { ServiceDiscoveryContent, SkillDescriptor } from '@crosstown/core';
 import type {
   ConnectorChannelClient,
   BootstrapEvent,
@@ -193,6 +193,15 @@ export interface TownConfig {
   publishSeedEntry?: boolean;
   /** External WebSocket URL of this relay (required if publishSeedEntry is true). */
   externalRelayUrl?: string;
+
+  // --- DVM ---
+
+  /**
+   * Optional DVM skill descriptor to include in service discovery events.
+   * When provided, the service discovery event will include the `skill` field.
+   * Typically computed by `node.getSkillDescriptor()` from the SDK.
+   */
+  skill?: SkillDescriptor;
 
   // --- Advanced ---
 
@@ -1027,6 +1036,11 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
           enabled: true,
           endpoint: '/publish',
         };
+      }
+
+      // Include skill descriptor when DVM capabilities are configured (Story 5.4)
+      if (config.skill) {
+        serviceDiscoveryContent.skill = config.skill;
       }
 
       const serviceDiscoveryEvent = buildServiceDiscoveryEvent(
