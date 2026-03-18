@@ -18,7 +18,7 @@ async function createBLSWithNIP34() {
   const nip34Handler = new NIP34Handler({
     forgejoUrl: process.env["FORGEJO_URL"] || 'http://forgejo:3000',
     forgejoToken: process.env["FORGEJO_TOKEN"] || '',
-    defaultOwner: process.env["FORGEJO_OWNER"] || 'toon'',
+    defaultOwner: process.env["FORGEJO_OWNER"] || 'toon',
     gitConfig: {
       userName: 'TOON Node',
       userEmail: 'node@toon.nostr',

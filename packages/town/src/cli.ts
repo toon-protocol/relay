@@ -108,8 +108,7 @@ function parseCli(): TownConfig {
     );
   }
 
-  const mnemonic =
-    values.mnemonic ?? process.env['TOON_MNEMONIC'] ?? undefined;
+  const mnemonic = values.mnemonic ?? process.env['TOON_MNEMONIC'] ?? undefined;
 
   const secretKeyHex =
     values['secret-key'] ?? process.env['TOON_SECRET_KEY'] ?? undefined;
@@ -124,14 +123,10 @@ function parseCli(): TownConfig {
   }
 
   const connectorUrl =
-    values['connector-url'] ??
-    process.env['TOON_CONNECTOR_URL'] ??
-    undefined;
+    values['connector-url'] ?? process.env['TOON_CONNECTOR_URL'] ?? undefined;
 
   if (!connectorUrl) {
-    console.error(
-      'Error: --connector-url (or TOON_CONNECTOR_URL) is required'
-    );
+    console.error('Error: --connector-url (or TOON_CONNECTOR_URL) is required');
     process.exit(1);
   }
 

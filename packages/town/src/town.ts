@@ -57,7 +57,10 @@ import {
   buildServiceDiscoveryEvent,
   VERSION,
 } from '@toon-protocol/core';
-import type { ServiceDiscoveryContent, SkillDescriptor } from '@toon-protocol/core';
+import type {
+  ServiceDiscoveryContent,
+  SkillDescriptor,
+} from '@toon-protocol/core';
 import type {
   ConnectorChannelClient,
   BootstrapEvent,

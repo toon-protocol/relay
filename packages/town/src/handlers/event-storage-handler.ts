@@ -14,7 +14,11 @@
  */
 
 import type { EventStore } from '@toon-protocol/relay';
-import type { Handler, HandlerContext, HandlerResponse } from '@toon-protocol/sdk';
+import type {
+  Handler,
+  HandlerContext,
+  HandlerResponse,
+} from '@toon-protocol/sdk';
 
 /**
  * Configuration for the event storage handler.

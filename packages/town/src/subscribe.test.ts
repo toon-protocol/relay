@@ -23,8 +23,9 @@ let lastConstructorArgs: {
 } | null = null;
 
 vi.mock('@toon-protocol/relay', async () => {
-  const actual: Record<string, unknown> =
-    await vi.importActual('@toon-protocol/relay');
+  const actual: Record<string, unknown> = await vi.importActual(
+    '@toon-protocol/relay'
+  );
   return {
     ...actual,
     RelaySubscriber: vi.fn(
