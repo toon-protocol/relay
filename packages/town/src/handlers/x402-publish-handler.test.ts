@@ -36,7 +36,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
-import { buildIlpPrepare, encodeEventToToon } from '@crosstown/core';
+import { buildIlpPrepare, encodeEventToToon } from '@toon-protocol/core';
 import { privateKeyToAccount } from 'viem/accounts';
 import { createX402Handler } from './x402-publish-handler.js';
 import type { X402HandlerConfig } from './x402-publish-handler.js';
@@ -95,7 +95,7 @@ function createNostrEvent(overrides: Record<string, unknown> = {}) {
 function createX402RequestBody(overrides: Record<string, unknown> = {}) {
   return {
     event: createNostrEvent(),
-    destination: 'g.crosstown.test-relay',
+    destination: 'g.toon.test-relay',
     ...overrides,
   };
 }
@@ -267,7 +267,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
   describe('buildIlpPrepare() amount correctness (T-3.3-13)', () => {
     it('[P0] buildIlpPrepare() sets amount field to match basePricePerByte * toonData.length', () => {
       // Given: known inputs for the ILP PREPARE packet
-      const destination = 'g.crosstown.target-relay';
+      const destination = 'g.toon.target-relay';
       const toonData = new Uint8Array(500); // 500 bytes
       const basePricePerByte = 10n;
       const expectedAmount = basePricePerByte * BigInt(toonData.length); // 5000n
@@ -347,7 +347,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
   describe('Packet equivalence (3.3-INT-003)', () => {
     it('[P0] x402 and ILP paths produce identical ILP PREPARE packets via shared buildIlpPrepare()', () => {
       // Given: identical inputs for both x402 and ILP paths
-      const destination = 'g.crosstown.test-relay';
+      const destination = 'g.toon.test-relay';
       const amount = 5000n;
       const toonData = new Uint8Array([1, 2, 3, 4, 5]); // sample TOON bytes
 
@@ -370,7 +370,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
 
     it('[P0] buildIlpPrepare output matches IlpClient.sendIlpPacket expected shape', () => {
       // Given: typical inputs
-      const destination = 'g.crosstown.target-relay';
+      const destination = 'g.toon.target-relay';
       const amount = 10000n;
       const toonData = new Uint8Array(100).fill(42);
 
@@ -406,7 +406,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
       // Given: forged authorization (zeroed sig components) and TOON payload
       const authorization = createEip3009Authorization();
       const toonData = Buffer.from('test_toon_data').toString('base64');
-      const destination = 'g.crosstown.test-relay';
+      const destination = 'g.toon.test-relay';
 
       // And: preflight config with devMode (skips Schnorr only, not EIP-3009 sig)
       // No publicClient = skip balance/nonce checks (pass by default)
@@ -660,7 +660,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
       const result = await runPreflight(
         forgedAuth,
         toonData,
-        'g.crosstown.test-relay',
+        'g.toon.test-relay',
         preflightConfig
       );
 
@@ -679,7 +679,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
   // Level: Integration (handler config)
   // --------------------------------------------------------------------------
   describe('x402 disabled (3.3-INT-007)', () => {
-    it('[P1] CROSSTOWN_X402_ENABLED=false -> GET /publish returns 404', async () => {
+    it('[P1] TOON_X402_ENABLED=false -> GET /publish returns 404', async () => {
       // Given: x402 is explicitly disabled in config
       const config = createX402Config({ x402Enabled: false });
       const requestBody = createX402RequestBody();
@@ -786,7 +786,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
       const result = await runPreflight(
         authorization,
         toonData,
-        'g.crosstown.test-relay',
+        'g.toon.test-relay',
         preflightConfig
       );
 
@@ -1164,7 +1164,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
       // Given: request body without event field
       const config = createX402Config();
       const response = await makeRequest(config, {
-        destination: 'g.crosstown.test-relay',
+        destination: 'g.toon.test-relay',
       });
 
       // Then: 400 missing required fields
@@ -1485,7 +1485,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
       // When: handler processes paid request
       await makeRequest(
         config,
-        createX402RequestBody({ destination: 'g.crosstown.target' }),
+        createX402RequestBody({ destination: 'g.toon.target' }),
         { 'X-PAYMENT': serializeAuth(authorization) }
       );
 
@@ -1495,7 +1495,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
         | Record<string, unknown>
         | undefined;
       expect(packet).toBeDefined();
-      expect(packet?.['destination']).toBe('g.crosstown.target');
+      expect(packet?.['destination']).toBe('g.toon.target');
       expect(typeof packet?.['amount']).toBe('string');
       expect(typeof packet?.['data']).toBe('string'); // base64
       // Amount should be basePricePerByte * toonBytes.length (as string)
@@ -1540,7 +1540,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
       const result = await runPreflight(
         authorization,
         toonBase64,
-        'g.crosstown.test-relay',
+        'g.toon.test-relay',
         preflightConfig
       );
 
@@ -1577,7 +1577,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
       const result = await runPreflight(
         authorization,
         invalidToonBase64,
-        'g.crosstown.test-relay',
+        'g.toon.test-relay',
         preflightConfig
       );
 
@@ -1631,7 +1631,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
       const result = await runPreflight(
         authorization,
         toonBase64,
-        'g.crosstown.test-relay',
+        'g.toon.test-relay',
         preflightConfig
       );
 
@@ -1682,7 +1682,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
       const result = await runPreflight(
         authorization,
         toonBase64,
-        'g.crosstown.test-relay',
+        'g.toon.test-relay',
         preflightConfig
       );
 
@@ -1731,7 +1731,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
       const result = await runPreflight(
         authorization,
         toonBase64,
-        'g.crosstown.test-relay',
+        'g.toon.test-relay',
         preflightConfig
       );
 
@@ -1779,7 +1779,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
       const result = await runPreflight(
         authorization,
         toonBase64,
-        'g.crosstown.test-relay',
+        'g.toon.test-relay',
         preflightConfig
       );
 
@@ -1816,7 +1816,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
       const result = await runPreflight(
         authorization,
         toonBase64,
-        'g.crosstown.test-relay',
+        'g.toon.test-relay',
         preflightConfig
       );
 
@@ -1871,7 +1871,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
       const result = await runPreflight(
         authorization,
         toonBase64,
-        'g.crosstown.test-relay',
+        'g.toon.test-relay',
         preflightConfig
       );
 
@@ -1914,7 +1914,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
       const result = await runPreflight(
         authorization,
         toonBase64,
-        'g.crosstown.test-relay',
+        'g.toon.test-relay',
         preflightConfig
       );
 
@@ -1966,7 +1966,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
       const result = await runPreflight(
         authorization,
         toonBase64,
-        'g.crosstown.test-relay',
+        'g.toon.test-relay',
         preflightConfig
       );
 
@@ -2001,7 +2001,7 @@ describe('Story 3.3: x402 /publish Endpoint', () => {
       const result = await runPreflight(
         authorization,
         toonBase64,
-        'g.crosstown.test-relay',
+        'g.toon.test-relay',
         preflightConfig
       );
 
@@ -2028,7 +2028,7 @@ describe('Story 3.3: x402 E2E (3.3-E2E-001)', () => {
     // - Anvil (local EVM chain with mock USDC)
     // - Faucet (fund test wallets)
     // - Connector (ILP routing)
-    // - At least one Crosstown relay node with x402 enabled
+    // - At least one TOON relay node with x402 enabled
     //
     // Steps:
     // 1. Fund a test wallet with mock USDC via the Faucet

@@ -1,5 +1,5 @@
 /**
- * startTown() -- Programmatic API for starting a Crosstown relay node.
+ * startTown() -- Programmatic API for starting a TOON relay node.
  *
  * This module wraps the same SDK components used by docker/src/entrypoint-town.ts
  * into a single function call with a typed configuration object. Both
@@ -30,12 +30,12 @@ import {
   createHandlerContext,
   fromMnemonic,
   fromSecretKey,
-} from '@crosstown/sdk';
+} from '@toon-protocol/sdk';
 import type {
   HandlePacketAcceptResponse,
   HandlePacketRejectResponse,
   NodeIdentity,
-} from '@crosstown/sdk';
+} from '@toon-protocol/sdk';
 import { createEventStorageHandler } from './handlers/event-storage-handler.js';
 import { createX402Handler } from './handlers/x402-publish-handler.js';
 import { createHealthResponse } from './health.js';
@@ -56,8 +56,8 @@ import {
   publishSeedRelayEntry,
   buildServiceDiscoveryEvent,
   VERSION,
-} from '@crosstown/core';
-import type { ServiceDiscoveryContent, SkillDescriptor } from '@crosstown/core';
+} from '@toon-protocol/core';
+import type { ServiceDiscoveryContent, SkillDescriptor } from '@toon-protocol/core';
 import type {
   ConnectorChannelClient,
   BootstrapEvent,
@@ -67,18 +67,18 @@ import type {
   IlpClient,
   SettlementConfig,
   EmbeddableConnectorLike,
-} from '@crosstown/core';
+} from '@toon-protocol/core';
 import {
   shallowParseToon,
   decodeEventFromToon,
   encodeEventToToon,
-} from '@crosstown/core/toon';
+} from '@toon-protocol/core/toon';
 import {
   SqliteEventStore,
   NostrRelayServer,
   RelaySubscriber,
-} from '@crosstown/relay';
-import type { EventStore } from '@crosstown/relay';
+} from '@toon-protocol/relay';
+import type { EventStore } from '@toon-protocol/relay';
 import type { Filter } from 'nostr-tools/filter';
 import {
   createPublicClient,
@@ -95,7 +95,7 @@ const MAX_PAYLOAD_BASE64_LENGTH = 1_048_576;
 // ---------- Public Types ----------
 
 /**
- * Configuration for starting a Crosstown relay node via `startTown()`.
+ * Configuration for starting a TOON relay node via `startTown()`.
  *
  * Exactly one of `mnemonic` or `secretKey` must be provided.
  * Exactly one of `connector` or `connectorUrl` must be provided.
@@ -138,7 +138,7 @@ export interface TownConfig {
   relayPort?: number;
   /** BLS HTTP server port (default: 3100). */
   blsPort?: number;
-  /** ILP address for this node (default: g.crosstown.<pubkeyShort>). */
+  /** ILP address for this node (default: g.toon.<pubkeyShort>). */
   ilpAddress?: string;
   /** BTP WebSocket endpoint (default: ws://localhost:3000). */
   btpEndpoint?: string;
@@ -251,7 +251,7 @@ export interface ResolvedTownConfig {
 }
 
 /**
- * A running Crosstown relay node instance returned by `startTown()`.
+ * A running TOON relay node instance returned by `startTown()`.
  *
  * Provides lifecycle control (stop), identity info, and bootstrap results.
  */
@@ -401,7 +401,7 @@ export function createSubscription(
 // ---------- Main API ----------
 
 /**
- * Start a Crosstown relay node with the given configuration.
+ * Start a TOON relay node with the given configuration.
  *
  * Composes the full SDK pipeline (identity, verification, pricing, handlers)
  * and starts the relay WebSocket server, BLS HTTP server, bootstrap service,
@@ -470,7 +470,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   const relayPort = config.relayPort ?? 7100;
   const blsPort = config.blsPort ?? 3100;
   const pubkeyShort = identity.pubkey.slice(0, 16);
-  const ilpAddress = config.ilpAddress ?? `g.crosstown.${pubkeyShort}`;
+  const ilpAddress = config.ilpAddress ?? `g.toon.${pubkeyShort}`;
   const btpEndpoint = config.btpEndpoint ?? 'ws://localhost:3000';
   const connectorUrl = config.connectorUrl;
   const connectorAdminUrl = connectorUrl

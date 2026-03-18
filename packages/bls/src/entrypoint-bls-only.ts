@@ -77,14 +77,14 @@ async function main(): Promise<void> {
   let nip34Handler: NIP34HandlerLike | undefined;
   if (forgejoUrl && forgejoToken && forgejoOwner) {
     try {
-      const { NIP34Handler } = await import('@crosstown/core/nip34');
+      const { NIP34Handler } = await import('@toon-protocol/core/nip34');
       nip34Handler = new NIP34Handler({
         forgejoUrl,
         forgejoToken,
         defaultOwner: forgejoOwner,
         gitConfig: {
-          userName: 'Crosstown Node',
-          userEmail: `${nodeId}@crosstown.nostr`,
+          userName: 'TOON Node',
+          userEmail: `${nodeId}@toon.nostr`,
         },
         verbose: true,
       });

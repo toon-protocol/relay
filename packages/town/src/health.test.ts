@@ -21,7 +21,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { createHealthResponse, type HealthConfig } from './health.js';
-import { VERSION } from '@crosstown/core';
+import { VERSION } from '@toon-protocol/core';
 
 // ============================================================================
 // Factories
@@ -43,7 +43,7 @@ function _createHealthConfig(
   return {
     phase: 'ready',
     pubkey: 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
-    ilpAddress: 'g.crosstown.abcdef12345678',
+    ilpAddress: 'g.toon.abcdef12345678',
     peerCount: 5,
     discoveredPeerCount: 12,
     channelCount: 3,
@@ -139,14 +139,14 @@ describe('Story 3.6: Enriched /health Endpoint', () => {
   // Additional unit tests for createHealthResponse() pure function
   // --------------------------------------------------------------------------
   describe('createHealthResponse() pure function', () => {
-    it('[P2] returns correct version from @crosstown/core (T-3.6-04)', () => {
+    it('[P2] returns correct version from @toon-protocol/core (T-3.6-04)', () => {
       // Arrange
       const config = _createHealthConfig();
 
       // Act
       const response = createHealthResponse(config);
 
-      // Assert -- version must match the VERSION constant from @crosstown/core
+      // Assert -- version must match the VERSION constant from @toon-protocol/core
       expect(response.version).toBe(VERSION);
       expect(response.version).toMatch(/^\d+\.\d+\.\d+/);
     });
@@ -191,7 +191,7 @@ describe('Story 3.6: Enriched /health Endpoint', () => {
     it('[P2] includes pubkey and ilpAddress from config (T-3.6-08)', () => {
       // Arrange
       const pubkey = 'ff'.repeat(32);
-      const ilpAddress = 'g.crosstown.testnode';
+      const ilpAddress = 'g.toon.testnode';
       const config = _createHealthConfig({ pubkey, ilpAddress });
 
       // Act
@@ -442,7 +442,7 @@ describe('Story 3.6: Enriched /health Endpoint', () => {
 // ============================================================================
 // Story 4.2: TEE Attestation Health Tests (T-4.2-06)
 // These tests validate the tee field in the health response.
-// Placed here because core cannot import from @crosstown/town.
+// Placed here because core cannot import from @toon-protocol/town.
 // ============================================================================
 
 describe('Story 4.2: /health TEE attestation field (T-4.2-06)', () => {

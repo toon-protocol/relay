@@ -12,7 +12,7 @@ const TEST_PUBKEY =
 function setRequiredEnv(): void {
   process.env['NODE_ID'] = 'test-node-1';
   process.env['NOSTR_SECRET_KEY'] = TEST_SECRET_KEY;
-  process.env['ILP_ADDRESS'] = 'g.crosstown.test';
+  process.env['ILP_ADDRESS'] = 'g.toon.test';
 }
 
 describe('loadBlsConfigFromEnv', () => {
@@ -50,7 +50,7 @@ describe('loadBlsConfigFromEnv', () => {
     expect(config.nodeId).toBe('test-node-1');
     expect(config.nostrSecretKey).toBe(TEST_SECRET_KEY);
     expect(config.pubkey).toBe(TEST_PUBKEY);
-    expect(config.ilpAddress).toBe('g.crosstown.test');
+    expect(config.ilpAddress).toBe('g.toon.test');
     expect(config.port).toBe(3100);
     expect(config.basePricePerByte).toBe(10n);
     expect(config.ownerPubkey).toBeUndefined();

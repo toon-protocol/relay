@@ -2,7 +2,7 @@
 # Multi-stage build for minimal image size
 #
 # Build from repo root:
-#   docker build -f packages/bls/Dockerfile -t crosstown-bls .
+#   docker build -f packages/bls/Dockerfile -t toon-bls .
 
 # ── Stage 1: Builder ─────────────────────────────────────────
 FROM node:20-alpine AS builder
@@ -41,12 +41,12 @@ COPY packages/bls/src/ packages/bls/src/
 COPY packages/bls/tsconfig.json packages/bls/tsup.config.ts packages/bls/
 
 # Build workspace dependencies then BLS
-RUN pnpm --filter @crosstown/core build && \
-    pnpm --filter @crosstown/relay build && \
-    pnpm --filter @crosstown/bls build
+RUN pnpm --filter @toon-protocol/core build && \
+    pnpm --filter @toon-protocol/relay build && \
+    pnpm --filter @toon-protocol/bls build
 
 # Create production deployment (production deps only, no symlinks)
-RUN pnpm --filter @crosstown/bls deploy --prod /prod
+RUN pnpm --filter @toon-protocol/bls deploy --prod /prod
 
 # Strip better-sqlite3 build artifacts (deps/ contains SQLite source, src/ contains C++ source)
 RUN rm -rf /prod/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/deps \
@@ -85,7 +85,7 @@ USER node
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -q --spider http://localhost:3100/health || exit 1
 
-# Start Crosstown node (use ENTRYPOINT env var to choose)
+# Start TOON node (use ENTRYPOINT env var to choose)
 # Default: entrypoint.js (full-featured node with Nostr relay, peer discovery, payment channels)
 # Minimal: entrypoint-bls-only.js (BLS only, no networking)
 CMD node dist/${ENTRYPOINT:-entrypoint.js}

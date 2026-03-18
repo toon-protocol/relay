@@ -1,17 +1,17 @@
-# @crosstown/town
+# @toon-protocol/town
 
-A complete Crosstown relay node — one command to run.
+A complete TOON relay node — one command to run.
 
 ## What It Does
 
-Town is the reference implementation of a Crosstown service. It combines the SDK's processing pipeline with an embedded ILP connector, WebSocket relay, SQLite storage, HTTP health endpoint, and automatic bootstrap into a single package.
+Town is the reference implementation of a TOON service. It combines the SDK's processing pipeline with an embedded ILP connector, WebSocket relay, SQLite storage, HTTP health endpoint, and automatic bootstrap into a single package.
 
 Run it with one function call or one CLI command.
 
 ## Install
 
 ```bash
-npm install @crosstown/town
+npm install @toon-protocol/town
 ```
 
 ## Usage
@@ -19,7 +19,7 @@ npm install @crosstown/town
 ### CLI
 
 ```bash
-npx @crosstown/town \
+npx @toon-protocol/town \
   --mnemonic "your twelve word mnemonic phrase here"
 ```
 
@@ -28,7 +28,7 @@ That's it. Town starts an embedded ILP connector, a WebSocket relay on port 7100
 ### Programmatic
 
 ```typescript
-import { startTown } from '@crosstown/town';
+import { startTown } from '@toon-protocol/town';
 
 const town = await startTown({
   mnemonic: 'your twelve word mnemonic...',
@@ -52,18 +52,18 @@ await town.stop();
 
 ```
 ┌─────────────────────────┐
-│  @crosstown/town        │  ← One-call relay (this package)
+│  @toon-protocol/town        │  ← One-call relay (this package)
 ├─────────────────────────┤
-│  @crosstown/sdk         │  ← Verification, pricing, handlers
+│  @toon-protocol/sdk         │  ← Verification, pricing, handlers
 ├─────────────────────────┤
-│  @crosstown/core        │  ← Bootstrap, discovery
-│  @crosstown/relay       │  ← WebSocket server, event store
+│  @toon-protocol/core        │  ← Bootstrap, discovery
+│  @toon-protocol/relay       │  ← WebSocket server, event store
 ├─────────────────────────┤
 │  Embedded Connector     │  ← ILP routing (included)
 └─────────────────────────┘
 ```
 
-Town is the SDK fully assembled. If you need custom handlers or different storage, use [`@crosstown/sdk`](../sdk) directly.
+Town is the SDK fully assembled. If you need custom handlers or different storage, use [`@toon-protocol/sdk`](../sdk) directly.
 
 ## Configuration
 
@@ -78,7 +78,7 @@ Town is the SDK fully assembled. If you need custom handlers or different storag
 | `knownPeers` | `[]` | Seed peers for bootstrap |
 | `connectorUrl` | — | Use an external connector instead of the embedded one |
 
-All options can also be set via environment variables (`CROSSTOWN_*`) or CLI flags (`--*`).
+All options can also be set via environment variables (`TOON_*`) or CLI flags (`--*`).
 
 ## What Happens on Start
 

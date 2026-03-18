@@ -4,7 +4,7 @@
  * Tests the subscription wrapper logic via the extracted `createSubscription()`
  * helper and verifies the running-state guard pattern.
  *
- * Mock strategy: Mock `@crosstown/relay` to replace `RelaySubscriber` with a
+ * Mock strategy: Mock `@toon-protocol/relay` to replace `RelaySubscriber` with a
  * controlled mock that captures constructor args and `start()` behavior.
  * This avoids issues with bundled transitive dependencies (nostr-tools/pool).
  */
@@ -22,9 +22,9 @@ let lastConstructorArgs: {
   eventStore: unknown;
 } | null = null;
 
-vi.mock('@crosstown/relay', async () => {
+vi.mock('@toon-protocol/relay', async () => {
   const actual: Record<string, unknown> =
-    await vi.importActual('@crosstown/relay');
+    await vi.importActual('@toon-protocol/relay');
   return {
     ...actual,
     RelaySubscriber: vi.fn(
@@ -637,7 +637,7 @@ describe('AC #3: lastSeenTimestamp tracking (static analysis)', () => {
 // ===========================================================================
 
 describe('TownSubscription type export (Story 2.8)', () => {
-  it('TownSubscription is exported from @crosstown/town', async () => {
+  it('TownSubscription is exported from @toon-protocol/town', async () => {
     // Verify TownSubscription type is importable by dynamically importing
     const townModule = await import('./index.js');
 

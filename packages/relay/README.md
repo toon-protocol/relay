@@ -1,11 +1,11 @@
-# @crosstown/relay
+# @toon-protocol/relay
 
 ILP-gated Nostr relay with Business Logic Server.
 
 ## Install
 
 ```bash
-npm install @crosstown/relay
+npm install @toon-protocol/relay
 ```
 
 ## Usage
@@ -16,7 +16,7 @@ import {
   BusinessLogicServer,
   PricingService,
   SqliteEventStore,
-} from '@crosstown/relay';
+} from '@toon-protocol/relay';
 ```
 
 ## License

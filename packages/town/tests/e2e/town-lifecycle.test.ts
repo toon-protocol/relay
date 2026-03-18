@@ -1,8 +1,8 @@
 /**
- * E2E Test: @crosstown/town Package Lifecycle (Story 2.5)
+ * E2E Test: @toon-protocol/town Package Lifecycle (Story 2.5)
  *
  * **Purpose:**
- * Verify that the @crosstown/town package exports a `startTown(config)` function
+ * Verify that the @toon-protocol/town package exports a `startTown(config)` function
  * that starts an SDK-based relay with sensible defaults, performs bootstrap, and
  * accepts events. This is the publishable relay package that replaces the manual
  * docker/src/entrypoint.ts composition.
@@ -12,19 +12,19 @@
  *    ```bash
  *    ./deploy-genesis-node.sh
  *    ```
- * 2. @crosstown/town package built:
+ * 2. @toon-protocol/town package built:
  *    ```bash
  *    cd packages/town && pnpm build
  *    ```
  *
  * **GREEN phase (Story 2.5 implementation complete):**
  * - startTown() implemented in packages/town/src/town.ts
- * - TownConfig and TownInstance types exported from @crosstown/town
+ * - TownConfig and TownInstance types exported from @toon-protocol/town
  * - CLI entrypoint at packages/town/src/cli.ts
  * - package.json bin entry added
  *
  * **What this validates:**
- * - FR-RELAY-1: Published as @crosstown/town with startTown(config) and CLI
+ * - FR-RELAY-1: Published as @toon-protocol/town with startTown(config) and CLI
  * - Sensible defaults: ports 7100 (relay) and 3100 (BLS) when not specified
  * - Bootstrap runs on start (peers discovered)
  * - Relay accepts events after start
@@ -36,10 +36,10 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import WebSocket from 'ws';
 
 // Public API surface of the town package (Story 2.5).
-import { startTown, type TownConfig, type TownInstance } from '@crosstown/town';
+import { startTown, type TownConfig, type TownInstance } from '@toon-protocol/town';
 
 // For TOON encoding/decoding in test assertions
-import { decodeEventFromToon } from '@crosstown/relay';
+import { decodeEventFromToon } from '@toon-protocol/relay';
 
 // For blockchain queries to verify payment channels
 // viem imports available for future blockchain verification tests
@@ -126,7 +126,7 @@ async function waitForHttp(url: string, timeoutMs = 10000): Promise<boolean> {
 // ============================================================================
 // GREEN PHASE -- Story 2.5 implementation complete.
 //
-// startTown() is exported from @crosstown/town. Tests require genesis node
+// startTown() is exported from @toon-protocol/town. Tests require genesis node
 // infrastructure (Anvil, Connector, Relay) to be running for E2E tests.
 // Tests gracefully skip if infrastructure is not available.
 //
@@ -135,7 +135,7 @@ async function waitForHttp(url: string, timeoutMs = 10000): Promise<boolean> {
 // - blsPort: 3500 -> 3550 in T-2.5-05 (avoids Faucet port conflict)
 // ============================================================================
 
-describe('@crosstown/town Package Lifecycle (Story 2.5)', () => {
+describe('@toon-protocol/town Package Lifecycle (Story 2.5)', () => {
   let genesisReady = false;
   let townInstance: TownInstance | null = null;
 
@@ -293,7 +293,7 @@ describe('@crosstown/town Package Lifecycle (Story 2.5)', () => {
   // P1: API surface and default behavior
   // ---------------------------------------------------------------------------
 
-  it('should export startTown() and TownConfig from @crosstown/town', async () => {
+  it('should export startTown() and TownConfig from @toon-protocol/town', async () => {
     // Validates AC #2: package exports startTown() and TownConfig type.
 
     // Verify startTown is a function
@@ -538,7 +538,7 @@ describe('@crosstown/town Package Lifecycle (Story 2.5)', () => {
   // P2: Package structure validation
   // ---------------------------------------------------------------------------
 
-  it('package.json should depend on @crosstown/sdk, @crosstown/relay, @crosstown/core', async () => {
+  it('package.json should depend on @toon-protocol/sdk, @toon-protocol/relay, @toon-protocol/core', async () => {
     // Validates AC #1: correct dependencies, bin entry, ESM, type:module.
 
     const fs = await import('fs');
@@ -556,13 +556,13 @@ describe('@crosstown/town Package Lifecycle (Story 2.5)', () => {
     } catch {
       expect.fail(
         'packages/town/package.json does not exist. ' +
-          'Create the @crosstown/town package with correct dependencies.'
+          'Create the @toon-protocol/town package with correct dependencies.'
       );
       return;
     }
 
     // Verify package name
-    expect(packageJson['name']).toBe('@crosstown/town');
+    expect(packageJson['name']).toBe('@toon-protocol/town');
 
     // Verify required dependencies
     const deps = packageJson['dependencies'] as
@@ -570,14 +570,14 @@ describe('@crosstown/town Package Lifecycle (Story 2.5)', () => {
       | undefined;
     expect(deps).toBeDefined();
 
-    // @crosstown/sdk is the core SDK that provides createNode(), handler registry, etc.
-    expect(deps!['@crosstown/sdk']).toBeDefined();
+    // @toon-protocol/sdk is the core SDK that provides createNode(), handler registry, etc.
+    expect(deps!['@toon-protocol/sdk']).toBeDefined();
 
-    // @crosstown/relay provides NostrRelayServer and SqliteEventStore
-    expect(deps!['@crosstown/relay']).toBeDefined();
+    // @toon-protocol/relay provides NostrRelayServer and SqliteEventStore
+    expect(deps!['@toon-protocol/relay']).toBeDefined();
 
-    // @crosstown/core provides BootstrapService, TOON codec, event builders, etc.
-    expect(deps!['@crosstown/core']).toBeDefined();
+    // @toon-protocol/core provides BootstrapService, TOON codec, event builders, etc.
+    expect(deps!['@toon-protocol/core']).toBeDefined();
 
     // Verify the package has a bin entry for CLI usage
     const bin = packageJson['bin'] as

@@ -1,5 +1,5 @@
 /**
- * Enriched health response for Crosstown relay nodes (Story 3.6).
+ * Enriched health response for TOON relay nodes (Story 3.6).
  *
  * Provides a pure function `createHealthResponse()` that builds a comprehensive
  * health JSON object combining static configuration (pricing, chain, version,
@@ -11,8 +11,8 @@
  * @module
  */
 
-import { VERSION } from '@crosstown/core';
-import type { BootstrapPhase } from '@crosstown/core';
+import { VERSION } from '@toon-protocol/core';
+import type { BootstrapPhase } from '@toon-protocol/core';
 
 /** TEE attestation state for the health response (enforcement guideline 12). */
 export interface TeeHealthInfo {

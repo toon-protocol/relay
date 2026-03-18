@@ -13,7 +13,7 @@
  */
 
 import type { WalletClient, PublicClient } from 'viem';
-import type { ChainPreset } from '@crosstown/core';
+import type { ChainPreset } from '@toon-protocol/core';
 import type { Eip3009Authorization } from './x402-types.js';
 import { USDC_ABI } from './x402-types.js';
 
@@ -38,7 +38,7 @@ export type SettlementResult = X402SettlementResult;
  * Configuration for the settlement module.
  *
  * Named `X402SettlementConfig` to avoid collision with
- * `SettlementConfig` from `@crosstown/core` (bootstrap).
+ * `SettlementConfig` from `@toon-protocol/core` (bootstrap).
  */
 export interface X402SettlementConfig {
   /** Resolved chain configuration. */

@@ -1,2 +1,2 @@
-export { encodeEventToToon, ToonEncodeError } from '@crosstown/core';
-export { decodeEventFromToon, ToonError } from '@crosstown/core';
+export { encodeEventToToon, ToonEncodeError } from '@toon-protocol/core';
+export { decodeEventFromToon, ToonDecodeError } from '@toon-protocol/core';

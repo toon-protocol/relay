@@ -1,7 +1,7 @@
 /**
- * Crosstown Node with Bootstrap
+ * TOON Node with Bootstrap
  *
- * This entrypoint creates a complete Crosstown node with:
+ * This entrypoint creates a complete TOON node with:
  * - BLS (Business Logic Server) for ILP packet handling
  * - Nostr Relay for peer discovery
  * - Bootstrap Service for automatic peer discovery
@@ -41,7 +41,7 @@ import { ConfigError } from './errors.js';
 import { PricingService } from './pricing/index.js';
 import { createEventStore } from './storage/index.js';
 import { encodeEventToToon, decodeEventFromToon } from './toon/index.js';
-import { NostrRelayServer } from '@crosstown/relay';
+import { NostrRelayServer } from '@toon-protocol/relay';
 import {
   BootstrapService,
   createDiscoveryTracker,
@@ -54,10 +54,10 @@ import {
   createHttpChannelClient,
   createHttpRuntimeClient as createHttpRuntimeClientV1,
   createHttpConnectorAdmin,
-} from '@crosstown/core';
+} from '@toon-protocol/core';
 import { SimplePool } from 'nostr-tools/pool';
 
-const BTP_SECRET = process.env['BTP_SECRET'] || 'crosstown-network-secret-2026';
+const BTP_SECRET = process.env['BTP_SECRET'] || 'toon-network-secret-2026';
 
 async function main(): Promise<void> {
   // Load BLS config
@@ -83,7 +83,7 @@ async function main(): Promise<void> {
   }
   const secretKey = Uint8Array.from(Buffer.from(secretKeyHex, 'hex'));
 
-  // Load Crosstown-specific config
+  // Load TOON-specific config
   const connectorAdminUrl = process.env['CONNECTOR_ADMIN_URL'];
   const connectorUrl = process.env['CONNECTOR_URL'];
   const btpEndpoint = process.env['BTP_ENDPOINT'];
@@ -117,7 +117,7 @@ async function main(): Promise<void> {
     }
   }
 
-  // Validate required Crosstown config
+  // Validate required TOON config
   if (!connectorAdminUrl) {
     throw new ConfigError(
       'CONNECTOR_ADMIN_URL',
@@ -137,7 +137,7 @@ async function main(): Promise<void> {
     );
   }
 
-  console.log('🚀 Starting Crosstown Node with Bootstrap...\n');
+  console.log('🚀 Starting TOON Node with Bootstrap...\n');
   console.log(`  Node ID:            ${nodeId}`);
   console.log(`  Pubkey:             ${pubkey}`);
   console.log(`  ILP Address:        ${ilpAddress}`);
@@ -211,14 +211,14 @@ async function main(): Promise<void> {
   let nip34Handler: NIP34HandlerLike | undefined;
   if (forgejoUrl && forgejoToken && forgejoOwner) {
     try {
-      const { NIP34Handler } = await import('@crosstown/core/nip34');
+      const { NIP34Handler } = await import('@toon-protocol/core/nip34');
       nip34Handler = new NIP34Handler({
         forgejoUrl,
         forgejoToken,
         defaultOwner: forgejoOwner,
         gitConfig: {
-          userName: 'Crosstown Node',
-          userEmail: `${nodeId}@crosstown.nostr`,
+          userName: 'TOON Node',
+          userEmail: `${nodeId}@toon.nostr`,
         },
         verbose: true,
       });
@@ -290,7 +290,7 @@ async function main(): Promise<void> {
   const blsHttpEndpoint =
     process.env['BLS_HTTP_ENDPOINT'] ||
     (process.env['NODE_ID']
-      ? `http://crosstown-${process.env['NODE_ID']}:${blsPort}`
+      ? `http://toon-${process.env['NODE_ID']}:${blsPort}`
       : undefined);
 
   const ilpInfo: IlpPeerInfo = {
@@ -427,7 +427,7 @@ async function main(): Promise<void> {
 
   console.log(`✅ BLS HTTP server started on port ${blsPort}`);
   console.log('');
-  console.log('🎉 Crosstown node fully operational!\n');
+  console.log('🎉 TOON node fully operational!\n');
 
   // -------------------------------------------------------------------------
   // Graceful Shutdown

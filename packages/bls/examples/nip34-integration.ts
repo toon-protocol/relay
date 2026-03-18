@@ -8,7 +8,7 @@
 
 import { BusinessLogicServer } from '../src/bls/BusinessLogicServer.js';
 import { InMemoryEventStore } from '../src/storage/InMemoryEventStore.js';
-import { NIP34Handler } from '@crosstown/core/nip34';
+import { NIP34Handler } from '@toon-protocol/core/nip34';
 
 /**
  * Example configuration for NIP-34 integration
@@ -18,10 +18,10 @@ async function createBLSWithNIP34() {
   const nip34Handler = new NIP34Handler({
     forgejoUrl: process.env["FORGEJO_URL"] || 'http://forgejo:3000',
     forgejoToken: process.env["FORGEJO_TOKEN"] || '',
-    defaultOwner: process.env["FORGEJO_OWNER"] || 'crosstown',
+    defaultOwner: process.env["FORGEJO_OWNER"] || 'toon'',
     gitConfig: {
-      userName: 'Crosstown Node',
-      userEmail: 'node@crosstown.nostr',
+      userName: 'TOON Node',
+      userEmail: 'node@toon.nostr',
     },
     verbose: true,
   });
@@ -76,7 +76,7 @@ async function handleNIP34Events() {
   // → BLS validates payment
   // → Stores event
   // → Calls NIP34Handler.handleEvent()
-  // → Creates repository in Forgejo: http://forgejo:3000/crosstown/my-awesome-repo
+  // → Creates repository in Forgejo: http://forgejo:3000/toon/my-awesome-repo
 
   // Example 2: Patch Submission (kind 1617)
   // User sends ILP payment with patch event:
@@ -122,7 +122,7 @@ function exampleEnvConfig() {
 # Forgejo Configuration
 FORGEJO_URL=http://forgejo:3000
 FORGEJO_TOKEN=your-forgejo-api-token-here
-FORGEJO_OWNER=crosstown
+FORGEJO_OWNER=toon
 
 # Optional: Owner pubkey for bypassing payments
 OWNER_PUBKEY=your-nostr-pubkey-hex
@@ -139,13 +139,13 @@ BASE_PRICE_PER_BYTE=10
 function exampleDockerCompose() {
   return `
 services:
-  crosstown:
-    image: crosstown:latest
+  toon:
+    image: toon:latest
     environment:
       # NIP-34 Configuration
       FORGEJO_URL: http://forgejo:3000
       FORGEJO_TOKEN: \${FORGEJO_TOKEN}
-      FORGEJO_OWNER: crosstown
+      FORGEJO_OWNER: toon
 
       # Other BLS config...
       BLS_PORT: 3100
@@ -153,17 +153,17 @@ services:
     depends_on:
       - forgejo
     networks:
-      - crosstown-network
+      - toon-network
 
   forgejo:
     image: codeberg.org/forgejo/forgejo:14
-    container_name: crosstown-forgejo
+    container_name: toon-forgejo
     ports:
       - "3003:3000"
     volumes:
       - forgejo-data:/data
     networks:
-      - crosstown-network
+      - toon-network
   `.trim();
 }
 

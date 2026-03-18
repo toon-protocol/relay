@@ -1,5 +1,5 @@
 {
-  "name": "@crosstown/relay",
+  "name": "@toon-protocol/relay",
   "version": "1.1.1",
   "description": "ILP-gated Nostr relay with Business Logic Server",
   "type": "module",
@@ -29,7 +29,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ALLiDoizCode/crosstown.git",
+    "url": "https://github.com/toon-protocol/town.git",
     "directory": "packages/relay"
   },
   "author": "ALLiDoizCode",
@@ -37,8 +37,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@crosstown/bls": "workspace:*",
-    "@crosstown/core": "workspace:*",
+    "@toon-protocol/bls": "workspace:*",
+    "@toon-protocol/core": "workspace:*",
     "@toon-format/toon": "^1.0.0",
     "better-sqlite3": "^11.0.0",
     "hono": "^4.11.10",

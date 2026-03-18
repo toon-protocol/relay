@@ -2,7 +2,7 @@
  * Tests for Story 2.4: Remove packages/git-proxy & Document Reference
  *
  * NOT SKIPPED: These tests verify static conditions in the repository
- * (file existence, dependency references) and do not depend on @crosstown/sdk.
+ * (file existence, dependency references) and do not depend on @toon-protocol/sdk.
  * They can run immediately to guard against regressions.
  */
 
@@ -73,7 +73,7 @@ describe('Story 2.4: packages/git-proxy removal', () => {
   it('should not have packages/git-proxy directory', () => {
     // P2: The packages/git-proxy directory must be removed as part of
     // the SDK consolidation. All git proxy functionality is superseded
-    // by the NIP-34 handler in @crosstown/core.
+    // by the NIP-34 handler in @toon-protocol/core.
     const gitProxyDir = join(repoRoot(), 'packages', 'git-proxy');
     expect(
       existsSync(gitProxyDir),
@@ -81,8 +81,8 @@ describe('Story 2.4: packages/git-proxy removal', () => {
     ).toBe(false);
   });
 
-  it('should not have any package depending on @crosstown/git-proxy', () => {
-    // P2: No workspace package should reference @crosstown/git-proxy in
+  it('should not have any package depending on @toon-protocol/git-proxy', () => {
+    // P2: No workspace package should reference @toon-protocol/git-proxy in
     // dependencies, devDependencies, or peerDependencies.
     const packageJsonPaths = getAllPackageJsonPaths();
     expect(packageJsonPaths.length).toBeGreaterThan(0);
@@ -100,7 +100,7 @@ describe('Story 2.4: packages/git-proxy removal', () => {
       ] as const;
       for (const section of depSections) {
         const deps = pkg[section] as Record<string, string> | undefined;
-        if (deps && '@crosstown/git-proxy' in deps) {
+        if (deps && '@toon-protocol/git-proxy' in deps) {
           dependingPackages.push(`${pkgPath} (${section})`);
         }
       }
@@ -108,11 +108,11 @@ describe('Story 2.4: packages/git-proxy removal', () => {
 
     expect(
       dependingPackages,
-      `Found packages depending on @crosstown/git-proxy:\n${dependingPackages.join('\n')}`
+      `Found packages depending on @toon-protocol/git-proxy:\n${dependingPackages.join('\n')}`
     ).toHaveLength(0);
   });
 
-  it('should not reference @crosstown/git-proxy in pnpm-workspace.yaml', () => {
+  it('should not reference @toon-protocol/git-proxy in pnpm-workspace.yaml', () => {
     // P2: The pnpm workspace config should not include git-proxy as
     // a workspace member after removal.
     const workspacePath = join(repoRoot(), 'pnpm-workspace.yaml');
@@ -130,24 +130,24 @@ describe('Story 2.4: packages/git-proxy removal', () => {
 });
 
 describe('Story 2.4: SDK relay entrypoint', () => {
-  it('SDK relay entrypoint should import from @crosstown/sdk (not manual wiring)', () => {
+  it('SDK relay entrypoint should import from @toon-protocol/sdk (not manual wiring)', () => {
     // P2: The new SDK-based entrypoint (packages/town/src/index.ts or similar)
-    // should import handler creation functions from @crosstown/sdk rather than
+    // should import handler creation functions from @toon-protocol/sdk rather than
     // manually wiring BLS, event handling, and bootstrap logic.
     //
     // This test verifies that the SDK package exists and exports the expected
-    // handler factories. It will FAIL until @crosstown/sdk is created.
+    // handler factories. It will FAIL until @toon-protocol/sdk is created.
     const sdkDir = join(repoRoot(), 'packages', 'sdk');
     const sdkPackageJson = join(sdkDir, 'package.json');
 
     expect(
       existsSync(sdkPackageJson),
-      `Expected @crosstown/sdk package to exist at: ${sdkDir}`
+      `Expected @toon-protocol/sdk package to exist at: ${sdkDir}`
     ).toBe(true);
 
     // Verify the package has the expected name
     const pkg = readJsonFile(sdkPackageJson);
     expect(pkg).toBeDefined();
-    expect(pkg!['name']).toBe('@crosstown/sdk');
+    expect(pkg!['name']).toBe('@toon-protocol/sdk');
   });
 });

@@ -1,9 +1,9 @@
 /**
- * @crosstown/town
+ * @toon-protocol/town
  *
  * SDK-based relay with startTown() API and CLI for ILP-gated Nostr services.
  * Provides handler implementations and a one-call programmatic API for
- * starting a Crosstown relay node.
+ * starting a TOON relay node.
  */
 
 // Town lifecycle API
