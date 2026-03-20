@@ -76,7 +76,7 @@ Town is the SDK fully assembled. If you need custom handlers or different storag
 | `dataDir` | `./data` | SQLite database location |
 | `devMode` | `false` | Skip verification and pricing |
 | `knownPeers` | `[]` | Seed peers for bootstrap |
-| `connectorUrl` | — | Use an external connector instead of the embedded one |
+| `connectorUrl` | — | Optional: connect to an external connector (omit to use embedded) |
 
 All options can also be set via environment variables (`TOON_*`) or CLI flags (`--*`).
 

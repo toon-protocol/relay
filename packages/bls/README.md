@@ -195,7 +195,7 @@ Verify an ILP payment and process event storage.
 ```json
 {
   "accept": true,
-  "fulfillment": "<base64, SHA-256 of event ID>",
+  "fulfillment": "<base64, SHA-256 of TOON-encoded event bytes>",
   "metadata": {
     "eventId": "<nostr-event-id>",
     "storedAt": 1234567890
