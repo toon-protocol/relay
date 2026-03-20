@@ -71,7 +71,7 @@ export const USDC_EIP712_DOMAIN = {
 
 /**
  * Minimal EventStore interface for destination reachability checks.
- * Uses structural typing to avoid importing @crosstown/relay directly.
+ * Uses structural typing to avoid importing @toon-protocol/relay directly.
  * The query method accepts Filter[] (array) per the relay's EventStore interface.
  */
 export interface EventStoreLike {
@@ -87,7 +87,7 @@ export interface EventStoreLike {
 export interface X402PublishRequest {
   /** Signed Nostr event. */
   event: NostrEvent;
-  /** Target ILP address (e.g., "g.crosstown.target-relay"). */
+  /** Target ILP address (e.g., "g.toon.target-relay"). */
   destination: string;
 }
 

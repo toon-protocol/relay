@@ -1,5 +1,5 @@
 /**
- * Unit tests for @crosstown/town package structure and publishability.
+ * Unit tests for @toon-protocol/town package structure and publishability.
  *
  * Story 2.5 ACs covered:
  * - AC #1: package.json structure (deps, bin, type:module, TypeScript strict)
@@ -37,23 +37,23 @@ function readJson(filePath: string): Record<string, unknown> {
 // ============================================================================
 
 describe('AC #1: package.json dependencies and structure', () => {
-  it('should have @crosstown/sdk as a runtime dependency', () => {
+  it('should have @toon-protocol/sdk as a runtime dependency', () => {
     const pkg = readJson(townPackagePath());
     const deps = pkg['dependencies'] as Record<string, string> | undefined;
     expect(deps).toBeDefined();
-    expect(deps!['@crosstown/sdk']).toBeDefined();
+    expect(deps!['@toon-protocol/sdk']).toBeDefined();
   });
 
-  it('should have @crosstown/relay as a runtime dependency', () => {
+  it('should have @toon-protocol/relay as a runtime dependency', () => {
     const pkg = readJson(townPackagePath());
     const deps = pkg['dependencies'] as Record<string, string> | undefined;
-    expect(deps!['@crosstown/relay']).toBeDefined();
+    expect(deps!['@toon-protocol/relay']).toBeDefined();
   });
 
-  it('should have @crosstown/core as a runtime dependency', () => {
+  it('should have @toon-protocol/core as a runtime dependency', () => {
     const pkg = readJson(townPackagePath());
     const deps = pkg['dependencies'] as Record<string, string> | undefined;
-    expect(deps!['@crosstown/core']).toBeDefined();
+    expect(deps!['@toon-protocol/core']).toBeDefined();
   });
 
   it('should have hono as a runtime dependency (BLS HTTP server)', () => {
@@ -196,7 +196,7 @@ describe('AC #6: npm publishability', () => {
 
   it('should have correct package name', () => {
     const pkg = readJson(townPackagePath());
-    expect(pkg['name']).toBe('@crosstown/town');
+    expect(pkg['name']).toBe('@toon-protocol/town');
   });
 
   it('should have build script using tsup', () => {

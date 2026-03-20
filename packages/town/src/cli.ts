@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 
 /**
- * CLI entrypoint for @crosstown/town.
+ * CLI entrypoint for @toon-protocol/town.
  *
  * Thin wrapper around startTown() that parses CLI flags and environment
  * variables, then delegates all logic to town.ts.
  *
  * Usage:
- *   npx @crosstown/town --mnemonic "abandon abandon ..." --connector-url "http://localhost:8080"
+ *   npx @toon-protocol/town --mnemonic "abandon abandon ..." --connector-url "http://localhost:8080"
  *
  * Environment variables override defaults; CLI flags override environment variables.
  */
@@ -21,7 +21,7 @@ import type { TownConfig, TownInstance } from './town.js';
 function printHelp(): void {
   console.log(
     `
-Usage: crosstown-town [options]
+Usage: toon-town [options]
 
 Options:
   --mnemonic <words>       BIP-39 mnemonic (12 or 24 words)
@@ -41,23 +41,23 @@ Options:
   --help                   Show this help message
 
 Environment Variables:
-  CROSSTOWN_MNEMONIC           Same as --mnemonic
-  CROSSTOWN_SECRET_KEY         Same as --secret-key
-  CROSSTOWN_RELAY_PORT         Same as --relay-port
-  CROSSTOWN_BLS_PORT           Same as --bls-port
-  CROSSTOWN_DATA_DIR           Same as --data-dir
-  CROSSTOWN_CONNECTOR_URL      Same as --connector-url
-  CROSSTOWN_CONNECTOR_ADMIN_URL  Same as --connector-admin-url
-  CROSSTOWN_KNOWN_PEERS        Same as --known-peers
-  CROSSTOWN_DEV_MODE           Same as --dev-mode (set to "true")
-  CROSSTOWN_X402_ENABLED       Same as --x402-enabled (set to "true")
-  CROSSTOWN_DISCOVERY          Same as --discovery
-  CROSSTOWN_SEED_RELAYS        Same as --seed-relays
-  CROSSTOWN_PUBLISH_SEED_ENTRY Same as --publish-seed-entry (set to "true")
-  CROSSTOWN_EXTERNAL_RELAY_URL Same as --external-relay-url
+  TOON_MNEMONIC           Same as --mnemonic
+  TOON_SECRET_KEY         Same as --secret-key
+  TOON_RELAY_PORT         Same as --relay-port
+  TOON_BLS_PORT           Same as --bls-port
+  TOON_DATA_DIR           Same as --data-dir
+  TOON_CONNECTOR_URL      Same as --connector-url
+  TOON_CONNECTOR_ADMIN_URL  Same as --connector-admin-url
+  TOON_KNOWN_PEERS        Same as --known-peers
+  TOON_DEV_MODE           Same as --dev-mode (set to "true")
+  TOON_X402_ENABLED       Same as --x402-enabled (set to "true")
+  TOON_DISCOVERY          Same as --discovery
+  TOON_SEED_RELAYS        Same as --seed-relays
+  TOON_PUBLISH_SEED_ENTRY Same as --publish-seed-entry (set to "true")
+  TOON_EXTERNAL_RELAY_URL Same as --external-relay-url
 
 Security:
-  Prefer CROSSTOWN_MNEMONIC or CROSSTOWN_SECRET_KEY environment variables
+  Prefer TOON_MNEMONIC or TOON_SECRET_KEY environment variables
   over --mnemonic / --secret-key CLI flags. CLI arguments are visible to
   other users on the system via process listings (e.g. ps aux). See CWE-214.
 `.trim()
@@ -98,21 +98,20 @@ function parseCli(): TownConfig {
   if (values.mnemonic) {
     console.warn(
       'Warning: --mnemonic is visible in process listings. ' +
-        'Prefer CROSSTOWN_MNEMONIC environment variable for production use.'
+        'Prefer TOON_MNEMONIC environment variable for production use.'
     );
   }
   if (values['secret-key']) {
     console.warn(
       'Warning: --secret-key is visible in process listings. ' +
-        'Prefer CROSSTOWN_SECRET_KEY environment variable for production use.'
+        'Prefer TOON_SECRET_KEY environment variable for production use.'
     );
   }
 
-  const mnemonic =
-    values.mnemonic ?? process.env['CROSSTOWN_MNEMONIC'] ?? undefined;
+  const mnemonic = values.mnemonic ?? process.env['TOON_MNEMONIC'] ?? undefined;
 
   const secretKeyHex =
-    values['secret-key'] ?? process.env['CROSSTOWN_SECRET_KEY'] ?? undefined;
+    values['secret-key'] ?? process.env['TOON_SECRET_KEY'] ?? undefined;
 
   let secretKey: Uint8Array | undefined;
   if (secretKeyHex) {
@@ -124,24 +123,20 @@ function parseCli(): TownConfig {
   }
 
   const connectorUrl =
-    values['connector-url'] ??
-    process.env['CROSSTOWN_CONNECTOR_URL'] ??
-    undefined;
+    values['connector-url'] ?? process.env['TOON_CONNECTOR_URL'] ?? undefined;
 
   if (!connectorUrl) {
-    console.error(
-      'Error: --connector-url (or CROSSTOWN_CONNECTOR_URL) is required'
-    );
+    console.error('Error: --connector-url (or TOON_CONNECTOR_URL) is required');
     process.exit(1);
   }
 
   const connectorAdminUrl =
     values['connector-admin-url'] ??
-    process.env['CROSSTOWN_CONNECTOR_ADMIN_URL'] ??
+    process.env['TOON_CONNECTOR_ADMIN_URL'] ??
     undefined;
 
   const relayPortStr =
-    values['relay-port'] ?? process.env['CROSSTOWN_RELAY_PORT'] ?? undefined;
+    values['relay-port'] ?? process.env['TOON_RELAY_PORT'] ?? undefined;
   const relayPort = relayPortStr ? parseInt(relayPortStr, 10) : undefined;
   if (
     relayPort !== undefined &&
@@ -152,7 +147,7 @@ function parseCli(): TownConfig {
   }
 
   const blsPortStr =
-    values['bls-port'] ?? process.env['CROSSTOWN_BLS_PORT'] ?? undefined;
+    values['bls-port'] ?? process.env['TOON_BLS_PORT'] ?? undefined;
   const blsPort = blsPortStr ? parseInt(blsPortStr, 10) : undefined;
   if (
     blsPort !== undefined &&
@@ -163,18 +158,18 @@ function parseCli(): TownConfig {
   }
 
   const dataDir =
-    values['data-dir'] ?? process.env['CROSSTOWN_DATA_DIR'] ?? undefined;
+    values['data-dir'] ?? process.env['TOON_DATA_DIR'] ?? undefined;
 
   const devMode =
     values['dev-mode'] ??
-    (process.env['CROSSTOWN_DEV_MODE'] === 'true' ? true : undefined);
+    (process.env['TOON_DEV_MODE'] === 'true' ? true : undefined);
 
   const x402Enabled =
     values['x402-enabled'] ??
-    (process.env['CROSSTOWN_X402_ENABLED'] === 'true' ? true : undefined);
+    (process.env['TOON_X402_ENABLED'] === 'true' ? true : undefined);
 
   const knownPeersJson =
-    values['known-peers'] ?? process.env['CROSSTOWN_KNOWN_PEERS'] ?? undefined;
+    values['known-peers'] ?? process.env['TOON_KNOWN_PEERS'] ?? undefined;
 
   let knownPeers:
     | { pubkey: string; relayUrl: string; btpEndpoint: string }[]
@@ -205,14 +200,14 @@ function parseCli(): TownConfig {
 
   if (!mnemonic && !secretKey) {
     console.error(
-      'Error: one of --mnemonic (or CROSSTOWN_MNEMONIC) or --secret-key (or CROSSTOWN_SECRET_KEY) is required'
+      'Error: one of --mnemonic (or TOON_MNEMONIC) or --secret-key (or TOON_SECRET_KEY) is required'
     );
     process.exit(1);
   }
 
   // Discovery mode
   const discoveryStr =
-    values.discovery ?? process.env['CROSSTOWN_DISCOVERY'] ?? undefined;
+    values.discovery ?? process.env['TOON_DISCOVERY'] ?? undefined;
   let discoveryMode: 'seed-list' | 'genesis' | undefined;
   if (discoveryStr) {
     if (discoveryStr !== 'seed-list' && discoveryStr !== 'genesis') {
@@ -224,7 +219,7 @@ function parseCli(): TownConfig {
 
   // Seed relays (comma-separated list of public Nostr relay URLs)
   const seedRelaysStr =
-    values['seed-relays'] ?? process.env['CROSSTOWN_SEED_RELAYS'] ?? undefined;
+    values['seed-relays'] ?? process.env['TOON_SEED_RELAYS'] ?? undefined;
   const seedRelaysArr = seedRelaysStr
     ? seedRelaysStr
         .split(',')
@@ -248,12 +243,12 @@ function parseCli(): TownConfig {
   // Publish seed entry flag
   const publishSeedEntry =
     values['publish-seed-entry'] ??
-    (process.env['CROSSTOWN_PUBLISH_SEED_ENTRY'] === 'true' ? true : undefined);
+    (process.env['TOON_PUBLISH_SEED_ENTRY'] === 'true' ? true : undefined);
 
   // External relay URL
   const externalRelayUrl =
     values['external-relay-url'] ??
-    process.env['CROSSTOWN_EXTERNAL_RELAY_URL'] ??
+    process.env['TOON_EXTERNAL_RELAY_URL'] ??
     undefined;
 
   const config: TownConfig = {
@@ -282,13 +277,13 @@ async function main(): Promise<void> {
   const config = parseCli();
 
   console.log('\n' + '='.repeat(50));
-  console.log('Crosstown Town Starting');
+  console.log('TOON Town Starting');
   console.log('='.repeat(50) + '\n');
 
   const instance: TownInstance = await startTown(config);
 
   console.log('\n' + '='.repeat(50));
-  console.log('Crosstown Town Ready');
+  console.log('TOON Town Ready');
   console.log('='.repeat(50));
   console.log(`  Pubkey:      ${instance.pubkey}`);
   console.log(`  EVM Address: ${instance.evmAddress}`);

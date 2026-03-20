@@ -1,13 +1,13 @@
 {
-  "name": "@crosstown/town",
-  "version": "0.1.4",
-  "description": "Crosstown Town - SDK-based relay with startTown() API and CLI for ILP-gated Nostr services",
+  "name": "@toon-protocol/town",
+  "version": "0.2.0",
+  "description": "TOON Town - SDK-based relay with startTown() API and CLI for ILP-gated Nostr services",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "crosstown-town": "./dist/cli.js"
+    "toon-town": "./dist/cli.js"
   },
   "exports": {
     ".": {
@@ -24,7 +24,7 @@
     "test:e2e": "vitest run --config vitest.e2e.config.ts"
   },
   "keywords": [
-    "crosstown",
+    "toon",
     "nostr",
     "ilp",
     "interledger",
@@ -34,7 +34,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ALLiDoizCode/crosstown.git",
+    "url": "https://github.com/toon-protocol/town.git",
     "directory": "packages/town"
   },
   "author": "ALLiDoizCode",
@@ -45,10 +45,11 @@
     "access": "public"
   },
   "dependencies": {
-    "@crosstown/core": "workspace:*",
-    "@crosstown/relay": "workspace:*",
-    "@crosstown/sdk": "workspace:*",
     "@hono/node-server": "^1.0.0",
+    "@toon-protocol/connector": "^1.8.1",
+    "@toon-protocol/core": "workspace:*",
+    "@toon-protocol/relay": "workspace:*",
+    "@toon-protocol/sdk": "workspace:*",
     "better-sqlite3": "^11.0.0",
     "hono": "^4.11.10",
     "nostr-tools": "^2.20.0",

@@ -23,8 +23,8 @@ docker compose -f docker-compose-with-local.yml down -v 2>/dev/null || true
 echo ""
 
 # Rebuild image
-echo -e "${BLUE}🔨 Rebuilding crosstown image...${NC}"
-docker build -f packages/bls/Dockerfile -t crosstown:optimized . || {
+echo -e "${BLUE}🔨 Rebuilding toon image...${NC}"
+docker build -f packages/bls/Dockerfile -t toon:optimized . || {
   echo -e "${RED}❌ Docker build failed${NC}"
   exit 1
 }
@@ -50,20 +50,20 @@ echo ""
 
 # Test 1: Full-featured entrypoint
 echo -e "${BLUE}Test 1: Full-Featured Entrypoint${NC}"
-BOOTSTRAP_BANNER=$(docker logs crosstown-node 2>&1 | grep "Starting Crosstown Node with Bootstrap" || echo "")
+BOOTSTRAP_BANNER=$(docker logs toon-node 2>&1 | grep "Starting TOON Node with Bootstrap" || echo "")
 if [ -n "$BOOTSTRAP_BANNER" ]; then
   echo -e "${GREEN}✅ Full-featured entrypoint loaded${NC}"
 else
   echo -e "${RED}❌ NOT using full-featured entrypoint!${NC}"
   echo "Logs:"
-  docker logs crosstown-node 2>&1 | head -20
+  docker logs toon-node 2>&1 | head -20
   exit 1
 fi
 echo ""
 
 # Test 2: Nostr Relay
 echo -e "${BLUE}Test 2: Nostr Relay${NC}"
-RELAY_START=$(docker logs crosstown-node 2>&1 | grep "Nostr relay started" || echo "")
+RELAY_START=$(docker logs toon-node 2>&1 | grep "Nostr relay started" || echo "")
 if [ -n "$RELAY_START" ]; then
   echo -e "${GREEN}✅ Nostr relay running${NC}"
 else
@@ -74,8 +74,8 @@ echo ""
 
 # Test 3: Anvil + Contracts
 echo -e "${BLUE}Test 3: Settlement Infrastructure${NC}"
-ANVIL=$(docker logs crosstown-anvil 2>&1 | grep "Listening on" || echo "")
-CONTRACTS=$(docker logs crosstown-anvil 2>&1 | grep -E "Deploying contracts|Script ran" || echo "")
+ANVIL=$(docker logs toon-anvil 2>&1 | grep "Listening on" || echo "")
+CONTRACTS=$(docker logs toon-anvil 2>&1 | grep -E "Deploying contracts|Script ran" || echo "")
 if [ -n "$ANVIL" ]; then
   echo -e "${GREEN}✅ Anvil running${NC}"
 fi
@@ -96,6 +96,6 @@ echo ""
 
 echo -e "${GREEN}✅ SUCCESS: Bootstrap flow is properly configured!${NC}"
 echo ""
-echo "View logs: docker compose -f docker-compose-with-local.yml logs crosstown-node"
+echo "View logs: docker compose -f docker-compose-with-local.yml logs toon-node"
 echo "Stop: docker compose -f docker-compose-with-local.yml down"
 echo ""

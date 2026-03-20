@@ -28,14 +28,14 @@ import {
   encodeEventToToon,
   decodeEventFromToon,
   shallowParseToon,
-} from '@crosstown/core/toon';
-import { SqliteEventStore } from '@crosstown/relay';
+} from '@toon-protocol/core/toon';
+import { SqliteEventStore } from '@toon-protocol/relay';
 import {
   createHandlerContext,
   createNode,
   type Handler,
   type HandlerContext,
-} from '@crosstown/sdk';
+} from '@toon-protocol/sdk';
 import type {
   HandlePacketRequest,
   HandlePacketResponse,
@@ -43,7 +43,7 @@ import type {
   SendPacketParams,
   SendPacketResult,
   RegisterPeerParams,
-} from '@crosstown/core';
+} from '@toon-protocol/core';
 
 // Import from the local module under test (Town package)
 import { createEventStorageHandler } from './event-storage-handler.js';
@@ -78,7 +78,7 @@ function createValidSignedEvent(
 
 /**
  * Encode a NostrEvent to base64-encoded TOON (the wire format for ILP packets).
- * Uses the real TOON codec from @crosstown/core/toon.
+ * Uses the real TOON codec from @toon-protocol/core/toon.
  */
 function eventToBase64Toon(event: NostrEvent): string {
   const toonData = encodeEventToToon(event);
@@ -688,7 +688,7 @@ describe('EventStorageHandler DVM Events (Story 5.2)', () => {
 
     const ctx = createTestContext({
       amount: '1000000',
-      destination: 'g.crosstown.relay',
+      destination: 'g.toon.relay',
       data: eventToBase64Toon(dvmEvent),
     });
 
@@ -767,7 +767,7 @@ describe('EventStorageHandler DVM Events (Story 5.2)', () => {
     for (const event of [regularEvent, dvmEvent5100, dvmEvent5200]) {
       const ctx = createTestContext({
         amount: '1000000',
-        destination: 'g.crosstown.relay',
+        destination: 'g.toon.relay',
         data: eventToBase64Toon(event),
       });
       const result = await handler(ctx);
@@ -835,7 +835,7 @@ describe('EventStorageHandler DVM Events (Story 5.2)', () => {
     // Act -- send through pipeline
     const result = await mockConnector.packetHandler!({
       amount: exactPrice.toString(),
-      destination: 'g.crosstown.relay',
+      destination: 'g.toon.relay',
       data: eventToBase64Toon(dvmEvent),
     });
 

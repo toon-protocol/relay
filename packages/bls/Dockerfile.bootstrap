@@ -1,8 +1,8 @@
-# Crosstown BLS with Nostr Bootstrap
+# TOON BLS with Nostr Bootstrap
 # Multi-stage build for minimal image size
 #
 # Build from repo root:
-#   docker build -f packages/bls/Dockerfile.bootstrap -t crosstown:bootstrap .
+#   docker build -f packages/bls/Dockerfile.bootstrap -t toon:bootstrap .
 
 # ── Stage 1: Builder ─────────────────────────────────────────
 FROM node:20-alpine AS builder
@@ -39,13 +39,13 @@ COPY packages/client/src/ packages/client/src/
 COPY packages/client/tsconfig.json packages/client/tsup.config.ts packages/client/
 
 # Build packages in dependency order
-RUN pnpm --filter @crosstown/core build
-RUN pnpm --filter @crosstown/relay build
-RUN pnpm --filter @crosstown/client build
-RUN pnpm --filter @crosstown/bls build
+RUN pnpm --filter @toon-protocol/core build
+RUN pnpm --filter @toon-protocol/relay build
+RUN pnpm --filter @toon-protocol/client build
+RUN pnpm --filter @toon-protocol/bls build
 
 # Create production deployment
-RUN pnpm --filter @crosstown/bls deploy --prod /prod
+RUN pnpm --filter @toon-protocol/bls deploy --prod /prod
 
 # Strip build artifacts
 RUN rm -rf /prod/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/deps \

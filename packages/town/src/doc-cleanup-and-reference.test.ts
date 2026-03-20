@@ -45,7 +45,7 @@ function repoRoot(): string {
 describe('Story 2.4: Stale documentation cleanup (AC #1)', () => {
   it('T-2.4-05: docs/api-contracts-git-proxy.md should not exist', () => {
     // P2: The obsolete git-proxy API contracts document must be deleted.
-    // It documents the removed @crosstown/git-proxy package's HTTP proxy API,
+    // It documents the removed @toon-protocol/git-proxy package's HTTP proxy API,
     // which is superseded by the NIP-34 Rig pattern (Epic 5).
     const stalePath = resolve(repoRoot(), 'docs', 'api-contracts-git-proxy.md');
     expect(
@@ -81,7 +81,7 @@ describe('Story 2.4: Stale documentation cleanup (AC #1)', () => {
 
   it('T-2.4-07: docs/index.md should not reference git-proxy', () => {
     // P2: The documentation index was generated before git-proxy was removed.
-    // It contains a package table row for @crosstown/git-proxy and an API
+    // It contains a package table row for @toon-protocol/git-proxy and an API
     // contracts link for the git-proxy documentation. Both must be removed.
     const indexPath = resolve(repoRoot(), 'docs', 'index.md');
 
@@ -96,7 +96,7 @@ describe('Story 2.4: Stale documentation cleanup (AC #1)', () => {
     expect(
       content.toLowerCase(),
       'docs/index.md should not contain any git-proxy references. ' +
-        'Known locations: package table row for @crosstown/git-proxy, ' +
+        'Known locations: package table row for @toon-protocol/git-proxy, ' +
         'API contracts link for git-proxy documentation.'
     ).not.toMatch(/git-proxy/i);
   });

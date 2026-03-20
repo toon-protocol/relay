@@ -1,5 +1,5 @@
 /**
- * @crosstown/relay
+ * @toon-protocol/relay
  *
  * ILP-gated Nostr relay with Business Logic Server.
  */
@@ -30,7 +30,7 @@ export {
   encodeEventToToon,
   decodeEventFromToon,
   ToonEncodeError,
-  ToonError,
+  ToonDecodeError,
 } from './toon/index.js';
 
 // Business Logic Server
@@ -62,5 +62,5 @@ export {
 export type { RelaySubscriberConfig } from './subscriber/index.js';
 export { RelaySubscriber } from './subscriber/index.js';
 
-// Re-exports from @crosstown/bls removed to avoid circular dependency
-// Downstream consumers should import directly from @crosstown/bls instead
+// Re-exports from @toon-protocol/bls removed to avoid circular dependency
+// Downstream consumers should import directly from @toon-protocol/bls instead

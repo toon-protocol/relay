@@ -147,6 +147,23 @@ describe('ConnectionHandler', () => {
     });
   });
 
+  describe('EVENT message handling (ILP-gated)', () => {
+    it('should reject external WebSocket EVENT writes', () => {
+      const event = createMockEvent();
+      handler.handleMessage(JSON.stringify(['EVENT', event]));
+
+      expect(ws.send).toHaveBeenCalledWith(
+        JSON.stringify([
+          'OK',
+          event.id,
+          false,
+          'restricted: writes require ILP payment',
+        ])
+      );
+      expect(store.store).not.toHaveBeenCalled();
+    });
+  });
+
   describe('CLOSE message handling', () => {
     it('should remove subscription on CLOSE', () => {
       handler.handleMessage(JSON.stringify(['REQ', 'sub1', {}]));

@@ -9,7 +9,7 @@
  * - T-2.3-07 [P1]: SDK relay entrypoint < 100 lines of handler code (AC #2)
  *
  * Additional coverage:
- * - Entrypoint imports handlers from @crosstown/town (not SDK stubs)
+ * - Entrypoint imports handlers from @toon-protocol/town (not SDK stubs)
  * - Entrypoint includes `sdk: true` in health response
  * - Docker package.json includes SDK and Town dependencies
  */
@@ -139,12 +139,12 @@ describe('Story 2.3: SDK-based entrypoint validation (static)', () => {
   // test already validates the SDK entrypoint has < 100 lines of handler logic.
 
   // --------------------------------------------------------------------------
-  // Import validation: handlers from @crosstown/town, not @crosstown/sdk
+  // Import validation: handlers from @toon-protocol/town, not @toon-protocol/sdk
   // --------------------------------------------------------------------------
 
-  it('SDK relay entrypoint should import handlers from @crosstown/town (not SDK stubs)', () => {
-    // Critical rule: handlers must be imported from @crosstown/town (real
-    // implementations), NOT from @crosstown/sdk (which exports throwing stubs).
+  it('SDK relay entrypoint should import handlers from @toon-protocol/town (not SDK stubs)', () => {
+    // Critical rule: handlers must be imported from @toon-protocol/town (real
+    // implementations), NOT from @toon-protocol/sdk (which exports throwing stubs).
     const entrypointPath = resolve(
       repoRoot(),
       'docker',
@@ -153,20 +153,20 @@ describe('Story 2.3: SDK-based entrypoint validation (static)', () => {
     );
     const source = readFileSync(entrypointPath, 'utf-8');
 
-    // Must import createEventStorageHandler from @crosstown/town
+    // Must import createEventStorageHandler from @toon-protocol/town
     expect(
       source,
-      'Must import createEventStorageHandler from @crosstown/town'
+      'Must import createEventStorageHandler from @toon-protocol/town'
     ).toMatch(
-      /import\s+\{[^}]*createEventStorageHandler[^}]*\}\s+from\s+['"]@crosstown\/town['"]/
+      /import\s+\{[^}]*createEventStorageHandler[^}]*\}\s+from\s+['"]@toon-protocol\/town['"]/
     );
 
-    // Must NOT import handler implementations from @crosstown/sdk
+    // Must NOT import handler implementations from @toon-protocol/sdk
     const sdkHandlerImportPattern =
-      /import\s+\{[^}]*createEventStorageHandler[^}]*\}\s+from\s+['"]@crosstown\/sdk['"]/;
+      /import\s+\{[^}]*createEventStorageHandler[^}]*\}\s+from\s+['"]@toon-protocol\/sdk['"]/;
     expect(
       sdkHandlerImportPattern.test(source),
-      'Must NOT import handler implementations from @crosstown/sdk (they are throwing stubs)'
+      'Must NOT import handler implementations from @toon-protocol/sdk (they are throwing stubs)'
     ).toBe(false);
   });
 
@@ -177,7 +177,7 @@ describe('Story 2.3: SDK-based entrypoint validation (static)', () => {
   it('SDK relay entrypoint should include sdk:true in health response', () => {
     // The SDK-based relay health endpoint must include `sdk: true` so E2E
     // tests can detect SDK mode vs the old entrypoint.
-    // The entrypoint delegates to createHealthResponse() from @crosstown/town
+    // The entrypoint delegates to createHealthResponse() from @toon-protocol/town
     // which always includes `sdk: true` in the response.
     const entrypointPath = resolve(
       repoRoot(),
@@ -190,7 +190,7 @@ describe('Story 2.3: SDK-based entrypoint validation (static)', () => {
     // The health endpoint must use createHealthResponse (which sets sdk: true)
     expect(
       source,
-      'Health endpoint must use createHealthResponse from @crosstown/town'
+      'Health endpoint must use createHealthResponse from @toon-protocol/town'
     ).toMatch(/createHealthResponse/);
   });
 
@@ -198,7 +198,7 @@ describe('Story 2.3: SDK-based entrypoint validation (static)', () => {
   // Docker package.json: SDK and Town dependencies
   // --------------------------------------------------------------------------
 
-  it('docker/package.json should include @crosstown/sdk and @crosstown/town dependencies', () => {
+  it('docker/package.json should include @toon-protocol/sdk and @toon-protocol/town dependencies', () => {
     // Docker package must depend on both SDK (pipeline components) and
     // Town (handler implementations) workspace packages.
     const dockerPkgPath = resolve(repoRoot(), 'docker', 'package.json');
@@ -215,12 +215,12 @@ describe('Story 2.3: SDK-based entrypoint validation (static)', () => {
     // deps is validated as defined above; use a fallback for type safety
     const safeDeps = deps ?? {};
     expect(
-      safeDeps['@crosstown/sdk'],
-      'docker/package.json must depend on @crosstown/sdk'
+      safeDeps['@toon-protocol/sdk'],
+      'docker/package.json must depend on @toon-protocol/sdk'
     ).toBeDefined();
     expect(
-      safeDeps['@crosstown/town'],
-      'docker/package.json must depend on @crosstown/town'
+      safeDeps['@toon-protocol/town'],
+      'docker/package.json must depend on @toon-protocol/town'
     ).toBeDefined();
   });
 

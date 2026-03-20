@@ -1,5 +1,5 @@
 /**
- * Event storage handler for @crosstown/town.
+ * Event storage handler for @toon-protocol/town.
  *
  * Stores incoming Nostr events in the EventStore after decoding from TOON.
  * This is the "default" handler for the relay -- it processes all event kinds
@@ -13,8 +13,12 @@
  *   3. ctx.accept({ eventId, storedAt }) -- accept the ILP packet
  */
 
-import type { EventStore } from '@crosstown/relay';
-import type { Handler, HandlerContext, HandlerResponse } from '@crosstown/sdk';
+import type { EventStore } from '@toon-protocol/relay';
+import type {
+  Handler,
+  HandlerContext,
+  HandlerResponse,
+} from '@toon-protocol/sdk';
 
 /**
  * Configuration for the event storage handler.
@@ -23,7 +27,7 @@ import type { Handler, HandlerContext, HandlerResponse } from '@crosstown/sdk';
  * Pricing, verification, and self-write bypass are SDK pipeline concerns.
  */
 export interface EventStorageHandlerConfig {
-  /** Event store backend (e.g., SqliteEventStore from @crosstown/relay). */
+  /** Event store backend (e.g., SqliteEventStore from @toon-protocol/relay). */
   eventStore: EventStore;
 }
 

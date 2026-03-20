@@ -18,9 +18,9 @@
 
 import { verifyTypedData } from 'viem';
 import type { PublicClient } from 'viem';
-import { shallowParseToon } from '@crosstown/core/toon';
-import type { ToonRoutingMeta } from '@crosstown/core/toon';
-import type { ChainPreset } from '@crosstown/core';
+import { shallowParseToon } from '@toon-protocol/core/toon';
+import type { ToonRoutingMeta } from '@toon-protocol/core/toon';
+import type { ChainPreset } from '@toon-protocol/core';
 import type { Eip3009Authorization, EventStoreLike } from './x402-types.js';
 import { EIP_3009_TYPES, USDC_EIP712_DOMAIN, USDC_ABI } from './x402-types.js';
 

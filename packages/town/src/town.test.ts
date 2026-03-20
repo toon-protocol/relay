@@ -101,7 +101,7 @@ describe('TownConfig type surface (AC #2)', () => {
       connectorAdminUrl: 'http://localhost:8081',
       relayPort: 7200,
       blsPort: 3200,
-      ilpAddress: 'g.crosstown.mynode',
+      ilpAddress: 'g.toon.mynode',
       btpEndpoint: 'ws://localhost:3000',
       basePricePerByte: 20n,
       knownPeers: [
@@ -137,7 +137,7 @@ describe('TownConfig type surface (AC #2)', () => {
     const resolved: ResolvedTownConfig = {
       relayPort: 7100,
       blsPort: 3100,
-      ilpAddress: 'g.crosstown.test',
+      ilpAddress: 'g.toon.test',
       btpEndpoint: 'ws://localhost:3000',
       connectorUrl: 'http://localhost:8080',
       connectorAdminUrl: 'http://localhost:8081',
@@ -160,7 +160,7 @@ describe('TownConfig type surface (AC #2)', () => {
     // All fields must be defined (non-optional in ResolvedTownConfig)
     expect(resolved.relayPort).toBe(7100);
     expect(resolved.blsPort).toBe(3100);
-    expect(resolved.ilpAddress).toBe('g.crosstown.test');
+    expect(resolved.ilpAddress).toBe('g.toon.test');
     expect(resolved.btpEndpoint).toBe('ws://localhost:3000');
     expect(resolved.connectorUrl).toBe('http://localhost:8080');
     expect(resolved.connectorAdminUrl).toBe('http://localhost:8081');
@@ -203,7 +203,7 @@ describe('TownInstance type surface (AC #5)', () => {
       config: {
         relayPort: 7100,
         blsPort: 3100,
-        ilpAddress: 'g.crosstown.test',
+        ilpAddress: 'g.toon.test',
         btpEndpoint: 'ws://localhost:3000',
         connectorUrl: 'http://localhost:8080',
         connectorAdminUrl: 'http://localhost:8081',
@@ -307,7 +307,7 @@ describe('connectorAdminUrl in TownConfig', () => {
 // Module exports (AC #2)
 // ============================================================================
 
-describe('Module exports from @crosstown/town (AC #2)', () => {
+describe('Module exports from @toon-protocol/town (AC #2)', () => {
   it('should export startTown as a function', async () => {
     // Dynamic import to verify the actual module exports
     const townModule = await import('./index.js');
@@ -393,7 +393,7 @@ describe('ResolvedTownConfig seed relay defaults (Story 3.4 AC #4)', () => {
     const resolved: ResolvedTownConfig = {
       relayPort: 7100,
       blsPort: 3100,
-      ilpAddress: 'g.crosstown.test',
+      ilpAddress: 'g.toon.test',
       btpEndpoint: 'ws://localhost:3000',
       basePricePerByte: 10n,
       routingBufferPercent: 10,
@@ -420,7 +420,7 @@ describe('ResolvedTownConfig seed relay defaults (Story 3.4 AC #4)', () => {
     const resolved: ResolvedTownConfig = {
       relayPort: 7100,
       blsPort: 3100,
-      ilpAddress: 'g.crosstown.test',
+      ilpAddress: 'g.toon.test',
       btpEndpoint: 'ws://localhost:3000',
       basePricePerByte: 10n,
       routingBufferPercent: 10,
@@ -462,7 +462,7 @@ describe('TownInstance.discoveryMode (Story 3.4 AC #1, #4)', () => {
       config: {
         relayPort: 7100,
         blsPort: 3100,
-        ilpAddress: 'g.crosstown.test',
+        ilpAddress: 'g.toon.test',
         btpEndpoint: 'ws://localhost:3000',
         basePricePerByte: 10n,
         routingBufferPercent: 10,
@@ -500,7 +500,7 @@ describe('TownInstance.discoveryMode (Story 3.4 AC #1, #4)', () => {
       config: {
         relayPort: 7100,
         blsPort: 3100,
-        ilpAddress: 'g.crosstown.test',
+        ilpAddress: 'g.toon.test',
         btpEndpoint: 'ws://localhost:3000',
         basePricePerByte: 10n,
         routingBufferPercent: 10,
@@ -531,7 +531,7 @@ describe('TownInstance.discoveryMode (Story 3.4 AC #1, #4)', () => {
 // ============================================================================
 
 describe('startTown() seed relay integration -- static analysis (Story 3.4)', () => {
-  it('town.ts imports SeedRelayDiscovery from @crosstown/core', () => {
+  it('town.ts imports SeedRelayDiscovery from @toon-protocol/core', () => {
     const sourcePath = resolve(__dirname, 'town.ts');
     const source = readFileSync(sourcePath, 'utf-8');
 
@@ -601,7 +601,7 @@ describe('ResolvedTownConfig includes chain field (T-3.5-11)', () => {
     const resolved: ResolvedTownConfig = {
       relayPort: 7100,
       blsPort: 3100,
-      ilpAddress: 'g.crosstown.test',
+      ilpAddress: 'g.toon.test',
       btpEndpoint: 'ws://localhost:3000',
       connectorUrl: 'http://localhost:8080',
       connectorAdminUrl: 'http://localhost:8081',
@@ -630,7 +630,7 @@ describe('ResolvedTownConfig includes chain field (T-3.5-11)', () => {
     const resolved: ResolvedTownConfig = {
       relayPort: 7100,
       blsPort: 3100,
-      ilpAddress: 'g.crosstown.test',
+      ilpAddress: 'g.toon.test',
       btpEndpoint: 'ws://localhost:3000',
       connectorUrl: 'http://localhost:8080',
       connectorAdminUrl: 'http://localhost:8081',
@@ -661,7 +661,7 @@ describe('ResolvedTownConfig includes chain field (T-3.5-11)', () => {
 // ============================================================================
 
 describe('startTown() kind:10035 integration -- static analysis (Story 3.5)', () => {
-  it('town.ts imports buildServiceDiscoveryEvent from @crosstown/core', () => {
+  it('town.ts imports buildServiceDiscoveryEvent from @toon-protocol/core', () => {
     const sourcePath = resolve(__dirname, 'town.ts');
     const source = readFileSync(sourcePath, 'utf-8');
 
@@ -669,7 +669,7 @@ describe('startTown() kind:10035 integration -- static analysis (Story 3.5)', ()
     expect(source).toContain('buildServiceDiscoveryEvent');
   });
 
-  it('town.ts imports ServiceDiscoveryContent type from @crosstown/core', () => {
+  it('town.ts imports ServiceDiscoveryContent type from @toon-protocol/core', () => {
     const sourcePath = resolve(__dirname, 'town.ts');
     const source = readFileSync(sourcePath, 'utf-8');
 
@@ -677,7 +677,7 @@ describe('startTown() kind:10035 integration -- static analysis (Story 3.5)', ()
     expect(source).toContain('ServiceDiscoveryContent');
   });
 
-  it('town.ts imports VERSION from @crosstown/core', () => {
+  it('town.ts imports VERSION from @toon-protocol/core', () => {
     const sourcePath = resolve(__dirname, 'town.ts');
     const source = readFileSync(sourcePath, 'utf-8');
 
@@ -842,10 +842,10 @@ describe('startTown() skill descriptor integration -- static analysis (Story 5.4
     expect(source).toMatch(/skill\??\s*:\s*SkillDescriptor/);
   });
 
-  it('town.ts imports SkillDescriptor type from @crosstown/core', () => {
+  it('town.ts imports SkillDescriptor type from @toon-protocol/core', () => {
     // Verify the SkillDescriptor type is imported for type safety
     expect(source).toContain('SkillDescriptor');
-    expect(source).toMatch(/from\s+['"]@crosstown\/core['"]/);
+    expect(source).toMatch(/from\s+['"]@toon-protocol\/core['"]/);
   });
 
   it('town.ts conditionally includes skill field in kind:10035 content (T-5.4-06)', () => {

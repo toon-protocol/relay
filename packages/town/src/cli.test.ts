@@ -123,24 +123,24 @@ describe('CLI source structure (AC #4)', () => {
 
   it('cli.ts should support all documented environment variables', () => {
     // AC #4 requires env var support matching CLI flags
-    // Story 3.4 adds: CROSSTOWN_DISCOVERY, CROSSTOWN_SEED_RELAYS,
-    // CROSSTOWN_PUBLISH_SEED_ENTRY, CROSSTOWN_EXTERNAL_RELAY_URL
+    // Story 3.4 adds: TOON_DISCOVERY, TOON_SEED_RELAYS,
+    // TOON_PUBLISH_SEED_ENTRY, TOON_EXTERNAL_RELAY_URL
     const source = readFileSync(cliSourcePath(), 'utf-8');
 
     const requiredEnvVars = [
-      'CROSSTOWN_MNEMONIC',
-      'CROSSTOWN_SECRET_KEY',
-      'CROSSTOWN_RELAY_PORT',
-      'CROSSTOWN_BLS_PORT',
-      'CROSSTOWN_DATA_DIR',
-      'CROSSTOWN_CONNECTOR_URL',
-      'CROSSTOWN_KNOWN_PEERS',
-      'CROSSTOWN_DEV_MODE',
+      'TOON_MNEMONIC',
+      'TOON_SECRET_KEY',
+      'TOON_RELAY_PORT',
+      'TOON_BLS_PORT',
+      'TOON_DATA_DIR',
+      'TOON_CONNECTOR_URL',
+      'TOON_KNOWN_PEERS',
+      'TOON_DEV_MODE',
       // Story 3.4: seed relay discovery env vars
-      'CROSSTOWN_DISCOVERY',
-      'CROSSTOWN_SEED_RELAYS',
-      'CROSSTOWN_PUBLISH_SEED_ENTRY',
-      'CROSSTOWN_EXTERNAL_RELAY_URL',
+      'TOON_DISCOVERY',
+      'TOON_SEED_RELAYS',
+      'TOON_PUBLISH_SEED_ENTRY',
+      'TOON_EXTERNAL_RELAY_URL',
     ];
 
     for (const envVar of requiredEnvVars) {
@@ -168,12 +168,12 @@ describe('CLI source structure (AC #4)', () => {
     // This ensures CLI flags are checked first, with env vars as fallback.
     // The pattern allows for line breaks between the ?? and process.env.
     const overridePairs: [string, string][] = [
-      ['mnemonic', 'CROSSTOWN_MNEMONIC'],
-      ["'secret-key'", 'CROSSTOWN_SECRET_KEY'],
-      ["'connector-url'", 'CROSSTOWN_CONNECTOR_URL'],
-      ["'relay-port'", 'CROSSTOWN_RELAY_PORT'],
-      ["'bls-port'", 'CROSSTOWN_BLS_PORT'],
-      ["'data-dir'", 'CROSSTOWN_DATA_DIR'],
+      ['mnemonic', 'TOON_MNEMONIC'],
+      ["'secret-key'", 'TOON_SECRET_KEY'],
+      ["'connector-url'", 'TOON_CONNECTOR_URL'],
+      ["'relay-port'", 'TOON_RELAY_PORT'],
+      ["'bls-port'", 'TOON_BLS_PORT'],
+      ["'data-dir'", 'TOON_DATA_DIR'],
     ];
 
     for (const [flag, envVar] of overridePairs) {
@@ -231,8 +231,8 @@ describe('CLI runtime behavior (AC #4)', () => {
     expect(output).toContain('--known-peers');
 
     // Should document environment variables
-    expect(output).toContain('CROSSTOWN_MNEMONIC');
-    expect(output).toContain('CROSSTOWN_CONNECTOR_URL');
+    expect(output).toContain('TOON_MNEMONIC');
+    expect(output).toContain('TOON_CONNECTOR_URL');
   });
 
   it('should exit with error when no identity is provided', () => {
@@ -254,8 +254,8 @@ describe('CLI runtime behavior (AC #4)', () => {
           env: {
             ...process.env,
             // Clear any env vars that might provide identity
-            CROSSTOWN_MNEMONIC: '',
-            CROSSTOWN_SECRET_KEY: '',
+            TOON_MNEMONIC: '',
+            TOON_SECRET_KEY: '',
           },
         }
       );
@@ -292,7 +292,7 @@ describe('CLI runtime behavior (AC #4)', () => {
           timeout: 5000,
           env: {
             ...process.env,
-            CROSSTOWN_RELAY_PORT: '',
+            TOON_RELAY_PORT: '',
           },
         }
       );
@@ -323,7 +323,7 @@ describe('CLI runtime behavior (AC #4)', () => {
           timeout: 5000,
           env: {
             ...process.env,
-            CROSSTOWN_CONNECTOR_URL: '',
+            TOON_CONNECTOR_URL: '',
           },
         }
       );
@@ -397,10 +397,10 @@ describe('CLI seed relay discovery flags (Story 3.4 AC #4)', () => {
     expect(output).toContain('--external-relay-url');
 
     // Story 3.4 env vars must appear in help output
-    expect(output).toContain('CROSSTOWN_DISCOVERY');
-    expect(output).toContain('CROSSTOWN_SEED_RELAYS');
-    expect(output).toContain('CROSSTOWN_PUBLISH_SEED_ENTRY');
-    expect(output).toContain('CROSSTOWN_EXTERNAL_RELAY_URL');
+    expect(output).toContain('TOON_DISCOVERY');
+    expect(output).toContain('TOON_SEED_RELAYS');
+    expect(output).toContain('TOON_PUBLISH_SEED_ENTRY');
+    expect(output).toContain('TOON_EXTERNAL_RELAY_URL');
   });
 
   it('cli.ts validates --discovery accepts only "seed-list" or "genesis"', () => {
@@ -438,37 +438,37 @@ describe('CLI seed relay discovery flags (Story 3.4 AC #4)', () => {
 // ============================================================================
 
 describe('Docker shared.ts seed relay env vars (Story 3.4)', () => {
-  it('shared.ts parses CROSSTOWN_DISCOVERY env var', () => {
+  it('shared.ts parses TOON_DISCOVERY env var', () => {
     const sharedPath = resolve(repoRoot(), 'docker', 'src', 'shared.ts');
     const source = readFileSync(sharedPath, 'utf-8');
 
-    expect(source).toContain('CROSSTOWN_DISCOVERY');
+    expect(source).toContain('TOON_DISCOVERY');
     expect(source).toContain('discoveryMode');
   });
 
-  it('shared.ts parses CROSSTOWN_SEED_RELAYS as comma-separated list', () => {
+  it('shared.ts parses TOON_SEED_RELAYS as comma-separated list', () => {
     const sharedPath = resolve(repoRoot(), 'docker', 'src', 'shared.ts');
     const source = readFileSync(sharedPath, 'utf-8');
 
-    expect(source).toContain('CROSSTOWN_SEED_RELAYS');
+    expect(source).toContain('TOON_SEED_RELAYS');
     // Verify comma-splitting logic
     expect(source).toMatch(/split\s*\(\s*['"],['"].*\)/);
     expect(source).toContain('seedRelays');
   });
 
-  it('shared.ts parses CROSSTOWN_PUBLISH_SEED_ENTRY env var', () => {
+  it('shared.ts parses TOON_PUBLISH_SEED_ENTRY env var', () => {
     const sharedPath = resolve(repoRoot(), 'docker', 'src', 'shared.ts');
     const source = readFileSync(sharedPath, 'utf-8');
 
-    expect(source).toContain('CROSSTOWN_PUBLISH_SEED_ENTRY');
+    expect(source).toContain('TOON_PUBLISH_SEED_ENTRY');
     expect(source).toContain('publishSeedEntry');
   });
 
-  it('shared.ts parses CROSSTOWN_EXTERNAL_RELAY_URL env var', () => {
+  it('shared.ts parses TOON_EXTERNAL_RELAY_URL env var', () => {
     const sharedPath = resolve(repoRoot(), 'docker', 'src', 'shared.ts');
     const source = readFileSync(sharedPath, 'utf-8');
 
-    expect(source).toContain('CROSSTOWN_EXTERNAL_RELAY_URL');
+    expect(source).toContain('TOON_EXTERNAL_RELAY_URL');
     expect(source).toContain('externalRelayUrl');
   });
 

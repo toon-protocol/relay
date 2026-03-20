@@ -1,5 +1,5 @@
 /**
- * @crosstown/bls
+ * @toon-protocol/bls
  *
  * Standalone Business Logic Server for ILP-gated Nostr event storage.
  */
@@ -41,7 +41,7 @@ export {
   encodeEventToToon,
   decodeEventFromToon,
   ToonEncodeError,
-  ToonError,
+  ToonDecodeError,
 } from './toon/index.js';
 
 // Pricing

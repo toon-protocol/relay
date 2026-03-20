@@ -1,5 +1,5 @@
 /**
- * x402 publish handler for the Crosstown protocol.
+ * x402 publish handler for the TOON protocol.
  *
  * Implements the HTTP-native payment on-ramp via the x402 protocol pattern.
  * Allows any HTTP client (AI agents, browsers, CLI tools) to publish Nostr
@@ -20,12 +20,12 @@
 
 import type { Context } from 'hono';
 import type { NostrEvent } from 'nostr-tools/pure';
-import { buildIlpPrepare, encodeEventToToon } from '@crosstown/core';
+import { buildIlpPrepare, encodeEventToToon } from '@toon-protocol/core';
 import type {
   ChainPreset,
   IlpClient,
   BuildIlpPrepareParams,
-} from '@crosstown/core';
+} from '@toon-protocol/core';
 import { calculateX402Price } from './x402-pricing.js';
 import { runPreflight } from './x402-preflight.js';
 import type { PreflightConfig } from './x402-preflight.js';
