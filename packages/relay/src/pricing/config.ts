@@ -6,7 +6,7 @@ import { PricingError } from './types.js';
  * Load pricing configuration from environment variables.
  *
  * Environment variables:
- * - RELAY_BASE_PRICE_PER_BYTE: Base price per byte (default: "10")
+ * - RELAY_BASE_PRICE_PER_BYTE: Base price per byte (default: "1")
  * - RELAY_KIND_OVERRIDES: JSON object mapping kind to price (optional)
  *   Format: {"1":"5","30023":"100"}
  *
@@ -15,7 +15,7 @@ import { PricingError } from './types.js';
  */
 export function loadPricingConfigFromEnv(): PricingConfig {
   // Parse base price
-  const basePriceStr = process.env['RELAY_BASE_PRICE_PER_BYTE'] ?? '10';
+  const basePriceStr = process.env['RELAY_BASE_PRICE_PER_BYTE'] ?? '1';
   let basePricePerByte: bigint;
   try {
     basePricePerByte = BigInt(basePriceStr);
