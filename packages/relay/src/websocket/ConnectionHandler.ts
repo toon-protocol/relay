@@ -125,30 +125,18 @@ export class ConnectionHandler {
   }
 
   /**
-   * Handle an EVENT message to store an event.
-   * Accepts events for free (no payment required).
+   * Handle an EVENT message from a WebSocket client.
+   *
+   * Rejects all external writes — the relay is ILP-gated (pay to write).
+   * Events are only stored through the ILP packet handler which calls
+   * eventStore.store() directly and then broadcastEvent() to notify subscribers.
    */
   private handleEvent(event: NostrEvent): void {
-    console.log(
-      `[ConnectionHandler] Received EVENT: ${event.id.slice(0, 16)}... kind:${event.kind}`
+    this.sendOk(
+      event.id,
+      false,
+      'restricted: writes require ILP payment'
     );
-
-    try {
-      // Store the event
-      this.eventStore.store(event);
-      console.log(`[ConnectionHandler] Event stored successfully`);
-
-      // Send OK message (NIP-20)
-      this.sendOk(event.id, true, '');
-    } catch (error) {
-      console.error(`[ConnectionHandler] Failed to store event:`, error);
-      // Send OK message with error (NIP-20)
-      this.sendOk(
-        event.id,
-        false,
-        error instanceof Error ? error.message : 'storage failed'
-      );
-    }
   }
 
   /**

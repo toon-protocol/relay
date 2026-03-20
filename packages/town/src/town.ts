@@ -13,7 +13,9 @@
  *
  * ## Deployment Modes
  *
- * - **Embedded** (`connector`): Pass an `EmbeddableConnectorLike` directly.
+ * - **Default** (no connector args): An embedded ConnectorNode is auto-created.
+ *   Zero-latency packet delivery, no external setup needed.
+ * - **Embedded** (`connector`): Pass a pre-configured `EmbeddableConnectorLike`.
  *   Zero-latency packet delivery via direct function calls.
  * - **Standalone** (`connectorUrl`): Connect to an external connector via HTTP.
  *   The connector runs as a separate process or container.
@@ -84,6 +86,10 @@ import {
 import type { EventStore } from '@toon-protocol/relay';
 import type { Filter } from 'nostr-tools/filter';
 import {
+  ConnectorNode,
+  createLogger as createConnectorLogger,
+} from '@toon-protocol/connector';
+import {
   createPublicClient,
   createWalletClient,
   defineChain,
@@ -116,16 +122,17 @@ export interface TownConfig {
   /** 32-byte secp256k1 secret key. */
   secretKey?: Uint8Array;
 
-  // --- Connector (exactly one required) ---
+  // --- Connector (optional — defaults to auto-created embedded connector) ---
 
   /**
    * Embedded connector instance for zero-latency mode.
-   * Exactly one of `connector` or `connectorUrl` is required.
+   * If neither `connector` nor `connectorUrl` is provided, an embedded
+   * ConnectorNode is auto-created (default mode).
    */
   connector?: EmbeddableConnectorLike;
   /**
    * External connector URL (e.g., "http://localhost:8080").
-   * Exactly one of `connector` or `connectorUrl` is required.
+   * Mutually exclusive with `connector`.
    */
   connectorUrl?: string;
   /**
@@ -134,6 +141,19 @@ export interface TownConfig {
    * Only used in standalone mode (with `connectorUrl`).
    */
   connectorAdminUrl?: string;
+
+  /**
+   * BTP server port for the auto-created embedded connector (default: 3000).
+   * Only used when neither `connector` nor `connectorUrl` is provided.
+   */
+  btpServerPort?: number;
+
+  /**
+   * EVM private key for settlement infrastructure.
+   * Only used when neither `connector` nor `connectorUrl` is provided.
+   * If not set, the identity's secp256k1 key is used.
+   */
+  settlementPrivateKey?: string;
 
   // --- Network ---
 
@@ -410,29 +430,34 @@ export function createSubscription(
  * and starts the relay WebSocket server, BLS HTTP server, bootstrap service,
  * and relay monitor. Returns a `TownInstance` for lifecycle management.
  *
- * Supports two deployment modes:
- * - **Embedded** (`connector`): Pass an EmbeddableConnectorLike directly for
- *   zero-latency packet delivery. No HTTP overhead.
+ * Supports three deployment modes:
+ * - **Default** (no connector args): Auto-creates an embedded ConnectorNode.
+ * - **Embedded** (`connector`): Pass a pre-configured EmbeddableConnectorLike.
  * - **Standalone** (`connectorUrl`): Connect to an external connector via HTTP.
  *
- * @param config - Node configuration. One of `connector`/`connectorUrl` and one
- *   of `mnemonic`/`secretKey` are required; all other fields have defaults.
+ * @param config - Node configuration. One of `mnemonic`/`secretKey` is required;
+ *   connector is optional (auto-created if omitted); all other fields have defaults.
  * @returns A running TownInstance.
  * @throws If both or neither of mnemonic/secretKey are provided.
- * @throws If both or neither of connector/connectorUrl are provided.
+ * @throws If both connector and connectorUrl are provided.
  *
  * @example
  * ```typescript
+ * // Default mode (auto-created embedded connector)
+ * const town = await startTown({
+ *   mnemonic: 'abandon abandon abandon ...',
+ * });
+ *
+ * // Embedded mode (pre-configured connector)
+ * const town = await startTown({
+ *   mnemonic: 'abandon abandon abandon ...',
+ *   connector: myConnectorNode,
+ * });
+ *
  * // Standalone mode (external connector)
  * const town = await startTown({
  *   mnemonic: 'abandon abandon abandon ...',
  *   connectorUrl: 'http://localhost:8080',
- * });
- *
- * // Embedded mode (zero-latency)
- * const town = await startTown({
- *   mnemonic: 'abandon abandon abandon ...',
- *   connector: myConnectorNode,
  * });
  * ```
  */
@@ -459,10 +484,10 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       'TownConfig: provide either connector or connectorUrl, not both'
     );
   }
-  if (!hasConnector && !hasConnectorUrl) {
-    throw new Error('TownConfig: one of connector or connectorUrl is required');
-  }
-  const embeddedMode = hasConnector;
+
+  // Auto-create embedded connector when neither is provided (default mode)
+  let autoCreatedConnector: ConnectorNode | null = null;
+  const embeddedMode = !hasConnectorUrl; // embedded when connector provided OR auto-created
 
   // --- 2. Derive identity ---
   const identity: NodeIdentity = hasMnemonic
@@ -522,6 +547,53 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     chain: chainConfig.name,
   };
 
+  // --- 3c. Auto-create embedded connector if neither provided ---
+  if (!hasConnector && !hasConnectorUrl) {
+    const nodeId = `toon-${identity.pubkey.slice(0, 16)}`;
+    const btpServerPort = config.btpServerPort ?? 3000;
+    const connectorLogger = createConnectorLogger(nodeId, 'warn');
+
+    // Derive settlement private key from identity if not explicitly set
+    let settlementPrivateKey = config.settlementPrivateKey;
+    if (!settlementPrivateKey) {
+      const keyBuffer = Buffer.from(identity.secretKey);
+      settlementPrivateKey = `0x${keyBuffer.toString('hex')}`;
+      keyBuffer.fill(0);
+    }
+
+    // Enable settlement infra when chain preset has both addresses
+    const hasSettlementAddresses =
+      chainConfig.registryAddress && chainConfig.tokenNetworkAddress;
+
+    autoCreatedConnector = new ConnectorNode(
+      {
+        nodeId,
+        btpServerPort,
+        environment: 'development' as const,
+        deploymentMode: 'embedded' as const,
+        peers: [],
+        routes: [],
+        localDelivery: { enabled: false },
+        ...(hasSettlementAddresses && {
+          settlementInfra: {
+            enabled: true,
+            rpcUrl: chainConfig.rpcUrl,
+            registryAddress: chainConfig.registryAddress,
+            tokenAddress: chainConfig.usdcAddress,
+            privateKey: settlementPrivateKey,
+          },
+        }),
+      },
+      connectorLogger
+    );
+  }
+
+  // Effective connector: user-provided or auto-created
+  const effectiveConnector: EmbeddableConnectorLike | undefined =
+    config.connector ??
+    (autoCreatedConnector as unknown as EmbeddableConnectorLike) ??
+    undefined;
+
   // --- 4. Create data directory ---
   mkdirSync(dataDir, { recursive: true });
 
@@ -574,16 +646,15 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       tokenNetworks: effectiveTokenNetworks,
     };
 
-    if (embeddedMode) {
-      const conn = config.connector as NonNullable<typeof config.connector>;
-      if (conn.openChannel && conn.getChannelState) {
+    if (embeddedMode && effectiveConnector) {
+      if (effectiveConnector.openChannel && effectiveConnector.getChannelState) {
         channelClient = createDirectChannelClient(
-          conn as Required<
+          effectiveConnector as Required<
             Pick<EmbeddableConnectorLike, 'openChannel' | 'getChannelState'>
           >
         );
       }
-    } else {
+    } else if (!embeddedMode) {
       channelClient = createHttpChannelClient(connectorAdminUrl as string);
     }
   }
@@ -591,7 +662,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   // --- 7. Connector admin client ---
   const adminClient: ConnectorAdminClient = embeddedMode
     ? createDirectConnectorAdmin(
-        config.connector as NonNullable<typeof config.connector>
+        effectiveConnector as NonNullable<typeof effectiveConnector>
       )
     : createHttpConnectorAdmin(connectorAdminUrl as string, '');
 
@@ -765,7 +836,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   // --- 10b. ILP client (created before x402 handler so it can be wired in) ---
   const ilpClient: IlpClient = embeddedMode
     ? createDirectIlpClient(
-        config.connector as NonNullable<typeof config.connector>,
+        effectiveConnector as NonNullable<typeof effectiveConnector>,
         {
           toonDecoder: (bytes: Uint8Array) => decodeEventFromToon(bytes),
         }
@@ -873,9 +944,8 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     current?: ReturnType<typeof createDiscoveryTracker>;
   } = {};
 
-  const connector = config.connector;
-  if (embeddedMode && connector?.setPacketHandler) {
-    connector.setPacketHandler(async (request) => {
+  if (embeddedMode && effectiveConnector?.setPacketHandler) {
+    effectiveConnector.setPacketHandler(async (request) => {
       const result = await handlePacket(request as HandlePacketRequest);
       // Feed accepted kind:10032 events to discovery tracker
       if (result.accept && discoveryTrackerRef.current) {
@@ -893,6 +963,17 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
         }
       }
       return result;
+    });
+  }
+
+  // Start auto-created connector (must happen before bootstrap)
+  if (autoCreatedConnector) {
+    await autoCreatedConnector.start();
+    // Add self-route so packets matching our ILP address are delivered locally
+    autoCreatedConnector.addRoute({
+      prefix: ilpAddress,
+      nextHop: `toon-${identity.pubkey.slice(0, 16)}`,
+      priority: 100,
     });
   }
 
@@ -1161,6 +1242,11 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
 
       await wsRelay.stop();
       blsServer.close();
+
+      // Stop auto-created connector
+      if (autoCreatedConnector) {
+        await autoCreatedConnector.stop();
+      }
 
       // Close the EventStore (optional method on the EventStore interface)
       eventStore.close?.();
