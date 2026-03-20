@@ -647,7 +647,10 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     };
 
     if (embeddedMode && effectiveConnector) {
-      if (effectiveConnector.openChannel && effectiveConnector.getChannelState) {
+      if (
+        effectiveConnector.openChannel &&
+        effectiveConnector.getChannelState
+      ) {
         channelClient = createDirectChannelClient(
           effectiveConnector as Required<
             Pick<EmbeddableConnectorLike, 'openChannel' | 'getChannelState'>

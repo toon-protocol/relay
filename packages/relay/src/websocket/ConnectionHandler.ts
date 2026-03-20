@@ -132,11 +132,7 @@ export class ConnectionHandler {
    * eventStore.store() directly and then broadcastEvent() to notify subscribers.
    */
   private handleEvent(event: NostrEvent): void {
-    this.sendOk(
-      event.id,
-      false,
-      'restricted: writes require ILP payment'
-    );
+    this.sendOk(event.id, false, 'restricted: writes require ILP payment');
   }
 
   /**
