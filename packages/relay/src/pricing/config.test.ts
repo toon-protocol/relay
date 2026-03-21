@@ -25,7 +25,7 @@ describe('loadPricingConfigFromEnv', () => {
     delete process.env['RELAY_KIND_OVERRIDES'];
 
     const config = loadPricingConfigFromEnv();
-    expect(config.basePricePerByte).toBe(10n);
+    expect(config.basePricePerByte).toBe(1n);
     expect(config.kindOverrides).toBeUndefined();
   });
 

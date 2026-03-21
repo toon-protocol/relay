@@ -1,6 +1,6 @@
 # @toon-protocol/bls
 
-Standalone Business Logic Server (BLS) for ILP-gated Nostr event storage.
+Standalone Business Logic Server (BLS) for ILP-gated [Nostr](https://github.com/nostr-protocol/nips) event storage.
 
 ## Quick Start
 
@@ -118,7 +118,7 @@ patches:
 | ------------------------- | -------- | ------- | ------------------------------------------------ |
 | `NODE_ID`                 | Yes      | —       | Unique node identifier                           |
 | `NOSTR_SECRET_KEY`        | Yes      | —       | 64-character hex Nostr secret key                |
-| `ILP_ADDRESS`             | Yes      | —       | Node's ILP address (e.g., `g.toon.node1`)   |
+| `ILP_ADDRESS`             | Yes      | —       | Node's ILP address (e.g., `g.toon.a1b2c3d4`) — assigned by upstream peer from peering topology. See [Protocol — ILP Address Hierarchy](../../docs/protocol.md#ilp-address-hierarchy) |
 | `BLS_PORT`                | No       | `3100`  | HTTP port to listen on (1–65535)                 |
 | `BLS_BASE_PRICE_PER_BYTE` | No       | `10`    | Base price per byte for event storage            |
 | `OWNER_PUBKEY`            | No       | —       | 64-char hex pubkey for self-write payment bypass |
@@ -141,7 +141,7 @@ The pricing variables support multiple naming conventions for backwards compatib
 
 **NODE_ID** — A unique string identifying this node. Used in health check responses and logging.
 
-**NOSTR_SECRET_KEY** — A 64-character lowercase hex string representing your Nostr private key. The corresponding public key is derived automatically and displayed in logs and health responses. The secret key is never logged.
+**NOSTR_SECRET_KEY** — A 64-character lowercase hex string representing your [Nostr](https://github.com/nostr-protocol/nips) private key. The corresponding public key is derived automatically and displayed in logs and health responses. The secret key is never logged.
 
 **ILP_ADDRESS** — Must start with `g.` and contain only alphanumeric characters, dots, and hyphens. Example: `g.toon.node1`.
 
