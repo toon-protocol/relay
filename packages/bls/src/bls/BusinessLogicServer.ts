@@ -1,4 +1,3 @@
-import { createHash } from 'crypto';
 import { Hono } from 'hono';
 import { verifyEvent } from 'nostr-tools/pure';
 import type { EventStore } from '../storage/index.js';
@@ -10,18 +9,6 @@ import type {
   HandlePacketRejectResponse,
 } from './types.js';
 import { ILP_ERROR_CODES, BlsError, isValidPubkey } from './types.js';
-
-/**
- * Generate a fulfillment from an event ID.
- * The fulfillment is SHA-256(eventId) encoded as base64.
- *
- * Note: The sender must use SHA256(SHA256(eventId)) as the condition
- * in their ILP Prepare packet.
- */
-export function generateFulfillment(eventId: string): string {
-  const hash = createHash('sha256').update(eventId).digest();
-  return hash.toString('base64');
-}
 
 /**
  * Business Logic Server for ILP payment verification.
@@ -160,7 +147,6 @@ export class BusinessLogicServer {
 
       return {
         accept: true,
-        fulfillment: generateFulfillment(event.id),
         metadata: {
           eventId: event.id,
           storedAt: Date.now(),
@@ -227,11 +213,9 @@ export class BusinessLogicServer {
       }
     }
 
-    // Generate fulfillment and return success
     const storedAt = Date.now();
     return {
       accept: true,
-      fulfillment: generateFulfillment(event.id),
       metadata: {
         eventId: event.id,
         storedAt,

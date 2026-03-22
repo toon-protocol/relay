@@ -45,7 +45,6 @@ export {
   BlsError,
   ILP_ERROR_CODES,
   BusinessLogicServer,
-  generateFulfillment,
   isValidPubkey,
 } from './bls/index.js';
 

@@ -49,8 +49,6 @@ export interface HandlePacketRequest {
  */
 export interface HandlePacketAcceptResponse {
   accept: true;
-  /** Base64-encoded fulfillment (SHA-256 of event.id) */
-  fulfillment: string;
   metadata?: {
     eventId: string;
     storedAt: number;

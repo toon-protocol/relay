@@ -46,8 +46,6 @@ export interface HandlePacketRequest {
  */
 export interface HandlePacketAcceptResponse {
   accept: true;
-  /** @deprecated Connector computes fulfillment from SHA256(toon_bytes). Will be removed in a future version. */
-  fulfillment?: string;
   metadata?: {
     eventId: string;
     storedAt: number;

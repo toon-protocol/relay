@@ -1,15 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createHash } from 'crypto';
 import {
   generateSecretKey,
   finalizeEvent,
   getPublicKey,
 } from 'nostr-tools/pure';
 import type { NostrEvent } from 'nostr-tools/pure';
-import {
-  BusinessLogicServer,
-  generateFulfillment,
-} from './BusinessLogicServer.js';
+import { BusinessLogicServer } from './BusinessLogicServer.js';
 import { ILP_ERROR_CODES, BlsError, isValidPubkey } from './types.js';
 import type { EventStore } from '../storage/index.js';
 import { encodeEventToToon } from '../toon/index.js';
@@ -74,27 +70,6 @@ function createEventFromKey(
   );
 }
 
-describe('generateFulfillment', () => {
-  it('should generate SHA-256 hash of event ID as base64', () => {
-    const eventId = 'abc123';
-    const expected = createHash('sha256').update(eventId).digest('base64');
-    expect(generateFulfillment(eventId)).toBe(expected);
-  });
-
-  it('should produce consistent results for same input', () => {
-    const eventId = 'test-event-id';
-    const result1 = generateFulfillment(eventId);
-    const result2 = generateFulfillment(eventId);
-    expect(result1).toBe(result2);
-  });
-
-  it('should produce different results for different inputs', () => {
-    const result1 = generateFulfillment('event1');
-    const result2 = generateFulfillment('event2');
-    expect(result1).not.toBe(result2);
-  });
-});
-
 describe('BusinessLogicServer', () => {
   let bls: BusinessLogicServer;
   let mockEventStore: ReturnType<typeof createMockEventStore>;
@@ -122,7 +97,6 @@ describe('BusinessLogicServer', () => {
       expect(response.status).toBe(200);
       const json = (await response.json()) as any;
       expect(json.accept).toBe(true);
-      expect(json.fulfillment).toBeDefined();
       expect(json.metadata?.eventId).toBe(event.id);
       expect(json.metadata?.storedAt).toBeTypeOf('number');
     });
@@ -286,10 +260,9 @@ describe('BusinessLogicServer', () => {
       expect(json.message).toContain('Missing required fields');
     });
 
-    it('should generate correct fulfillment from event.id', async () => {
+    it('should not include fulfillment in response', async () => {
       const event = createValidSignedEvent();
       const base64Data = eventToBase64Toon(event);
-      const expectedFulfillment = generateFulfillment(event.id);
 
       const response = await bls.getApp().request('/handle-packet', {
         method: 'POST',
@@ -302,7 +275,8 @@ describe('BusinessLogicServer', () => {
       });
 
       const json = (await response.json()) as any;
-      expect(json.fulfillment).toBe(expectedFulfillment);
+      expect(json.accept).toBe(true);
+      expect(json.fulfillment).toBeUndefined();
     });
 
     it('should calculate price correctly based on TOON byte length', async () => {
@@ -749,7 +723,6 @@ describe('BusinessLogicServer with ownerPubkey', () => {
     expect(response.status).toBe(200);
     const json = (await response.json()) as any;
     expect(json.accept).toBe(true);
-    expect(json.fulfillment).toBeDefined();
     expect(json.metadata?.eventId).toBe(event.id);
   });
 
