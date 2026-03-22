@@ -28,7 +28,6 @@ export {
   ILP_ERROR_CODES,
   isValidPubkey,
   BusinessLogicServer,
-  generateFulfillment,
 } from './bls/index.js';
 
 // Storage

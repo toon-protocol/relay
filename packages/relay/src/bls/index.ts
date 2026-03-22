@@ -11,7 +11,4 @@ export {
   isValidPubkey,
   PUBKEY_REGEX,
 } from './types.js';
-export {
-  BusinessLogicServer,
-  generateFulfillment,
-} from './BusinessLogicServer.js';
+export { BusinessLogicServer } from './BusinessLogicServer.js';
