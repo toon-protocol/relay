@@ -1,7 +1,7 @@
 /**
  * startTown() -- Programmatic API for starting a TOON relay node.
  *
- * This module wraps the same SDK components used by docker/src/entrypoint-town.ts
+ * This module wraps the same SDK components used by docker/src/entrypoint-sdk.ts
  * into a single function call with a typed configuration object. Both
  * `startTown()` and the Docker entrypoint compose the same pipeline:
  *
