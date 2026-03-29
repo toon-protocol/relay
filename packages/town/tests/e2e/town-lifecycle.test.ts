@@ -8,9 +8,9 @@
  * docker/src/entrypoint.ts composition.
  *
  * **Prerequisites:**
- * 1. Genesis node infrastructure deployed (Anvil, connector):
+ * 1. SDK E2E infrastructure deployed:
  *    ```bash
- *    ./deploy-genesis-node.sh
+ *    ./scripts/sdk-e2e-infra.sh up
  *    ```
  * 2. @toon-protocol/town package built:
  *    ```bash
@@ -140,13 +140,13 @@ describe('@toon-protocol/town Package Lifecycle (Story 2.5)', () => {
   let townInstance: TownInstance | null = null;
 
   beforeAll(async () => {
-    // Verify genesis node infrastructure is running (needed for bootstrap peer)
+    // Verify SDK E2E infrastructure is running (needed for bootstrap peer)
     try {
       const connectorHealth = await fetch(`${CONNECTOR_URL}/health`, {
         signal: AbortSignal.timeout(3000),
       });
       if (!connectorHealth.ok) {
-        console.warn('Connector not ready. Run: ./deploy-genesis-node.sh');
+        console.warn('Connector not ready. Run: ./scripts/sdk-e2e-infra.sh up');
         return;
       }
 
@@ -154,7 +154,7 @@ describe('@toon-protocol/town Package Lifecycle (Story 2.5)', () => {
         signal: AbortSignal.timeout(3000),
       });
       if (!blsHealth.ok) {
-        console.warn('Genesis BLS not ready. Run: ./deploy-genesis-node.sh');
+        console.warn('BLS not ready. Run: ./scripts/sdk-e2e-infra.sh up');
         return;
       }
 
@@ -170,7 +170,7 @@ describe('@toon-protocol/town Package Lifecycle (Story 2.5)', () => {
         signal: AbortSignal.timeout(3000),
       });
       if (!anvilTest.ok) {
-        console.warn('Anvil not ready. Run: ./deploy-genesis-node.sh');
+        console.warn('Anvil not ready. Run: ./scripts/sdk-e2e-infra.sh up');
         return;
       }
 
