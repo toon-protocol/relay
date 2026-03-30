@@ -46,7 +46,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.0.0",
-    "@toon-protocol/connector": "^2.0.0",
+    "@toon-protocol/connector": "^2.2.0",
     "@toon-protocol/core": "workspace:*",
     "@toon-protocol/relay": "workspace:*",
     "@toon-protocol/sdk": "workspace:*",
