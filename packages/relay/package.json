@@ -1,6 +1,6 @@
 {
   "name": "@toon-protocol/relay",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "ILP-gated Nostr relay with Business Logic Server",
   "type": "module",
   "main": "./dist/index.js",
