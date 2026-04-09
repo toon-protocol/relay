@@ -1,6 +1,6 @@
 {
   "name": "@toon-protocol/town",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "description": "TOON Town - SDK-based relay with startTown() API and CLI for ILP-gated Nostr services",
   "type": "module",
   "main": "./dist/index.js",
@@ -46,7 +46,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.0.0",
-    "@toon-protocol/connector": "^2.0.0",
+    "@toon-protocol/connector": "^2.2.0",
     "@toon-protocol/core": "workspace:*",
     "@toon-protocol/relay": "workspace:*",
     "@toon-protocol/sdk": "workspace:*",
