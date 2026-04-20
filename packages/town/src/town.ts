@@ -217,6 +217,25 @@ export interface TownConfig {
   /** External WebSocket URL of this relay (required if publishSeedEntry is true). */
   externalRelayUrl?: string;
 
+  // --- Transport Privacy ---
+
+  /**
+   * Ator hidden service configuration for the relay.
+   *
+   * When enabled, the relay binds to localhost only (ator handles inbound routing)
+   * and publishes the `.anon` address in seed relay discovery events.
+   *
+   * - `enabled: false` (default): Relay binds to `0.0.0.0`, no privacy overlay.
+   * - `enabled: true`: Relay binds to `127.0.0.1`, publishes `anonAddress` for discovery.
+   */
+  ator?: {
+    enabled: boolean;
+    /** The `.anon` hidden service address for this relay (e.g., "wss://abc123.anon:443"). */
+    anonAddress?: string;
+    /** SOCKS5 proxy URL for outbound connections (default: "socks5h://127.0.0.1:9050"). */
+    socksProxy?: string;
+  };
+
   // --- DVM ---
 
   /**
@@ -517,7 +536,12 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   const discovery = config.discovery ?? 'genesis';
   const seedRelays = config.seedRelays ?? [];
   const publishSeedEntryFlag = config.publishSeedEntry ?? false;
-  const externalRelayUrl = config.externalRelayUrl;
+  // Use ator .anon address as externalRelayUrl when ator is enabled and no explicit URL set
+  const externalRelayUrl =
+    config.externalRelayUrl ??
+    (config.ator?.enabled && config.ator.anonAddress
+      ? config.ator.anonAddress
+      : undefined);
 
   // --- 3b. Resolve chain preset early (needed for resolvedConfig and settlement) ---
   const chainConfig = resolveChainConfig(config.chain);
@@ -565,27 +589,35 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     const hasSettlementAddresses =
       chainConfig.registryAddress && chainConfig.tokenNetworkAddress;
 
-    autoCreatedConnector = new ConnectorNode(
-      {
-        nodeId,
-        btpServerPort,
-        environment: 'development' as const,
-        deploymentMode: 'embedded' as const,
-        peers: [],
-        routes: [],
-        localDelivery: { enabled: false },
-        ...(hasSettlementAddresses && {
-          settlementInfra: {
-            enabled: true,
-            rpcUrl: chainConfig.rpcUrl,
-            registryAddress: chainConfig.registryAddress,
-            tokenAddress: chainConfig.usdcAddress,
-            privateKey: settlementPrivateKey,
-          },
-        }),
-      },
-      connectorLogger
-    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const connectorConfig: any = {
+      nodeId,
+      btpServerPort,
+      environment: 'development' as const,
+      deploymentMode: 'embedded' as const,
+      peers: [],
+      routes: [],
+      localDelivery: { enabled: false },
+      ...(hasSettlementAddresses && {
+        settlementInfra: {
+          enabled: true,
+          rpcUrl: chainConfig.rpcUrl,
+          registryAddress: chainConfig.registryAddress,
+          tokenAddress: chainConfig.usdcAddress,
+          privateKey: settlementPrivateKey,
+        },
+      }),
+    };
+    // Pass ator transport config to connector for outbound BTP peering
+    if (config.ator?.enabled && config.ator.anonAddress) {
+      connectorConfig.transport = {
+        type: 'socks5',
+        socksProxy: config.ator.socksProxy ?? 'socks5h://127.0.0.1:9050',
+        externalUrl: config.ator.anonAddress,
+        managed: false,
+      };
+    }
+    autoCreatedConnector = new ConnectorNode(connectorConfig, connectorLogger);
   }
 
   // Effective connector: user-provided or auto-created
@@ -912,7 +944,12 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   });
 
   // --- 11. WebSocket Relay ---
-  const wsRelay = new NostrRelayServer({ port: relayPort }, eventStore);
+  // When ator is enabled, bind to localhost only (hidden service handles inbound routing)
+  const relayHost = config.ator?.enabled ? '127.0.0.1' : undefined;
+  const wsRelay = new NostrRelayServer(
+    { port: relayPort, host: relayHost },
+    eventStore
+  );
   await wsRelay.start();
   await new Promise((resolve) => setTimeout(resolve, 500));
 
