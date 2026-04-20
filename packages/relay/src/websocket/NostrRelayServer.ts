@@ -28,7 +28,10 @@ export class NostrRelayServer {
   async start(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
-        this.wss = new WebSocketServer({ port: this.config.port });
+        this.wss = new WebSocketServer({
+          port: this.config.port,
+          host: this.config.host,
+        });
 
         this.wss.on('connection', (ws: WebSocket) => {
           this.handleConnection(ws);
