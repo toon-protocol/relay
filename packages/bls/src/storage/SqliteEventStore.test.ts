@@ -459,6 +459,114 @@ describe('SqliteEventStore', () => {
     });
   });
 
+  describe('TOON Parameterized Replaceable Events (kinds 10032-10099)', () => {
+    beforeEach(() => {
+      store = new SqliteEventStore(':memory:');
+    });
+
+    it('should NOT replace kind 10040 events with different d-tags (workflow chains coexist)', () => {
+      const pubkey = 'samepubkey'.padEnd(64, '0');
+      const event1 = createTestEvent({
+        id: 'event1'.padEnd(64, '0'),
+        pubkey,
+        kind: 10040,
+        created_at: 1000,
+        tags: [['d', 'wf-123-2-abc']],
+        content: 'workflow-a',
+      });
+      const event2 = createTestEvent({
+        id: 'event2'.padEnd(64, '0'),
+        pubkey,
+        kind: 10040,
+        created_at: 1000, // same created_at — would collide under standard replaceable
+        tags: [['d', 'wf-123-2-def']],
+        content: 'workflow-b',
+      });
+
+      store.store(event1);
+      store.store(event2);
+
+      // Both should coexist because d-tags differ
+      expect(store.get(event1.id)).toEqual(event1);
+      expect(store.get(event2.id)).toEqual(event2);
+    });
+
+    it('should replace kind 10040 events with same d-tag', () => {
+      const pubkey = 'samepubkey'.padEnd(64, '0');
+      const event1 = createTestEvent({
+        id: 'event1'.padEnd(64, '0'),
+        pubkey,
+        kind: 10040,
+        created_at: 1000,
+        tags: [['d', 'wf-same-tag']],
+        content: 'old',
+      });
+      const event2 = createTestEvent({
+        id: 'event2'.padEnd(64, '0'),
+        pubkey,
+        kind: 10040,
+        created_at: 2000,
+        tags: [['d', 'wf-same-tag']],
+        content: 'new',
+      });
+
+      store.store(event1);
+      store.store(event2);
+
+      expect(store.get(event1.id)).toBeUndefined();
+      expect(store.get(event2.id)).toEqual(event2);
+    });
+
+    it('should NOT replace kind 10032 events with different d-tags', () => {
+      const pubkey = 'samepubkey'.padEnd(64, '0');
+      const event1 = createTestEvent({
+        id: 'event1'.padEnd(64, '0'),
+        pubkey,
+        kind: 10032,
+        created_at: 1000,
+        tags: [['d', 'peer-config-a']],
+      });
+      const event2 = createTestEvent({
+        id: 'event2'.padEnd(64, '0'),
+        pubkey,
+        kind: 10032,
+        created_at: 1000,
+        tags: [['d', 'peer-config-b']],
+      });
+
+      store.store(event1);
+      store.store(event2);
+
+      expect(store.get(event1.id)).toEqual(event1);
+      expect(store.get(event2.id)).toEqual(event2);
+    });
+
+    it('should treat kind 10099 as parameterized replaceable (upper boundary)', () => {
+      const pubkey = 'samepubkey'.padEnd(64, '0');
+      const event1 = createTestEvent({
+        id: 'event1'.padEnd(64, '0'),
+        pubkey,
+        kind: 10099,
+        created_at: 1000,
+        tags: [['d', 'reserved-1']],
+      });
+      const event2 = createTestEvent({
+        id: 'event2'.padEnd(64, '0'),
+        pubkey,
+        kind: 10099,
+        created_at: 2000,
+        tags: [['d', 'reserved-2']],
+      });
+
+      store.store(event1);
+      store.store(event2);
+
+      // Different d-tags — both should exist
+      expect(store.get(event1.id)).toEqual(event1);
+      expect(store.get(event2.id)).toEqual(event2);
+    });
+  });
+
   describe('Query Operations', () => {
     beforeEach(() => {
       store = new SqliteEventStore(':memory:');
