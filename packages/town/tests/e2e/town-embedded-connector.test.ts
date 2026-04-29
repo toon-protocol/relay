@@ -163,13 +163,16 @@ describe('Town E2E with Embedded Connector', () => {
         peers: [],
         routes: [],
         localDelivery: { enabled: false },
-        settlementInfra: {
-          enabled: true,
-          rpcUrl: ANVIL_RPC,
-          registryAddress: REGISTRY_ADDRESS,
-          tokenAddress: TOKEN_ADDRESS,
-          privateKey: TEST_PRIVATE_KEY,
-        },
+        chainProviders: [
+          {
+            chainType: 'evm' as const,
+            chainId: `evm:${CHAIN_ID}`,
+            rpcUrl: ANVIL_RPC,
+            registryAddress: REGISTRY_ADDRESS,
+            tokenAddress: TOKEN_ADDRESS,
+            keyId: TEST_PRIVATE_KEY,
+          },
+        ],
       },
       connectorLogger
     );

@@ -42,16 +42,18 @@ function initializeSchema(db: Database.Database): void {
 
 /**
  * Check if an event kind is in the replaceable range (10000-19999).
+ * Excludes TOON-specific parameterized kinds 10032-10099.
  */
 function isReplaceableKind(kind: number): boolean {
-  return kind >= 10000 && kind <= 19999;
+  return kind >= 10000 && kind <= 19999 && !(kind >= 10032 && kind <= 10099);
 }
 
 /**
- * Check if an event kind is in the parameterized replaceable range (30000-39999).
+ * Check if an event kind is in the parameterized replaceable range.
+ * Covers NIP-33 (30000-39999) and TOON-specific kinds (10032-10099).
  */
 function isParameterizedReplaceableKind(kind: number): boolean {
-  return kind >= 30000 && kind <= 39999;
+  return (kind >= 30000 && kind <= 39999) || (kind >= 10032 && kind <= 10099);
 }
 
 /**

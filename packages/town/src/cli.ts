@@ -55,6 +55,7 @@ Environment Variables:
   TOON_SEED_RELAYS        Same as --seed-relays
   TOON_PUBLISH_SEED_ENTRY Same as --publish-seed-entry (set to "true")
   TOON_EXTERNAL_RELAY_URL Same as --external-relay-url
+  TOON_FEE_PER_EVENT      Fee per event in ILP units (overrides basePricePerByte)
 
 Security:
   Prefer TOON_MNEMONIC or TOON_SECRET_KEY environment variables
@@ -251,6 +252,17 @@ function parseCli(): TownConfig {
     process.env['TOON_EXTERNAL_RELAY_URL'] ??
     undefined;
 
+  // Fee per event (overrides basePricePerByte)
+  const feePerEventStr = process.env['TOON_FEE_PER_EVENT'] ?? undefined;
+  const feePerEvent = feePerEventStr ? parseInt(feePerEventStr, 10) : undefined;
+  if (
+    feePerEvent !== undefined &&
+    (Number.isNaN(feePerEvent) || feePerEvent < 0)
+  ) {
+    console.error('Error: TOON_FEE_PER_EVENT must be a non-negative integer');
+    process.exit(1);
+  }
+
   const config: TownConfig = {
     connectorUrl,
     ...(mnemonic && { mnemonic }),
@@ -266,6 +278,7 @@ function parseCli(): TownConfig {
     ...(seedRelaysArr && { seedRelays: seedRelaysArr }),
     ...(publishSeedEntry !== undefined && { publishSeedEntry }),
     ...(externalRelayUrl && { externalRelayUrl }),
+    ...(feePerEvent !== undefined && { feePerEvent }),
   };
 
   return config;

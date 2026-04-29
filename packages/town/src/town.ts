@@ -255,6 +255,15 @@ export interface TownConfig {
   assetCode?: string;
   /** Asset scale for ILP (default: 6). */
   assetScale?: number;
+
+  // --- Fee Override ---
+
+  /**
+   * Fee per event in ILP units (overrides basePricePerByte when set).
+   * When provided, sets basePricePerByte to this value. Used by the
+   * Townhouse orchestrator via TOON_FEE_PER_EVENT env var.
+   */
+  feePerEvent?: number;
 }
 
 /**
@@ -523,7 +532,10 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   const connectorAdminUrl = connectorUrl
     ? (config.connectorAdminUrl ?? deriveAdminUrl(connectorUrl))
     : undefined;
-  const basePricePerByte = config.basePricePerByte ?? 10n;
+  const basePricePerByte =
+    config.feePerEvent !== undefined
+      ? BigInt(config.feePerEvent)
+      : (config.basePricePerByte ?? 10n);
   const routingBufferPercent = config.routingBufferPercent ?? 10;
   const x402Enabled = config.x402Enabled ?? false;
   const knownPeers = [...(config.knownPeers ?? [])];

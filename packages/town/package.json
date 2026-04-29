@@ -13,6 +13,9 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./cli": {
+      "import": "./dist/cli.js"
     }
   },
   "files": [
@@ -46,7 +49,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.0.0",
-    "@toon-protocol/connector": "^2.3.0",
+    "@toon-protocol/connector": "^3.3.3",
     "@toon-protocol/core": "workspace:*",
     "@toon-protocol/relay": "workspace:*",
     "@toon-protocol/sdk": "workspace:*",
