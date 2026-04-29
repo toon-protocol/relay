@@ -64,7 +64,8 @@ describe('TOON_FEE_PER_EVENT env var (Story 21.5, Task 4)', () => {
     it('[P2] cli.ts help text should document TOON_FEE_PER_EVENT', () => {
       const source = readFileSync(CLI_SOURCE_PATH, 'utf-8');
       // The help text (printHelp function) should mention the env var
-      const helpSection = source.match(/function printHelp[\s\S]*?^}/m)?.[0] ?? '';
+      const helpSection =
+        source.match(/function printHelp[\s\S]*?^}/m)?.[0] ?? '';
       expect(helpSection).toContain('TOON_FEE_PER_EVENT');
     });
   });
