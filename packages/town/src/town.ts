@@ -788,7 +788,18 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     });
 
     try {
-      return await registry.dispatch(ctx);
+      const result = await registry.dispatch(ctx);
+      // Broadcast stored events to WebSocket subscribers so the live event feed
+      // in the Townhouse dashboard reflects newly accepted events in real time.
+      if (result.accept) {
+        try {
+          const event = decodeEventFromToon(toonBytes);
+          wsRelayRef.current?.broadcastEvent(event);
+        } catch {
+          // Non-Nostr payloads (e.g. kind:10032 ILP info) may fail decode — ignore.
+        }
+      }
+      return result;
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : 'Unknown error';
       console.error('[Town] Handler dispatch failed:', errMsg);
@@ -819,18 +830,28 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
 
   let peerCount = 0;
   let channelCount = 0;
+  // discoveryTracker is created after waitForConnector; this ref lets the health
+  // handler respond safely before initialization completes (returns 0 counts until ready).
+  const discoveryTrackerRef: {
+    current?: ReturnType<typeof createDiscoveryTracker>;
+  } = {};
+
+  // wsRelay is created in step 11 (after BLS server). This ref lets handlePacket
+  // broadcast newly stored events to WebSocket subscribers without a forward reference.
+  const wsRelayRef: { current?: NostrRelayServer } = {};
 
   // --- 10. BLS HTTP Server ---
   const app = new Hono();
   app.get('/health', (c: Context) => {
     const bootstrapPhase = bootstrapService.getPhase();
+    const dt = discoveryTrackerRef.current;
     return c.json(
       createHealthResponse({
         phase: bootstrapPhase,
         pubkey: identity.pubkey,
         ilpAddress,
-        peerCount: discoveryTracker.getPeerCount() + peerCount,
-        discoveredPeerCount: discoveryTracker.getDiscoveredCount(),
+        peerCount: (dt ? dt.getPeerCount() : 0) + peerCount,
+        discoveredPeerCount: dt ? dt.getDiscoveredCount() : 0,
         channelCount,
         basePricePerByte,
         x402Enabled,
@@ -862,7 +883,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
           const toonBytes = Buffer.from(body.data, 'base64');
           const decoded = decodeEventFromToon(toonBytes);
           if (decoded && decoded.kind === ILP_PEER_INFO_KIND) {
-            discoveryTracker.processEvent(decoded);
+            discoveryTrackerRef.current?.processEvent(decoded);
           }
         } catch {
           /* decode failed, ignore */
@@ -962,6 +983,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     { port: relayPort, host: relayHost },
     eventStore
   );
+  wsRelayRef.current = wsRelay;
   await wsRelay.start();
   await new Promise((resolve) => setTimeout(resolve, 500));
 
@@ -991,10 +1013,6 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   });
 
   // In embedded mode, wire the packet handler directly to the connector.
-  // Mutable ref for discovery tracker (created below, used in handler callback).
-  const discoveryTrackerRef: {
-    current?: ReturnType<typeof createDiscoveryTracker>;
-  } = {};
 
   if (embeddedMode && effectiveConnector?.setPacketHandler) {
     effectiveConnector.setPacketHandler(async (request) => {
@@ -1035,7 +1053,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     // If the connector is unreachable, clean up already-started servers before
     // propagating the error so we don't leak listening ports.
     try {
-      await waitForConnector(connectorUrl as string);
+      await waitForConnector(connectorAdminUrl as string);
     } catch (connectorError: unknown) {
       blsServer.close();
       await wsRelay.stop();
@@ -1053,10 +1071,8 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   if (channelClient) {
     discoveryTracker.setChannelClient(channelClient);
   }
-  // Wire discovery tracker ref for embedded mode packet handler
+  // Wire discovery tracker ref (used by health handler and embedded packet handler)
   discoveryTrackerRef.current = discoveryTracker;
-  // discoveryTracker peer count is read live via getPeerCount() in the
-  // health endpoint — no need for a separate counter here.
 
   // --- 13b. Seed Relay Discovery (when discovery: 'seed-list') ---
   // Runs before bootstrap to populate knownPeers from seed relay list.
