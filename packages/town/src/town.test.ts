@@ -943,4 +943,17 @@ describe('startTown() embedded-with-parent connector wiring -- static analysis',
     expect(source).toMatch(/connectorConfig\.transport\s*=\s*\{/);
     expect(source).toMatch(/type:\s*['"]socks5['"]/);
   });
+
+  it('town.ts wires chainProviders into embedded connector when chain has settlement addresses', () => {
+    // chainProviders entry is conditionally spread into connectorConfig so the
+    // embedded ConnectorNode's ClaimReceiver can verify apex-signed claims.
+    expect(source).toMatch(/chainProviders:\s*\[chainProvidersEntry\]/);
+    expect(source).toMatch(/chainType:\s*['"]evm['"]/);
+    // chainId is `evm:<numeric>` (connector form), NOT `evm:base:<numeric>`.
+    expect(source).toMatch(/evm:\$\{chainConfig\.chainId\}/);
+    // Identity-derived hex key (secp256k1) shared with EVM signing path.
+    expect(source).toMatch(
+      /Buffer\.from\(identity\.secretKey\)\.toString\(['"]hex['"]\)/
+    );
+  });
 });

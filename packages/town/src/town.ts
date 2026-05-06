@@ -596,6 +596,45 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       routes.push({ prefix: 'g', nextHop: parentPeerId, priority: 0 });
     }
 
+    // chainProviders entry — wires the embedded ConnectorNode's ClaimReceiver
+    // so it can verify per-packet claims signed by the apex (image >=3.4.0).
+    // Same secp256k1 key derives Nostr identity AND EVM treasury account.
+    // We only build the entry when the chain preset has all settlement
+    // addresses populated; presets like arbitrum-one have empty registry/
+    // tokenNetwork strings, in which case we degrade gracefully (no warn-fail).
+    const hasSettlementAddresses =
+      !!chainConfig.rpcUrl &&
+      !!chainConfig.registryAddress &&
+      !!chainConfig.tokenNetworkAddress &&
+      !!chainConfig.usdcAddress;
+
+    let chainProvidersEntry: {
+      chainType: 'evm';
+      chainId: string;
+      rpcUrl: string;
+      registryAddress: string;
+      tokenAddress: string;
+      keyId: string;
+    } | null = null;
+    if (hasSettlementAddresses) {
+      // chainId here is the connector's `evm:<numeric>` form, NOT the
+      // chainKey ('evm:base:<numeric>') used for settlement maps.
+      const keyHex = `0x${Buffer.from(identity.secretKey).toString('hex')}`;
+      chainProvidersEntry = {
+        chainType: 'evm',
+        chainId: `evm:${chainConfig.chainId}`,
+        rpcUrl: chainConfig.rpcUrl,
+        registryAddress: chainConfig.registryAddress,
+        tokenAddress: chainConfig.usdcAddress,
+        keyId: keyHex,
+      };
+    } else {
+      console.warn('[Town] connector.chain_providers_skipped', {
+        chain: chainConfig.name,
+        reason: 'missing settlement addresses',
+      });
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const connectorConfig: any = {
       nodeId,
@@ -615,6 +654,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       settlement: {
         connectorFeePercentage: 0,
       } as unknown as NonNullable<ConnectorConfig['settlement']>,
+      ...(chainProvidersEntry && { chainProviders: [chainProvidersEntry] }),
     };
     // Ator/SOCKS5 transport propagation also covers the parent dial when
     // running inside a hidden-service deployment.
