@@ -13,12 +13,19 @@
  *
  * ## Deployment Modes
  *
- * - **Default** (no connector args): An embedded ConnectorNode is auto-created.
- *   Zero-latency packet delivery, no external setup needed.
- * - **Embedded** (`connector`): Pass a pre-configured `EmbeddableConnectorLike`.
- *   Zero-latency packet delivery via direct function calls.
- * - **Standalone** (`connectorUrl`): Connect to an external connector via HTTP.
- *   The connector runs as a separate process or container.
+ * The town node ALWAYS runs an embedded `ConnectorNode` so that packets
+ * destined for its own ILP address can be routed locally (the connector and
+ * the BLS handler must share a process for the round-trip to work).
+ *
+ * - **Standalone embedded** (no `connectorUrl`): A self-routing embedded
+ *   connector with no upstream peers. Useful for genesis nodes and tests.
+ * - **Embedded with parent** (`connectorUrl` set): The embedded connector
+ *   is configured with `connectorUrl` as a parent BTP peer, plus a self-route
+ *   for local delivery and a default-route to the parent for everything else.
+ * - **Pre-built embedded** (`connector`): Pass a fully constructed
+ *   `EmbeddableConnectorLike`. The town does not modify it.
+ *
+ * `connector` and `connectorUrl` are mutually exclusive — provide at most one.
  */
 
 import { mkdirSync } from 'node:fs';
@@ -45,9 +52,6 @@ import {
   BootstrapService,
   createDiscoveryTracker,
   ILP_PEER_INFO_KIND,
-  createHttpIlpClient,
-  createHttpConnectorAdmin,
-  createHttpChannelClient,
   createDirectIlpClient,
   createDirectConnectorAdmin,
   createDirectChannelClient,
@@ -89,6 +93,7 @@ import {
   ConnectorNode,
   createLogger as createConnectorLogger,
 } from '@toon-protocol/connector';
+import type { ConnectorConfig } from '@toon-protocol/connector';
 import {
   createPublicClient,
   createWalletClient,
@@ -107,12 +112,16 @@ const MAX_PAYLOAD_BASE64_LENGTH = 1_048_576;
  * Configuration for starting a TOON relay node via `startTown()`.
  *
  * Exactly one of `mnemonic` or `secretKey` must be provided.
- * Exactly one of `connector` or `connectorUrl` must be provided.
+ * `connector` and `connectorUrl` are mutually exclusive — provide at most one.
  *
- * - **Embedded mode** (`connector`): Pass an `EmbeddableConnectorLike` directly
- *   for zero-latency packet delivery. No HTTP overhead.
- * - **Standalone mode** (`connectorUrl`): Connect to an external connector via
- *   HTTP. The connector runs as a separate process.
+ * - When neither is provided, a standalone embedded `ConnectorNode` is built
+ *   with only a self-route (no upstream peers).
+ * - When `connectorUrl` is set, the embedded connector is configured with
+ *   that URL as a parent BTP peer plus a default-route to it. `ilpAddress`
+ *   becomes REQUIRED in this mode and must fall under the parent's prefix
+ *   (e.g. `g.townhouse.<self>`).
+ * - When `connector` is set, the caller-supplied `EmbeddableConnectorLike`
+ *   is used as-is; town does not configure peers, routes, or settlement on it.
  */
 export interface TownConfig {
   // --- Identity (exactly one required) ---
@@ -122,36 +131,34 @@ export interface TownConfig {
   /** 32-byte secp256k1 secret key. */
   secretKey?: Uint8Array;
 
-  // --- Connector (optional — defaults to auto-created embedded connector) ---
+  // --- Connector ---
 
   /**
-   * Embedded connector instance for zero-latency mode.
-   * If neither `connector` nor `connectorUrl` is provided, an embedded
-   * ConnectorNode is auto-created (default mode).
+   * Pre-built embedded connector. Mutually exclusive with `connectorUrl`.
+   * When provided, town does not modify the connector — peers, routes, and
+   * settlement are the caller's responsibility.
    */
   connector?: EmbeddableConnectorLike;
   /**
-   * External connector URL (e.g., "http://localhost:8080").
-   * Mutually exclusive with `connector`.
+   * Parent connector BTP URL (e.g. `ws://apex.example:3001`). When set, the
+   * embedded connector is built with this URL as a parent peer and a default
+   * `g.` route to that peer; `ilpAddress` MUST also be set and fall under the
+   * parent's prefix. Mutually exclusive with `connector`.
    */
   connectorUrl?: string;
-  /**
-   * External connector admin URL (e.g., "http://localhost:8081").
-   * Defaults to the connectorUrl with port incremented by 1.
-   * Only used in standalone mode (with `connectorUrl`).
-   */
-  connectorAdminUrl?: string;
+  /** BTP peer id to use for the parent connector (default: `'apex'`). */
+  parentPeerId?: string;
+  /** BTP auth token for the parent peer (default: empty string -- no-auth). */
+  parentAuthToken?: string;
+  /** Stable nodeId for the embedded connector (default: `toon-<pubkeyShort>`). */
+  nodeId?: string;
 
-  /**
-   * BTP server port for the auto-created embedded connector (default: 3000).
-   * Only used when neither `connector` nor `connectorUrl` is provided.
-   */
+  /** BTP server port for the embedded connector (default: 3000). */
   btpServerPort?: number;
 
   /**
-   * EVM private key for settlement infrastructure.
-   * Only used when neither `connector` nor `connectorUrl` is provided.
-   * If not set, the identity's secp256k1 key is used.
+   * EVM private key for settlement infrastructure on the embedded connector.
+   * If not set, the identity's secp256k1 key is reused.
    */
   settlementPrivateKey?: string;
 
@@ -161,7 +168,11 @@ export interface TownConfig {
   relayPort?: number;
   /** BLS HTTP server port (default: 3100). */
   blsPort?: number;
-  /** ILP address for this node (default: g.toon.<pubkeyShort>). */
+  /**
+   * ILP address for this node. Default `g.toon.<pubkeyShort>` is used only
+   * when no parent connector is configured. When `connectorUrl` is set this
+   * field is REQUIRED and must fall under the parent's address prefix.
+   */
   ilpAddress?: string;
   /** BTP WebSocket endpoint (default: ws://localhost:3000). */
   btpEndpoint?: string;
@@ -275,10 +286,12 @@ export interface ResolvedTownConfig {
   blsPort: number;
   ilpAddress: string;
   btpEndpoint: string;
-  /** Connector URL (standalone mode only). */
+  /** Stable nodeId of the embedded connector. */
+  nodeId: string;
+  /** Parent connector URL when peering with one (omitted otherwise). */
   connectorUrl?: string;
-  /** Connector admin URL (standalone mode only). */
-  connectorAdminUrl?: string;
+  /** Parent BTP peer id (only meaningful when connectorUrl is set). */
+  parentPeerId?: string;
   basePricePerByte: bigint;
   routingBufferPercent: number;
   x402Enabled: boolean;
@@ -356,45 +369,6 @@ export interface TownSubscription {
   isActive(): boolean;
 }
 
-// ---------- Internal Helpers ----------
-
-/**
- * Derive connector admin URL from the connector URL by incrementing the port.
- * e.g., http://localhost:8080 -> http://localhost:8081
- *
- * @internal Exported for unit testing only.
- */
-export function deriveAdminUrl(connectorUrl: string): string {
-  const parsed = new URL(connectorUrl);
-  const port = parseInt(parsed.port || '8080', 10);
-  parsed.port = String(port + 1);
-  return parsed.toString().replace(/\/$/, '');
-}
-
-/**
- * Wait for the connector health endpoint to become available.
- */
-async function waitForConnector(url: string, timeoutMs = 60000): Promise<void> {
-  const healthUrl = `${url}/health`;
-  const start = Date.now();
-
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const response = await fetch(healthUrl, {
-        signal: AbortSignal.timeout(2000),
-      });
-      if (response.ok) return;
-    } catch {
-      // retry
-    }
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-  }
-
-  throw new Error(
-    `Connector health check timed out after ${timeoutMs}ms: ${url}`
-  );
-}
-
 // ---------- Subscription Helper ----------
 
 /**
@@ -458,34 +432,33 @@ export function createSubscription(
  * and starts the relay WebSocket server, BLS HTTP server, bootstrap service,
  * and relay monitor. Returns a `TownInstance` for lifecycle management.
  *
- * Supports three deployment modes:
- * - **Default** (no connector args): Auto-creates an embedded ConnectorNode.
- * - **Embedded** (`connector`): Pass a pre-configured EmbeddableConnectorLike.
- * - **Standalone** (`connectorUrl`): Connect to an external connector via HTTP.
+ * The town node ALWAYS runs an embedded `ConnectorNode`. Three configurations
+ * are supported:
+ * - No connector args: standalone embedded connector with self-route only.
+ * - `connectorUrl`: embedded connector configured with that URL as a parent
+ *   BTP peer plus a default `g.` route to it. `ilpAddress` is REQUIRED here.
+ * - `connector`: pass a pre-built `EmbeddableConnectorLike`; town does not
+ *   modify it.
  *
  * @param config - Node configuration. One of `mnemonic`/`secretKey` is required;
- *   connector is optional (auto-created if omitted); all other fields have defaults.
+ *   `connector` and `connectorUrl` are mutually exclusive.
  * @returns A running TownInstance.
  * @throws If both or neither of mnemonic/secretKey are provided.
  * @throws If both connector and connectorUrl are provided.
+ * @throws If connectorUrl is set without an explicit ilpAddress.
  *
  * @example
  * ```typescript
- * // Default mode (auto-created embedded connector)
- * const town = await startTown({
- *   mnemonic: 'abandon abandon abandon ...',
- * });
+ * // Standalone (no parent)
+ * const town = await startTown({ mnemonic: 'abandon ...' });
  *
- * // Embedded mode (pre-configured connector)
+ * // Embedded with parent
  * const town = await startTown({
- *   mnemonic: 'abandon abandon abandon ...',
- *   connector: myConnectorNode,
- * });
- *
- * // Standalone mode (external connector)
- * const town = await startTown({
- *   mnemonic: 'abandon abandon abandon ...',
- *   connectorUrl: 'http://localhost:8080',
+ *   mnemonic: 'abandon ...',
+ *   connectorUrl: 'ws://apex.example:3001',
+ *   parentPeerId: 'apex',
+ *   parentAuthToken: '',
+ *   ilpAddress: 'g.townhouse.alice',
  * });
  * ```
  */
@@ -513,9 +486,15 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     );
   }
 
-  // Auto-create embedded connector when neither is provided (default mode)
-  let autoCreatedConnector: ConnectorNode | null = null;
-  const embeddedMode = !hasConnectorUrl; // embedded when connector provided OR auto-created
+  // When peering with a parent, the operator MUST set ilpAddress so it falls
+  // under the parent's prefix (e.g. g.townhouse.<self>). The default
+  // g.toon.<pubkey> address would not be routable from the parent.
+  if (hasConnectorUrl && config.ilpAddress === undefined) {
+    throw new Error(
+      'TownConfig: ilpAddress is required when connectorUrl is set ' +
+        '(must fall under the parent connector prefix, e.g. g.townhouse.<self>)'
+    );
+  }
 
   // --- 2. Derive identity ---
   const identity: NodeIdentity = hasMnemonic
@@ -528,10 +507,10 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   const pubkeyShort = identity.pubkey.slice(0, 16);
   const ilpAddress = config.ilpAddress ?? `g.toon.${pubkeyShort}`;
   const btpEndpoint = config.btpEndpoint ?? 'ws://localhost:3000';
+  const nodeId = config.nodeId ?? `toon-${pubkeyShort}`;
+  const parentPeerId = config.parentPeerId ?? 'apex';
+  const parentAuthToken = config.parentAuthToken ?? '';
   const connectorUrl = config.connectorUrl;
-  const connectorAdminUrl = connectorUrl
-    ? (config.connectorAdminUrl ?? deriveAdminUrl(connectorUrl))
-    : undefined;
   const basePricePerByte =
     config.feePerEvent !== undefined
       ? BigInt(config.feePerEvent)
@@ -564,8 +543,8 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     blsPort,
     ilpAddress,
     btpEndpoint,
-    ...(connectorUrl && { connectorUrl }),
-    ...(connectorAdminUrl && { connectorAdminUrl }),
+    nodeId,
+    ...(connectorUrl && { connectorUrl, parentPeerId }),
     basePricePerByte,
     routingBufferPercent,
     x402Enabled,
@@ -583,23 +562,39 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     chain: chainConfig.name,
   };
 
-  // --- 3c. Auto-create embedded connector if neither provided ---
-  if (!hasConnector && !hasConnectorUrl) {
-    const nodeId = `toon-${identity.pubkey.slice(0, 16)}`;
+  // --- 3c. Auto-create embedded connector when no pre-built one was supplied ---
+  let autoCreatedConnector: ConnectorNode | null = null;
+  if (!hasConnector) {
     const btpServerPort = config.btpServerPort ?? 3000;
     const connectorLogger = createConnectorLogger(nodeId, 'warn');
 
-    // Derive settlement private key from identity if not explicitly set
-    let settlementPrivateKey = config.settlementPrivateKey;
-    if (!settlementPrivateKey) {
-      const keyBuffer = Buffer.from(identity.secretKey);
-      settlementPrivateKey = `0x${keyBuffer.toString('hex')}`;
-      keyBuffer.fill(0);
-    }
+    // Routes: always self-route for local delivery; add a parent default route
+    // when peering. Local delivery is triggered by `nextHop === nodeId` (or
+    // the literal 'local'); the connector's packet-handler.ts then auto-skips
+    // settlement fees for local hops.
+    const routes: Array<{
+      prefix: string;
+      nextHop: string;
+      priority?: number;
+    }> = [{ prefix: ilpAddress, nextHop: nodeId, priority: 100 }];
 
-    // Enable settlement infra when chain preset has both addresses
-    const hasSettlementAddresses =
-      chainConfig.registryAddress && chainConfig.tokenNetworkAddress;
+    // Peers: only the parent, when configured.
+    const peers: Array<{
+      id: string;
+      url: string;
+      authToken: string;
+    }> = [];
+
+    if (hasConnectorUrl) {
+      peers.push({
+        id: parentPeerId,
+        url: connectorUrl as string,
+        authToken: parentAuthToken,
+      });
+      // Connector's isValidILPAddress rejects trailing dots; RoutingTable
+      // adds the delimiter at match time, so 'g' matches 'g.foo' correctly.
+      routes.push({ prefix: 'g', nextHop: parentPeerId, priority: 0 });
+    }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const connectorConfig: any = {
@@ -607,20 +602,22 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       btpServerPort,
       environment: 'development' as const,
       deploymentMode: 'embedded' as const,
-      peers: [],
-      routes: [],
+      peers,
+      routes,
       localDelivery: { enabled: false },
-      ...(hasSettlementAddresses && {
-        settlementInfra: {
-          enabled: true,
-          rpcUrl: chainConfig.rpcUrl,
-          registryAddress: chainConfig.registryAddress,
-          tokenAddress: chainConfig.usdcAddress,
-          privateKey: settlementPrivateKey,
-        },
-      }),
+      // Children don't expose an admin API — the apex parent is the
+      // operator-facing surface. Disabling avoids a hard runtime dep on
+      // express in the town docker bundle.
+      adminApi: { enabled: false },
+      // Belt-and-braces: zero connector forwarding fee. Combined with the
+      // packet-handler's automatic skip for local-delivery hops this keeps the
+      // child fee surface flat regardless of peering topology.
+      settlement: {
+        connectorFeePercentage: 0,
+      } as unknown as NonNullable<ConnectorConfig['settlement']>,
     };
-    // Pass ator transport config to connector for outbound BTP peering
+    // Ator/SOCKS5 transport propagation also covers the parent dial when
+    // running inside a hidden-service deployment.
     if (config.ator?.enabled && config.ator.anonAddress) {
       connectorConfig.transport = {
         type: 'socks5',
@@ -632,11 +629,10 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     autoCreatedConnector = new ConnectorNode(connectorConfig, connectorLogger);
   }
 
-  // Effective connector: user-provided or auto-created
-  const effectiveConnector: EmbeddableConnectorLike | undefined =
+  // Effective connector: user-provided or auto-created. Always defined.
+  const effectiveConnector: EmbeddableConnectorLike =
     config.connector ??
-    (autoCreatedConnector as unknown as EmbeddableConnectorLike) ??
-    undefined;
+    (autoCreatedConnector as unknown as EmbeddableConnectorLike);
 
   // --- 4. Create data directory ---
   mkdirSync(dataDir, { recursive: true });
@@ -690,28 +686,18 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       tokenNetworks: effectiveTokenNetworks,
     };
 
-    if (embeddedMode && effectiveConnector) {
-      if (
-        effectiveConnector.openChannel &&
-        effectiveConnector.getChannelState
-      ) {
-        channelClient = createDirectChannelClient(
-          effectiveConnector as Required<
-            Pick<EmbeddableConnectorLike, 'openChannel' | 'getChannelState'>
-          >
-        );
-      }
-    } else if (!embeddedMode) {
-      channelClient = createHttpChannelClient(connectorAdminUrl as string);
+    if (effectiveConnector.openChannel && effectiveConnector.getChannelState) {
+      channelClient = createDirectChannelClient(
+        effectiveConnector as Required<
+          Pick<EmbeddableConnectorLike, 'openChannel' | 'getChannelState'>
+        >
+      );
     }
   }
 
   // --- 7. Connector admin client ---
-  const adminClient: ConnectorAdminClient = embeddedMode
-    ? createDirectConnectorAdmin(
-        effectiveConnector as NonNullable<typeof effectiveConnector>
-      )
-    : createHttpConnectorAdmin(connectorAdminUrl as string, '');
+  const adminClient: ConnectorAdminClient =
+    createDirectConnectorAdmin(effectiveConnector);
 
   // --- 8. SDK Pipeline ---
   const verifier = createVerificationPipeline({ devMode });
@@ -830,8 +816,9 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
 
   let peerCount = 0;
   let channelCount = 0;
-  // discoveryTracker is created after waitForConnector; this ref lets the health
-  // handler respond safely before initialization completes (returns 0 counts until ready).
+  // discoveryTracker is created after the embedded connector starts; this ref
+  // lets the health handler respond safely before initialization completes
+  // (returns 0 counts until ready).
   const discoveryTrackerRef: {
     current?: ReturnType<typeof createDiscoveryTracker>;
   } = {};
@@ -902,14 +889,9 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   });
 
   // --- 10b. ILP client (created before x402 handler so it can be wired in) ---
-  const ilpClient: IlpClient = embeddedMode
-    ? createDirectIlpClient(
-        effectiveConnector as NonNullable<typeof effectiveConnector>,
-        {
-          toonDecoder: (bytes: Uint8Array) => decodeEventFromToon(bytes),
-        }
-      )
-    : createHttpIlpClient(connectorAdminUrl as string);
+  const ilpClient: IlpClient = createDirectIlpClient(effectiveConnector, {
+    toonDecoder: (bytes: Uint8Array) => decodeEventFromToon(bytes),
+  });
 
   // --- 10c. viem clients for x402 settlement (conditional) ---
   let x402WalletClient: WalletClient | undefined;
@@ -1012,9 +994,8 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     }
   });
 
-  // In embedded mode, wire the packet handler directly to the connector.
-
-  if (embeddedMode && effectiveConnector?.setPacketHandler) {
+  // Wire the packet handler directly to the embedded connector.
+  if (effectiveConnector.setPacketHandler) {
     effectiveConnector.setPacketHandler(async (request) => {
       const result = await handlePacket(request as HandlePacketRequest);
       // Feed accepted kind:10032 events to discovery tracker
@@ -1036,30 +1017,10 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     });
   }
 
-  // Start auto-created connector (must happen before bootstrap)
+  // Start the auto-created connector before bootstrap. Pre-built connectors
+  // are the caller's responsibility to start.
   if (autoCreatedConnector) {
     await autoCreatedConnector.start();
-    // Add self-route so packets matching our ILP address are delivered locally
-    autoCreatedConnector.addRoute({
-      prefix: ilpAddress,
-      nextHop: `toon-${identity.pubkey.slice(0, 16)}`,
-      priority: 100,
-    });
-  }
-
-  // Wait for connector health (standalone mode only).
-  // In embedded mode, the connector is in-process — no health check needed.
-  if (!embeddedMode) {
-    // If the connector is unreachable, clean up already-started servers before
-    // propagating the error so we don't leak listening ports.
-    try {
-      await waitForConnector(connectorAdminUrl as string);
-    } catch (connectorError: unknown) {
-      blsServer.close();
-      await wsRelay.stop();
-      eventStore.close?.();
-      throw connectorError;
-    }
   }
 
   // Create DiscoveryTracker
