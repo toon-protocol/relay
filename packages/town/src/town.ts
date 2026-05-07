@@ -162,6 +162,16 @@ export interface TownConfig {
    */
   settlementPrivateKey?: string;
 
+  /**
+   * EVM treasury address advertised to the parent connector for the
+   * embedded-with-parent peer entry. The apex's PerPacketClaimService uses
+   * this as the `peerAddress` when the apex opens a payment channel toward
+   * this child. Only meaningful when `connectorUrl` is set. When omitted,
+   * the parent peer entry has no `evmAddress` and the apex's channel-open
+   * call must supply `peerAddress` explicitly.
+   */
+  parentEvmAddress?: string;
+
   // --- Network ---
 
   /** WebSocket relay port (default: 7100). */
@@ -566,7 +576,15 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   let autoCreatedConnector: ConnectorNode | null = null;
   if (!hasConnector) {
     const btpServerPort = config.btpServerPort ?? 3000;
-    const connectorLogger = createConnectorLogger(nodeId, 'warn');
+    const connectorLogger = createConnectorLogger(
+      nodeId,
+      (process.env['TOON_CONNECTOR_LOG_LEVEL'] as
+        | 'debug'
+        | 'info'
+        | 'warn'
+        | 'error'
+        | undefined) ?? 'warn'
+    );
 
     // Routes: always self-route for local delivery; add a parent default route
     // when peering. Local delivery is triggered by `nextHop === nodeId` (or
@@ -583,6 +601,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       id: string;
       url: string;
       authToken: string;
+      evmAddress?: string;
     }> = [];
 
     if (hasConnectorUrl) {
@@ -590,6 +609,11 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
         id: parentPeerId,
         url: connectorUrl as string,
         authToken: parentAuthToken,
+        // When the operator publishes their EVM treasury address to the
+        // parent, the apex can open a settlement channel toward this child
+        // without needing to discover the address via kind:10032. The
+        // connector schema treats this field as optional metadata.
+        ...(config.parentEvmAddress && { evmAddress: config.parentEvmAddress }),
       });
       // Connector's isValidILPAddress rejects trailing dots; RoutingTable
       // adds the delimiter at match time, so 'g' matches 'g.foo' correctly.
@@ -619,7 +643,18 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     if (hasSettlementAddresses) {
       // chainId here is the connector's `evm:<numeric>` form, NOT the
       // chainKey ('evm:base:<numeric>') used for settlement maps.
-      const keyHex = `0x${Buffer.from(identity.secretKey).toString('hex')}`;
+      // When operator supplies `settlementPrivateKey`, prefer it over the
+      // identity-derived hex — this lets the embedded connector's
+      // ClaimReceiver use a funded EVM account (e.g. Anvil deterministic
+      // privkey) distinct from the Nostr identity.
+      const keyHex =
+        config.settlementPrivateKey ??
+        `0x${Buffer.from(identity.secretKey).toString('hex')}`;
+      if (!/^0x[0-9a-fA-F]{64}$/.test(keyHex)) {
+        throw new Error(
+          `TownConfig.settlementPrivateKey must be a 0x-prefixed 32-byte hex string (got length ${keyHex.length}); cannot wire chainProviders for ${chainConfig.name}`
+        );
+      }
       chainProvidersEntry = {
         chainType: 'evm',
         chainId: `evm:${chainConfig.chainId}`,

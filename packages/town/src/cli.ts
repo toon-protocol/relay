@@ -69,6 +69,13 @@ Environment Variables:
   TOON_PUBLISH_SEED_ENTRY Same as --publish-seed-entry (set to "true")
   TOON_EXTERNAL_RELAY_URL Same as --external-relay-url
   TOON_FEE_PER_EVENT      Fee per event in ILP units (overrides basePricePerByte)
+  TOON_SETTLEMENT_PRIVATE_KEY  EVM private key (0x-prefixed 32-byte hex) for the
+                          embedded connector's ClaimReceiver / chainProviders.
+                          Defaults to the identity-derived secp256k1 hex.
+  TOON_PARENT_EVM_ADDRESS EVM treasury address advertised to the parent
+                          connector as the peer entry's evmAddress (used by the
+                          apex's PerPacketClaimService when opening a settlement
+                          channel toward this child).
 
 Security:
   Prefer TOON_MNEMONIC or TOON_SECRET_KEY environment variables
@@ -293,6 +300,35 @@ function parseCli(): TownConfig {
     process.exit(1);
   }
 
+  // Settlement private key — controls the embedded connector's ClaimReceiver
+  // signer. CLI flag intentionally omitted (process listings would expose the
+  // key via `ps`, CWE-214). Env-only.
+  const settlementPrivateKey =
+    process.env['TOON_SETTLEMENT_PRIVATE_KEY'] ?? undefined;
+  if (
+    settlementPrivateKey !== undefined &&
+    !/^0x[0-9a-fA-F]{64}$/.test(settlementPrivateKey)
+  ) {
+    console.error(
+      'Error: TOON_SETTLEMENT_PRIVATE_KEY must be a 0x-prefixed 32-byte hex string'
+    );
+    process.exit(1);
+  }
+
+  // Parent EVM address advertised to the apex peer. Public address — safe to
+  // ship via env. Validated as 0x + 40 hex chars (ERC-55 mixed-case allowed).
+  const parentEvmAddress =
+    process.env['TOON_PARENT_EVM_ADDRESS'] ?? undefined;
+  if (
+    parentEvmAddress !== undefined &&
+    !/^0x[0-9a-fA-F]{40}$/.test(parentEvmAddress)
+  ) {
+    console.error(
+      'Error: TOON_PARENT_EVM_ADDRESS must be a 0x-prefixed 20-byte hex address'
+    );
+    process.exit(1);
+  }
+
   const config: TownConfig = {
     ...(connectorUrl && { connectorUrl }),
     ...(parentPeerId && { parentPeerId }),
@@ -312,6 +348,8 @@ function parseCli(): TownConfig {
     ...(publishSeedEntry !== undefined && { publishSeedEntry }),
     ...(externalRelayUrl && { externalRelayUrl }),
     ...(feePerEvent !== undefined && { feePerEvent }),
+    ...(settlementPrivateKey && { settlementPrivateKey }),
+    ...(parentEvmAddress && { parentEvmAddress }),
   };
 
   return config;
