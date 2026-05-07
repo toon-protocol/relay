@@ -590,19 +590,19 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     // when peering. Local delivery is triggered by `nextHop === nodeId` (or
     // the literal 'local'); the connector's packet-handler.ts then auto-skips
     // settlement fees for local hops.
-    const routes: Array<{
+    const routes: {
       prefix: string;
       nextHop: string;
       priority?: number;
-    }> = [{ prefix: ilpAddress, nextHop: nodeId, priority: 100 }];
+    }[] = [{ prefix: ilpAddress, nextHop: nodeId, priority: 100 }];
 
     // Peers: only the parent, when configured.
-    const peers: Array<{
+    const peers: {
       id: string;
       url: string;
       authToken: string;
       evmAddress?: string;
-    }> = [];
+    }[] = [];
 
     if (hasConnectorUrl) {
       peers.push({

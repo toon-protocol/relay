@@ -150,9 +150,7 @@ function parseCli(): TownConfig {
     values['connector-url'] ?? process.env['TOON_CONNECTOR_URL'] ?? undefined;
 
   const parentPeerId =
-    values['parent-peer-id'] ??
-    process.env['TOON_PARENT_PEER_ID'] ??
-    undefined;
+    values['parent-peer-id'] ?? process.env['TOON_PARENT_PEER_ID'] ?? undefined;
 
   const parentAuthToken =
     values['parent-auth-token'] ??
@@ -317,8 +315,7 @@ function parseCli(): TownConfig {
 
   // Parent EVM address advertised to the apex peer. Public address — safe to
   // ship via env. Validated as 0x + 40 hex chars (ERC-55 mixed-case allowed).
-  const parentEvmAddress =
-    process.env['TOON_PARENT_EVM_ADDRESS'] ?? undefined;
+  const parentEvmAddress = process.env['TOON_PARENT_EVM_ADDRESS'] ?? undefined;
   if (
     parentEvmAddress !== undefined &&
     !/^0x[0-9a-fA-F]{40}$/.test(parentEvmAddress)

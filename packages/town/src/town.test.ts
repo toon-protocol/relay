@@ -932,9 +932,7 @@ describe('startTown() embedded-with-parent connector wiring -- static analysis',
   });
 
   it('town.ts requires ilpAddress when connectorUrl is set', () => {
-    expect(source).toMatch(
-      /ilpAddress is required when connectorUrl is set/
-    );
+    expect(source).toMatch(/ilpAddress is required when connectorUrl is set/);
   });
 
   it('town.ts propagates ator SOCKS5 transport to the embedded connector', () => {
