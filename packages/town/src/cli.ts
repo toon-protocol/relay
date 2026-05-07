@@ -7,7 +7,9 @@
  * variables, then delegates all logic to town.ts.
  *
  * Usage:
- *   npx @toon-protocol/town --mnemonic "abandon abandon ..." --connector-url "http://localhost:8080"
+ *   npx @toon-protocol/town --mnemonic "abandon abandon ..." \
+ *       --connector-url "ws://apex.example:3001" \
+ *       --ilp-address "g.townhouse.alice"
  *
  * Environment variables override defaults; CLI flags override environment variables.
  */
@@ -29,8 +31,16 @@ Options:
   --relay-port <port>      WebSocket relay port (default: 7100)
   --bls-port <port>        BLS HTTP port (default: 3100)
   --data-dir <path>        Data directory (default: ./data)
-  --connector-url <url>    External connector URL (required)
-  --connector-admin-url <url>  Connector admin URL (default: connectorUrl port+1)
+  --connector-url <url>    Parent connector BTP URL (e.g. ws://apex:3001).
+                           When set, the embedded connector peers with this
+                           URL and routes everything outside the local prefix
+                           through it. --ilp-address becomes REQUIRED and must
+                           fall under the parent's prefix.
+  --parent-peer-id <id>    BTP peer id to register the parent under (default: apex)
+  --parent-auth-token <t>  Auth token for the parent peer (default: empty / no-auth)
+  --ilp-address <addr>     ILP address for this node (default: g.toon.<pubkey>;
+                           REQUIRED when --connector-url is set, e.g. g.townhouse.<self>)
+  --node-id <id>           Stable nodeId for the embedded connector (default: toon-<pubkey>)
   --known-peers <json>     Known peers as JSON array
   --dev-mode               Enable dev mode (skip verification)
   --x402-enabled           Enable x402 /publish endpoint (default: false)
@@ -46,8 +56,11 @@ Environment Variables:
   TOON_RELAY_PORT         Same as --relay-port
   TOON_BLS_PORT           Same as --bls-port
   TOON_DATA_DIR           Same as --data-dir
-  TOON_CONNECTOR_URL      Same as --connector-url
-  TOON_CONNECTOR_ADMIN_URL  Same as --connector-admin-url
+  TOON_CONNECTOR_URL      Same as --connector-url (parent BTP URL)
+  TOON_PARENT_PEER_ID     Same as --parent-peer-id
+  TOON_PARENT_AUTH_TOKEN  Same as --parent-auth-token
+  TOON_ILP_ADDRESS        Same as --ilp-address (required with TOON_CONNECTOR_URL)
+  TOON_NODE_ID            Same as --node-id
   TOON_KNOWN_PEERS        Same as --known-peers
   TOON_DEV_MODE           Same as --dev-mode (set to "true")
   TOON_X402_ENABLED       Same as --x402-enabled (set to "true")
@@ -56,6 +69,13 @@ Environment Variables:
   TOON_PUBLISH_SEED_ENTRY Same as --publish-seed-entry (set to "true")
   TOON_EXTERNAL_RELAY_URL Same as --external-relay-url
   TOON_FEE_PER_EVENT      Fee per event in ILP units (overrides basePricePerByte)
+  TOON_SETTLEMENT_PRIVATE_KEY  EVM private key (0x-prefixed 32-byte hex) for the
+                          embedded connector's ClaimReceiver / chainProviders.
+                          Defaults to the identity-derived secp256k1 hex.
+  TOON_PARENT_EVM_ADDRESS EVM treasury address advertised to the parent
+                          connector as the peer entry's evmAddress (used by the
+                          apex's PerPacketClaimService when opening a settlement
+                          channel toward this child).
 
 Security:
   Prefer TOON_MNEMONIC or TOON_SECRET_KEY environment variables
@@ -74,7 +94,10 @@ function parseCli(): TownConfig {
       'bls-port': { type: 'string' },
       'data-dir': { type: 'string' },
       'connector-url': { type: 'string' },
-      'connector-admin-url': { type: 'string' },
+      'parent-peer-id': { type: 'string' },
+      'parent-auth-token': { type: 'string' },
+      'ilp-address': { type: 'string' },
+      'node-id': { type: 'string' },
       'known-peers': { type: 'string' },
       'dev-mode': { type: 'boolean' },
       'x402-enabled': { type: 'boolean' },
@@ -126,15 +149,27 @@ function parseCli(): TownConfig {
   const connectorUrl =
     values['connector-url'] ?? process.env['TOON_CONNECTOR_URL'] ?? undefined;
 
-  if (!connectorUrl) {
-    console.error('Error: --connector-url (or TOON_CONNECTOR_URL) is required');
+  const parentPeerId =
+    values['parent-peer-id'] ?? process.env['TOON_PARENT_PEER_ID'] ?? undefined;
+
+  const parentAuthToken =
+    values['parent-auth-token'] ??
+    process.env['TOON_PARENT_AUTH_TOKEN'] ??
+    undefined;
+
+  const ilpAddress =
+    values['ilp-address'] ?? process.env['TOON_ILP_ADDRESS'] ?? undefined;
+
+  const nodeId = values['node-id'] ?? process.env['TOON_NODE_ID'] ?? undefined;
+
+  if (connectorUrl && !ilpAddress) {
+    console.error(
+      'Error: --ilp-address (or TOON_ILP_ADDRESS) is required when ' +
+        '--connector-url is set; it must fall under the parent connector prefix ' +
+        '(e.g. g.townhouse.<self>)'
+    );
     process.exit(1);
   }
-
-  const connectorAdminUrl =
-    values['connector-admin-url'] ??
-    process.env['TOON_CONNECTOR_ADMIN_URL'] ??
-    undefined;
 
   const relayPortStr =
     values['relay-port'] ?? process.env['TOON_RELAY_PORT'] ?? undefined;
@@ -263,14 +298,45 @@ function parseCli(): TownConfig {
     process.exit(1);
   }
 
+  // Settlement private key — controls the embedded connector's ClaimReceiver
+  // signer. CLI flag intentionally omitted (process listings would expose the
+  // key via `ps`, CWE-214). Env-only.
+  const settlementPrivateKey =
+    process.env['TOON_SETTLEMENT_PRIVATE_KEY'] ?? undefined;
+  if (
+    settlementPrivateKey !== undefined &&
+    !/^0x[0-9a-fA-F]{64}$/.test(settlementPrivateKey)
+  ) {
+    console.error(
+      'Error: TOON_SETTLEMENT_PRIVATE_KEY must be a 0x-prefixed 32-byte hex string'
+    );
+    process.exit(1);
+  }
+
+  // Parent EVM address advertised to the apex peer. Public address — safe to
+  // ship via env. Validated as 0x + 40 hex chars (ERC-55 mixed-case allowed).
+  const parentEvmAddress = process.env['TOON_PARENT_EVM_ADDRESS'] ?? undefined;
+  if (
+    parentEvmAddress !== undefined &&
+    !/^0x[0-9a-fA-F]{40}$/.test(parentEvmAddress)
+  ) {
+    console.error(
+      'Error: TOON_PARENT_EVM_ADDRESS must be a 0x-prefixed 20-byte hex address'
+    );
+    process.exit(1);
+  }
+
   const config: TownConfig = {
-    connectorUrl,
+    ...(connectorUrl && { connectorUrl }),
+    ...(parentPeerId && { parentPeerId }),
+    ...(parentAuthToken !== undefined && { parentAuthToken }),
+    ...(ilpAddress && { ilpAddress }),
+    ...(nodeId && { nodeId }),
     ...(mnemonic && { mnemonic }),
     ...(secretKey && { secretKey }),
     ...(relayPort !== undefined && { relayPort }),
     ...(blsPort !== undefined && { blsPort }),
     ...(dataDir && { dataDir }),
-    ...(connectorAdminUrl && { connectorAdminUrl }),
     ...(knownPeers && { knownPeers }),
     ...(devMode !== undefined && { devMode }),
     ...(x402Enabled !== undefined && { x402Enabled }),
@@ -279,6 +345,8 @@ function parseCli(): TownConfig {
     ...(publishSeedEntry !== undefined && { publishSeedEntry }),
     ...(externalRelayUrl && { externalRelayUrl }),
     ...(feePerEvent !== undefined && { feePerEvent }),
+    ...(settlementPrivateKey && { settlementPrivateKey }),
+    ...(parentEvmAddress && { parentEvmAddress }),
   };
 
   return config;
@@ -303,6 +371,10 @@ async function main(): Promise<void> {
   console.log(`  Relay:       ws://localhost:${instance.config.relayPort}`);
   console.log(`  BLS:         http://localhost:${instance.config.blsPort}`);
   console.log(`  ILP Address: ${instance.config.ilpAddress}`);
+  if (instance.config.connectorUrl) {
+    console.log(`  Parent BTP:  ${instance.config.connectorUrl}`);
+    console.log(`  Parent Peer: ${instance.config.parentPeerId}`);
+  }
   console.log(`  Peers:       ${instance.bootstrapResult.peerCount}`);
   console.log(`  Channels:    ${instance.bootstrapResult.channelCount}`);
   console.log('='.repeat(50) + '\n');

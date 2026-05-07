@@ -15,7 +15,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { startTown, deriveAdminUrl } from './town.js';
+import { startTown } from './town.js';
 import type { TownConfig, TownInstance, ResolvedTownConfig } from './town.js';
 
 // ============================================================================
@@ -29,7 +29,6 @@ describe('startTown() identity validation (AC #2)', () => {
     const config: TownConfig = {
       mnemonic: 'test test test test test test test test test test test junk',
       secretKey: new Uint8Array(32),
-      connectorUrl: 'http://localhost:8080',
     };
 
     // When/Then: should throw immediately
@@ -41,9 +40,7 @@ describe('startTown() identity validation (AC #2)', () => {
   it('should reject config with neither mnemonic nor secretKey', async () => {
     // Given: a config with no identity source
     // TypeScript won't catch this at compile time since both are optional.
-    const config = {
-      connectorUrl: 'http://localhost:8080',
-    } as TownConfig;
+    const config = {} as TownConfig;
 
     // When/Then: should throw immediately
     await expect(startTown(config)).rejects.toThrow(
@@ -53,20 +50,59 @@ describe('startTown() identity validation (AC #2)', () => {
 });
 
 // ============================================================================
+// Connector mode validation
+// ============================================================================
+
+describe('startTown() connector mode validation', () => {
+  it('rejects config with both connector and connectorUrl', async () => {
+    // Two ways to wire the embedded connector are mutually exclusive.
+    const fakeConnector = {
+      sendPacket: async () => ({}),
+      registerPeer: async () => {},
+      removePeer: async () => {},
+    } as unknown as TownConfig['connector'];
+
+    const config: TownConfig = {
+      mnemonic: 'test test test test test test test test test test test junk',
+      connector: fakeConnector,
+      connectorUrl: 'ws://apex.example:3001',
+      ilpAddress: 'g.townhouse.alice',
+    };
+
+    await expect(startTown(config)).rejects.toThrow(
+      /provide either connector or connectorUrl, not both/
+    );
+  });
+
+  it('rejects connectorUrl without an explicit ilpAddress', async () => {
+    // The default `g.toon.<pubkey>` address would not fall under the parent's
+    // prefix, so the operator must opt in explicitly.
+    const config: TownConfig = {
+      mnemonic: 'test test test test test test test test test test test junk',
+      connectorUrl: 'ws://apex.example:3001',
+    };
+
+    await expect(startTown(config)).rejects.toThrow(
+      /ilpAddress is required when connectorUrl is set/
+    );
+  });
+});
+
+// ============================================================================
 // Type Export Tests (AC #2)
 // ============================================================================
 
 describe('TownConfig type surface (AC #2)', () => {
-  it('should accept minimal mnemonic config', () => {
-    // Given: the minimum required fields
+  it('should accept minimal mnemonic config (no connectorUrl required)', () => {
+    // Given: the minimum required fields. connectorUrl is now optional —
+    // when omitted town runs a standalone embedded connector.
     const config: TownConfig = {
       mnemonic: 'test test test test test test test test test test test junk',
-      connectorUrl: 'http://localhost:8080',
     };
 
     // Then: should compile and have expected structure
     expect(config.mnemonic).toBeDefined();
-    expect(config.connectorUrl).toBe('http://localhost:8080');
+    expect(config.connectorUrl).toBeUndefined();
     expect(config.relayPort).toBeUndefined();
     expect(config.blsPort).toBeUndefined();
     expect(config.basePricePerByte).toBeUndefined();
@@ -86,22 +122,40 @@ describe('TownConfig type surface (AC #2)', () => {
     // Given: a config with secretKey instead of mnemonic
     const config: TownConfig = {
       secretKey: new Uint8Array(32),
-      connectorUrl: 'http://localhost:8080',
     };
 
     expect(config.secretKey).toBeDefined();
     expect(config.mnemonic).toBeUndefined();
   });
 
+  it('should accept embedded-with-parent config', () => {
+    // Given: a config that points the embedded connector at a parent BTP URL
+    const config: TownConfig = {
+      mnemonic: 'test test test test test test test test test test test junk',
+      connectorUrl: 'ws://apex.example:3001',
+      parentPeerId: 'apex',
+      parentAuthToken: '',
+      ilpAddress: 'g.townhouse.alice',
+      nodeId: 'toon-alice',
+    };
+
+    expect(config.connectorUrl).toBe('ws://apex.example:3001');
+    expect(config.parentPeerId).toBe('apex');
+    expect(config.parentAuthToken).toBe('');
+    expect(config.ilpAddress).toBe('g.townhouse.alice');
+    expect(config.nodeId).toBe('toon-alice');
+  });
+
   it('should accept full config with all optional fields', () => {
     // Given: a config with every optional field populated
     const config: TownConfig = {
       mnemonic: 'test test test test test test test test test test test junk',
-      connectorUrl: 'http://localhost:8080',
-      connectorAdminUrl: 'http://localhost:8081',
+      connectorUrl: 'ws://apex.example:3001',
+      parentPeerId: 'apex',
+      parentAuthToken: 'secret',
       relayPort: 7200,
       blsPort: 3200,
-      ilpAddress: 'g.toon.mynode',
+      ilpAddress: 'g.townhouse.alice',
       btpEndpoint: 'ws://localhost:3000',
       basePricePerByte: 20n,
       knownPeers: [
@@ -139,8 +193,7 @@ describe('TownConfig type surface (AC #2)', () => {
       blsPort: 3100,
       ilpAddress: 'g.toon.test',
       btpEndpoint: 'ws://localhost:3000',
-      connectorUrl: 'http://localhost:8080',
-      connectorAdminUrl: 'http://localhost:8081',
+      nodeId: 'toon-test',
       basePricePerByte: 10n,
       routingBufferPercent: 10,
       x402Enabled: false,
@@ -162,8 +215,7 @@ describe('TownConfig type surface (AC #2)', () => {
     expect(resolved.blsPort).toBe(3100);
     expect(resolved.ilpAddress).toBe('g.toon.test');
     expect(resolved.btpEndpoint).toBe('ws://localhost:3000');
-    expect(resolved.connectorUrl).toBe('http://localhost:8080');
-    expect(resolved.connectorAdminUrl).toBe('http://localhost:8081');
+    expect(resolved.nodeId).toBe('toon-test');
     expect(resolved.basePricePerByte).toBe(10n);
     expect(resolved.knownPeers).toEqual([]);
     expect(resolved.dataDir).toBe('./data');
@@ -179,6 +231,38 @@ describe('TownConfig type surface (AC #2)', () => {
     expect(resolved.externalRelayUrl).toBeUndefined();
     // Story 3.5: Chain field
     expect(resolved.chain).toBe('anvil');
+    // Standalone embedded mode -- no parent
+    expect(resolved.connectorUrl).toBeUndefined();
+    expect(resolved.parentPeerId).toBeUndefined();
+  });
+
+  it('ResolvedTownConfig surfaces parent peer info when set', () => {
+    const resolved: ResolvedTownConfig = {
+      relayPort: 7100,
+      blsPort: 3100,
+      ilpAddress: 'g.townhouse.alice',
+      btpEndpoint: 'ws://localhost:3000',
+      nodeId: 'toon-alice',
+      connectorUrl: 'ws://apex.example:3001',
+      parentPeerId: 'apex',
+      basePricePerByte: 10n,
+      routingBufferPercent: 10,
+      x402Enabled: false,
+      knownPeers: [],
+      dataDir: './data',
+      devMode: false,
+      ardriveEnabled: false,
+      relayUrls: [],
+      assetCode: 'USD',
+      assetScale: 6,
+      discovery: 'genesis',
+      seedRelays: [],
+      publishSeedEntry: false,
+      chain: 'anvil',
+    };
+
+    expect(resolved.connectorUrl).toBe('ws://apex.example:3001');
+    expect(resolved.parentPeerId).toBe('apex');
   });
 });
 
@@ -205,8 +289,7 @@ describe('TownInstance type surface (AC #5)', () => {
         blsPort: 3100,
         ilpAddress: 'g.toon.test',
         btpEndpoint: 'ws://localhost:3000',
-        connectorUrl: 'http://localhost:8080',
-        connectorAdminUrl: 'http://localhost:8081',
+        nodeId: 'toon-test',
         basePricePerByte: 10n,
         routingBufferPercent: 10,
         x402Enabled: false,
@@ -244,66 +327,6 @@ describe('TownInstance type surface (AC #5)', () => {
 });
 
 // ============================================================================
-// Internal helper: deriveAdminUrl
-// ============================================================================
-
-describe('deriveAdminUrl()', () => {
-  it('should increment port by 1 for standard URL', () => {
-    expect(deriveAdminUrl('http://localhost:8080')).toBe(
-      'http://localhost:8081'
-    );
-  });
-
-  it('should handle non-standard ports', () => {
-    expect(deriveAdminUrl('http://connector.example.com:9090')).toBe(
-      'http://connector.example.com:9091'
-    );
-  });
-
-  it('should handle HTTPS URLs with explicit non-default ports', () => {
-    expect(deriveAdminUrl('https://connector.example.com:8443')).toBe(
-      'https://connector.example.com:8444'
-    );
-  });
-
-  it('should default to port 8080 when no port is specified', () => {
-    // URL without explicit port defaults to 8080 in the function
-    const result = deriveAdminUrl('http://connector.example.com');
-    expect(result).toBe('http://connector.example.com:8081');
-  });
-
-  it('should strip trailing slash from result', () => {
-    const result = deriveAdminUrl('http://localhost:8080/');
-    expect(result).toBe('http://localhost:8081');
-  });
-});
-
-// ============================================================================
-// connectorAdminUrl in TownConfig
-// ============================================================================
-
-describe('connectorAdminUrl in TownConfig', () => {
-  it('should be optional (defaults to derived URL from connectorUrl)', () => {
-    const config: TownConfig = {
-      mnemonic: 'test test test test test test test test test test test junk',
-      connectorUrl: 'http://localhost:8080',
-    };
-
-    expect(config.connectorAdminUrl).toBeUndefined();
-  });
-
-  it('should use explicit connectorAdminUrl when provided', () => {
-    const config: TownConfig = {
-      mnemonic: 'test test test test test test test test test test test junk',
-      connectorUrl: 'http://localhost:8080',
-      connectorAdminUrl: 'http://custom-admin:9999',
-    };
-
-    expect(config.connectorAdminUrl).toBe('http://custom-admin:9999');
-  });
-});
-
-// ============================================================================
 // Module exports (AC #2)
 // ============================================================================
 
@@ -332,7 +355,6 @@ describe('TownConfig seed relay discovery fields (Story 3.4 AC #4)', () => {
     // Given: a minimal TownConfig without discovery field
     const config: TownConfig = {
       mnemonic: 'test test test test test test test test test test test junk',
-      connectorUrl: 'http://localhost:8080',
     };
 
     // Then: discovery is undefined, will be resolved to 'genesis' by startTown
@@ -342,7 +364,6 @@ describe('TownConfig seed relay discovery fields (Story 3.4 AC #4)', () => {
   it('TownConfig accepts discovery: "seed-list"', () => {
     const config: TownConfig = {
       mnemonic: 'test test test test test test test test test test test junk',
-      connectorUrl: 'http://localhost:8080',
       discovery: 'seed-list',
       seedRelays: ['wss://relay.damus.io', 'wss://relay.nostr.band'],
     };
@@ -354,7 +375,6 @@ describe('TownConfig seed relay discovery fields (Story 3.4 AC #4)', () => {
   it('TownConfig accepts discovery: "genesis"', () => {
     const config: TownConfig = {
       mnemonic: 'test test test test test test test test test test test junk',
-      connectorUrl: 'http://localhost:8080',
       discovery: 'genesis',
     };
 
@@ -364,7 +384,6 @@ describe('TownConfig seed relay discovery fields (Story 3.4 AC #4)', () => {
   it('TownConfig accepts publishSeedEntry and externalRelayUrl', () => {
     const config: TownConfig = {
       mnemonic: 'test test test test test test test test test test test junk',
-      connectorUrl: 'http://localhost:8080',
       discovery: 'seed-list',
       seedRelays: ['wss://relay.damus.io'],
       publishSeedEntry: true,
@@ -378,7 +397,6 @@ describe('TownConfig seed relay discovery fields (Story 3.4 AC #4)', () => {
   it('seedRelays, publishSeedEntry, externalRelayUrl default to undefined', () => {
     const config: TownConfig = {
       mnemonic: 'test test test test test test test test test test test junk',
-      connectorUrl: 'http://localhost:8080',
     };
 
     expect(config.seedRelays).toBeUndefined();
@@ -395,6 +413,7 @@ describe('ResolvedTownConfig seed relay defaults (Story 3.4 AC #4)', () => {
       blsPort: 3100,
       ilpAddress: 'g.toon.test',
       btpEndpoint: 'ws://localhost:3000',
+      nodeId: 'toon-test',
       basePricePerByte: 10n,
       routingBufferPercent: 10,
       x402Enabled: false,
@@ -422,6 +441,7 @@ describe('ResolvedTownConfig seed relay defaults (Story 3.4 AC #4)', () => {
       blsPort: 3100,
       ilpAddress: 'g.toon.test',
       btpEndpoint: 'ws://localhost:3000',
+      nodeId: 'toon-test',
       basePricePerByte: 10n,
       routingBufferPercent: 10,
       x402Enabled: false,
@@ -464,6 +484,7 @@ describe('TownInstance.discoveryMode (Story 3.4 AC #1, #4)', () => {
         blsPort: 3100,
         ilpAddress: 'g.toon.test',
         btpEndpoint: 'ws://localhost:3000',
+        nodeId: 'toon-test',
         basePricePerByte: 10n,
         routingBufferPercent: 10,
         x402Enabled: false,
@@ -502,6 +523,7 @@ describe('TownInstance.discoveryMode (Story 3.4 AC #1, #4)', () => {
         blsPort: 3100,
         ilpAddress: 'g.toon.test',
         btpEndpoint: 'ws://localhost:3000',
+        nodeId: 'toon-test',
         basePricePerByte: 10n,
         routingBufferPercent: 10,
         x402Enabled: false,
@@ -575,7 +597,6 @@ describe('TownConfig supports chain field (T-3.5-10)', () => {
     // Given: a TownConfig with the chain field set
     const config: TownConfig = {
       mnemonic: 'test test test test test test test test test test test junk',
-      connectorUrl: 'http://localhost:8080',
       chain: 'arbitrum-one',
     };
 
@@ -587,7 +608,6 @@ describe('TownConfig supports chain field (T-3.5-10)', () => {
     // Given: a minimal TownConfig without chain
     const config: TownConfig = {
       mnemonic: 'test test test test test test test test test test test junk',
-      connectorUrl: 'http://localhost:8080',
     };
 
     // Then: chain is undefined (resolved to 'anvil' by startTown)
@@ -603,8 +623,7 @@ describe('ResolvedTownConfig includes chain field (T-3.5-11)', () => {
       blsPort: 3100,
       ilpAddress: 'g.toon.test',
       btpEndpoint: 'ws://localhost:3000',
-      connectorUrl: 'http://localhost:8080',
-      connectorAdminUrl: 'http://localhost:8081',
+      nodeId: 'toon-test',
       basePricePerByte: 10n,
       routingBufferPercent: 10,
       x402Enabled: false,
@@ -632,8 +651,7 @@ describe('ResolvedTownConfig includes chain field (T-3.5-11)', () => {
       blsPort: 3100,
       ilpAddress: 'g.toon.test',
       btpEndpoint: 'ws://localhost:3000',
-      connectorUrl: 'http://localhost:8080',
-      connectorAdminUrl: 'http://localhost:8081',
+      nodeId: 'toon-test',
       basePricePerByte: 10n,
       routingBufferPercent: 10,
       x402Enabled: true,
@@ -784,8 +802,10 @@ describe('startTown() x402 viem client wiring -- static analysis', () => {
   });
 
   it('creates viem clients inside x402Enabled conditional, after ILP client and before handler', () => {
-    // Use call-site patterns (with '(') to skip import-level occurrences
-    const ilpClientIdx = source.indexOf('createHttpIlpClient(');
+    // Use call-site patterns (with '(') to skip import-level occurrences.
+    // The ILP client is now always created via createDirectIlpClient — there
+    // is no HTTP path anymore.
+    const ilpClientIdx = source.indexOf('createDirectIlpClient(');
     const viemBlockIdx = source.indexOf('privateKeyToAccount(');
     const handlerIdx = source.indexOf('createX402Handler({');
     expect(ilpClientIdx).toBeGreaterThan(-1);
@@ -865,5 +885,73 @@ describe('startTown() skill descriptor integration -- static analysis (Story 5.4
     // skill wiring comes after x402 and before build
     expect(skillIdx).toBeGreaterThan(x402Idx);
     expect(buildIdx).toBeGreaterThan(skillIdx);
+  });
+});
+
+// ============================================================================
+// Embedded-with-parent connector wiring -- static analysis
+// ============================================================================
+
+describe('startTown() embedded-with-parent connector wiring -- static analysis', () => {
+  const sourcePath = resolve(__dirname, 'town.ts');
+  const source = readFileSync(sourcePath, 'utf-8');
+
+  it('town.ts always constructs an embedded ConnectorNode (no external HTTP path)', () => {
+    // The HTTP-admin variants must be gone; only the direct/embedded variants remain.
+    expect(source).toContain('createDirectConnectorAdmin');
+    expect(source).toContain('createDirectIlpClient');
+    expect(source).not.toContain('createHttpConnectorAdmin');
+    expect(source).not.toContain('createHttpIlpClient');
+    expect(source).not.toContain('createHttpChannelClient');
+    expect(source).not.toContain('waitForConnector');
+  });
+
+  it('town.ts wires connectorUrl as a parent BTP peer when set', () => {
+    // Peer entry uses connectorUrl as the BTP URL and parentPeerId as the id.
+    expect(source).toMatch(/id:\s*parentPeerId/);
+    expect(source).toMatch(/url:\s*connectorUrl/);
+    expect(source).toMatch(/authToken:\s*parentAuthToken/);
+  });
+
+  it('town.ts adds a self-route at construction time so packets stay local', () => {
+    // Self-route: prefix = ilpAddress, nextHop = nodeId.
+    expect(source).toMatch(
+      /prefix:\s*ilpAddress\s*,\s*nextHop:\s*nodeId\s*,\s*priority:\s*100/
+    );
+  });
+
+  it('town.ts adds a g default route to the parent only when connectorUrl is set', () => {
+    // Prefix is 'g' (not 'g.') because connector's isValidILPAddress rejects
+    // trailing dots; RoutingTable matches via prefix + '.' delimiter.
+    expect(source).toMatch(/prefix:\s*['"]g['"]\s*,\s*nextHop:\s*parentPeerId/);
+    expect(source).toMatch(/if\s*\(hasConnectorUrl\)\s*\{/);
+  });
+
+  it('town.ts zeroes connector forwarding fees on the embedded connector', () => {
+    expect(source).toMatch(/connectorFeePercentage:\s*0/);
+  });
+
+  it('town.ts requires ilpAddress when connectorUrl is set', () => {
+    expect(source).toMatch(/ilpAddress is required when connectorUrl is set/);
+  });
+
+  it('town.ts propagates ator SOCKS5 transport to the embedded connector', () => {
+    // The transport is set on the connectorConfig regardless of the parent
+    // peering mode, so hidden-service deployments get SOCKS5 outbound dial too.
+    expect(source).toMatch(/connectorConfig\.transport\s*=\s*\{/);
+    expect(source).toMatch(/type:\s*['"]socks5['"]/);
+  });
+
+  it('town.ts wires chainProviders into embedded connector when chain has settlement addresses', () => {
+    // chainProviders entry is conditionally spread into connectorConfig so the
+    // embedded ConnectorNode's ClaimReceiver can verify apex-signed claims.
+    expect(source).toMatch(/chainProviders:\s*\[chainProvidersEntry\]/);
+    expect(source).toMatch(/chainType:\s*['"]evm['"]/);
+    // chainId is `evm:<numeric>` (connector form), NOT `evm:base:<numeric>`.
+    expect(source).toMatch(/evm:\$\{chainConfig\.chainId\}/);
+    // Identity-derived hex key (secp256k1) shared with EVM signing path.
+    expect(source).toMatch(
+      /Buffer\.from\(identity\.secretKey\)\.toString\(['"]hex['"]\)/
+    );
   });
 });

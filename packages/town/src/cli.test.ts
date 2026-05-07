@@ -94,6 +94,8 @@ describe('CLI source structure (AC #4)', () => {
     // AC #4 requires: --mnemonic, --secret-key, --relay-port, --bls-port,
     // --data-dir, --connector-url, --known-peers, --dev-mode, --help
     // Story 3.4 adds: --discovery, --seed-relays, --publish-seed-entry, --external-relay-url
+    // Embedded-with-parent adds: --parent-peer-id, --parent-auth-token,
+    // --ilp-address, --node-id
     const source = readFileSync(cliSourcePath(), 'utf-8');
 
     // Flags appear as property keys in the parseArgs options object.
@@ -106,6 +108,10 @@ describe('CLI source structure (AC #4)', () => {
       'bls-port',
       'data-dir',
       'connector-url',
+      'parent-peer-id',
+      'parent-auth-token',
+      'ilp-address',
+      'node-id',
       'known-peers',
       'dev-mode',
       'help',
@@ -125,6 +131,8 @@ describe('CLI source structure (AC #4)', () => {
     // AC #4 requires env var support matching CLI flags
     // Story 3.4 adds: TOON_DISCOVERY, TOON_SEED_RELAYS,
     // TOON_PUBLISH_SEED_ENTRY, TOON_EXTERNAL_RELAY_URL
+    // Embedded-with-parent adds: TOON_PARENT_PEER_ID, TOON_PARENT_AUTH_TOKEN,
+    // TOON_ILP_ADDRESS, TOON_NODE_ID
     const source = readFileSync(cliSourcePath(), 'utf-8');
 
     const requiredEnvVars = [
@@ -134,6 +142,10 @@ describe('CLI source structure (AC #4)', () => {
       'TOON_BLS_PORT',
       'TOON_DATA_DIR',
       'TOON_CONNECTOR_URL',
+      'TOON_PARENT_PEER_ID',
+      'TOON_PARENT_AUTH_TOKEN',
+      'TOON_ILP_ADDRESS',
+      'TOON_NODE_ID',
       'TOON_KNOWN_PEERS',
       'TOON_DEV_MODE',
       // Story 3.4: seed relay discovery env vars
@@ -171,6 +183,10 @@ describe('CLI source structure (AC #4)', () => {
       ['mnemonic', 'TOON_MNEMONIC'],
       ["'secret-key'", 'TOON_SECRET_KEY'],
       ["'connector-url'", 'TOON_CONNECTOR_URL'],
+      ["'parent-peer-id'", 'TOON_PARENT_PEER_ID'],
+      ["'parent-auth-token'", 'TOON_PARENT_AUTH_TOKEN'],
+      ["'ilp-address'", 'TOON_ILP_ADDRESS'],
+      ["'node-id'", 'TOON_NODE_ID'],
       ["'relay-port'", 'TOON_RELAY_PORT'],
       ["'bls-port'", 'TOON_BLS_PORT'],
       ["'data-dir'", 'TOON_DATA_DIR'],
@@ -223,6 +239,9 @@ describe('CLI runtime behavior (AC #4)', () => {
     expect(output).toContain('Usage:');
     expect(output).toContain('--mnemonic');
     expect(output).toContain('--connector-url');
+    expect(output).toContain('--parent-peer-id');
+    expect(output).toContain('--parent-auth-token');
+    expect(output).toContain('--ilp-address');
     expect(output).toContain('--relay-port');
     expect(output).toContain('--bls-port');
     expect(output).toContain('--secret-key');
@@ -233,6 +252,9 @@ describe('CLI runtime behavior (AC #4)', () => {
     // Should document environment variables
     expect(output).toContain('TOON_MNEMONIC');
     expect(output).toContain('TOON_CONNECTOR_URL');
+    expect(output).toContain('TOON_PARENT_PEER_ID');
+    expect(output).toContain('TOON_PARENT_AUTH_TOKEN');
+    expect(output).toContain('TOON_ILP_ADDRESS');
   });
 
   it('should exit with error when no identity is provided', () => {
@@ -242,23 +264,20 @@ describe('CLI runtime behavior (AC #4)', () => {
       return;
     }
 
-    // Run the CLI without mnemonic or secret-key (but with connector-url to
-    // pass that validation first)
+    // Run the CLI without mnemonic or secret-key. connector-url is no longer
+    // required, so the identity check fires first.
     try {
-      execFileSync(
-        'node',
-        [cliPath, '--connector-url', 'http://localhost:8080'],
-        {
-          encoding: 'utf-8',
-          timeout: 5000,
-          env: {
-            ...process.env,
-            // Clear any env vars that might provide identity
-            TOON_MNEMONIC: '',
-            TOON_SECRET_KEY: '',
-          },
-        }
-      );
+      execFileSync('node', [cliPath], {
+        encoding: 'utf-8',
+        timeout: 5000,
+        env: {
+          ...process.env,
+          // Clear any env vars that might provide identity or implicit config
+          TOON_MNEMONIC: '',
+          TOON_SECRET_KEY: '',
+          TOON_CONNECTOR_URL: '',
+        },
+      });
       // Should have exited with error
       expect.fail('CLI should have exited with non-zero code');
     } catch (error: unknown) {
@@ -282,8 +301,6 @@ describe('CLI runtime behavior (AC #4)', () => {
           cliPath,
           '--mnemonic',
           'test test test test test test test test test test test junk',
-          '--connector-url',
-          'http://localhost:8080',
           '--relay-port',
           'abc',
         ],
@@ -293,6 +310,7 @@ describe('CLI runtime behavior (AC #4)', () => {
           env: {
             ...process.env,
             TOON_RELAY_PORT: '',
+            TOON_CONNECTOR_URL: '',
           },
         }
       );
@@ -303,7 +321,9 @@ describe('CLI runtime behavior (AC #4)', () => {
     }
   });
 
-  it('should exit with error when --connector-url is missing', () => {
+  it('should exit with error when --connector-url is set without --ilp-address', () => {
+    // Embedded-with-parent mode requires the operator to set ilpAddress so
+    // it falls under the parent's prefix.
     const cliPath = cliDistPath();
     if (!existsSync(cliPath)) {
       console.log('Skipping: dist/cli.js not built. Run pnpm build first.');
@@ -317,13 +337,15 @@ describe('CLI runtime behavior (AC #4)', () => {
           cliPath,
           '--mnemonic',
           'test test test test test test test test test test test junk',
+          '--connector-url',
+          'ws://apex.example:3001',
         ],
         {
           encoding: 'utf-8',
           timeout: 5000,
           env: {
             ...process.env,
-            TOON_CONNECTOR_URL: '',
+            TOON_ILP_ADDRESS: '',
           },
         }
       );
