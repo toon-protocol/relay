@@ -601,6 +601,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       id: string;
       url: string;
       authToken: string;
+      relation?: 'parent' | 'peer' | 'child';
       evmAddress?: string;
     }[] = [];
 
@@ -609,6 +610,16 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
         id: parentPeerId,
         url: connectorUrl as string,
         authToken: parentAuthToken,
+        // Tag the upstream as our PARENT so the embedded connector's
+        // relation-aware logic applies (toon-protocol/connector#78): a child
+        // skips the inbound per-packet-claim requirement for PREPAREs forwarded
+        // by its parent (the parent settles in aggregate and attaches no
+        // per-packet claim to a child). Without this the peer defaults to
+        // 'peer' and the child F06-rejects every parent-forwarded paid packet.
+        // NOTE: `parentPeerId` MUST equal the parent connector's nodeId (its BTP
+        // auth identity), since the connector keys peerRelations by the
+        // auth-declared peerId of the inbound session — not a local alias.
+        relation: 'parent',
         // When the operator publishes their EVM treasury address to the
         // parent, the apex can open a settlement channel toward this child
         // without needing to discover the address via kind:10032. The
