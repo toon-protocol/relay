@@ -545,7 +545,30 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       : undefined);
 
   // --- 3b. Resolve chain preset early (needed for resolvedConfig and settlement) ---
-  const chainConfig = resolveChainConfig(config.chain);
+  // Relay-only sentinel: when the operator (or the Townhouse network resolver in
+  // `custom` mode with no EVM provider) sets the chain to `'none'`, the node runs
+  // as a pure relay — no settlement chain is resolved, so no ethers provider is
+  // ever constructed and the node connects straight to its parent connector.
+  // `resolveChainConfig` reads `TOON_CHAIN` itself (env wins over the parameter),
+  // so we mirror that precedence here to detect the sentinel before it throws on
+  // an unknown chain name.
+  const requestedChain = process.env['TOON_CHAIN'] || config.chain;
+  const relayOnly = requestedChain === 'none';
+  if (relayOnly) {
+    console.log('[Town] connector.relay_only', {
+      reason: 'no settlement chain configured (chain=none)',
+    });
+  }
+  const chainConfig = relayOnly
+    ? {
+        name: 'none',
+        chainId: 0,
+        rpcUrl: '',
+        usdcAddress: '',
+        tokenNetworkAddress: '',
+        registryAddress: '',
+      }
+    : resolveChainConfig(config.chain);
   const chainKey = `evm:base:${chainConfig.chainId}`;
 
   const resolvedConfig: ResolvedTownConfig = {
@@ -731,12 +754,12 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
 
   // Auto-populate settlement fields from chain preset when not explicitly set.
   // Explicit config values always win over chain preset defaults.
-  const effectiveChainRpcUrls = config.chainRpcUrls ?? {
-    [chainKey]: chainConfig.rpcUrl,
-  };
-  const effectivePreferredTokens = config.preferredTokens ?? {
-    [chainKey]: chainConfig.usdcAddress,
-  };
+  const effectiveChainRpcUrls =
+    config.chainRpcUrls ??
+    (relayOnly ? undefined : { [chainKey]: chainConfig.rpcUrl });
+  const effectivePreferredTokens =
+    config.preferredTokens ??
+    (relayOnly ? undefined : { [chainKey]: chainConfig.usdcAddress });
   const effectiveTokenNetworks =
     config.tokenNetworks ??
     (chainConfig.tokenNetworkAddress
