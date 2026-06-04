@@ -162,6 +162,22 @@ describe('CLI source structure (AC #4)', () => {
     }
   });
 
+  it('cli.ts parses SUPPORTED_CHAINS into multi-chain settlement config (Phase-2 Stage 2)', () => {
+    const source = readFileSync(cliSourcePath(), 'utf-8');
+
+    // Must read the SUPPORTED_CHAINS list and the per-chain env families so a
+    // town child can advertise non-EVM chains (e.g. solana:devnet) in 10032.
+    expect(source).toContain("process.env['SUPPORTED_CHAINS']");
+    expect(source).toContain('SETTLEMENT_ADDRESS_');
+    expect(source).toContain('CHAIN_RPC_URL_');
+    expect(source).toContain('TOKEN_NETWORK_');
+    expect(source).toContain('PREFERRED_TOKEN_');
+
+    // Must thread the parsed maps into the TownConfig.
+    expect(source).toMatch(/settlementAddresses && \{ settlementAddresses \}/);
+    expect(source).toMatch(/chainRpcUrls && \{ chainRpcUrls \}/);
+  });
+
   it('cli.ts should wire SIGINT and SIGTERM to graceful shutdown', () => {
     const source = readFileSync(cliSourcePath(), 'utf-8');
 

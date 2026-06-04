@@ -615,6 +615,49 @@ describe('TownConfig supports chain field (T-3.5-10)', () => {
   });
 });
 
+describe('TownConfig supports per-chain settlementAddresses (Phase-2 Stage 2)', () => {
+  it('[P1] TownConfig accepts a settlementAddresses override map', () => {
+    // Given: a TownConfig advertising a base58 Solana recipient for solana:devnet
+    const solanaRecipient = 'EdJxYPDxGvaJuu57DSUptf4soLv8enpdyQJJhHDLiydG';
+    const config: TownConfig = {
+      mnemonic: 'test test test test test test test test test test test junk',
+      chainRpcUrls: { 'solana:devnet': 'http://localhost:8899' },
+      tokenNetworks: { 'solana:devnet': solanaRecipient },
+      settlementAddresses: { 'solana:devnet': solanaRecipient },
+    };
+
+    // Then: the override is accepted by TypeScript and holds the base58 value
+    expect(config.settlementAddresses?.['solana:devnet']).toMatch(
+      /^[1-9A-HJ-NP-Za-km-z]+$/
+    );
+  });
+
+  it('[P1] settlementAddresses defaults to undefined', () => {
+    const config: TownConfig = {
+      mnemonic: 'test test test test test test test test test test test junk',
+    };
+    expect(config.settlementAddresses).toBeUndefined();
+  });
+
+  it('[P1] startTown prefers a per-chain settlementAddresses override over identity.evmAddress', () => {
+    // Static analysis: the settlement-advertise block must read the override
+    // first and fall back to the EVM address (so non-EVM chains advertise a
+    // chain-native recipient instead of the wrong 0x address).
+    const source = readFileSync(resolve(__dirname, 'town.ts'), 'utf-8');
+    expect(source).toMatch(
+      /config\.settlementAddresses\?\.\[chain\]\s*\?\?\s*identity\.evmAddress/
+    );
+  });
+
+  it('[P1] supportedChains includes settlementAddresses-only chains', () => {
+    const source = readFileSync(resolve(__dirname, 'town.ts'), 'utf-8');
+    // The supported-chains set must union in config.settlementAddresses keys.
+    expect(source).toMatch(
+      /Object\.keys\(config\.settlementAddresses \?\? \{\}\)/
+    );
+  });
+});
+
 describe('ResolvedTownConfig includes chain field (T-3.5-11)', () => {
   it('[P2] ResolvedTownConfig accepts chain field with string value', () => {
     // Given: a ResolvedTownConfig with chain field populated

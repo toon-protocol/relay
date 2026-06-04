@@ -216,6 +216,21 @@ export interface TownConfig {
   tokenNetworks?: Record<string, string>;
   /** Chain ID -> preferred token address. */
   preferredTokens?: Record<string, string>;
+  /**
+   * Chain ID -> settlement (recipient) address advertised in kind:10032.
+   *
+   * By default every supported chain advertises the identity's EVM address.
+   * That is wrong for non-EVM chains (e.g. `solana:devnet`), whose settlement
+   * recipient must be a chain-native address (a base58 Solana pubkey). Provide
+   * a per-chain override here to advertise a chain-native recipient; chains
+   * absent from this map keep the EVM-address default.
+   *
+   * NOTE (Phase-2 Stage 2 gate): advertising a Solana recipient is necessary
+   * but NOT sufficient for a settleable Solana loop — the client must also open
+   * a real on-chain Solana payment-channel PDA and sign over that PDA. See the
+   * Stage-2 PR description / gate report.
+   */
+  settlementAddresses?: Record<string, string>;
 
   // --- Storage ---
 
@@ -771,7 +786,10 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   let settlementInfo: SettlementConfig | undefined;
 
   const hasSettlement =
-    effectiveChainRpcUrls || effectiveTokenNetworks || effectivePreferredTokens;
+    effectiveChainRpcUrls ||
+    effectiveTokenNetworks ||
+    effectivePreferredTokens ||
+    config.settlementAddresses;
 
   if (hasSettlement) {
     const supportedChains = Array.from(
@@ -779,13 +797,18 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
         ...Object.keys(effectiveChainRpcUrls ?? {}),
         ...Object.keys(effectiveTokenNetworks ?? {}),
         ...Object.keys(effectivePreferredTokens ?? {}),
+        ...Object.keys(config.settlementAddresses ?? {}),
       ])
     );
 
-    // Build settlement addresses from the identity's EVM address
+    // Build settlement addresses. Each chain defaults to the identity's EVM
+    // address, but a per-chain override (config.settlementAddresses) wins so
+    // non-EVM chains can advertise a chain-native recipient (e.g. the apex's
+    // base58 Solana pubkey for `solana:devnet`).
     const settlementAddresses: Record<string, string> = {};
     for (const chain of supportedChains) {
-      settlementAddresses[chain] = identity.evmAddress;
+      settlementAddresses[chain] =
+        config.settlementAddresses?.[chain] ?? identity.evmAddress;
     }
 
     settlementInfo = {

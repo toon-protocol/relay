@@ -326,8 +326,51 @@ function parseCli(): TownConfig {
     process.exit(1);
   }
 
+  // Multi-chain settlement advertisement (additive; opt-in via SUPPORTED_CHAINS).
+  //
+  // The default single-EVM-chain path (TOON_CHAIN/TOON_RPC_URL) is unchanged.
+  // When SUPPORTED_CHAINS is set, parse per-chain env vars so the node can
+  // advertise additional chains (notably `solana:devnet`) in kind:10032 with a
+  // chain-native settlement recipient. Env key convention mirrors the SDK
+  // entrypoint (docker/src/shared.ts): "solana:devnet" -> "SOLANA_DEVNET".
+  //   SETTLEMENT_ADDRESS_<KEY>  recipient address advertised for the chain
+  //   CHAIN_RPC_URL_<KEY>       RPC URL for the chain
+  //   TOKEN_NETWORK_<KEY>       payment-channel program / token-network address
+  //   PREFERRED_TOKEN_<KEY>     preferred token (e.g. USDC mint)
+  let chainRpcUrls: Record<string, string> | undefined;
+  let tokenNetworks: Record<string, string> | undefined;
+  let preferredTokens: Record<string, string> | undefined;
+  let settlementAddresses: Record<string, string> | undefined;
+  const supportedChainsStr = process.env['SUPPORTED_CHAINS'];
+  if (supportedChainsStr) {
+    const chains = supportedChainsStr
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const chain of chains) {
+      const key = chain.replace(/:/g, '_').toUpperCase();
+      const addr = process.env[`SETTLEMENT_ADDRESS_${key}`];
+      if (addr) (settlementAddresses ??= {})[chain] = addr;
+      const rpc = process.env[`CHAIN_RPC_URL_${key}`];
+      if (rpc) (chainRpcUrls ??= {})[chain] = rpc;
+      const tokenNet = process.env[`TOKEN_NETWORK_${key}`];
+      if (tokenNet) (tokenNetworks ??= {})[chain] = tokenNet;
+      const token = process.env[`PREFERRED_TOKEN_${key}`];
+      if (token) (preferredTokens ??= {})[chain] = token;
+      if (!addr) {
+        console.warn(
+          `[Town] Warning: chain "${chain}" listed in SUPPORTED_CHAINS but no SETTLEMENT_ADDRESS_${key} env var found`
+        );
+      }
+    }
+  }
+
   const config: TownConfig = {
     ...(connectorUrl && { connectorUrl }),
+    ...(chainRpcUrls && { chainRpcUrls }),
+    ...(tokenNetworks && { tokenNetworks }),
+    ...(preferredTokens && { preferredTokens }),
+    ...(settlementAddresses && { settlementAddresses }),
     ...(parentPeerId && { parentPeerId }),
     ...(parentAuthToken !== undefined && { parentAuthToken }),
     ...(ilpAddress && { ilpAddress }),
