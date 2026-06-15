@@ -1215,6 +1215,10 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       btpEndpoint,
       assetCode,
       assetScale,
+      // Advertise the publish price (per byte, in ILP base units) so clients can
+      // compute the amount to attach before sending — derived from feePerEvent /
+      // basePricePerByte. Previously omitted, leaving peers to assume free.
+      feePerByte: String(basePricePerByte),
       ...(settlementInfo?.supportedChains && {
         supportedChains: settlementInfo.supportedChains,
       }),

@@ -298,6 +298,23 @@ function parseCli(): TownConfig {
     process.exit(1);
   }
 
+  // Public BTP endpoint advertised in this town's kind:10032 (so clients learn
+  // how to reach the apex to route packets to g.townhouse.town). Set by the
+  // Townhouse orchestrator from the apex's .anyone / direct URL.
+  const btpEndpoint = process.env['TOON_BTP_ENDPOINT'] ?? undefined;
+
+  // Settlement asset advertised in kind:10032.
+  const assetCode = process.env['TOON_ASSET_CODE'] ?? undefined;
+  const assetScaleStr = process.env['TOON_ASSET_SCALE'] ?? undefined;
+  const assetScale = assetScaleStr ? parseInt(assetScaleStr, 10) : undefined;
+  if (
+    assetScale !== undefined &&
+    (Number.isNaN(assetScale) || assetScale < 0 || assetScale > 18)
+  ) {
+    console.error('Error: TOON_ASSET_SCALE must be an integer in 0..18');
+    process.exit(1);
+  }
+
   // Settlement private key — controls the embedded connector's ClaimReceiver
   // signer. CLI flag intentionally omitted (process listings would expose the
   // key via `ps`, CWE-214). Env-only.
@@ -388,6 +405,9 @@ function parseCli(): TownConfig {
     ...(publishSeedEntry !== undefined && { publishSeedEntry }),
     ...(externalRelayUrl && { externalRelayUrl }),
     ...(feePerEvent !== undefined && { feePerEvent }),
+    ...(btpEndpoint && { btpEndpoint }),
+    ...(assetCode && { assetCode }),
+    ...(assetScale !== undefined && { assetScale }),
     ...(settlementPrivateKey && { settlementPrivateKey }),
     ...(parentEvmAddress && { parentEvmAddress }),
   };
