@@ -1219,6 +1219,10 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       // compute the amount to attach before sending — derived from feePerEvent /
       // basePricePerByte. Previously omitted, leaving peers to assume free.
       feePerByte: String(basePricePerByte),
+      // Public Nostr relay URL for FREE reads, so clients discover where to
+      // subscribe (separate from btpEndpoint, which is the pay-to-write path).
+      // Set when the operator exposes the relay publicly (HS .anyone or direct).
+      ...(externalRelayUrl && { relayUrl: externalRelayUrl }),
       ...(settlementInfo?.supportedChains && {
         supportedChains: settlementInfo.supportedChains,
       }),
