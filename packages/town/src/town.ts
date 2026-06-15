@@ -531,7 +531,13 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   const blsPort = config.blsPort ?? 3100;
   const pubkeyShort = identity.pubkey.slice(0, 16);
   const ilpAddress = config.ilpAddress ?? `g.toon.${pubkeyShort}`;
-  const btpEndpoint = config.btpEndpoint ?? 'ws://localhost:3000';
+  // When no public BTP endpoint is configured (operator hasn't set one, or the
+  // apex .anyone hostname isn't resolved yet), advertise an EMPTY btpEndpoint
+  // rather than a loopback URL. A loopback default (`ws://localhost:3000`) leaks
+  // into a network-visible kind:10032 and is unreachable from outside the Docker
+  // network — clients that faithfully dial it fail (issue #259). An empty value
+  // is rejected gracefully by client discovery instead of misdirecting it.
+  const btpEndpoint = config.btpEndpoint ?? '';
   const nodeId = config.nodeId ?? `toon-${pubkeyShort}`;
   const parentPeerId = config.parentPeerId ?? 'apex';
   const parentAuthToken = config.parentAuthToken ?? '';
