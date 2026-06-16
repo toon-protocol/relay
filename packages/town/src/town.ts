@@ -300,6 +300,16 @@ export interface TownConfig {
    * Townhouse orchestrator via TOON_FEE_PER_EVENT env var.
    */
   feePerEvent?: number;
+
+  /**
+   * NIP-40 time-to-live for this node's kind:10032 announcement, in seconds
+   * (default 3600). The node re-publishes its announcement at half this
+   * interval so a live apex stays fresh while an offline one expires, letting
+   * clients skip its unreachable BTP endpoint (issue #261). Set to 0 to disable
+   * the expiration tag and the heartbeat (non-expiring announcement). Override
+   * via the `TOON_ANNOUNCEMENT_TTL_SECONDS` env var.
+   */
+  announcementTtlSeconds?: number;
 }
 
 /**
@@ -556,6 +566,19 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   const assetCode = config.assetCode ?? 'USD';
   const assetScale = config.assetScale ?? 6;
   const discovery = config.discovery ?? 'genesis';
+  // NIP-40 TTL for the kind:10032 announcement (issue #261). Env wins over the
+  // config field; default 1h. A non-finite/negative value falls back to the
+  // default, and 0 disables expiration + the heartbeat (non-expiring event).
+  const announcementTtlSeconds = (() => {
+    const fromEnv = process.env['TOON_ANNOUNCEMENT_TTL_SECONDS'];
+    const raw =
+      fromEnv !== undefined && fromEnv !== ''
+        ? Number(fromEnv)
+        : config.announcementTtlSeconds;
+    if (raw === undefined) return 3600;
+    if (!Number.isFinite(raw) || raw < 0) return 3600;
+    return Math.floor(raw);
+  })();
   const seedRelays = config.seedRelays ?? [];
   const publishSeedEntryFlag = config.publishSeedEntry ?? false;
   // Use ator .anon address as externalRelayUrl when ator is enabled and no explicit URL set
@@ -1212,6 +1235,9 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     }
   }
 
+  // Handle for the kind:10032 liveness heartbeat (issue #261); cleared in stop().
+  let announcementHeartbeat: ReturnType<typeof setInterval> | undefined;
+
   try {
     const results = await bootstrapService.bootstrap();
 
@@ -1243,35 +1269,59 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
       }),
     };
 
-    try {
-      const ilpInfoEvent = buildIlpPeerInfoEvent(
-        ownIlpInfo,
-        identity.secretKey
-      );
-      eventStore.store(ilpInfoEvent);
+    // Build + store + propagate a fresh kind:10032 each time. Re-signing yields
+    // a new created_at and NIP-40 expiration window, so a live apex's
+    // announcement stays unexpired while an offline one lapses (issue #261).
+    const publishOwnAnnouncement = () => {
+      try {
+        const ilpInfoEvent = buildIlpPeerInfoEvent(
+          ownIlpInfo,
+          identity.secretKey,
+          announcementTtlSeconds > 0
+            ? { ttlSeconds: announcementTtlSeconds }
+            : {}
+        );
+        eventStore.store(ilpInfoEvent);
 
-      // Publish to genesis relay via ILP if we have bootstrap peers
-      const firstPeer = knownPeers[0];
-      const genesisResult = results[0];
-      if (firstPeer && genesisResult) {
-        const genesisIlpAddress = genesisResult.peerInfo.ilpAddress;
-        const toonBytes = encodeEventToToon(ilpInfoEvent);
-        const base64Toon = Buffer.from(toonBytes).toString('base64');
-        const ilpAmount = String(BigInt(toonBytes.length) * basePricePerByte);
+        // Publish to genesis relay via ILP if we have bootstrap peers
+        const firstPeer = knownPeers[0];
+        const genesisResult = results[0];
+        if (firstPeer && genesisResult) {
+          const genesisIlpAddress = genesisResult.peerInfo.ilpAddress;
+          const toonBytes = encodeEventToToon(ilpInfoEvent);
+          const base64Toon = Buffer.from(toonBytes).toString('base64');
+          const ilpAmount = String(BigInt(toonBytes.length) * basePricePerByte);
 
-        ilpClient
-          .sendIlpPacket({
-            destination: genesisIlpAddress,
-            amount: ilpAmount,
-            data: base64Toon,
-          })
-          .catch((err: unknown) => {
-            const msg = err instanceof Error ? err.message : 'Unknown';
-            console.warn('[Town] Failed to publish via ILP:', msg);
-          });
+          ilpClient
+            .sendIlpPacket({
+              destination: genesisIlpAddress,
+              amount: ilpAmount,
+              data: base64Toon,
+            })
+            .catch((err: unknown) => {
+              const msg = err instanceof Error ? err.message : 'Unknown';
+              console.warn('[Town] Failed to publish via ILP:', msg);
+            });
+        }
+      } catch (error: unknown) {
+        console.warn('[Town] Failed to publish ILP info:', error);
       }
-    } catch (error: unknown) {
-      console.warn('[Town] Failed to publish ILP info:', error);
+    };
+
+    publishOwnAnnouncement();
+
+    // Liveness heartbeat: re-announce at half the TTL so there is always an
+    // unexpired kind:10032 on the relay while we are up. When the node stops,
+    // the heartbeat stops and the last announcement expires after the TTL,
+    // signalling clients to stop dialing this (now-unreachable) apex (#261).
+    if (announcementTtlSeconds > 0) {
+      const heartbeatMs = Math.max(
+        1,
+        Math.floor((announcementTtlSeconds * 1000) / 2)
+      );
+      announcementHeartbeat = setInterval(publishOwnAnnouncement, heartbeatMs);
+      // Don't let the heartbeat keep the process alive on its own.
+      announcementHeartbeat.unref?.();
     }
 
     // Self-write: publish own kind:10035 (Service Discovery)
@@ -1399,6 +1449,12 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     async stop() {
       if (!running) return;
       running = false;
+
+      // Stop the kind:10032 liveness heartbeat so the announcement lapses (#261)
+      if (announcementHeartbeat) {
+        clearInterval(announcementHeartbeat);
+        announcementHeartbeat = undefined;
+      }
 
       // Close outbound subscriptions first
       for (const sub of activeSubscriptions) {
