@@ -1,5 +1,5 @@
 /**
- * Event storage handler for @toon-protocol/town.
+ * Event storage handler for @toon-protocol/relay.
  *
  * Stores incoming Nostr events in the EventStore after decoding from TOON.
  * This is the "default" handler for the relay -- it processes all event kinds
@@ -13,7 +13,7 @@
  *   3. ctx.accept({ eventId, storedAt }) -- accept the ILP packet
  */
 
-import type { EventStore } from '@toon-protocol/relay';
+import type { EventStore } from '../../storage/index.js';
 import type {
   Handler,
   HandlerContext,

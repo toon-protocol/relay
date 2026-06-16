@@ -4,8 +4,8 @@
  * Tests the subscription wrapper logic via the extracted `createSubscription()`
  * helper and verifies the running-state guard pattern.
  *
- * Mock strategy: Mock `@toon-protocol/relay` to replace `RelaySubscriber` with a
- * controlled mock that captures constructor args and `start()` behavior.
+ * Mock strategy: Mock the relay subscriber module to replace `RelaySubscriber`
+ * with a controlled mock that captures constructor args and `start()` behavior.
  * This avoids issues with bundled transitive dependencies (nostr-tools/pool).
  */
 
@@ -22,9 +22,9 @@ let lastConstructorArgs: {
   eventStore: unknown;
 } | null = null;
 
-vi.mock('@toon-protocol/relay', async () => {
+vi.mock('../subscriber/index.js', async () => {
   const actual: Record<string, unknown> = await vi.importActual(
-    '@toon-protocol/relay'
+    '../subscriber/index.js'
   );
   return {
     ...actual,

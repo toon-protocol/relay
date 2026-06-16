@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 
 /**
- * CLI entrypoint for @toon-protocol/town.
+ * CLI entrypoint for @toon-protocol/relay.
  *
- * Thin wrapper around startTown() that parses CLI flags and environment
+ * Thin wrapper around startRelay() that parses CLI flags and environment
  * variables, then delegates all logic to town.ts.
  *
  * Usage:
- *   npx @toon-protocol/town --mnemonic "abandon abandon ..." \
+ *   npx @toon-protocol/relay --mnemonic "abandon abandon ..." \
  *       --connector-url "ws://apex.example:3001" \
  *       --ilp-address "g.townhouse.alice"
  *
@@ -15,8 +15,8 @@
  */
 
 import { parseArgs } from 'node:util';
-import { startTown } from './town.js';
-import type { TownConfig, TownInstance } from './town.js';
+import { startRelay } from './town.js';
+import type { RelayConfig, RelayInstance } from './town.js';
 
 // ---------- CLI Parsing ----------
 
@@ -85,7 +85,7 @@ Security:
   );
 }
 
-function parseCli(): TownConfig {
+function parseCli(): RelayConfig {
   const { values } = parseArgs({
     options: {
       mnemonic: { type: 'string' },
@@ -382,7 +382,7 @@ function parseCli(): TownConfig {
     }
   }
 
-  const config: TownConfig = {
+  const config: RelayConfig = {
     ...(connectorUrl && { connectorUrl }),
     ...(chainRpcUrls && { chainRpcUrls }),
     ...(tokenNetworks && { tokenNetworks }),
@@ -424,7 +424,7 @@ async function main(): Promise<void> {
   console.log('TOON Town Starting');
   console.log('='.repeat(50) + '\n');
 
-  const instance: TownInstance = await startTown(config);
+  const instance: RelayInstance = await startRelay(config);
 
   console.log('\n' + '='.repeat(50));
   console.log('TOON Town Ready');

@@ -1,15 +1,15 @@
 /**
- * startTown() -- Programmatic API for starting a TOON relay node.
+ * startRelay() -- Programmatic API for starting a TOON relay node.
  *
  * This module wraps the same SDK components used by docker/src/entrypoint-sdk.ts
  * into a single function call with a typed configuration object. Both
- * `startTown()` and the Docker entrypoint compose the same pipeline:
+ * `startRelay()` and the Docker entrypoint compose the same pipeline:
  *
  *   Identity -> Verification -> Pricing -> HandlerRegistry -> BLS + Relay + Bootstrap
  *
  * The key difference is lifecycle management: the Docker entrypoint uses
- * process-level signals (SIGINT/SIGTERM), while `startTown()` returns a
- * `TownInstance` with an explicit `.stop()` method.
+ * process-level signals (SIGINT/SIGTERM), while `startRelay()` returns a
+ * `RelayInstance` with an explicit `.stop()` method.
  *
  * ## Deployment Modes
  *
@@ -82,12 +82,10 @@ import {
   decodeEventFromToon,
   encodeEventToToon,
 } from '@toon-protocol/core/toon';
-import {
-  SqliteEventStore,
-  NostrRelayServer,
-  RelaySubscriber,
-} from '@toon-protocol/relay';
-import type { EventStore } from '@toon-protocol/relay';
+import { SqliteEventStore } from '../storage/index.js';
+import { NostrRelayServer } from '../websocket/index.js';
+import { RelaySubscriber } from '../subscriber/index.js';
+import type { EventStore } from '../storage/index.js';
 import type { Filter } from 'nostr-tools/filter';
 import {
   ConnectorNode,
@@ -109,7 +107,7 @@ const MAX_PAYLOAD_BASE64_LENGTH = 1_048_576;
 // ---------- Public Types ----------
 
 /**
- * Configuration for starting a TOON relay node via `startTown()`.
+ * Configuration for starting a TOON relay node via `startRelay()`.
  *
  * Exactly one of `mnemonic` or `secretKey` must be provided.
  * `connector` and `connectorUrl` are mutually exclusive — provide at most one.
@@ -123,7 +121,7 @@ const MAX_PAYLOAD_BASE64_LENGTH = 1_048_576;
  * - When `connector` is set, the caller-supplied `EmbeddableConnectorLike`
  *   is used as-is; town does not configure peers, routes, or settlement on it.
  */
-export interface TownConfig {
+export interface RelayConfig {
   // --- Identity (exactly one required) ---
 
   /** 12-word or 24-word BIP-39 mnemonic phrase. */
@@ -316,7 +314,7 @@ export interface TownConfig {
  * Resolved configuration with all defaults applied. All fields are non-optional
  * (ports, pricing, paths have been filled in).
  */
-export interface ResolvedTownConfig {
+export interface ResolvedRelayConfig {
   relayPort: number;
   blsPort: number;
   ilpAddress: string;
@@ -350,11 +348,11 @@ export interface ResolvedTownConfig {
 }
 
 /**
- * A running TOON relay node instance returned by `startTown()`.
+ * A running TOON relay node instance returned by `startRelay()`.
  *
  * Provides lifecycle control (stop), identity info, and bootstrap results.
  */
-export interface TownInstance {
+export interface RelayInstance {
   /** Whether the relay is currently running. */
   isRunning(): boolean;
 
@@ -367,10 +365,10 @@ export interface TownInstance {
    *
    * @param relayUrl - WebSocket URL of the relay to subscribe to.
    * @param filter - Nostr filter (kinds, authors, etc.).
-   * @returns A TownSubscription handle.
+   * @returns A RelaySubscription handle.
    * @throws If the town is not running.
    */
-  subscribe(relayUrl: string, filter: Filter): TownSubscription;
+  subscribe(relayUrl: string, filter: Filter): RelaySubscription;
 
   /** The node's Nostr x-only public key (64-char hex). */
   pubkey: string;
@@ -379,7 +377,7 @@ export interface TownInstance {
   evmAddress: string;
 
   /** The resolved configuration with all defaults applied. */
-  config: ResolvedTownConfig;
+  config: ResolvedRelayConfig;
 
   /** Bootstrap results from the startup phase. */
   bootstrapResult: {
@@ -393,9 +391,9 @@ export interface TownInstance {
 
 /**
  * Handle for managing an outbound subscription to a remote Nostr relay.
- * Returned by `TownInstance.subscribe()`.
+ * Returned by `RelayInstance.subscribe()`.
  */
-export interface TownSubscription {
+export interface RelaySubscription {
   /** Close the subscription and disconnect from the relay. */
   close(): void;
   /** The relay URL this subscription is connected to. */
@@ -408,16 +406,16 @@ export interface TownSubscription {
 
 /**
  * Create a subscription to a remote Nostr relay, storing received events
- * in the local EventStore. Returns a TownSubscription handle.
+ * in the local EventStore. Returns a RelaySubscription handle.
  *
- * @internal Exported for unit testing only. Use `TownInstance.subscribe()` instead.
+ * @internal Exported for unit testing only. Use `RelayInstance.subscribe()` instead.
  */
 export function createSubscription(
   relayUrl: string,
   filter: Filter,
   eventStore: EventStore,
-  activeSubscriptions: Set<TownSubscription>
-): TownSubscription {
+  activeSubscriptions: Set<RelaySubscription>
+): RelaySubscription {
   // Validate WebSocket URL scheme to provide clear errors and prevent
   // non-WebSocket URLs from reaching SimplePool (consistency with BTP URL
   // validation convention in project-context.md).
@@ -441,7 +439,7 @@ export function createSubscription(
   let _lastSeenTimestamp = 0;
   void _lastSeenTimestamp;
 
-  const subscription: TownSubscription = {
+  const subscription: RelaySubscription = {
     close() {
       if (!active) return;
       active = false;
@@ -465,7 +463,7 @@ export function createSubscription(
  *
  * Composes the full SDK pipeline (identity, verification, pricing, handlers)
  * and starts the relay WebSocket server, BLS HTTP server, bootstrap service,
- * and relay monitor. Returns a `TownInstance` for lifecycle management.
+ * and relay monitor. Returns a `RelayInstance` for lifecycle management.
  *
  * The town node ALWAYS runs an embedded `ConnectorNode`. Three configurations
  * are supported:
@@ -477,7 +475,7 @@ export function createSubscription(
  *
  * @param config - Node configuration. One of `mnemonic`/`secretKey` is required;
  *   `connector` and `connectorUrl` are mutually exclusive.
- * @returns A running TownInstance.
+ * @returns A running RelayInstance.
  * @throws If both or neither of mnemonic/secretKey are provided.
  * @throws If both connector and connectorUrl are provided.
  * @throws If connectorUrl is set without an explicit ilpAddress.
@@ -485,10 +483,10 @@ export function createSubscription(
  * @example
  * ```typescript
  * // Standalone (no parent)
- * const town = await startTown({ mnemonic: 'abandon ...' });
+ * const town = await startRelay({ mnemonic: 'abandon ...' });
  *
  * // Embedded with parent
- * const town = await startTown({
+ * const town = await startRelay({
  *   mnemonic: 'abandon ...',
  *   connectorUrl: 'ws://apex.example:3001',
  *   parentPeerId: 'apex',
@@ -497,18 +495,18 @@ export function createSubscription(
  * });
  * ```
  */
-export async function startTown(config: TownConfig): Promise<TownInstance> {
+export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
   // --- 1. Validate identity ---
   const hasMnemonic = config.mnemonic !== undefined;
   const hasSecretKey = config.secretKey !== undefined;
 
   if (hasMnemonic && hasSecretKey) {
     throw new Error(
-      'TownConfig: provide either mnemonic or secretKey, not both'
+      'RelayConfig: provide either mnemonic or secretKey, not both'
     );
   }
   if (!hasMnemonic && !hasSecretKey) {
-    throw new Error('TownConfig: one of mnemonic or secretKey is required');
+    throw new Error('RelayConfig: one of mnemonic or secretKey is required');
   }
 
   // --- 1b. Validate connector mode ---
@@ -517,7 +515,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
 
   if (hasConnector && hasConnectorUrl) {
     throw new Error(
-      'TownConfig: provide either connector or connectorUrl, not both'
+      'RelayConfig: provide either connector or connectorUrl, not both'
     );
   }
 
@@ -526,7 +524,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   // g.toon.<pubkey> address would not be routable from the parent.
   if (hasConnectorUrl && config.ilpAddress === undefined) {
     throw new Error(
-      'TownConfig: ilpAddress is required when connectorUrl is set ' +
+      'RelayConfig: ilpAddress is required when connectorUrl is set ' +
         '(must fall under the parent connector prefix, e.g. g.townhouse.<self>)'
     );
   }
@@ -615,7 +613,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
     : resolveChainConfig(config.chain);
   const chainKey = `evm:base:${chainConfig.chainId}`;
 
-  const resolvedConfig: ResolvedTownConfig = {
+  const resolvedConfig: ResolvedRelayConfig = {
     relayPort,
     blsPort,
     ilpAddress,
@@ -730,7 +728,7 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
         `0x${Buffer.from(identity.secretKey).toString('hex')}`;
       if (!/^0x[0-9a-fA-F]{64}$/.test(keyHex)) {
         throw new Error(
-          `TownConfig.settlementPrivateKey must be a 0x-prefixed 32-byte hex string (got length ${keyHex.length}); cannot wire chainProviders for ${chainConfig.name}`
+          `RelayConfig.settlementPrivateKey must be a 0x-prefixed 32-byte hex string (got length ${keyHex.length}); cannot wire chainProviders for ${chainConfig.name}`
         );
       }
       chainProvidersEntry = {
@@ -1425,15 +1423,15 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
   const socialSubscription = socialDiscovery.start();
 
   // --- 14. Outbound subscription tracking ---
-  const activeSubscriptions = new Set<TownSubscription>();
+  const activeSubscriptions = new Set<RelaySubscription>();
 
-  // --- 15. Build TownInstance ---
-  const instance: TownInstance = {
+  // --- 15. Build RelayInstance ---
+  const instance: RelayInstance = {
     isRunning() {
       return running;
     },
 
-    subscribe(subscribeRelayUrl: string, filter: Filter): TownSubscription {
+    subscribe(subscribeRelayUrl: string, filter: Filter): RelaySubscription {
       if (!running) {
         throw new Error('Cannot subscribe: town is not running');
       }
@@ -1495,3 +1493,34 @@ export async function startTown(config: TownConfig): Promise<TownInstance> {
 
   return instance;
 }
+
+// ---------- Deprecated aliases ----------
+// The launcher API was renamed from `startTown`/`Town*` to `startRelay`/`Relay*`
+// when @toon-protocol/town was merged into @toon-protocol/relay. The old names
+// are retained as aliases so existing callers keep working.
+
+/**
+ * @deprecated Use {@link startRelay} instead. Retained for backwards
+ * compatibility after the town → relay package merge.
+ */
+export const startTown = startRelay;
+
+/**
+ * @deprecated Use {@link RelayConfig} instead.
+ */
+export type TownConfig = RelayConfig;
+
+/**
+ * @deprecated Use {@link RelayInstance} instead.
+ */
+export type TownInstance = RelayInstance;
+
+/**
+ * @deprecated Use {@link ResolvedRelayConfig} instead.
+ */
+export type ResolvedTownConfig = ResolvedRelayConfig;
+
+/**
+ * @deprecated Use {@link RelaySubscription} instead.
+ */
+export type TownSubscription = RelaySubscription;

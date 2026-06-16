@@ -3,7 +3,7 @@
  *
  * Test IDs map to test-design-epic-21.md scenario T-039.
  * TDD Red Phase — tests use it() because TOON_FEE_PER_EVENT is not yet
- * implemented in packages/town/src/cli.ts.
+ * implemented in packages/relay/src/launcher/cli.ts.
  *
  * These tests verify:
  * - AC #6: Write-fee configuration via FEE_PER_EVENT environment variable

@@ -11,7 +11,6 @@ export default defineConfig({
       '@toon-protocol/bls': resolve(__dirname, 'packages/bls/src/index.ts'),
       '@toon-protocol/sdk': resolve(__dirname, 'packages/sdk/src/index.ts'),
       '@toon-protocol/client': resolve(__dirname, 'packages/client/src/index.ts'),
-      '@toon-protocol/town': resolve(__dirname, 'packages/town/src/index.ts'),
     },
   },
   test: {

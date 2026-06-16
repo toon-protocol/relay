@@ -2,7 +2,7 @@ import type { WebSocket } from 'ws';
 import { WebSocketServer } from 'ws';
 import type { NostrEvent } from 'nostr-tools/pure';
 import type { EventStore } from '../storage/index.js';
-import type { RelayConfig } from '../types.js';
+import type { RelayServerConfig } from '../types.js';
 import { DEFAULT_RELAY_CONFIG } from '../types.js';
 import { ConnectionHandler } from './ConnectionHandler.js';
 
@@ -13,10 +13,10 @@ import { ConnectionHandler } from './ConnectionHandler.js';
 export class NostrRelayServer {
   private wss: WebSocketServer | null = null;
   private handlers = new Map<WebSocket, ConnectionHandler>();
-  private config: Required<RelayConfig>;
+  private config: Required<RelayServerConfig>;
 
   constructor(
-    config: Partial<RelayConfig> = {},
+    config: Partial<RelayServerConfig> = {},
     private eventStore: EventStore
   ) {
     this.config = { ...DEFAULT_RELAY_CONFIG, ...config };

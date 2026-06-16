@@ -2,7 +2,7 @@ import type { WebSocket } from 'ws';
 import type { Filter } from 'nostr-tools/filter';
 import type { NostrEvent } from 'nostr-tools/pure';
 import type { EventStore } from '../storage/index.js';
-import type { RelayConfig } from '../types.js';
+import type { RelayServerConfig } from '../types.js';
 import { DEFAULT_RELAY_CONFIG } from '../types.js';
 import { encodeEventToToonString } from '../toon/index.js';
 import { matchFilter } from '../filters/index.js';
@@ -22,12 +22,12 @@ export interface Subscription {
  */
 export class ConnectionHandler {
   private subscriptions = new Map<string, Subscription>();
-  private config: Required<RelayConfig>;
+  private config: Required<RelayServerConfig>;
 
   constructor(
     private ws: WebSocket,
     private eventStore: EventStore,
-    config: Partial<RelayConfig> = {}
+    config: Partial<RelayServerConfig> = {}
   ) {
     this.config = { ...DEFAULT_RELAY_CONFIG, ...config };
   }

@@ -16,7 +16,7 @@ import { join, resolve } from 'path';
 
 /**
  * Resolve a path relative to the repository root.
- * The test file lives at packages/town/src/cleanup.test.ts, so the repo
+ * The test file lives at packages/relay/src/launcher/cleanup.test.ts, so the repo
  * root is three directories up.
  */
 function repoRoot(): string {
@@ -131,7 +131,7 @@ describe('Story 2.4: packages/git-proxy removal', () => {
 
 describe('Story 2.4: SDK relay entrypoint', () => {
   it('SDK relay entrypoint should import from @toon-protocol/sdk (not manual wiring)', () => {
-    // P2: The new SDK-based entrypoint (packages/town/src/index.ts or similar)
+    // P2: The new SDK-based entrypoint (packages/relay/src/launcher/index.ts or similar)
     // should import handler creation functions from @toon-protocol/sdk rather than
     // manually wiring BLS, event handling, and bootstrap logic.
     //

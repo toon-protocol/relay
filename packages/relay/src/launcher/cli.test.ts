@@ -53,7 +53,7 @@ describe('CLI source structure (AC #4)', () => {
   it('cli.ts should exist', () => {
     expect(
       existsSync(cliSourcePath()),
-      'packages/town/src/cli.ts must exist'
+      'packages/relay/src/launcher/cli.ts must exist'
     ).toBe(true);
   });
 
