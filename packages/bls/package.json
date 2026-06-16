@@ -37,7 +37,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@toon-protocol/core": "workspace:*",
+    "@toon-protocol/core": "^1.4.1",
     "@toon-protocol/relay": "workspace:*",
     "@hono/node-server": "^1.14.0",
     "@toon-format/toon": "^1.0.0",
