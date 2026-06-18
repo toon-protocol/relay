@@ -11,18 +11,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: jetify-com/devbox-install-action@734088efddca47cf44ff8a09289c6d0e51b73218 # v0.12.0
+      - uses: pnpm/action-setup@v4
         with:
-          enable-cache: true
+          version: 8.15.0
 
-      - run: devbox run -- pnpm install --frozen-lockfile
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
 
-      - run: devbox run -- pnpm lint
+      - run: pnpm install --no-frozen-lockfile
+
+      - run: pnpm lint
         continue-on-error: true
 
-      - run: devbox run -- pnpm -r build
+      - run: pnpm -r build
 
-      - run: devbox run -- pnpm -r test --if-present
+      - run: pnpm -r test --if-present
 
   devbox-validate:
     runs-on: ubuntu-latest
