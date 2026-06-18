@@ -11,7 +11,7 @@ TOON Protocol Nostr relay node — @toon-protocol/relay (NIP-01 relay + BLS + st
 **Prerequisites:** [install Devbox](https://www.jetify.com/devbox/docs/installing_devbox/) (`curl -fsSL https://get.jetify.com/devbox | bash`).
 
 ```sh
-# Enter the reproducible shell (installs Node 20 + pnpm 8.15.0 automatically)
+# Enter the reproducible shell (installs Node 22 + pnpm 8.15.0 automatically)
 devbox shell
 
 # Then install dependencies and run tests as normal
@@ -20,4 +20,4 @@ pnpm -r build
 pnpm -r test
 ```
 
-Without Devbox the repo still works with any Node ≥ 20 + pnpm 8.15.0 installed globally.
+Without Devbox the repo still works with any Node ≥ 22 + pnpm 8.15.0 installed globally.
