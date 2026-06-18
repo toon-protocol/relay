@@ -1,0 +1,10 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.13.6/.schema/devbox.schema.json",
+  "packages": ["nodejs@20.11.0"],
+  "shell": {
+    "init_hook": [
+      "corepack enable",
+      "corepack prepare pnpm@8.15.0 --activate"
+    ]
+  }
+}
