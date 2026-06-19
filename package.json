@@ -1,0 +1,93 @@
+{
+  "name": "relay",
+  "version": "0.3.0",
+  "private": true,
+  "description": "ILP-gated Nostr relay. Pay to write, free to read.",
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r run build",
+    "test": "vitest run",
+    "test:jest": "pnpm --filter @toon-protocol/pet-dvm test",
+    "test:zk": "pnpm --filter @toon-protocol/pet-circuit test",
+    "test:all": "vitest run && pnpm test:jest",
+    "test:coverage": "vitest --coverage",
+    "lint": "eslint .",
+    "format": "prettier --write \"packages/*/src/**/*.ts\"",
+    "format:check": "prettier --check \"packages/*/src/**/*.ts\"",
+    "demo:ilp-gated-relay": "tsx packages/examples/src/ilp-gated-relay-demo/index.ts",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "changeset publish"
+  },
+  "keywords": [
+    "nostr",
+    "interledger",
+    "ilp",
+    "toon",
+    "payment",
+    "agent",
+    "nip-02",
+    "social-graph"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=8"
+  },
+  "packageManager": "pnpm@8.15.0",
+  "pnpm": {
+    "neverBuiltDependencies": [
+      "@anyone-protocol/anyone-client"
+    ],
+    "overrides": {
+      "protobufjs": ">=7.2.5",
+      "ws@>=7.0.0 <7.5.10": ">=7.5.10",
+      "body-parser": ">=1.20.3",
+      "send": ">=0.19.0",
+      "serve-static": ">=1.16.0",
+      "cookie": ">=0.7.0",
+      "path-to-regexp": ">=0.1.10",
+      "express": ">=4.21.0"
+    },
+    "auditConfig": {
+      "ignoreCves": [
+        "GHSA-vjh7-7g9h-fjfh",
+        "GHSA-848j-6mx2-7j84",
+        "GHSA-w7fw-mjwx-w883",
+        "GHSA-49q7-c7j4-3p7m",
+        "GHSA-c2qf-rxjj-qqgw"
+      ]
+    }
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@hono/node-server": "^1.13.7",
+    "@noble/curves": "^1.8.0",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "@toon-format/toon": "^1.0.0",
+    "@types/node": "^20.11.0",
+    "@types/ws": "^8.18.1",
+    "@vitest/coverage-v8": "^1.0.0",
+    "conventional-changelog-conventionalcommits": "^8.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^9.0.0",
+    "hono": "^4.11.10",
+    "nostr-tools": "^2.23.1",
+    "prettier": "^3.2.0",
+    "semantic-release": "^24.2.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.3.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^1.0.0",
+    "ws": "^8.19.0",
+    "zod": "^3.25.0",
+    "@changesets/cli": "^2.27.9"
+  },
+  "dependencies": {
+    "@ardrive/turbo-sdk": "^1.41.0",
+    "arweave": "^1.15.5"
+  }
+}

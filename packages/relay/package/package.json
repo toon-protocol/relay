@@ -1,0 +1,51 @@
+{
+  "name": "@toon-protocol/relay",
+  "version": "1.0.0",
+  "description": "ILP-gated Nostr relay with Business Logic Server",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch"
+  },
+  "keywords": [
+    "nostr",
+    "relay",
+    "ilp",
+    "interledger"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/toon-protocol/town.git",
+    "directory": "packages/relay"
+  },
+  "author": "ALLiDoizCode",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@toon-protocol/bls": "^1.0.0",
+    "@toon-protocol/core": "^1.0.0",
+    "@toon-format/toon": "^1.0.0",
+    "better-sqlite3": "^11.0.0",
+    "hono": "^4.0.0",
+    "nostr-tools": "^2.20.0",
+    "ws": "^8.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/ws": "^8.0.0"
+  }
+}

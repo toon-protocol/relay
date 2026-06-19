@@ -1,0 +1,89 @@
+# TOON BLS with Nostr Bootstrap
+# Multi-stage build for minimal image size
+#
+# Build from repo root:
+#   docker build -f packages/bls/Dockerfile.bootstrap -t toon:bootstrap .
+
+# ── Stage 1: Builder ─────────────────────────────────────────
+FROM node:20-alpine AS builder
+
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# Install native build dependencies
+RUN apk add --no-cache python3 py3-setuptools make g++
+
+WORKDIR /app
+
+# Copy workspace files
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.json .npmrc ./
+
+# Copy all package.json files
+COPY packages/bls/package.json packages/bls/
+COPY packages/core/package.json packages/core/
+COPY packages/relay/package.json packages/relay/
+COPY packages/client/package.json packages/client/
+COPY docker/package.json docker/
+
+# Install all dependencies
+RUN pnpm install --frozen-lockfile
+
+# Copy source code
+COPY packages/bls/src/ packages/bls/src/
+COPY packages/bls/tsconfig.json packages/bls/tsup.config.ts packages/bls/
+COPY packages/core/src/ packages/core/src/
+COPY packages/core/tsconfig.json packages/core/tsup.config.ts packages/core/
+COPY packages/relay/src/ packages/relay/src/
+COPY packages/relay/tsconfig.json packages/relay/tsup.config.ts packages/relay/
+COPY packages/client/src/ packages/client/src/
+COPY packages/client/tsconfig.json packages/client/tsup.config.ts packages/client/
+
+# Build packages in dependency order
+RUN pnpm --filter @toon-protocol/core build
+RUN pnpm --filter @toon-protocol/relay build
+RUN pnpm --filter @toon-protocol/client build
+RUN pnpm --filter @toon-protocol/bls build
+
+# Create production deployment
+RUN pnpm --filter @toon-protocol/bls deploy --prod /prod
+
+# Strip build artifacts
+RUN rm -rf /prod/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/deps \
+           /prod/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/src \
+           /prod/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/binding.gyp
+
+# ── Stage 2: Production ──────────────────────────────────────
+FROM node:20-alpine
+
+# Install runtime dependencies
+RUN apk add --no-cache libstdc++
+
+WORKDIR /app
+
+# Copy production deployment
+COPY --from=builder /prod/dist ./dist
+COPY --from=builder /prod/node_modules ./node_modules
+COPY --from=builder /prod/package.json ./
+
+# Set environment
+ENV NODE_ENV=production
+ENV DATA_DIR=/data
+ENV BLS_PORT=3100
+ENV WS_PORT=7100
+
+# Expose ports
+EXPOSE 3100 7100
+
+# Declare volume
+VOLUME /data
+
+# Create data directory
+RUN mkdir -p /data && chown node:node /data
+USER node
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -q --spider http://localhost:3100/health || exit 1
+
+# Start with full-featured entrypoint (now the default)
+CMD ["node", "dist/entrypoint.js"]

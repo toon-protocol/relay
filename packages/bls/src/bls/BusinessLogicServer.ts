@@ -1,0 +1,242 @@
+import { Hono } from 'hono';
+import { verifyEvent } from 'nostr-tools/pure';
+import type { EventStore } from '../storage/index.js';
+import { decodeEventFromToon } from '../toon/index.js';
+import type {
+  BlsConfig,
+  HandlePacketRequest,
+  HandlePacketAcceptResponse,
+  HandlePacketRejectResponse,
+} from './types.js';
+import { ILP_ERROR_CODES, BlsError, isValidPubkey } from './types.js';
+
+/**
+ * Business Logic Server for ILP payment verification.
+ *
+ * Handles payment requests from an ILP connector, verifying that the
+ * payment amount meets the required price for storing the included
+ * Nostr event.
+ */
+export class BusinessLogicServer {
+  private app: Hono;
+
+  constructor(
+    private config: BlsConfig,
+    private eventStore: EventStore
+  ) {
+    // Validate ownerPubkey format if provided
+    if (
+      config.ownerPubkey !== undefined &&
+      !isValidPubkey(config.ownerPubkey)
+    ) {
+      throw new BlsError(
+        'Invalid ownerPubkey format: must be 64 lowercase hex characters',
+        'INVALID_CONFIG'
+      );
+    }
+    this.app = new Hono();
+    this.setupRoutes();
+  }
+
+  /**
+   * Set up HTTP routes.
+   */
+  private setupRoutes(): void {
+    this.app.post('/handle-packet', async (c) => {
+      try {
+        const body = await c.req.json<HandlePacketRequest>();
+        const response = this.handlePacket(body);
+        return c.json(response, response.accept ? 200 : 400);
+      } catch (error) {
+        const response: HandlePacketRejectResponse = {
+          accept: false,
+          code: ILP_ERROR_CODES.INTERNAL_ERROR,
+          message:
+            error instanceof Error ? error.message : 'Internal server error',
+        };
+        return c.json(response, 500);
+      }
+    });
+
+    this.app.get('/health', (c) => {
+      return c.json({
+        status: 'healthy',
+        timestamp: Date.now(),
+      });
+    });
+  }
+
+  /**
+   * Process a packet request.
+   *
+   * This method is public to support direct connector integration in embedded mode,
+   * where the connector calls this method directly via setPacketHandler() instead
+   * of making HTTP requests.
+   */
+  public handlePacket(
+    request: HandlePacketRequest
+  ): HandlePacketAcceptResponse | HandlePacketRejectResponse {
+    // Validate required fields
+    if (!request.amount || !request.destination || !request.data) {
+      return {
+        accept: false,
+        code: ILP_ERROR_CODES.BAD_REQUEST,
+        message: 'Missing required fields: amount, destination, data',
+      };
+    }
+
+    // Decode base64 data
+    let toonBytes: Uint8Array;
+    try {
+      toonBytes = Uint8Array.from(Buffer.from(request.data, 'base64'));
+    } catch {
+      return {
+        accept: false,
+        code: ILP_ERROR_CODES.BAD_REQUEST,
+        message: 'Invalid base64 encoding in data field',
+      };
+    }
+
+    // Decode TOON to Nostr event
+    let event;
+    try {
+      event = decodeEventFromToon(toonBytes);
+    } catch (error) {
+      return {
+        accept: false,
+        code: ILP_ERROR_CODES.BAD_REQUEST,
+        message: `Invalid TOON data: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      };
+    }
+
+    // Verify event signature
+    if (!verifyEvent(event)) {
+      return {
+        accept: false,
+        code: ILP_ERROR_CODES.BAD_REQUEST,
+        message: 'Invalid event signature',
+      };
+    }
+
+    // Self-write bypass: owner events skip payment verification
+    if (this.config.ownerPubkey && event.pubkey === this.config.ownerPubkey) {
+      try {
+        this.eventStore.store(event);
+      } catch (error) {
+        throw new BlsError(
+          `Failed to store event: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'STORAGE_ERROR'
+        );
+      }
+
+      // Trigger NIP-34 handler if configured (async, non-blocking)
+      if (this.config.onNIP34Event) {
+        const isNIP34 =
+          event.kind === 30617 ||
+          event.kind === 1617 ||
+          event.kind === 1618 ||
+          event.kind === 1621 ||
+          (event.kind >= 1630 && event.kind <= 1633);
+
+        if (isNIP34) {
+          this.config.onNIP34Event(event).catch((error) => {
+            console.error(`NIP-34 handler error for event ${event.id}:`, error);
+          });
+        }
+      }
+
+      return {
+        accept: true,
+        metadata: {
+          eventId: event.id,
+          storedAt: Date.now(),
+        },
+      };
+    }
+
+    // Calculate price: use PricingService if provided, otherwise simple calculation
+    const price = this.config.pricingService
+      ? this.config.pricingService.calculatePriceFromBytes(
+          toonBytes,
+          event.kind
+        )
+      : BigInt(toonBytes.length) * this.config.basePricePerByte;
+
+    // Parse and compare amounts
+    let amount: bigint;
+    try {
+      amount = BigInt(request.amount);
+    } catch {
+      return {
+        accept: false,
+        code: ILP_ERROR_CODES.BAD_REQUEST,
+        message: 'Invalid amount format',
+      };
+    }
+
+    if (amount < price) {
+      return {
+        accept: false,
+        code: ILP_ERROR_CODES.INSUFFICIENT_AMOUNT,
+        message: 'Insufficient payment amount',
+        metadata: {
+          required: price.toString(),
+          received: amount.toString(),
+        },
+      };
+    }
+
+    // Store event
+    try {
+      this.eventStore.store(event);
+    } catch (error) {
+      throw new BlsError(
+        `Failed to store event: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'STORAGE_ERROR'
+      );
+    }
+
+    // Trigger NIP-34 handler if configured (async, non-blocking)
+    if (this.config.onNIP34Event) {
+      // NIP-34 event kinds: 30617, 1617, 1618, 1621, 1630-1633
+      const isNIP34 =
+        event.kind === 30617 ||
+        event.kind === 1617 ||
+        event.kind === 1618 ||
+        event.kind === 1621 ||
+        (event.kind >= 1630 && event.kind <= 1633);
+
+      if (isNIP34) {
+        this.config.onNIP34Event(event).catch((error) => {
+          console.error(`NIP-34 handler error for event ${event.id}:`, error);
+        });
+      }
+    }
+
+    const storedAt = Date.now();
+    return {
+      accept: true,
+      metadata: {
+        eventId: event.id,
+        storedAt,
+      },
+    };
+  }
+
+  /**
+   * Get the Hono app instance for testing or composition.
+   */
+  getApp(): Hono {
+    return this.app;
+  }
+
+  /**
+   * Start the HTTP server on the specified port.
+   */
+  start(port: number): void {
+    // Note: In Node.js, you would typically use @hono/node-server
+    // For now, this method is a placeholder for actual server startup
+    // The actual server binding would be done by the consumer
+    console.log(`BLS would start on port ${port}`);
+  }
+}
