@@ -113,7 +113,7 @@ importers:
         specifier: ^1.4.1
         version: 1.4.1(@toon-protocol/connector@3.10.0)(typescript@5.9.3)
       '@toon-protocol/relay':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../relay
       better-sqlite3:
         specifier: ^11.0.0
@@ -144,7 +144,7 @@ importers:
         specifier: ^1.0.0
         version: 1.4.0
       '@toon-protocol/bls':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../bls
       '@toon-protocol/connector':
         specifier: ^3.10.0
