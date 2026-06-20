@@ -15,11 +15,11 @@ jobs:
         with:
           enable-cache: true
 
-      - run: pnpm install --no-frozen-lockfile
+      - run: devbox run -- pnpm install --no-frozen-lockfile
 
-      - run: pnpm lint
+      - run: devbox run -- pnpm lint
         continue-on-error: true
 
-      - run: pnpm -r build
+      - run: devbox run -- pnpm -r build
 
-      - run: pnpm -r test --if-present
+      - run: devbox run -- pnpm -r test --if-present
