@@ -110,8 +110,8 @@ importers:
         specifier: ^1.0.0
         version: 1.4.0
       '@toon-protocol/core':
-        specifier: ^1.4.1
-        version: 1.4.1(@toon-protocol/connector@3.10.0)(typescript@5.9.3)
+        specifier: ^1.4.2
+        version: 1.4.2(@toon-protocol/connector@3.10.0)(typescript@5.9.3)
       '@toon-protocol/relay':
         specifier: workspace:^
         version: link:../relay
@@ -150,11 +150,11 @@ importers:
         specifier: ^3.10.0
         version: 3.10.0(@types/node@20.19.32)(typescript@5.9.3)
       '@toon-protocol/core':
-        specifier: ^1.4.1
-        version: 1.4.1(@toon-protocol/connector@3.10.0)(typescript@5.9.3)
+        specifier: ^1.4.2
+        version: 1.4.2(@toon-protocol/connector@3.10.0)(typescript@5.9.3)
       '@toon-protocol/sdk':
-        specifier: ^0.5.0
-        version: 0.5.0(@toon-protocol/connector@3.10.0)(typescript@5.9.3)
+        specifier: ^0.5.1
+        version: 0.5.1(@toon-protocol/connector@3.10.0)(typescript@5.9.3)
       better-sqlite3:
         specifier: ^11.0.0
         version: 11.10.0
@@ -6204,8 +6204,8 @@ packages:
       - utf-8-validate
     dev: false
 
-  /@toon-protocol/core@1.4.1(@toon-protocol/connector@3.10.0)(typescript@5.9.3):
-    resolution: {integrity: sha512-5P6F19Vqlu/3TkTDg1JQar0H3kaQftUxC7m3+BtxSR1PLKHF2RGUyP1N/V0lREg3yB7W9TkD3+m7vA5dtoQs3g==}
+  /@toon-protocol/core@1.4.2(@toon-protocol/connector@3.10.0)(typescript@5.9.3):
+    resolution: {integrity: sha512-DPncNqvdMc5SopnA+cZB70x9adRu+g6qiITqGpGNQ2it6gih6VkPdH542ZPA/RJbMnaSCYF+isNhHOdB4T2iyA==}
     peerDependencies:
       '@toon-protocol/connector': '>=3.3.3'
     peerDependenciesMeta:
@@ -6268,8 +6268,8 @@ packages:
       o1js: 2.14.0
     dev: false
 
-  /@toon-protocol/sdk@0.5.0(@toon-protocol/connector@3.10.0)(typescript@5.9.3):
-    resolution: {integrity: sha512-cu2/jfIkoFzBToois+R3XsQC5XBePOjV0qGZzgGK7A4W+O2eJBBFFT2Hq9hidDZUDfICl4UUUNoEiPE90Xoi8w==}
+  /@toon-protocol/sdk@0.5.1(@toon-protocol/connector@3.10.0)(typescript@5.9.3):
+    resolution: {integrity: sha512-Zd2DQWDqqI5wIdvH/vgsHmC5/1x+DhA+QLqEYcwry7ZHE+IsTRoP3vnvRyyJ3Xv8vk2sm3p5EoAhza8bDnEVJQ==}
     engines: {node: '>=20'}
     peerDependencies:
       '@toon-protocol/connector': '>=3.3.3'
@@ -6286,7 +6286,7 @@ packages:
       '@scure/bip32': 2.0.1
       '@scure/bip39': 2.0.1
       '@toon-protocol/connector': 3.10.0(@types/node@20.19.32)(typescript@5.9.3)
-      '@toon-protocol/core': 1.4.1(@toon-protocol/connector@3.10.0)(typescript@5.9.3)
+      '@toon-protocol/core': 1.4.2(@toon-protocol/connector@3.10.0)(typescript@5.9.3)
       nostr-tools: 2.23.1(typescript@5.9.3)
     transitivePeerDependencies:
       - '@azure/app-configuration'
