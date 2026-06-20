@@ -147,7 +147,7 @@ importers:
         specifier: workspace:^
         version: link:../bls
       '@toon-protocol/connector':
-        specifier: ^3.13.0
+        specifier: ^3.10.0
         version: 3.13.0(@types/node@20.19.32)(typescript@5.9.3)
       '@toon-protocol/core':
         specifier: ^1.4.2
