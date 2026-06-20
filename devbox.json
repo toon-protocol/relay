@@ -5,6 +5,6 @@
       "version": "22",
       "disable_plugin": true
     },
-    "pnpm_8": "latest"
+    "pnpm_8": "8.15.9"
   }
 }

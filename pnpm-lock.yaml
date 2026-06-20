@@ -147,13 +147,13 @@ importers:
         specifier: workspace:^
         version: link:../bls
       '@toon-protocol/connector':
-        specifier: ^3.10.0
+        specifier: ^3.13.0
         version: 3.13.0(@types/node@20.19.32)(typescript@5.9.3)
       '@toon-protocol/core':
-        specifier: ^1.4.1
+        specifier: ^1.4.2
         version: 1.4.2(@toon-protocol/connector@3.13.0)(typescript@5.9.3)
       '@toon-protocol/sdk':
-        specifier: ^0.5.0
+        specifier: ^0.5.1
         version: 0.5.1(@toon-protocol/connector@3.13.0)(typescript@5.9.3)
       better-sqlite3:
         specifier: ^11.0.0
