@@ -1,10 +1,12 @@
 /**
  * @toon-protocol/relay
  *
- * ILP-gated Nostr relay with Business Logic Server.
+ * Nostr relay app: free NIP-01 WebSocket reads plus an HTTP `POST /write`
+ * surface for storing events. Payment is enforced upstream by an external
+ * terminator, so this package contains no ILP/connector/settlement logic.
  */
 
-export const VERSION = '0.1.0';
+export { VERSION } from './version.js';
 
 // Types
 // NOTE: the low-level WebSocket relay-server config is exported as
@@ -36,30 +38,6 @@ export {
   ToonDecodeError,
 } from './toon/index.js';
 
-// Business Logic Server
-export type {
-  BlsConfig,
-  HandlePacketRequest,
-  HandlePacketAcceptResponse,
-  HandlePacketRejectResponse,
-  HandlePacketResponse,
-} from './bls/index.js';
-export {
-  BlsError,
-  ILP_ERROR_CODES,
-  BusinessLogicServer,
-  isValidPubkey,
-} from './bls/index.js';
-
-// Pricing
-export type { PricingConfig } from './pricing/index.js';
-export {
-  PricingError,
-  PricingService,
-  loadPricingConfigFromEnv,
-  loadPricingConfigFromFile,
-} from './pricing/index.js';
-
 // Subscriber
 export type { RelaySubscriberConfig } from './subscriber/index.js';
 export { RelaySubscriber } from './subscriber/index.js';
@@ -67,10 +45,10 @@ export { RelaySubscriber } from './subscriber/index.js';
 // ---------------------------------------------------------------------------
 // Launcher (formerly @toon-protocol/town)
 //
-// SDK-based relay launcher with a one-call programmatic API (startRelay()) and
-// handler implementations for ILP-gated Nostr services. Merged in from the
-// @toon-protocol/town package. Old `startTown`/`Town*` names are re-exported
-// as deprecated aliases.
+// One-call programmatic API (startRelay()) that wires the event store, the
+// HTTP write/health server, and the NIP-01 WebSocket read server. Merged in
+// from the @toon-protocol/town package; old `startTown`/`Town*` names are
+// re-exported as deprecated aliases.
 // ---------------------------------------------------------------------------
 
 // Relay launcher lifecycle API
@@ -93,59 +71,14 @@ export type {
 
 // Health response
 export { createHealthResponse } from './launcher/health.js';
-export type {
-  HealthConfig,
-  HealthResponse,
-  TeeHealthInfo,
-} from './launcher/health.js';
+export type { HealthConfig, HealthResponse } from './launcher/health.js';
 
-// Event storage handler
-export { createEventStorageHandler } from './launcher/handlers/event-storage-handler.js';
-export type { EventStorageHandlerConfig } from './launcher/handlers/event-storage-handler.js';
-
-// x402 publish handler
-export { createX402Handler } from './launcher/handlers/x402-publish-handler.js';
+// Payment-oblivious write handler (POST /write surface)
+export { createObliviousWriteHandler } from './launcher/handlers/oblivious-write-handler.js';
 export type {
-  X402HandlerConfig,
-  X402Handler,
-} from './launcher/handlers/x402-publish-handler.js';
-
-// x402 pricing
-export { calculateX402Price } from './launcher/handlers/x402-pricing.js';
-export type { X402PricingConfig } from './launcher/handlers/x402-pricing.js';
-
-// x402 pre-flight
-export { runPreflight } from './launcher/handlers/x402-preflight.js';
-export type {
-  PreflightResult,
-  PreflightConfig,
-} from './launcher/handlers/x402-preflight.js';
-
-// x402 settlement
-export { settleEip3009 } from './launcher/handlers/x402-settlement.js';
-export type {
-  X402SettlementResult,
-  X402SettlementConfig,
-} from './launcher/handlers/x402-settlement.js';
-// Deprecated aliases -- use X402SettlementResult / X402SettlementConfig instead
-export type {
-  SettlementResult,
-  SettlementConfig,
-} from './launcher/handlers/x402-settlement.js';
-
-// x402 types
-export type {
-  Eip3009Authorization,
-  EventStoreLike,
-  X402PublishRequest,
-  X402PublishResponse,
-  X402PricingResponse,
-} from './launcher/handlers/x402-types.js';
-export {
-  EIP_3009_TYPES,
-  USDC_EIP712_DOMAIN,
-  USDC_ABI,
-} from './launcher/handlers/x402-types.js';
+  ObliviousWriteHandler,
+  ObliviousWriteHandlerConfig,
+} from './launcher/handlers/oblivious-write-handler.js';
 
 // Re-exports from @toon-protocol/bls removed to avoid circular dependency
 // Downstream consumers should import directly from @toon-protocol/bls instead

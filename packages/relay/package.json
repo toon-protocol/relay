@@ -44,15 +44,10 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.0.0",
-    "@toon-protocol/bls": "workspace:^",
-    "@toon-protocol/connector": "^3.10.0",
-    "@toon-protocol/core": "^1.4.2",
-    "@toon-protocol/sdk": "^0.5.1",
     "@toon-format/toon": "^1.0.0",
     "better-sqlite3": "^11.0.0",
     "hono": "^4.11.10",
     "nostr-tools": "^2.20.0",
-    "viem": "^2.47.2",
     "ws": "^8.0.0"
   },
   "devDependencies": {
