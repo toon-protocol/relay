@@ -26,6 +26,15 @@
  *   `EmbeddableConnectorLike`. The town does not modify it.
  *
  * `connector` and `connectorUrl` are mutually exclusive — provide at most one.
+ *
+ * - **Oblivious** (`obliviousMode: true`, default `false`): the relay runs as a
+ *   payment-oblivious app behind an external terminator. No embedded connector
+ *   is created; no x402/EIP-3009/ILP-settlement code runs. The node exposes
+ *   `POST /write` (event-as-JSON), trusting injected `X-TOON-Payer`/`-Amount`/
+ *   `-Chain` headers without re-validating payment. Free NIP-01 WS reads are
+ *   unchanged. Mutually exclusive with `connector`/`connectorUrl`. The embedded
+ *   modes above remain the DEFAULT and are unchanged when `obliviousMode` is
+ *   false.
  */
 
 import { mkdirSync } from 'node:fs';
@@ -47,6 +56,7 @@ import type {
 } from '@toon-protocol/sdk';
 import { createEventStorageHandler } from './handlers/event-storage-handler.js';
 import { createX402Handler } from './handlers/x402-publish-handler.js';
+import { createObliviousWriteHandler } from './handlers/oblivious-write-handler.js';
 import { createHealthResponse } from './health.js';
 import {
   BootstrapService,
@@ -138,6 +148,13 @@ export interface RelayConfig {
    */
   connector?: EmbeddableConnectorLike;
   /**
+   * Pre-built EventStore. When provided, town uses it instead of constructing
+   * the default file-backed `SqliteEventStore` under `dataDir`. Useful for
+   * tests (inject an `InMemoryEventStore`) and for embedding the relay with a
+   * shared store. The caller owns its lifecycle when supplied.
+   */
+  eventStore?: EventStore;
+  /**
    * Parent connector BTP URL (e.g. `ws://apex.example:3001`). When set, the
    * embedded connector is built with this URL as a parent peer and a default
    * `g.` route to that peer; `ilpAddress` MUST also be set and fall under the
@@ -150,6 +167,18 @@ export interface RelayConfig {
   parentAuthToken?: string;
   /** Stable nodeId for the embedded connector (default: `toon-<pubkeyShort>`). */
   nodeId?: string;
+
+  /**
+   * Run as a payment-oblivious relay (default `false`). When `true`, the relay
+   * runs as a payment-oblivious app behind an external terminator: no embedded
+   * connector is created and no x402/EIP-3009/ILP-settlement code runs. The
+   * node exposes `POST /write` (event-as-JSON), trusting injected
+   * `X-TOON-Payer`/`X-TOON-Amount`/`X-TOON-Chain` headers without re-validating
+   * payment. Free NIP-01 WS reads are unchanged. Mutually exclusive with
+   * `connector`/`connectorUrl`. Embedded modes remain the default and unchanged
+   * when this is `false`. Overridable via the `TOON_OBLIVIOUS_MODE` env var.
+   */
+  obliviousMode?: boolean;
 
   /** BTP server port for the embedded connector (default: 3000). */
   btpServerPort?: number;
@@ -345,6 +374,8 @@ export interface ResolvedRelayConfig {
   externalRelayUrl?: string;
   /** Chain preset name (e.g., 'anvil', 'arbitrum-one'). */
   chain: string;
+  /** Whether the relay is running in payment-oblivious mode (no connector). */
+  obliviousMode: boolean;
 }
 
 /**
@@ -519,6 +550,19 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
     );
   }
 
+  // Oblivious mode: payment-oblivious relay behind an external terminator. No
+  // embedded connector is created, so it is mutually exclusive with the
+  // connector/connectorUrl embedded modes. Env wins only when neither is set.
+  const obliviousMode =
+    config.obliviousMode ?? process.env['TOON_OBLIVIOUS_MODE'] === 'true';
+
+  if (obliviousMode && (hasConnector || hasConnectorUrl)) {
+    throw new Error(
+      'RelayConfig: obliviousMode is mutually exclusive with connector/connectorUrl ' +
+        '(an oblivious relay runs no embedded connector)'
+    );
+  }
+
   // When peering with a parent, the operator MUST set ilpAddress so it falls
   // under the parent's prefix (e.g. g.townhouse.<self>). The default
   // g.toon.<pubkey> address would not be routable from the parent.
@@ -555,7 +599,10 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
       ? BigInt(config.feePerEvent)
       : (config.basePricePerByte ?? 10n);
   const routingBufferPercent = config.routingBufferPercent ?? 10;
-  const x402Enabled = config.x402Enabled ?? false;
+  // x402 settles payments on-chain inside this process. In oblivious mode the
+  // process is payment-oblivious (an external terminator gates writes), so
+  // force x402 off regardless of what the caller passed.
+  const x402Enabled = obliviousMode ? false : (config.x402Enabled ?? false);
   const knownPeers = [...(config.knownPeers ?? [])];
   const dataDir = config.dataDir ?? './data';
   const devMode = config.devMode ?? false;
@@ -594,8 +641,11 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
   // `resolveChainConfig` reads `TOON_CHAIN` itself (env wins over the parameter),
   // so we mirror that precedence here to detect the sentinel before it throws on
   // an unknown chain name.
+  // Oblivious mode forces relay-only: no settlement chain, no provider, no
+  // channels — the process never touches the payment layer. The `'none'`
+  // sentinel (or oblivious mode) selects the relay-only branch below.
   const requestedChain = process.env['TOON_CHAIN'] || config.chain;
-  const relayOnly = requestedChain === 'none';
+  const relayOnly = requestedChain === 'none' || obliviousMode;
   if (relayOnly) {
     console.log('[Town] connector.relay_only', {
       reason: 'no settlement chain configured (chain=none)',
@@ -635,11 +685,14 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
     publishSeedEntry: publishSeedEntryFlag,
     ...(externalRelayUrl && { externalRelayUrl }),
     chain: chainConfig.name,
+    obliviousMode,
   };
 
   // --- 3c. Auto-create embedded connector when no pre-built one was supplied ---
+  // Skipped entirely in oblivious mode: a payment-oblivious relay runs no
+  // embedded connector (an external terminator gates writes).
   let autoCreatedConnector: ConnectorNode | null = null;
-  if (!hasConnector) {
+  if (!hasConnector && !obliviousMode) {
     const btpServerPort = config.btpServerPort ?? 3000;
     const connectorLogger = createConnectorLogger(
       nodeId,
@@ -780,17 +833,21 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
     autoCreatedConnector = new ConnectorNode(connectorConfig, connectorLogger);
   }
 
-  // Effective connector: user-provided or auto-created. Always defined.
-  const effectiveConnector: EmbeddableConnectorLike =
+  // Effective connector: user-provided or auto-created. Null in oblivious mode
+  // (no embedded connector); connector-dependent builders below are skipped.
+  const effectiveConnector: EmbeddableConnectorLike | null =
     config.connector ??
-    (autoCreatedConnector as unknown as EmbeddableConnectorLike);
+    (autoCreatedConnector as unknown as EmbeddableConnectorLike | null);
 
   // --- 4. Create data directory ---
   mkdirSync(dataDir, { recursive: true });
 
   // --- 5. EventStore ---
+  // Caller-supplied store wins (tests/embedding); otherwise default to the
+  // file-backed SqliteEventStore under dataDir.
   const dbPath = join(dataDir, 'events.db');
-  const eventStore: EventStore = new SqliteEventStore(dbPath);
+  const eventStore: EventStore =
+    config.eventStore ?? new SqliteEventStore(dbPath);
 
   // --- 5b. Auto-populate settlement defaults from chain preset ---
 
@@ -845,7 +902,10 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
       tokenNetworks: effectiveTokenNetworks,
     };
 
-    if (effectiveConnector.openChannel && effectiveConnector.getChannelState) {
+    if (
+      effectiveConnector?.openChannel &&
+      effectiveConnector.getChannelState
+    ) {
       channelClient = createDirectChannelClient(
         effectiveConnector as Required<
           Pick<EmbeddableConnectorLike, 'openChannel' | 'getChannelState'>
@@ -855,8 +915,10 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
   }
 
   // --- 7. Connector admin client ---
-  const adminClient: ConnectorAdminClient =
-    createDirectConnectorAdmin(effectiveConnector);
+  // Skipped in oblivious mode (no connector to administer).
+  const adminClient: ConnectorAdminClient | undefined = effectiveConnector
+    ? createDirectConnectorAdmin(effectiveConnector)
+    : undefined;
 
   // --- 8. SDK Pipeline ---
   const verifier = createVerificationPipeline({ devMode });
@@ -1006,51 +1068,59 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
     );
   });
 
-  app.post('/handle-packet', async (c: Context) => {
-    try {
-      const body = (await c.req.json()) as HandlePacketRequest;
-      if (
-        body.amount === undefined ||
-        body.amount === null ||
-        body.destination === undefined ||
-        body.destination === null ||
-        body.data === undefined ||
-        body.data === null
-      ) {
+  // The ILP localDelivery write surface is mounted ONLY in embedded mode. In
+  // oblivious mode the relay exposes POST /write instead (see below), and
+  // /handle-packet is left unmounted (404).
+  if (!obliviousMode) {
+    app.post('/handle-packet', async (c: Context) => {
+      try {
+        const body = (await c.req.json()) as HandlePacketRequest;
+        if (
+          body.amount === undefined ||
+          body.amount === null ||
+          body.destination === undefined ||
+          body.destination === null ||
+          body.data === undefined ||
+          body.data === null
+        ) {
+          return c.json(
+            { accept: false, code: 'F00', message: 'Missing required fields' },
+            400
+          );
+        }
+        const result = await handlePacket(body);
+        // Feed accepted kind:10032 events to discovery tracker for peer discovery
+        if (result.accept) {
+          try {
+            const toonBytes = Buffer.from(body.data, 'base64');
+            const decoded = decodeEventFromToon(toonBytes);
+            if (decoded && decoded.kind === ILP_PEER_INFO_KIND) {
+              discoveryTrackerRef.current?.processEvent(decoded);
+            }
+          } catch {
+            /* decode failed, ignore */
+          }
+        }
+        return c.json(result, result.accept ? 200 : 400);
+      } catch (error: unknown) {
+        // Log the full error server-side for debugging, but return a generic
+        // message to the caller to avoid leaking internal details (CWE-209).
+        console.error('[Town] handle-packet error:', error);
         return c.json(
-          { accept: false, code: 'F00', message: 'Missing required fields' },
-          400
+          { accept: false, code: 'T00', message: 'Internal server error' },
+          500
         );
       }
-      const result = await handlePacket(body);
-      // Feed accepted kind:10032 events to discovery tracker for peer discovery
-      if (result.accept) {
-        try {
-          const toonBytes = Buffer.from(body.data, 'base64');
-          const decoded = decodeEventFromToon(toonBytes);
-          if (decoded && decoded.kind === ILP_PEER_INFO_KIND) {
-            discoveryTrackerRef.current?.processEvent(decoded);
-          }
-        } catch {
-          /* decode failed, ignore */
-        }
-      }
-      return c.json(result, result.accept ? 200 : 400);
-    } catch (error: unknown) {
-      // Log the full error server-side for debugging, but return a generic
-      // message to the caller to avoid leaking internal details (CWE-209).
-      console.error('[Town] handle-packet error:', error);
-      return c.json(
-        { accept: false, code: 'T00', message: 'Internal server error' },
-        500
-      );
-    }
-  });
+    });
+  }
 
   // --- 10b. ILP client (created before x402 handler so it can be wired in) ---
-  const ilpClient: IlpClient = createDirectIlpClient(effectiveConnector, {
-    toonDecoder: (bytes: Uint8Array) => decodeEventFromToon(bytes),
-  });
+  // Skipped in oblivious mode (no connector to send ILP packets through).
+  const ilpClient: IlpClient | undefined = effectiveConnector
+    ? createDirectIlpClient(effectiveConnector, {
+        toonDecoder: (bytes: Uint8Array) => decodeEventFromToon(bytes),
+      })
+    : undefined;
 
   // --- 10c. viem clients for x402 settlement (conditional) ---
   let x402WalletClient: WalletClient | undefined;
@@ -1093,24 +1163,50 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
     }
   }
 
-  // --- 10d. x402 /publish route ---
-  const x402Handler = createX402Handler({
-    x402Enabled,
-    chainConfig,
-    basePricePerByte,
-    routingBufferPercent,
-    facilitatorAddress: config.facilitatorAddress ?? identity.evmAddress,
-    ownPubkey: identity.pubkey,
-    devMode,
-    eventStore,
-    ilpClient,
-    walletClient: x402WalletClient,
-    publicClient: x402PublicClient,
-  });
+  // --- 10d. Write surface routing ---
+  // Embedded mode (default): mount the x402 /publish route as before. Oblivious
+  // mode: mount POST /write (plain-HTTP, payment-oblivious) and skip /publish.
+  if (obliviousMode) {
+    // The oblivious write handler stores the event, then mirrors the SAME
+    // post-store side effects used by the embedded handlePacket closure:
+    //   1. broadcast to WS subscribers so live readers see new events, and
+    //   2. feed accepted kind:10032 events to the discovery tracker.
+    const obliviousHandler = createObliviousWriteHandler({
+      eventStore,
+      devMode,
+      onStored: (event) => {
+        // Mirror handlePacket's WS broadcast (town.ts step 8).
+        try {
+          wsRelayRef.current?.broadcastEvent(event);
+        } catch {
+          // Non-broadcastable payloads — ignore (matches embedded behavior).
+        }
+        // Mirror the discovery-tracker feed for kind:10032 (ILP peer info).
+        if (event.kind === ILP_PEER_INFO_KIND) {
+          discoveryTrackerRef.current?.processEvent(event);
+        }
+      },
+    });
+    app.post('/write', (c: Context) => obliviousHandler.handleWrite(c));
+  } else {
+    const x402Handler = createX402Handler({
+      x402Enabled,
+      chainConfig,
+      basePricePerByte,
+      routingBufferPercent,
+      facilitatorAddress: config.facilitatorAddress ?? identity.evmAddress,
+      ownPubkey: identity.pubkey,
+      devMode,
+      eventStore,
+      ilpClient,
+      walletClient: x402WalletClient,
+      publicClient: x402PublicClient,
+    });
 
-  // Register /publish for both GET and POST methods
-  app.get('/publish', (c: Context) => x402Handler.handlePublish(c));
-  app.post('/publish', (c: Context) => x402Handler.handlePublish(c));
+    // Register /publish for both GET and POST methods
+    app.get('/publish', (c: Context) => x402Handler.handlePublish(c));
+    app.post('/publish', (c: Context) => x402Handler.handlePublish(c));
+  }
 
   const blsServer: ServerType = serve({
     fetch: app.fetch,
@@ -1132,12 +1228,17 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
   let running = true;
 
   // --- 13. Bootstrap ---
-  bootstrapService.setConnectorAdmin(adminClient);
+  // Connector-dependent wiring is skipped in oblivious mode (no connector).
+  if (adminClient) {
+    bootstrapService.setConnectorAdmin(adminClient);
+  }
   if (channelClient) {
     bootstrapService.setChannelClient(channelClient);
   }
 
-  bootstrapService.setIlpClient(ilpClient);
+  if (ilpClient) {
+    bootstrapService.setIlpClient(ilpClient);
+  }
 
   bootstrapService.on((event: BootstrapEvent) => {
     switch (event.type) {
@@ -1154,7 +1255,7 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
   });
 
   // Wire the packet handler directly to the embedded connector.
-  if (effectiveConnector.setPacketHandler) {
+  if (effectiveConnector?.setPacketHandler) {
     effectiveConnector.setPacketHandler(async (request) => {
       const result = await handlePacket(request as HandlePacketRequest);
       // Feed accepted kind:10032 events to discovery tracker
@@ -1187,7 +1288,9 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
     secretKey: identity.secretKey,
     settlementInfo,
   });
-  discoveryTracker.setConnectorAdmin(adminClient);
+  if (adminClient) {
+    discoveryTracker.setConnectorAdmin(adminClient);
+  }
   if (channelClient) {
     discoveryTracker.setChannelClient(channelClient);
   }
@@ -1284,7 +1387,7 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
         // Publish to genesis relay via ILP if we have bootstrap peers
         const firstPeer = knownPeers[0];
         const genesisResult = results[0];
-        if (firstPeer && genesisResult) {
+        if (ilpClient && firstPeer && genesisResult) {
           const genesisIlpAddress = genesisResult.peerInfo.ilpAddress;
           const toonBytes = encodeEventToToon(ilpInfoEvent);
           const base64Toon = Buffer.from(toonBytes).toString('base64');
@@ -1359,7 +1462,7 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
       // Publish to peers via ILP (fire-and-forget, same pattern as kind:10032)
       const firstPeer = knownPeers[0];
       const genesisResult = results[0];
-      if (firstPeer && genesisResult) {
+      if (ilpClient && firstPeer && genesisResult) {
         const genesisIlpAddress = genesisResult.peerInfo.ilpAddress;
         const sdToonBytes = encodeEventToToon(serviceDiscoveryEvent);
         const sdBase64Toon = Buffer.from(sdToonBytes).toString('base64');
