@@ -170,7 +170,6 @@ async function main(): Promise<void> {
   // -------------------------------------------------------------------------
   // Create Settlement Info
   // -------------------------------------------------------------------------
-  // TODO: Read from environment (EVM address, token address, chain ID)
   const settlementInfo: SettlementConfig = {
     supportedChains: ['evm:base:31337'],
     settlementAddresses: {

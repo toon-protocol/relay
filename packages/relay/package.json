@@ -1,7 +1,7 @@
 {
   "name": "@toon-protocol/relay",
-  "version": "1.3.2",
-  "description": "ILP-gated Nostr relay with Business Logic Server",
+  "version": "1.3.4",
+  "description": "Nostr relay app: free NIP-01 reads + HTTP POST /write",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -35,7 +35,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/toon-protocol/town.git",
+    "url": "https://github.com/toon-protocol/relay.git",
     "directory": "packages/relay"
   },
   "author": "ALLiDoizCode",
