@@ -1,6 +1,7 @@
 export {
   encodeEventToToon,
   encodeEventToToonString,
+  decodeEventFromToon,
   ToonEncodeError,
-} from '@toon-protocol/core';
-export { decodeEventFromToon, ToonDecodeError } from '@toon-protocol/core';
+  ToonDecodeError,
+} from './codec.js';

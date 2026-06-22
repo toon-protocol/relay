@@ -1,0 +1,10 @@
+# Keep the Docker build context lean and reproducible. node_modules and dist are
+# rebuilt inside the image; .git/CI artifacts are never needed at build time.
+**/node_modules
+**/dist
+.git
+.github
+**/*.tsbuildinfo
+**/coverage
+**/data
+*.log

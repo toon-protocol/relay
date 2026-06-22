@@ -1,14 +1,53 @@
 # @toon-protocol/relay
 
-ILP-gated Nostr relay with payment verification, event storage, and dynamic pricing.
+A Nostr relay app: free NIP-01 WebSocket reads plus an HTTP `POST /write`
+surface for storing events.
 
-> This is an internal package. Most users should start with [`@toon-protocol/town`](../town) which wraps this into a single command, or [`@toon-protocol/sdk`](../sdk) for custom services.
+The relay contains **no ILP, connector, settlement, or pricing logic**. Payment
+is enforced entirely upstream by an external terminator — by the time a write
+reaches this process it is already proven paid, so the relay simply stores the
+event and serves reads.
 
 ## Install
 
 ```bash
 npm install @toon-protocol/relay
 ```
+
+## Run (CLI)
+
+```bash
+NOSTR_SECRET_KEY=<64-char-hex> npx @toon-protocol/relay
+# reads:  ws://localhost:7100
+# writes: http://localhost:3100/write
+# health: http://localhost:3100/health
+```
+
+| Env var | Default | Description |
+|---------|---------|-------------|
+| `TOON_SECRET_KEY` / `NOSTR_SECRET_KEY` | — | 64-char hex identity key (one of these or `TOON_MNEMONIC` is required) |
+| `TOON_MNEMONIC` | — | BIP-39 mnemonic (NIP-06 derivation) |
+| `TOON_RELAY_PORT` | `7100` | WebSocket read port |
+| `TOON_BLS_PORT` | `3100` | HTTP write/health port |
+| `TOON_DATA_DIR` | `./data` | SQLite data directory |
+| `TOON_DEV_MODE` | `false` | Skip event-signature verification on `POST /write` |
+
+## Run (programmatic)
+
+```ts
+import { startRelay } from '@toon-protocol/relay';
+
+const relay = await startRelay({ secretKey });
+// ... POST /write on 3100, read NIP-01 on 7100 ...
+await relay.stop();
+```
+
+## HTTP surface
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/write` | Store an event. Body `{ "event": <NostrEvent> }`. Trusts injected `X-TOON-Payer`/`-Amount`/`-Chain` headers (echoed, not validated); verifies only the event signature. |
+| `GET`  | `/health` | Liveness, identity (`pubkey`), `capabilities`, and `version`. |
 
 ## WebSocket Relay Server
 
@@ -21,124 +60,43 @@ const eventStore = new SqliteEventStore('./events.db');
 const relay = new NostrRelayServer({ port: 7100 }, eventStore);
 
 await relay.start();
-console.log(`Relay listening on port ${relay.getPort()}`);
-console.log(`Connected clients: ${relay.getClientCount()}`);
-
-// Push an event to all matching subscriptions
-relay.broadcastEvent(event);
-
+relay.broadcastEvent(event); // push to matching subscriptions
 await relay.stop();
-```
-
-### Configuration
-
-```ts
-import { DEFAULT_RELAY_CONFIG } from '@toon-protocol/relay';
-
-const config = {
-  port: 7100,                          // Default: 7000
-  maxConnections: 100,                 // Default: 100
-  maxSubscriptionsPerConnection: 20,   // Default: 20
-  maxFiltersPerSubscription: 10,       // Default: 10
-  databasePath: './events.db',         // Default: ':memory:'
-};
 ```
 
 ## Event Storage
 
-Two built-in storage backends.
-
 ```ts
 import { InMemoryEventStore, SqliteEventStore } from '@toon-protocol/relay';
 
-// In-memory (for testing or ephemeral nodes)
-const memStore = new InMemoryEventStore();
+const memStore = new InMemoryEventStore();      // ephemeral
+const sqlStore = new SqliteEventStore('./events.db'); // persistent
 
-// SQLite (for persistent storage)
-const sqlStore = new SqliteEventStore('./events.db');
-
-// Both implement the EventStore interface
 memStore.store(event);
 const found = memStore.get(event.id);
 const results = memStore.query([{ kinds: [1], limit: 10 }]);
 ```
 
-## Business Logic Server (BLS)
-
-HTTP server that verifies ILP payment packets, validates events, and gates writes behind payment.
-
-```ts
-import { BusinessLogicServer, SqliteEventStore } from '@toon-protocol/relay';
-
-const eventStore = new SqliteEventStore('./events.db');
-const bls = new BusinessLogicServer({
-  basePricePerByte: 10n,
-  ownerPubkey: 'abc123...',   // Owner events bypass payment
-}, eventStore);
-
-// Start HTTP server
-bls.listen(3100);
-
-// Or handle packets directly
-const response = bls.handlePacket({
-  amount: '5000',
-  destination: 'g.toon.node-a',
-  data: 'base64-encoded-toon-event',
-});
-
-if (response.accept) {
-  console.log('Event stored:', response.metadata?.eventId);
-}
-```
-
-### Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Health check with pricing, capabilities, chain info |
-| `POST` | `/handle-packet` | Process ILP payment packets |
-
-## Pricing Service
-
-Dynamic per-byte pricing with kind-specific overrides.
-
-```ts
-import { PricingService } from '@toon-protocol/relay';
-
-const pricing = new PricingService({
-  basePricePerByte: 10n,
-  kindOverrides: new Map([
-    [1, 5n],      // Short notes: cheaper
-    [30023, 20n], // Long-form articles: premium
-  ]),
-});
-
-const price = pricing.computePrice(1, eventSizeInBytes);
-```
-
 ## TOON Codec
 
-Re-exported from [`@toon-protocol/core`](../core) for convenience.
+Re-exported from [`@toon-protocol/core`](https://github.com/toon-protocol/core) for convenience.
 
 ```ts
 import { encodeEventToToon, decodeEventFromToon } from '@toon-protocol/relay';
-
-const toonBytes = encodeEventToToon(nostrEvent);
-const event = decodeEventFromToon(toonBytes);
 ```
 
 ## Full API
 
 | Category | Exports |
 |----------|---------|
-| **Relay** | `NostrRelayServer`, `ConnectionHandler`, `RelayConfig`, `DEFAULT_RELAY_CONFIG` |
-| **Storage** | `EventStore`, `InMemoryEventStore`, `SqliteEventStore` |
-| **BLS** | `BusinessLogicServer`, `BlsConfig`, `HandlePacketRequest/Response` |
-| **Pricing** | `PricingService`, `PricingConfig`, `loadPricingConfigFromEnv`, `loadPricingConfigFromFile` |
+| **Launcher** | `startRelay`, `RelayConfig`, `RelayInstance`, `RelaySubscription`, `ResolvedRelayConfig` |
+| **Relay** | `NostrRelayServer`, `ConnectionHandler`, `RelayServerConfig`, `DEFAULT_RELAY_CONFIG` |
+| **Storage** | `EventStore`, `InMemoryEventStore`, `SqliteEventStore`, `RelayError` |
+| **Write/Health** | `createWriteHandler`, `createHealthResponse` |
 | **Codec** | `encodeEventToToon`, `decodeEventFromToon`, `ToonEncodeError`, `ToonDecodeError` |
+| **Subscriber** | `RelaySubscriber`, `RelaySubscriberConfig` |
 | **Filter** | `matchFilter` |
-| **Errors** | `RelayError`, `BlsError`, `PricingError` |
-| **Constants** | `ILP_ERROR_CODES`, `PUBKEY_REGEX`, `VERSION` |
+| **Constants** | `VERSION` |
 
 ## License
 
