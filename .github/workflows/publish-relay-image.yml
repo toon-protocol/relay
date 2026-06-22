@@ -1,13 +1,11 @@
 name: Publish relay image
 
-# Builds the oblivious-capable relay image (packages/relay/Dockerfile) and
-# pushes it to GHCR. Unblocks connector #221/#222: their app-behind-terminator
-# compose references ghcr.io/toon-protocol/relay:oblivious.
+# Builds the relay image (packages/relay/Dockerfile) and pushes it to GHCR.
+# Unblocks connector #221/#222: their app-behind-terminator compose points
+# RELAY_IMAGE at this image.
 #
-# The `oblivious` tag is (re)published on every push to main and on release
-# tags, so the connector compose's default RELAY_IMAGE always resolves to the
-# latest relay#24 contract. Version tags (vX.Y.Z) additionally publish semver
-# tags for pinning.
+# `latest` is (re)published on every push to main; version tags (vX.Y.Z) also
+# publish semver tags for pinning, plus an immutable sha tag.
 
 on:
   push:
@@ -40,10 +38,10 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/relay
-          # `oblivious` is the connector compose default and tracks main; semver
-          # tags publish on vX.Y.Z; sha tags give an immutable handle.
+          # `latest` tracks main; semver tags publish on vX.Y.Z; sha tags give
+          # an immutable handle.
           tags: |
-            type=raw,value=oblivious
+            type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha

@@ -92,7 +92,7 @@ import { encodeEventToToon, decodeEventFromToon } from '@toon-protocol/relay';
 | **Launcher** | `startRelay`, `RelayConfig`, `RelayInstance`, `RelaySubscription`, `ResolvedRelayConfig` |
 | **Relay** | `NostrRelayServer`, `ConnectionHandler`, `RelayServerConfig`, `DEFAULT_RELAY_CONFIG` |
 | **Storage** | `EventStore`, `InMemoryEventStore`, `SqliteEventStore`, `RelayError` |
-| **Write/Health** | `createObliviousWriteHandler`, `createHealthResponse` |
+| **Write/Health** | `createWriteHandler`, `createHealthResponse` |
 | **Codec** | `encodeEventToToon`, `decodeEventFromToon`, `ToonEncodeError`, `ToonDecodeError` |
 | **Subscriber** | `RelaySubscriber`, `RelaySubscriberConfig` |
 | **Filter** | `matchFilter` |

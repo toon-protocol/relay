@@ -1,5 +1,5 @@
 /**
- * Unit tests for the payment-oblivious write handler.
+ * Unit tests for the write handler.
  *
  * The handler accepts an event-as-JSON, trusts (does not validate) injected
  * X-TOON-* payment headers, verifies only the event signature for integrity,
@@ -17,8 +17,8 @@ import { Hono } from 'hono';
 import { generateSecretKey, finalizeEvent } from 'nostr-tools/pure';
 import type { NostrEvent } from 'nostr-tools/pure';
 import { InMemoryEventStore } from '../../storage/index.js';
-import { createObliviousWriteHandler } from './oblivious-write-handler.js';
-import type { ObliviousWriteHandlerConfig } from './oblivious-write-handler.js';
+import { createWriteHandler } from './write-handler.js';
+import type { WriteHandlerConfig } from './write-handler.js';
 
 /**
  * Create a properly signed Nostr event for testing.
@@ -43,12 +43,12 @@ function createValidSignedEvent(
  * Mount the handler on a bare Hono app and dispatch a POST /write request.
  */
 async function makeRequest(
-  config: ObliviousWriteHandlerConfig,
+  config: WriteHandlerConfig,
   body: unknown,
   headers: Record<string, string> = {},
   rawBody?: string
 ): Promise<Response> {
-  const handler = createObliviousWriteHandler(config);
+  const handler = createWriteHandler(config);
   const app = new Hono();
   app.post('/write', (c) => handler.handleWrite(c));
 
@@ -64,7 +64,7 @@ async function makeRequest(
   return app.fetch(request);
 }
 
-describe('Oblivious write handler', () => {
+describe('Write handler', () => {
   it('stores a valid signed event, echoes headers, and calls onStored once', async () => {
     // Given: an in-memory store, a tracking callback, and a signed event
     const eventStore = new InMemoryEventStore();

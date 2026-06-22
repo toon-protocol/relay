@@ -11,7 +11,7 @@ export { VERSION } from './version.js';
 // Types
 // NOTE: the low-level WebSocket relay-server config is exported as
 // `RelayServerConfig` (renamed from `RelayConfig`) so the launcher's
-// `RelayConfig` (formerly `TownConfig`) can take the `RelayConfig` name.
+// `RelayConfig` can take the `RelayConfig` name.
 export type { RelayServerConfig } from './types.js';
 export { DEFAULT_RELAY_CONFIG } from './types.js';
 
@@ -43,42 +43,31 @@ export type { RelaySubscriberConfig } from './subscriber/index.js';
 export { RelaySubscriber } from './subscriber/index.js';
 
 // ---------------------------------------------------------------------------
-// Launcher (formerly @toon-protocol/town)
+// Launcher
 //
 // One-call programmatic API (startRelay()) that wires the event store, the
-// HTTP write/health server, and the NIP-01 WebSocket read server. Merged in
-// from the @toon-protocol/town package; old `startTown`/`Town*` names are
-// re-exported as deprecated aliases.
+// HTTP write/health server, and the NIP-01 WebSocket read server.
 // ---------------------------------------------------------------------------
 
 // Relay launcher lifecycle API
-export { startRelay } from './launcher/town.js';
+export { startRelay } from './launcher/relay.js';
 export type {
   RelayConfig,
   RelayInstance,
   RelaySubscription,
   ResolvedRelayConfig,
-} from './launcher/town.js';
-
-// Deprecated launcher aliases (town → relay merge)
-export { startTown } from './launcher/town.js';
-export type {
-  TownConfig,
-  TownInstance,
-  TownSubscription,
-  ResolvedTownConfig,
-} from './launcher/town.js';
+} from './launcher/relay.js';
 
 // Health response
 export { createHealthResponse } from './launcher/health.js';
 export type { HealthConfig, HealthResponse } from './launcher/health.js';
 
-// Payment-oblivious write handler (POST /write surface)
-export { createObliviousWriteHandler } from './launcher/handlers/oblivious-write-handler.js';
+// Write handler (POST /write surface)
+export { createWriteHandler } from './launcher/handlers/write-handler.js';
 export type {
-  ObliviousWriteHandler,
-  ObliviousWriteHandlerConfig,
-} from './launcher/handlers/oblivious-write-handler.js';
+  WriteHandler,
+  WriteHandlerConfig,
+} from './launcher/handlers/write-handler.js';
 
 // Re-exports from @toon-protocol/bls removed to avoid circular dependency
 // Downstream consumers should import directly from @toon-protocol/bls instead

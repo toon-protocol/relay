@@ -1,16 +1,15 @@
 /**
- * Payment-oblivious write handler for @toon-protocol/relay.
+ * Write handler for @toon-protocol/relay.
  *
  * Exposes a plain-HTTP write surface that accepts an event-as-JSON, trusts
  * (but does NOT validate) injected payment headers, verifies ONLY the event
  * signature for integrity, and stores the event.
  *
- * This handler is intentionally decoupled from the payment layer: it contains
- * no claim/settlement/ILP/x402/EIP-3009 logic and imports none of it. Payment
- * validation is the connector's concern; by the time a request reaches this
- * surface, the trusted `X-TOON-*` headers are assumed already proven by an
- * upstream gate. The handler captures them purely for the response echo and a
- * log line.
+ * This handler is intentionally decoupled from any payment layer: it contains
+ * no claim/settlement/ILP logic and imports none of it. Payment validation is
+ * the upstream terminator's concern; by the time a request reaches this surface
+ * the trusted `X-TOON-*` headers are assumed already proven. The handler
+ * captures them purely for the response echo and a log line.
  *
  * Flow:
  * 1. Parse JSON body `{ event }` -> 400 on malformed/missing event
@@ -29,9 +28,9 @@ import type { NostrEvent } from 'nostr-tools/pure';
 import type { EventStore } from '../../storage/index.js';
 
 /**
- * Configuration for the payment-oblivious write handler.
+ * Configuration for the write handler.
  */
-export interface ObliviousWriteHandlerConfig {
+export interface WriteHandlerConfig {
   /** Event store backend used to persist accepted events. */
   eventStore: EventStore;
   /** Whether dev mode is enabled (skips Schnorr signature verification). */
@@ -41,22 +40,22 @@ export interface ObliviousWriteHandlerConfig {
 }
 
 /**
- * Payment-oblivious write handler instance.
+ * Write handler instance.
  */
-export interface ObliviousWriteHandler {
+export interface WriteHandler {
   /** Handle a plain-HTTP write request. */
   handleWrite(c: Context): Promise<Response>;
 }
 
 /**
- * Create a payment-oblivious write handler.
+ * Create a write handler.
  *
  * @param config - Handler configuration.
- * @returns An ObliviousWriteHandler with a handleWrite method.
+ * @returns A WriteHandler with a handleWrite method.
  */
-export function createObliviousWriteHandler(
-  config: ObliviousWriteHandlerConfig
-): ObliviousWriteHandler {
+export function createWriteHandler(
+  config: WriteHandlerConfig
+): WriteHandler {
   return {
     async handleWrite(c: Context): Promise<Response> {
       // --- Parse request body ---
@@ -79,7 +78,7 @@ export function createObliviousWriteHandler(
       const chain = c.req.header('X-TOON-Chain');
 
       console.log(
-        `[oblivious-write] event=${event.id} payer=${payer ?? '-'} amount=${amount ?? '-'} chain=${chain ?? '-'}`
+        `[write] event=${event.id} payer=${payer ?? '-'} amount=${amount ?? '-'} chain=${chain ?? '-'}`
       );
 
       // --- Verify event signature (integrity only; skipped in devMode) ---

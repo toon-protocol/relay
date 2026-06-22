@@ -1,12 +1,12 @@
 /**
  * Unit Tests: NOSTR_SECRET_KEY identity alias support (issue #26)
  *
- * The published oblivious-mode relay image honors the connector's documented
- * env contract, which names the identity key `NOSTR_SECRET_KEY` (the same var
- * the BLS entrypoint uses). The relay CLI must accept it as an alias for
- * TOON_SECRET_KEY so the image is a drop-in for connector #221's compose.
+ * The published relay image honors the connector's documented env contract,
+ * which names the identity key `NOSTR_SECRET_KEY` (the same var the BLS
+ * entrypoint uses). The relay CLI must accept it as an alias for TOON_SECRET_KEY
+ * so the image is a drop-in for connector #221's compose.
  *
- * These are source-based assertions, mirroring fee-per-event-env.test.ts.
+ * These are source-based assertions.
  */
 
 import { describe, it, expect } from 'vitest';

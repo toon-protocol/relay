@@ -32,7 +32,7 @@ import { SqliteEventStore } from '../storage/index.js';
 import type { EventStore } from '../storage/index.js';
 import { NostrRelayServer } from '../websocket/index.js';
 import { RelaySubscriber } from '../subscriber/index.js';
-import { createObliviousWriteHandler } from './handlers/oblivious-write-handler.js';
+import { createWriteHandler } from './handlers/write-handler.js';
 import { createHealthResponse } from './health.js';
 
 // ---------- Configuration ----------
@@ -271,7 +271,7 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
 
   // POST /write: trust the upstream terminator's injected payment headers,
   // verify only the event signature, store, and broadcast to live WS readers.
-  const writeHandler = createObliviousWriteHandler({
+  const writeHandler = createWriteHandler({
     eventStore,
     devMode,
     onStored: (event) => {
@@ -340,26 +340,3 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
 
   return instance;
 }
-
-// ---------- Deprecated aliases ----------
-// The launcher API was renamed from `startTown`/`Town*` to `startRelay`/`Relay*`
-// when @toon-protocol/town was merged into @toon-protocol/relay. The old names
-// are retained as aliases so existing callers keep working.
-
-/**
- * @deprecated Use {@link startRelay} instead. Retained for backwards
- * compatibility after the town → relay package merge.
- */
-export const startTown = startRelay;
-
-/** @deprecated Use {@link RelayConfig} instead. */
-export type TownConfig = RelayConfig;
-
-/** @deprecated Use {@link RelayInstance} instead. */
-export type TownInstance = RelayInstance;
-
-/** @deprecated Use {@link ResolvedRelayConfig} instead. */
-export type ResolvedTownConfig = ResolvedRelayConfig;
-
-/** @deprecated Use {@link RelaySubscription} instead. */
-export type TownSubscription = RelaySubscription;

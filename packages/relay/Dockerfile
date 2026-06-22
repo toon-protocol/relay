@@ -7,12 +7,11 @@
 #   * GET  /health on TOON_BLS_PORT — compose healthcheck
 #   * free NIP-01 WS reads on TOON_RELAY_PORT (default 7100)
 #
-# Published as ghcr.io/toon-protocol/relay:oblivious (the connector's
-# `app-behind-terminator` compose default); the `:oblivious` tag is retained
-# for compatibility — the image always behaves this way now.
+# Published as ghcr.io/toon-protocol/relay:latest (the connector's
+# `app-behind-terminator` compose points RELAY_IMAGE here).
 #
 # Build from repo root:
-#   docker build -f packages/relay/Dockerfile -t ghcr.io/toon-protocol/relay:oblivious .
+#   docker build -f packages/relay/Dockerfile -t ghcr.io/toon-protocol/relay:latest .
 
 # ── Stage 1: Builder ─────────────────────────────────────────
 FROM node:20-alpine AS builder

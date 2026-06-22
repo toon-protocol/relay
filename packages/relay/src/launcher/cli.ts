@@ -4,7 +4,7 @@
  * CLI entrypoint for @toon-protocol/relay.
  *
  * Thin wrapper around startRelay() that parses CLI flags and environment
- * variables, then delegates to town.ts. The relay is a plain read/write app:
+ * variables, then delegates to relay.ts. The relay is a plain read/write app:
  * free NIP-01 WebSocket reads plus an HTTP `POST /write` surface. Payment is
  * enforced upstream by an external terminator, so there are no connector,
  * ILP, chain, or pricing options here.
@@ -17,8 +17,8 @@
  */
 
 import { parseArgs } from 'node:util';
-import { startRelay } from './town.js';
-import type { RelayConfig, RelayInstance } from './town.js';
+import { startRelay } from './relay.js';
+import type { RelayConfig, RelayInstance } from './relay.js';
 
 // ---------- CLI Parsing ----------
 

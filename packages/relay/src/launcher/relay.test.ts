@@ -19,8 +19,8 @@ import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { generateSecretKey, finalizeEvent } from 'nostr-tools/pure';
 import type { NostrEvent } from 'nostr-tools/pure';
-import { startRelay } from './town.js';
-import type { RelayInstance } from './town.js';
+import { startRelay } from './relay.js';
+import type { RelayInstance } from './relay.js';
 import { InMemoryEventStore } from '../storage/index.js';
 
 // High, unlikely-to-collide port base. Each boot() takes a fresh pair so
