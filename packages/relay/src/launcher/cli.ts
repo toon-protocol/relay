@@ -44,6 +44,12 @@ Options:
   --known-peers <json>     Known peers as JSON array
   --dev-mode               Enable dev mode (skip verification)
   --x402-enabled           Enable x402 /publish endpoint (default: false)
+  --oblivious-mode         Run as a payment-oblivious relay (default: false).
+                           No embedded connector is created and no x402/ILP
+                           settlement code runs; exposes POST /write (event-as-
+                           JSON) trusting injected X-TOON-* headers. Free NIP-01
+                           WS reads are unchanged. Mutually exclusive with
+                           --connector-url.
   --discovery <mode>       Discovery mode: 'seed-list' or 'genesis' (default: 'genesis')
   --seed-relays <urls>     Comma-separated public Nostr relay URLs for seed discovery
   --publish-seed-entry     Publish this node as a seed relay entry (default: false)
@@ -64,6 +70,7 @@ Environment Variables:
   TOON_KNOWN_PEERS        Same as --known-peers
   TOON_DEV_MODE           Same as --dev-mode (set to "true")
   TOON_X402_ENABLED       Same as --x402-enabled (set to "true")
+  TOON_OBLIVIOUS_MODE     Same as --oblivious-mode (set to "true")
   TOON_DISCOVERY          Same as --discovery
   TOON_SEED_RELAYS        Same as --seed-relays
   TOON_PUBLISH_SEED_ENTRY Same as --publish-seed-entry (set to "true")
@@ -101,6 +108,7 @@ function parseCli(): RelayConfig {
       'known-peers': { type: 'string' },
       'dev-mode': { type: 'boolean' },
       'x402-enabled': { type: 'boolean' },
+      'oblivious-mode': { type: 'boolean' },
       discovery: { type: 'string' },
       'seed-relays': { type: 'string' },
       'publish-seed-entry': { type: 'boolean' },
@@ -203,6 +211,10 @@ function parseCli(): RelayConfig {
   const x402Enabled =
     values['x402-enabled'] ??
     (process.env['TOON_X402_ENABLED'] === 'true' ? true : undefined);
+
+  const obliviousMode =
+    values['oblivious-mode'] ??
+    (process.env['TOON_OBLIVIOUS_MODE'] === 'true' ? true : undefined);
 
   const knownPeersJson =
     values['known-peers'] ?? process.env['TOON_KNOWN_PEERS'] ?? undefined;
@@ -400,6 +412,7 @@ function parseCli(): RelayConfig {
     ...(knownPeers && { knownPeers }),
     ...(devMode !== undefined && { devMode }),
     ...(x402Enabled !== undefined && { x402Enabled }),
+    ...(obliviousMode !== undefined && { obliviousMode }),
     ...(discoveryMode && { discovery: discoveryMode }),
     ...(seedRelaysArr && { seedRelays: seedRelaysArr }),
     ...(publishSeedEntry !== undefined && { publishSeedEntry }),
