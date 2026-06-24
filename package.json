@@ -2,7 +2,7 @@
   "name": "relay",
   "version": "0.3.0",
   "private": true,
-  "description": "ILP-gated Nostr relay. Pay to write, free to read.",
+  "description": "NIP-01 Nostr relay: WebSocket reads + HTTP POST /write",
   "type": "module",
   "scripts": {
     "build": "pnpm -r run build",
@@ -85,9 +85,5 @@
     "ws": "^8.19.0",
     "zod": "^3.25.0",
     "@changesets/cli": "^2.27.9"
-  },
-  "dependencies": {
-    "@ardrive/turbo-sdk": "^1.41.0",
-    "arweave": "^1.15.5"
   }
 }
