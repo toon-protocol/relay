@@ -20,13 +20,6 @@ overrides:
 importers:
 
   .:
-    dependencies:
-      '@ardrive/turbo-sdk':
-        specifier: ^1.41.0
-        version: 1.41.0(typescript@5.9.3)
-      arweave:
-        specifier: ^1.15.5
-        version: 1.15.7
     devDependencies:
       '@changesets/cli':
         specifier: ^2.27.9
