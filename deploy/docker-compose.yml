@@ -1,0 +1,78 @@
+# =============================================================================
+# relay deploy — connector (payment proxy) + oblivious Nostr relay. NO Caddy.
+# =============================================================================
+# The connector monetizes WRITES; READS are free and hit the relay's WS directly.
+# TLS is terminated by the deployment environment, which reverse-proxies to the
+# host-published edge (:3000) and to the free-read WS (:7100).
+#
+#   payer ──POST /ilp──▶ connector ──POST /write──▶ relay:3100  (paid store; PRIVATE)
+#   reader ──wss REQ (free)───────────────────────▶ relay:7100  (Nostr reads; PUBLIC)
+#
+# PRIVACY INVARIANT (enforced by construction):
+#   - relay :3100 (paid-write store)  → NEVER host-published; only connector:3100.
+#   - connector admin :8081 / health :8080 → NEVER host-published.
+#   The only host-bound ports are the edge :3000 and the free-read WS :7100.
+#
+# Dev:  docker compose up --build   (builds relay-connector locally from ./Dockerfile)
+# Prod: docker compose up           (pulls the pinned RELAY_CONNECTOR_IMAGE)
+# =============================================================================
+
+services:
+  # ── The payment proxy (connector + baked relay route config) ────────────────
+  connector:
+    image: ${RELAY_CONNECTOR_IMAGE:-ghcr.io/toon-protocol/relay-connector:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CONNECTOR_TAG: ${CONNECTOR_TAG:-3.24.2}
+    environment:
+      CONFIG_FILE: /app/config/connector.yaml
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # "Drop in your seedphrase": the on-chain settlement key is derived from this
+      # BIP-39 mnemonic at boot (overwrites connector.yaml's keyId). Empty → the
+      # pre-funded anvil account-0 devnet fallback.
+      TOON_MNEMONIC: ${TOON_MNEMONIC:-}
+      # The shared devnet serves a SELF-SIGNED cert — devnet-only shortcut so the
+      # connector's RPC/faucet calls don't fail TLS verification. DEVNET-ONLY.
+      NODE_TLS_REJECT_UNAUTHORIZED: ${NODE_TLS_REJECT_UNAUTHORIZED:-0}
+    ports:
+      - '${EDGE_PORT:-3000}:3000' # paid POST /ilp edge (the env's TLS terminator fronts this)
+    expose:
+      - '8080' # health — internal only
+    depends_on:
+      relay:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── The oblivious relay (real Nostr relay) ──────────────────────────────────
+  # Published relay image. The paid-write HTTP store port (3100, POST /write) is
+  # NOT published — only the connector dials it over the compose network
+  # (relay:3100), which enforces the privacy invariant.
+  relay:
+    image: ${RELAY_IMAGE:-ghcr.io/toon-protocol/relay:latest}
+    environment:
+      TOON_OBLIVIOUS_MODE: 'true'
+      TOON_BLS_PORT: '3100' # paid-write HTTP store (POST /write) — PRIVATE
+      TOON_RELAY_PORT: '7100' # free-read Nostr WS — published
+      TOON_CHAIN: 'none' # oblivious forces relay-only; explicit for safety
+      # The relay CLI REQUIRES an identity key to boot (this is IDENTITY, not
+      # money). Generate an ephemeral 32-byte hex into RELAY_NOSTR_SECRET_KEY in .env.
+      NOSTR_SECRET_KEY: ${RELAY_NOSTR_SECRET_KEY:?set RELAY_NOSTR_SECRET_KEY in .env (32-byte hex)}
+      # Enforce Nostr signature verification on writes (public deploy → false).
+      TOON_DEV_MODE: ${RELAY_DEV_MODE:-false}
+    ports:
+      - '${RELAY_WS_PORT:-7100}:7100' # free reads (the env's TLS terminator fronts this)
+    expose:
+      - '3100' # paid-write store — PRIVATE (only the connector dials relay:3100)
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q --spider http://localhost:3100/health || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+networks:
+  default:
+    name: relay_deploy_net
