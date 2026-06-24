@@ -2,7 +2,7 @@
 
 TOON Protocol Nostr relay node — @toon-protocol/relay (NIP-01 relay + BLS + startRelay launcher) and @toon-protocol/bls
 
-> Extracted from the TOON monorepo with full git history preserved. npm publishing is done by CI (changesets + `pnpm`, authed by the org `NPM_TOKEN` secret). Docker image-publish workflows (where applicable) are a follow-up carved from the monorepo `publish-townhouse-images.yml`.
+> Extracted from the TOON monorepo with full git history preserved. npm publishing is done by CI (changesets + `pnpm`, authed by the org `NPM_TOKEN` secret). Docker image published to ghcr.io/toon-protocol/relay:latest by publish-relay-image.yml.
 
 ### Getting started with Devbox
 
