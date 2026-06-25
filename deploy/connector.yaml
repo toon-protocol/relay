@@ -145,3 +145,40 @@ routes:
     ilpAddress: g.proxy.store
     settlementAddresses:
       evm: '0xC0E55cD2E967a4F625627DaE5d4946f54267C7ab'
+
+# ── Self-announce (kind:10032 IlpPeerInfo) ────────────────────────────────────
+# Closes the discovery gap behind toon-protocol/relay#37 + toon-protocol/store#22.
+# This connector is THE g.proxy apex, so it is the single emitter for the whole
+# topology: it periodically builds, signs, and republishes a fresh kind:10032
+# announcement to the relay it fronts (relay:3100 POST /write — the same private
+# store it reverse-proxies paid writes to). The event then shows up on the relay's
+# free read WS, so a client holding ONLY the genesis seed can discover the publish
+# AND store routes out of band and drop hardcoded publishDestination/storeDestination.
+#
+# - Signed with this node's NIP-06 Nostr key (derived from TOON_MNEMONIC — the same
+#   identity it settles with; NO new secret). The store box does NOT self-announce:
+#   its private /write is not reachable across boxes, and the apex already advertises
+#   the g.proxy.store route here (clients always pay the apex first hop, so the apex
+#   settlement address advertised below is the right one for every route).
+# - NIP-40 expiration is refreshed at ~half the TTL (refreshIntervalSecs → TTL = 2x),
+#   so the announcement is CONTINUOUSLY fresh and never lapses while the node is up.
+# - `routes` rides in the announcement CONTENT (not a core wire-type change).
+#
+# REQUIRES a connector image that includes the self-announce feature
+# (toon-protocol/connector#265). Bump CONNECTOR_TAG (.env / Dockerfile) to a release
+# that carries it; older images ignore this block.
+selfAnnounce:
+  enabled: true
+  # The relay's PRIVATE paid-write store (compose-network only; never host-published).
+  writeUrl: http://relay:3100/write
+  refreshIntervalSecs: 300
+  # Public-facing endpoints the connector can't infer (TLS terminated by the env).
+  btpEndpoint: wss://proxy.devnet.toonprotocol.dev:443
+  httpEndpoint: https://proxy.devnet.toonprotocol.dev/ilp
+  relayUrl: wss://relay-ws.devnet.toonprotocol.dev
+  assetCode: USDC
+  assetScale: 6
+  # Route hints carried in announcement content so clients learn routing out of band.
+  routes:
+    publish: g.proxy.relay
+    store: g.proxy.store

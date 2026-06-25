@@ -85,11 +85,40 @@ WS read; an unpaid `POST /ilp` → REJECT; and the relay store (`:3100`) is NOT
 publicly reachable. (Against a public edge, point the URLs at the env's HTTPS
 hostnames instead of `localhost`.)
 
+## Out-of-band discovery (kind:10032 self-announce)
+
+This apex connector publishes a fresh `kind:10032` `IlpPeerInfo` announcement to the
+relay it fronts so a client holding **only the genesis seed** can discover the
+publish (`g.proxy.relay`) **and** store (`g.proxy.store`) routes out of band —
+instead of hardcoding `publishDestination`/`storeDestination` in its config. This
+closes [toon-protocol/relay#37](https://github.com/toon-protocol/relay/issues/37)
+and [toon-protocol/store#22](https://github.com/toon-protocol/store/issues/22).
+
+- The connector is **the single emitter** for the whole `g.proxy` topology (it owns
+  all three routes), so the store box does **not** announce separately — the apex
+  advertises the store route here. It signs with its **NIP-06 key derived from
+  `TOON_MNEMONIC`** (the settlement identity; no new secret) and writes the event to
+  the relay's private `POST /write` store, which surfaces it on the free read WS.
+- It **refreshes before the NIP-40 expiration lapses** (`refreshIntervalSecs` →
+  TTL = 2×), so the announcement is continuously fresh while the node is up.
+- Config lives in `connector.yaml`'s `selfAnnounce` block. **It REQUIRES a connector
+  image that includes [toon-protocol/connector#265](https://github.com/toon-protocol/connector/pull/265)** —
+  bump `CONNECTOR_TAG` to a release carrying it; older images ignore the block.
+
+Verify it's live (after redeploying the apex against a connector that supports it):
+
+```bash
+# Query the free read WS for the apex announcement (replace host for a public edge):
+npx ts-node -e 'import {SimplePool} from "nostr-tools";const p=new SimplePool();p.querySync(["ws://localhost:7100"],{kinds:[10032]}).then(e=>{console.log(e);process.exit(0)})'
+# Expect a fresh, UNEXPIRED kind:10032 whose content carries routes {publish,store}.
+```
+
 ## Privacy invariant
 
 - **relay `:3100` (paid-write store) is never host-published** — the only way in
   is a paid `POST /ilp` to the connector. Enforcement is by construction
-  (`expose`, not `ports`).
+  (`expose`, not `ports`). The self-announce writer reaches it over the compose
+  network (`relay:3100`), not the host.
 - **connector `:8080` / admin `:8081` are never host-published.**
 - The only host-bound ports are the edge **`:3000`** and the free-read WS
   **`:7100`** — both fronted by the environment's TLS terminator.
