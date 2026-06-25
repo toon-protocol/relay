@@ -20,6 +20,8 @@
  * - BOOTSTRAP_PEERS: Comma-separated peer pubkeys to bootstrap with
  * - BASE_PRICE_PER_BYTE: Base price per byte (default: 10)
  * - DATA_DIR: Data directory for persistent storage
+ * - ILP_INFO_REFRESH_INTERVAL: Seconds between kind:10032 re-publishes; the
+ *   announcement's NIP-40 expiration is set to 2x this (default: 300)
  */
 
 import { serve } from '@hono/node-server';
@@ -368,15 +370,55 @@ async function main(): Promise<void> {
   await bootstrapService.bootstrap();
   console.log(`✅ Bootstrap completed`);
 
-  // If genesis peer (no bootstrap peers), publish own ILP info to local relay
-  if (bootstrapPeers.length === 0) {
-    const ilpInfoEvent = buildIlpPeerInfoEvent(ilpInfo, secretKey);
-    eventStore.store(ilpInfoEvent);
-    console.log(
-      `✅ Genesis peer: Published ILP info (kind:10032) to local relay`
-    );
-    console.log(`   Event ID: ${ilpInfoEvent.id}`);
-  }
+  // -------------------------------------------------------------------------
+  // Publish own ILP info (kind:10032) to the local relay — and keep it fresh.
+  // -------------------------------------------------------------------------
+  // This announcement is the OUT-OF-BAND descriptor for this node's route +
+  // settlement: a client holding only the committed genesis seed (connect info
+  // only) discovers how to publish/route here by querying this kind:10032 on the
+  // local relay, with NO hardcoded destination. The apex (g.proxy.relay) must
+  // therefore always self-announce — published unconditionally (mirrors the
+  // store apex, which publishes its own ILP info to its local relay regardless
+  // of genesis status), not only on the genesis path.
+  //
+  // FRESHNESS: each event carries a NIP-40 `expiration` (ttl = 2x the refresh
+  // interval) and is re-published on an interval so an unexpired announcement is
+  // always available. kind:10032 is a replaceable event (10000-19999), so each
+  // refresh supersedes the prior one rather than accumulating copies.
+  const ilpInfoRefreshSeconds = parseInt(
+    process.env['ILP_INFO_REFRESH_INTERVAL'] || '300',
+    10
+  );
+  const publishOwnIlpInfo = (): void => {
+    try {
+      const ilpInfoEvent = buildIlpPeerInfoEvent(ilpInfo, secretKey, {
+        ttlSeconds: ilpInfoRefreshSeconds * 2,
+      });
+      eventStore.store(ilpInfoEvent);
+      try {
+        relay.broadcastEvent(ilpInfoEvent);
+      } catch {
+        // Non-broadcastable payloads -- ignore.
+      }
+      console.log(
+        `✅ Published own ILP info (kind:10032) for ${ilpAddress} to local relay ` +
+          `(event ${ilpInfoEvent.id.slice(0, 16)}…, ttl ${ilpInfoRefreshSeconds * 2}s)`
+      );
+    } catch (error) {
+      console.warn(
+        '⚠️  Failed to publish ILP info (kind:10032):',
+        error instanceof Error ? error.message : error
+      );
+    }
+  };
+
+  publishOwnIlpInfo();
+  const ilpInfoRefreshTimer = setInterval(
+    publishOwnIlpInfo,
+    ilpInfoRefreshSeconds * 1000
+  );
+  // Don't let the refresh timer keep the process alive on its own.
+  ilpInfoRefreshTimer.unref?.();
 
   // -------------------------------------------------------------------------
   // Start BLS HTTP Server
@@ -433,6 +475,7 @@ async function main(): Promise<void> {
   // -------------------------------------------------------------------------
   const shutdown = async () => {
     console.log('Shutting down...');
+    clearInterval(ilpInfoRefreshTimer);
     server.close();
     pool.close([]);
     await relay.stop();
