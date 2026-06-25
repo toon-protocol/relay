@@ -82,25 +82,66 @@ chainProviders:
       initialDepositMultiplier: 2
       ledgerSnapshotPath: ./data/ledger-connector.json
 
-peers: []
+# ── Peers ─────────────────────────────────────────────────────────────────────
+# This relay-connector ABSORBS the g.proxy apex role (it replaces the old toon-box
+# apex). It is the g.proxy entry point AND a real ILP hop: it terminates
+# g.proxy.relay (paid Nostr writes → relay:3100), forwards g.proxy.relay.store to
+# the store box (EARNING connectorFeePercentage on the hop), and forwards the
+# direct g.proxy.store to the store box too.
+#
+# SETTLEMENT IDENTITY: reuse the apex's demo seed so existing client channels
+# (to g.proxy.store / g.proxy.relay.store) survive the cutover. Set in .env:
+#   TOON_MNEMONIC="giant goat guide develop boy wolf target embody leave sunny paddle neutral"
+#   → EVM 0xC0E55cD2E967a4F625627DaE5d4946f54267C7ab (NIP-06 path m/44'/1237'/0'/0/0)
+# It is DISTINCT from the store (0x1f4E12…), so the relay-connector↔store-box
+# channel settles correctly (no self-pay).
+peers:
+  - id: store-box
+    url: wss://proxy.store.devnet.toonprotocol.dev:443
+    relation: peer
+    authToken: ''
+    chain: evm:31337
+    # The store box's settlement address (its distinct mnemonic, NIP-06 path).
+    settlementAddress: '0x1f4E12A9357a3c46477F95F6f9813eeBF49f106e'
 
 # ── Routes ──────────────────────────────────────────────────────────────────
-# ONE terminated route. `upstream` points at the relay's oblivious-mode HTTP
-# store port (3100) over the compose network by service name — the host can never
-# reach `relay:3100` directly (that port is NOT published), which is what enforces
-# the privacy invariant: paid writes MUST flow through the connector. The store
-# endpoint (`POST /write`, body `{event}`) is carried in the forwarded HTTP
-# envelope; this only needs the base host:port.
+# THREE routes — this node is the g.proxy entry point + the relay hop:
+#   1. g.proxy.relay        → TERMINATE, reverse-proxy POST /write → relay:3100
+#                             (paid Nostr writes; relay:3100 is never host-published).
+#   2. g.proxy.relay.store  → FORWARD to the store-box peer (the relay hop; this
+#                             node earns connectorFeePercentage on it).
+#   3. g.proxy.store        → FORWARD to the store-box peer (the absorbed-apex
+#                             direct path; clients can also dial the store box edge).
+# Longest-prefix: g.proxy.relay.store (more specific) forwards; the rest of
+# g.proxy.relay terminates at the relay.
 #
-# `settlementAddresses.evm` is anvil account-0's address (matches the keyId above).
-# With TOON_MNEMONIC set, change it to the mnemonic-derived EVM address (boot log).
+# settlementAddresses.evm is this node's OWN address (the fee recipient) =
+# the apex demo identity 0xC0E55… set via TOON_MNEMONIC above.
 routes:
-  - prefix: g.connector.relay
+  - prefix: g.proxy.relay
     nextHop: connector
     upstream: http://relay:3100
     price: '1000'
     chains:
       - evm
-    ilpAddress: g.connector.relay
+    ilpAddress: g.proxy.relay
     settlementAddresses:
-      evm: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
+      evm: '0xC0E55cD2E967a4F625627DaE5d4946f54267C7ab'
+
+  - prefix: g.proxy.relay.store
+    nextHop: store-box
+    price: '1000'
+    chains:
+      - evm
+    ilpAddress: g.proxy.relay.store
+    settlementAddresses:
+      evm: '0xC0E55cD2E967a4F625627DaE5d4946f54267C7ab'
+
+  - prefix: g.proxy.store
+    nextHop: store-box
+    price: '1000'
+    chains:
+      - evm
+    ilpAddress: g.proxy.store
+    settlementAddresses:
+      evm: '0xC0E55cD2E967a4F625627DaE5d4946f54267C7ab'
