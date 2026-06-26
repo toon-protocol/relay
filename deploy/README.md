@@ -94,13 +94,19 @@ instead of hardcoding `publishDestination`/`storeDestination` in its config. Thi
 closes [toon-protocol/relay#37](https://github.com/toon-protocol/relay/issues/37)
 and [toon-protocol/store#22](https://github.com/toon-protocol/store/issues/22).
 
-- The connector is **the single emitter** for the whole `g.proxy` topology (it owns
-  all three routes), so the store box does **not** announce separately — the apex
-  advertises the store route here. It signs with its **NIP-06 key derived from
-  `TOON_MNEMONIC`** (the settlement identity; no new secret) and writes the event to
-  the relay's private `POST /write` store, which surfaces it on the free read WS.
+- The connector publishes the event **through its own routing** by addressing
+  `announceTo` (an ILP route), so the publish path is the same one any write takes:
+  here `announceTo: g.proxy.relay` is the apex's **own terminated route**, so routing
+  delivers the write **locally = free**. (A node that must announce through a relay it
+  doesn't front — e.g. the store box — sets `announceTo` to a **forwarded** route and
+  the connector pays for the write over ILP from its own channel. See the store deploy.)
+- It signs with its **NIP-06 key derived from `TOON_MNEMONIC`** (the settlement
+  identity; no new secret). The event lands in the relay's event store and surfaces on
+  the free read WS.
 - It **refreshes before the NIP-40 expiration lapses** (`refreshIntervalSecs` →
   TTL = 2×), so the announcement is continuously fresh while the node is up.
+- The store box **also self-announces** its own `g.proxy.store` peer info (remote/paid),
+  so both routes are discoverable from their owning node — not just advertised here.
 - Config lives in `connector.yaml`'s `selfAnnounce` block. **It REQUIRES a connector
   image that includes [toon-protocol/connector#265](https://github.com/toon-protocol/connector/pull/265)** —
   bump `CONNECTOR_TAG` to a release carrying it; older images ignore the block.
