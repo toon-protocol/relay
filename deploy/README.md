@@ -33,7 +33,8 @@ referenced as a sibling service.
 | `ghcr.io/toon-protocol/relay-connector`     | connector + this repo's `connector.yaml` baked in        |
 
 The `relay-connector` image bakes a **pinned** connector (`CONNECTOR_TAG`, default
-`3.24.2`) so the config schema and the HTTP-envelope contract are frozen against a
+`3.28.0` — the release that ships the `selfAnnounce` feature) so the config schema
+and the HTTP-envelope contract are frozen against a
 known connector. The image's own version tracks this repo's release (`vX.Y.Z` /
 `latest` / `sha`); bump `CONNECTOR_TAG` deliberately to adopt a newer connector.
 
@@ -107,9 +108,9 @@ and [toon-protocol/store#22](https://github.com/toon-protocol/store/issues/22).
   TTL = 2×), so the announcement is continuously fresh while the node is up.
 - The store box **also self-announces** its own `g.proxy.store` peer info (remote/paid),
   so both routes are discoverable from their owning node — not just advertised here.
-- Config lives in `connector.yaml`'s `selfAnnounce` block. **It REQUIRES a connector
-  image that includes [toon-protocol/connector#265](https://github.com/toon-protocol/connector/pull/265)** —
-  bump `CONNECTOR_TAG` to a release carrying it; older images ignore the block.
+- Config lives in `connector.yaml`'s `selfAnnounce` block. **It REQUIRES connector
+  `>= 3.28.0`** ([toon-protocol/connector#265](https://github.com/toon-protocol/connector/pull/265),
+  shipped in v3.28.0) — `CONNECTOR_TAG` is pinned to `3.28.0`; older images ignore the block.
 
 Verify it's live (after redeploying the apex against a connector that supports it):
 
