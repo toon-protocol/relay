@@ -170,9 +170,9 @@ routes:
 # - `routes` rides in the announcement CONTENT (not a core wire-type change). The store
 #   box ALSO self-announces its own g.proxy.store peer info (remote/paid) — see its deploy.
 #
-# REQUIRES a connector image that includes the self-announce feature
-# (toon-protocol/connector#265). Bump CONNECTOR_TAG (.env / Dockerfile) to a release
-# that carries it; older images ignore this block.
+# REQUIRES connector >= 3.28.0 — the self-announce feature
+# (toon-protocol/connector#265) shipped in v3.28.0. CONNECTOR_TAG (.env / Dockerfile)
+# is pinned to 3.28.0; older images ignore this block.
 selfAnnounce:
   enabled: true
   # The ILP route to publish the kind:10032 THROUGH. This is the apex's own terminated
