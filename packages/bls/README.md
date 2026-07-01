@@ -118,7 +118,7 @@ patches:
 | ------------------------- | -------- | ------- | ------------------------------------------------ |
 | `NODE_ID`                 | Yes      | —       | Unique node identifier                           |
 | `NOSTR_SECRET_KEY`        | Yes      | —       | 64-character hex Nostr secret key                |
-| `ILP_ADDRESS`             | Yes      | —       | Node's ILP address (e.g., `g.toon.a1b2c3d4`) — assigned by upstream peer from peering topology. See [Protocol — ILP Address Hierarchy](../../docs/protocol.md#ilp-address-hierarchy) |
+| `ILP_ADDRESS`             | Yes      | —       | Node's ILP address (e.g., `g.toon.a1b2c3d4`) — assigned by upstream peer from peering topology. See [TOON Protocol — ILP Address Hierarchy](https://github.com/toon-protocol/toon-meta/blob/main/docs/protocol.md#ilp-address-hierarchy) |
 | `BLS_PORT`                | No       | `3100`  | HTTP port to listen on (1–65535)                 |
 | `BLS_BASE_PRICE_PER_BYTE` | No       | `10`    | Base price per byte for event storage            |
 | `OWNER_PUBKEY`            | No       | —       | 64-char hex pubkey for self-write payment bypass |
