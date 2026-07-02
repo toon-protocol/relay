@@ -1,6 +1,6 @@
 {
   "name": "@toon-protocol/relay",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Nostr relay app: free NIP-01 reads + HTTP POST /write",
   "type": "module",
   "main": "./dist/index.js",
