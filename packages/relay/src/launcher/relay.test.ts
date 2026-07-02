@@ -17,7 +17,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
-import { generateSecretKey, finalizeEvent } from 'nostr-tools/pure';
+import {
+  generateSecretKey,
+  finalizeEvent,
+  verifyEvent,
+} from 'nostr-tools/pure';
 import type { NostrEvent } from 'nostr-tools/pure';
 import { startRelay } from './relay.js';
 import type { RelayInstance } from './relay.js';
@@ -169,18 +173,77 @@ describe('startRelay() — HTTP/WS relay app', () => {
       ws.send(JSON.stringify(['REQ', subId, { kinds: [1] }]));
       const messages = await collected;
 
-      // NIP-01 reads send events TOON-encoded as a string in EVENT[2]
-      // (encodeEventToToonString), not as a JSON object. Assert the encoded
-      // payload carries our event id.
+      // NIP-01 reads send the event as canonical JSON — an inline event
+      // object in EVENT[2] that a vanilla nostr client can parse with a
+      // single JSON.parse and verify id+sig from the wire (#46).
       const eventMsg = messages.find(
-        (m): m is [string, string, string] =>
+        (m): m is [string, string, NostrEvent] =>
           Array.isArray(m) && m[0] === 'EVENT' && m[1] === subId
       );
       expect(eventMsg).toBeDefined();
-      expect(typeof (eventMsg as [string, string, string])[2]).toBe('string');
-      expect((eventMsg as [string, string, string])[2]).toContain(
-        `id: ${event.id}`
-      );
+      const wireEvent = (eventMsg as [string, string, NostrEvent])[2];
+      expect(typeof wireEvent).toBe('object');
+      expect(wireEvent).toEqual({
+        id: event.id,
+        pubkey: event.pubkey,
+        created_at: event.created_at,
+        kind: event.kind,
+        tags: event.tags,
+        content: event.content,
+        sig: event.sig,
+      });
+      // Independent-implementation round-trip: nostr-tools recomputes the
+      // NIP-01 canonical serialization hash (id) and checks the sig.
+      expect(verifyEvent(wireEvent)).toBe(true);
+    } finally {
+      ws.close();
+    }
+  });
+
+  it('pushes live-subscription events as canonical NIP-01 JSON that verifies (#46)', async () => {
+    instance = await boot();
+
+    // Subscribe FIRST so the event arrives via the live broadcast path
+    // (broadcastEvent -> notifyNewEvent), not the stored-query path.
+    const ws = new WebSocket(`ws://localhost:${RELAY_PORT}`);
+    await waitForOpen(ws);
+    try {
+      const subId = 'livesub';
+      const eose = collectUntilEose(ws, subId);
+      ws.send(JSON.stringify(['REQ', subId, { kinds: [1] }]));
+      await eose;
+
+      const liveFrame = new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error('timed out waiting for live EVENT')),
+          5000
+        );
+        ws.on('message', (data: Buffer) => {
+          clearTimeout(timer);
+          resolve(data.toString());
+        });
+      });
+
+      const event = createSignedEvent('live canonical wire check');
+      const writeRes = await fetch(`http://localhost:${BLS_PORT}/write`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event }),
+      });
+      expect(writeRes.status).toBe(200);
+
+      // Decode like a vanilla NIP-01 client: single JSON.parse of the raw
+      // frame, event inline as a JSON object, id+sig verifiable from the wire.
+      const parsed = JSON.parse(await liveFrame) as [
+        string,
+        string,
+        NostrEvent,
+      ];
+      expect(parsed[0]).toBe('EVENT');
+      expect(parsed[1]).toBe(subId);
+      expect(typeof parsed[2]).toBe('object');
+      expect(parsed[2].id).toBe(event.id);
+      expect(verifyEvent(parsed[2])).toBe(true);
     } finally {
       ws.close();
     }

@@ -1,11 +1,17 @@
 /**
  * TOON event codec.
  *
- * Encodes/decodes Nostr events to and from the TOON wire format used on this
- * relay's NIP-01 read surface. Vendored from `@toon-protocol/core` so the relay
- * depends only on the lightweight `@toon-format/toon` encoder rather than core's
- * full transitive tree (which pulls Arweave / web3 wallet stacks the relay does
- * not use). Same MIT license / org.
+ * Encodes/decodes Nostr events to and from the TOON text format. Vendored from
+ * `@toon-protocol/core` so the relay depends only on the lightweight
+ * `@toon-format/toon` encoder rather than core's full transitive tree (which
+ * pulls Arweave / web3 wallet stacks the relay does not use). Same MIT
+ * license / org.
+ *
+ * NOTE: this codec is NOT used on the relay's NIP-01 read surface. Outbound
+ * EVENT frames are canonical NIP-01 JSON (see
+ * `websocket/ConnectionHandler.sendEvent`, #46) so that standard nostr clients
+ * can parse events and verify signatures from the wire. The codec remains
+ * exported for library consumers that exchange TOON-text events elsewhere.
  *
  * @module
  */

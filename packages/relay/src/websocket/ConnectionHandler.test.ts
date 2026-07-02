@@ -1,9 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import {
+  finalizeEvent,
+  generateSecretKey,
+  verifyEvent,
+} from 'nostr-tools/pure';
 import type { NostrEvent } from 'nostr-tools/pure';
 import type { WebSocket } from 'ws';
 import { ConnectionHandler } from './ConnectionHandler.js';
 import type { EventStore } from '../storage/index.js';
-import { encodeEventToToonString } from '../toon/index.js';
 
 function createMockWebSocket(): WebSocket {
   return {
@@ -56,7 +60,7 @@ describe('ConnectionHandler', () => {
       expect(handler.getSubscriptionCount()).toBe(1);
     });
 
-    it('should send matching events', () => {
+    it('should send matching events as canonical NIP-01 JSON (inline event object)', () => {
       const event = createMockEvent();
       store = createMockEventStore([event]);
       handler = new ConnectionHandler(ws, store);
@@ -64,8 +68,45 @@ describe('ConnectionHandler', () => {
       handler.handleMessage(JSON.stringify(['REQ', 'sub1', {}]));
 
       expect(ws.send).toHaveBeenCalledWith(
-        JSON.stringify(['EVENT', 'sub1', encodeEventToToonString(event)])
+        JSON.stringify(['EVENT', 'sub1', event])
       );
+      // The event payload must be a JSON object within the frame, never a
+      // re-encoded string (TOON text / double-JSON) — #46.
+      const frame = (ws.send as ReturnType<typeof vi.fn>).mock.calls
+        .map((c: unknown[]) => JSON.parse(c[0] as string) as unknown[])
+        .find((m) => m[0] === 'EVENT')!;
+      expect(typeof frame[2]).toBe('object');
+      expect(frame[2]).toEqual(event);
+    });
+
+    it('served stored events verify with an independent nostr implementation (nostr-tools)', () => {
+      const signed = finalizeEvent(
+        {
+          kind: 1,
+          created_at: Math.floor(Date.now() / 1000),
+          tags: [['t', 'interop']],
+          content: 'canonical wire check with "escaped quotes" and `backticks`',
+        },
+        generateSecretKey()
+      );
+      store = createMockEventStore([signed]);
+      handler = new ConnectionHandler(ws, store);
+
+      handler.handleMessage(JSON.stringify(['REQ', 'sub1', {}]));
+
+      // Decode exactly like a vanilla NIP-01 client: one JSON.parse of the
+      // raw wire frame, then verify id+sig from the resulting object.
+      const rawFrame = (ws.send as ReturnType<typeof vi.fn>).mock.calls
+        .map((c: unknown[]) => c[0] as string)
+        .find((raw) => (JSON.parse(raw) as unknown[])[0] === 'EVENT')!;
+      const [, subId, wireEvent] = JSON.parse(rawFrame) as [
+        string,
+        string,
+        NostrEvent,
+      ];
+      expect(subId).toBe('sub1');
+      expect(wireEvent.id).toBe(signed.id);
+      expect(verifyEvent(wireEvent)).toBe(true);
     });
 
     it('should send EOSE after events', () => {
@@ -161,6 +202,57 @@ describe('ConnectionHandler', () => {
         ])
       );
       expect(store.store).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('live subscription path (notifyNewEvent)', () => {
+    it('should push new events as canonical NIP-01 JSON (inline event object)', () => {
+      handler.handleMessage(JSON.stringify(['REQ', 'live1', { kinds: [1] }]));
+      (ws.send as ReturnType<typeof vi.fn>).mockClear();
+
+      const event = createMockEvent({ id: 'liveevent1' });
+      handler.notifyNewEvent(event);
+
+      expect(ws.send).toHaveBeenCalledWith(
+        JSON.stringify(['EVENT', 'live1', event])
+      );
+    });
+
+    it('live-pushed events verify with an independent nostr implementation (nostr-tools)', () => {
+      handler.handleMessage(JSON.stringify(['REQ', 'live1', { kinds: [1] }]));
+      (ws.send as ReturnType<typeof vi.fn>).mockClear();
+
+      const signed = finalizeEvent(
+        {
+          kind: 1,
+          created_at: Math.floor(Date.now() / 1000),
+          tags: [],
+          content: 'live path canonical wire check',
+        },
+        generateSecretKey()
+      );
+      handler.notifyNewEvent(signed);
+
+      const rawFrame = (ws.send as ReturnType<typeof vi.fn>).mock
+        .calls[0]![0] as string;
+      const [type, subId, wireEvent] = JSON.parse(rawFrame) as [
+        string,
+        string,
+        NostrEvent,
+      ];
+      expect(type).toBe('EVENT');
+      expect(subId).toBe('live1');
+      expect(typeof wireEvent).toBe('object');
+      expect(verifyEvent(wireEvent)).toBe(true);
+    });
+
+    it('should not push events that match no subscription filter', () => {
+      handler.handleMessage(JSON.stringify(['REQ', 'live1', { kinds: [7] }]));
+      (ws.send as ReturnType<typeof vi.fn>).mockClear();
+
+      handler.notifyNewEvent(createMockEvent({ kind: 1 }));
+
+      expect(ws.send).not.toHaveBeenCalled();
     });
   });
 

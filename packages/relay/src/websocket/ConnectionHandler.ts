@@ -4,7 +4,6 @@ import type { NostrEvent } from 'nostr-tools/pure';
 import type { EventStore } from '../storage/index.js';
 import type { RelayServerConfig } from '../types.js';
 import { DEFAULT_RELAY_CONFIG } from '../types.js';
-import { encodeEventToToonString } from '../toon/index.js';
 import { matchFilter } from '../filters/index.js';
 
 /**
@@ -170,8 +169,17 @@ export class ConnectionHandler {
     return this.subscriptions.size;
   }
 
+  /**
+   * Emit an outbound NIP-01 EVENT frame.
+   *
+   * The event MUST go on the wire as canonical NIP-01 JSON —
+   * `["EVENT", <subId>, {id, pubkey, created_at, kind, tags, content, sig}]`
+   * with the event as a plain JSON object — so any standard nostr client can
+   * parse it and verify `id`/`sig` from the wire bytes (#46). Never re-encode
+   * the event (TOON text, double-JSON-stringify, etc.) at this boundary.
+   */
   private sendEvent(subscriptionId: string, event: NostrEvent): void {
-    this.send(['EVENT', subscriptionId, encodeEventToToonString(event)]);
+    this.send(['EVENT', subscriptionId, event]);
   }
 
   private sendEose(subscriptionId: string): void {
