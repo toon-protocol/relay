@@ -79,7 +79,7 @@ const results = memStore.query([{ kinds: [1], limit: 10 }]);
 
 ## TOON Codec
 
-Re-exported from [`@toon-protocol/core`](https://github.com/toon-protocol/core) for convenience.
+Vendored in-repo (`src/toon/codec.ts`) so the relay depends only on the lightweight `@toon-format/toon` encoder rather than `@toon-protocol/core`'s full transitive tree. The relay has no runtime dependency on `@toon-protocol/core`.
 
 ```ts
 import { encodeEventToToon, decodeEventFromToon } from '@toon-protocol/relay';
