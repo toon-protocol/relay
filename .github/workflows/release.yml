@@ -1,6 +1,6 @@
 name: Release
 
-# Publishes @toon-protocol/core and @toon-protocol/sdk to npm via changesets.
+# Publishes @toon-protocol/relay and @toon-protocol/bls to npm via changesets.
 # Auth comes from the org-level NPM_TOKEN secret (no local `npm login`).
 # changesets rewrites `workspace:*` -> the real version at publish time.
 #
