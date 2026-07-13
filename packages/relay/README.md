@@ -29,6 +29,7 @@ NOSTR_SECRET_KEY=<64-char-hex> npx @toon-protocol/relay
 | `TOON_MNEMONIC` | — | BIP-39 mnemonic (NIP-06 derivation) |
 | `TOON_RELAY_PORT` | `7100` | WebSocket read port |
 | `TOON_BLS_PORT` | `3100` | HTTP write/health port |
+| `TOON_HOST` | `0.0.0.0` | WebSocket bind host |
 | `TOON_DATA_DIR` | `./data` | SQLite data directory |
 | `TOON_DEV_MODE` | `false` | Skip event-signature verification on `POST /write` |
 
