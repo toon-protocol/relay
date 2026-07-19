@@ -23,16 +23,12 @@ COPY packages/bls/package.json packages/bls/
 
 # Copy placeholder package.json files for other workspace packages
 # (required for pnpm install --frozen-lockfile to resolve the full workspace)
-COPY packages/core/package.json packages/core/
 COPY packages/relay/package.json packages/relay/
-COPY docker/package.json docker/
 
 # Install all dependencies (including devDependencies for building)
 RUN pnpm install --frozen-lockfile
 
 # Copy workspace dependency source code (must be built before BLS)
-COPY packages/core/src/ packages/core/src/
-COPY packages/core/tsconfig.json packages/core/tsup.config.ts packages/core/
 COPY packages/relay/src/ packages/relay/src/
 COPY packages/relay/tsconfig.json packages/relay/tsup.config.ts packages/relay/
 
@@ -41,8 +37,7 @@ COPY packages/bls/src/ packages/bls/src/
 COPY packages/bls/tsconfig.json packages/bls/tsup.config.ts packages/bls/
 
 # Build workspace dependencies then BLS
-RUN pnpm --filter @toon-protocol/core build && \
-    pnpm --filter @toon-protocol/relay build && \
+RUN pnpm --filter @toon-protocol/relay build && \
     pnpm --filter @toon-protocol/bls build
 
 # Create production deployment (production deps only, no symlinks)
