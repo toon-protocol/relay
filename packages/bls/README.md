@@ -124,6 +124,9 @@ patches:
 | `OWNER_PUBKEY`            | No       | —       | 64-char hex pubkey for self-write payment bypass |
 | `DATA_DIR`                | No       | `/data` | Directory for SQLite database storage            |
 | `BLS_KIND_OVERRIDES`      | No       | —       | JSON object mapping event kinds to prices        |
+| `FORGEJO_URL`             | No       | —       | Forgejo instance URL; enables NIP-34 Git integration when set with `FORGEJO_TOKEN` and `FORGEJO_OWNER` |
+| `FORGEJO_TOKEN`           | No       | —       | Forgejo API token for NIP-34 Git integration     |
+| `FORGEJO_OWNER`           | No       | —       | Default Forgejo repo owner for NIP-34 Git integration |
 
 ### Pricing Variable Aliases
 
