@@ -20,10 +20,7 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.json .npmrc ./
 
 # Copy all package.json files
 COPY packages/bls/package.json packages/bls/
-COPY packages/core/package.json packages/core/
 COPY packages/relay/package.json packages/relay/
-COPY packages/client/package.json packages/client/
-COPY docker/package.json docker/
 
 # Install all dependencies
 RUN pnpm install --frozen-lockfile
@@ -31,17 +28,11 @@ RUN pnpm install --frozen-lockfile
 # Copy source code
 COPY packages/bls/src/ packages/bls/src/
 COPY packages/bls/tsconfig.json packages/bls/tsup.config.ts packages/bls/
-COPY packages/core/src/ packages/core/src/
-COPY packages/core/tsconfig.json packages/core/tsup.config.ts packages/core/
 COPY packages/relay/src/ packages/relay/src/
 COPY packages/relay/tsconfig.json packages/relay/tsup.config.ts packages/relay/
-COPY packages/client/src/ packages/client/src/
-COPY packages/client/tsconfig.json packages/client/tsup.config.ts packages/client/
 
 # Build packages in dependency order
-RUN pnpm --filter @toon-protocol/core build
 RUN pnpm --filter @toon-protocol/relay build
-RUN pnpm --filter @toon-protocol/client build
 RUN pnpm --filter @toon-protocol/bls build
 
 # Create production deployment
