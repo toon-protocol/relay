@@ -31,7 +31,7 @@ export default tseslint.config(
       ],
     },
   },
-  // Relaxed rules for test files, examples, and docker entrypoint
+  // Relaxed rules for test files and examples
   {
     files: [
       '**/*.test.ts',
@@ -44,7 +44,6 @@ export default tseslint.config(
       '**/tests/**',
       '**/e2e/**',
       '**/examples/**',
-      'docker/src/**',
     ],
     rules: {
       '@typescript-eslint/no-explicit-any': 'warn',
