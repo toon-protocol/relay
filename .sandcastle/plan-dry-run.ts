@@ -24,6 +24,7 @@
 import * as sandcastle from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
+import { sandboxSecrets } from "./sandbox-secrets.ts";
 
 // Same schema the real loop validates the planner's <plan> against (main.ts).
 const planSchema = z.object({
@@ -41,7 +42,10 @@ const hooks = {
 
 const plan = await sandcastle.run({
   hooks,
-  sandbox: docker(),
+  // Forward CLAUDE_CODE_OAUTH_TOKEN + GH_TOKEN into the container; the engine's
+  // env resolver does not (see ./sandbox-secrets.ts). The planner needs the
+  // Claude credential and GH_TOKEN for the in-sandbox `gh issue list`.
+  sandbox: docker({ env: sandboxSecrets() }),
   name: "planner-dry-run",
   maxIterations: 1,
   agent: sandcastle.claudeCode("claude-opus-4-8"),

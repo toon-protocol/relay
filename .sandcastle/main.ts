@@ -24,6 +24,13 @@
 import * as sandcastle from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
+import { sandboxSecrets } from "./sandbox-secrets.ts";
+
+// Forward host secrets into every sandbox this loop spawns. The engine's env
+// resolver only passes vars that appear in the gitignored `.sandcastle/.env`,
+// so in CI CLAUDE_CODE_OAUTH_TOKEN + GH_TOKEN would otherwise never reach the
+// container. See ./sandbox-secrets.ts for the full root-cause note.
+const sandboxEnv = sandboxSecrets();
 
 // The planner emits its plan as JSON inside <plan> tags; Output.object extracts
 // and validates it against this schema. We use Zod here, but any Standard
@@ -76,7 +83,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
   // -------------------------------------------------------------------------
   const plan = await sandcastle.run({
     hooks,
-    sandbox: docker(),
+    sandbox: docker({ env: sandboxEnv }),
     name: "planner",
     // One iteration is enough: the planner just needs to read and reason,
     // not write code. (Structured output requires maxIterations: 1.)
@@ -119,7 +126,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     issues.map(async (issue) => {
       const sandbox = await sandcastle.createSandbox({
         branch: issue.branch,
-        sandbox: docker(),
+        sandbox: docker({ env: sandboxEnv }),
         hooks,
       });
 
@@ -210,7 +217,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
   // -------------------------------------------------------------------------
   await sandcastle.run({
     hooks,
-    sandbox: docker(),
+    sandbox: docker({ env: sandboxEnv }),
     name: "merger",
     maxIterations: 1,
     agent: sandcastle.claudeCode("claude-opus-4-8"),

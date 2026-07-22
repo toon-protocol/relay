@@ -34,6 +34,7 @@
 import { execFileSync } from "node:child_process";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
+import { sandboxSecrets } from "./sandbox-secrets.ts";
 
 const prNumber = process.env.SANDCASTLE_PR_NUMBER?.trim();
 if (!prNumber || !/^\d+$/.test(prNumber)) {
@@ -64,7 +65,10 @@ console.log(
 
 const sandbox = await sandcastle.createSandbox({
   branch: headRef,
-  sandbox: docker(),
+  // Forward CLAUDE_CODE_OAUTH_TOKEN + GH_TOKEN into the container (the engine's
+  // env resolver does not — see ./sandbox-secrets.ts). GH_TOKEN is what the
+  // review-push step's in-sandbox `git push` to the PR branch authenticates with.
+  sandbox: docker({ env: sandboxSecrets() }),
   hooks,
 });
 
