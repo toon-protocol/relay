@@ -41,6 +41,7 @@
 import { execFileSync } from "node:child_process";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
+import { sandboxSecrets } from "./sandbox-secrets.ts";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -91,7 +92,12 @@ console.log(
 
 const sandbox = await sandcastle.createSandbox({
   branch,
-  sandbox: docker(),
+  // Forward CLAUDE_CODE_OAUTH_TOKEN + GH_TOKEN from the host into the container.
+  // Without this the engine's env resolver never passes them through (they are
+  // not in the gitignored `.sandcastle/.env`), so claude-code is "Not logged in"
+  // and the in-sandbox `git push`/`gh pr create` are unauthenticated. See
+  // ./sandbox-secrets.ts for the full root-cause note.
+  sandbox: docker({ env: sandboxSecrets() }),
   hooks,
 });
 
