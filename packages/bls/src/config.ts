@@ -146,7 +146,10 @@ function parsePort(): number {
   const portStr = process.env['BLS_PORT'];
   if (!portStr) return 3100;
 
-  const port = parseInt(portStr, 10);
+  // Reject anything that is not a pure base-10 integer string. parseInt()
+  // stops at the first non-digit (e.g. "8080abc" -> 8080, "1e3" -> 1), which
+  // would silently coerce malformed input to a port the operator never set.
+  const port = /^\d+$/.test(portStr) ? parseInt(portStr, 10) : NaN;
   if (isNaN(port) || port < 1 || port > 65535) {
     throw new ConfigError(
       'BLS_PORT',

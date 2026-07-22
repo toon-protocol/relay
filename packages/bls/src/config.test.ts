@@ -207,6 +207,19 @@ describe('loadBlsConfigFromEnv', () => {
     );
   });
 
+  it.each(['8080abc', '80.5', '1e3', '0x10', ' 8080 ', '+8080', '-1'])(
+    'should throw ConfigError when BLS_PORT is malformed (%s)',
+    (value) => {
+      setRequiredEnv();
+      process.env['BLS_PORT'] = value;
+
+      expect(() => loadBlsConfigFromEnv()).toThrow(ConfigError);
+      expect(() => loadBlsConfigFromEnv()).toThrow(
+        'must be an integer between 1 and 65535'
+      );
+    }
+  );
+
   // --- BASE_PRICE_PER_BYTE ---
 
   it('should use default basePricePerByte of 10 when not set', () => {
