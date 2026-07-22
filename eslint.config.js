@@ -64,6 +64,7 @@ export default tseslint.config(
       'archive/**',
       '.cache/**',
       '.claude/**',
+      '.sandcastle/**',
     ],
   }
 );

@@ -38,7 +38,7 @@ If applicable, use RGR to complete the task.
 relay is a pnpm workspace. Before committing, run relay's real gate and make sure every command passes:
 
 - lint: `eslint .`
-- typecheck: `tsc -p tsconfig.json --noEmit`
+- typecheck: `pnpm run typecheck`
 - test: `vitest run`
 - build: `pnpm -r run build`
 

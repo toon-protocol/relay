@@ -8,6 +8,7 @@ neverBuiltDependencies:
   - '@anyone-protocol/anyone-client'
 
 overrides:
+  nostr-tools: 2.23.1
   protobufjs: '>=7.2.5'
   ws@>=7.0.0 <7.5.10: '>=7.5.10'
   body-parser: '>=1.20.3'
@@ -67,7 +68,7 @@ importers:
         specifier: ^4.11.10
         version: 4.12.7
       nostr-tools:
-        specifier: ^2.23.1
+        specifier: 2.23.1
         version: 2.23.1(typescript@5.9.3)
       prettier:
         specifier: ^3.2.0
@@ -118,8 +119,8 @@ importers:
         specifier: ^4.11.10
         version: 4.12.7
       nostr-tools:
-        specifier: ^2.20.0
-        version: 2.23.0(typescript@5.9.3)
+        specifier: 2.23.1
+        version: 2.23.1(typescript@5.9.3)
       ws:
         specifier: ^8.18.0
         version: 8.19.0
@@ -146,8 +147,8 @@ importers:
         specifier: ^4.11.10
         version: 4.12.7
       nostr-tools:
-        specifier: ^2.20.0
-        version: 2.23.0(typescript@5.9.3)
+        specifier: 2.23.1
+        version: 2.23.1(typescript@5.9.3)
       ws:
         specifier: ^8.0.0
         version: 8.19.0
@@ -7994,24 +7995,6 @@ packages:
     resolution: {integrity: sha512-JYc0DPlpGWB40kH5g07gGTrYuMqV653k3uBKY6uITPWds3M0ov3GaWGp9lbE3Bzngx8+XkfzgvASb9vk9JDFXQ==}
     engines: {node: '>=14.16'}
     dev: true
-
-  /nostr-tools@2.23.0(typescript@5.9.3):
-    resolution: {integrity: sha512-TcjR+HOxzf3sceLo9ceFekCwaQEamigaPllG7LTu3dLkJiPTw5vF0ekO8n7msWUG/G4D9cV8aqpoR0M3L9Bjwg==}
-    peerDependencies:
-      typescript: '>=5.0.0'
-    peerDependenciesMeta:
-      typescript:
-        optional: true
-    dependencies:
-      '@noble/ciphers': 2.1.1
-      '@noble/curves': 2.0.1
-      '@noble/hashes': 2.0.1
-      '@scure/base': 2.0.0
-      '@scure/bip32': 2.0.1
-      '@scure/bip39': 2.0.1
-      nostr-wasm: 0.1.0
-      typescript: 5.9.3
-    dev: false
 
   /nostr-tools@2.23.1(typescript@5.9.3):
     resolution: {integrity: sha512-Q5SJ1omrseBFXtLwqDhufpFLA6vX3rS/IuBCc974qaYX6YKGwEPxa/ZsyxruUOr+b+5EpWL2hFmCB5AueYrfBw==}

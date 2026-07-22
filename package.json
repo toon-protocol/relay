@@ -15,6 +15,7 @@
     "changeset": "changeset",
     "version": "changeset version",
     "release": "changeset publish",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "sandcastle": "npx tsx .sandcastle/main.ts",
     "sandcastle:plan": "npx tsx .sandcastle/plan-dry-run.ts"
   },
@@ -40,6 +41,7 @@
       "@anyone-protocol/anyone-client"
     ],
     "overrides": {
+      "nostr-tools": "2.23.1",
       "protobufjs": ">=7.2.5",
       "ws@>=7.0.0 <7.5.10": ">=7.5.10",
       "body-parser": ">=1.20.3",

@@ -32,7 +32,10 @@ describe('createHealthResponse', () => {
   });
 
   it('does not leak any payment / connector fields', () => {
-    const res = createHealthResponse(makeConfig()) as Record<string, unknown>;
+    const res = createHealthResponse(makeConfig()) as unknown as Record<
+      string,
+      unknown
+    >;
     for (const field of [
       'x402',
       'pricing',
