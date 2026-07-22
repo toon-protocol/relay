@@ -2,7 +2,7 @@
 
 TOON Protocol Nostr relay node — @toon-protocol/relay (NIP-01 relay + BLS + startRelay launcher) and @toon-protocol/bls
 
-In the TOON stack this is the Nostr relay (built on @toon-protocol/core) that towns run: reads are free over plain NIP-01, while paid writes reach it through the connector payment proxy sitting in front. The live devnet relay is `wss://relay-ws.devnet.toonprotocol.dev`. To use the network as a client (rather than run a relay), start with the toon-client [rig README](https://github.com/toon-protocol/toon-client/blob/main/packages/rig/README.md).
+In the TOON stack this is the Nostr relay: reads are free over plain NIP-01, while paid writes reach it through the connector payment proxy sitting in front. The live devnet relay is `wss://relay-ws.devnet.toonprotocol.dev`. To use the network as a client (rather than run a relay), start with the toon-client [rig README](https://github.com/toon-protocol/toon-client/blob/main/packages/rig/README.md).
 
 > Extracted from the TOON monorepo with full git history preserved. npm publishing is done by CI (changesets + `pnpm`, authed by the org `NPM_TOKEN` secret). Docker image published to ghcr.io/toon-protocol/relay:latest by publish-relay-image.yml.
 
