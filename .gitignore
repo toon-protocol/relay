@@ -4,6 +4,9 @@ node_modules/
 # Build output
 dist/
 
+# ESLint cache (CI-cached via actions/cache; not meaningful to commit locally)
+.eslintcache
+
 # Turbo
 .turbo/
 

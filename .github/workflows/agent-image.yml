@@ -29,6 +29,24 @@ jobs:
       - name: Build agent image
         run: npx --yes @ai-hero/sandcastle@0.12.0 docker build-image
 
+      - name: Gate performance no-regression guard (image size)
+        run: |
+          set -euo pipefail
+          SIZE=$(docker image inspect sandcastle:relay --format='{{.Size}}')
+          BASELINE_BYTES=$(jq -r '.performance.dockerImageSizeBytes' .sandcastle/gate-baseline.json)
+          echo "Agent image size: ${SIZE} bytes"
+          if [ "$BASELINE_BYTES" = "null" ]; then
+            echo "::notice::No frozen image-size baseline yet in .sandcastle/gate-baseline.json — recording ${SIZE} bytes for a follow-up baseline-update commit, not enforcing."
+            exit 0
+          fi
+          TOLERANCE=$(jq -r '.regressionTolerancePercent' .sandcastle/gate-baseline.json)
+          LIMIT=$((BASELINE_BYTES + BASELINE_BYTES * TOLERANCE / 100))
+          echo "Frozen baseline ${BASELINE_BYTES} bytes, +${TOLERANCE}% limit ${LIMIT} bytes"
+          if [ "$SIZE" -gt "$LIMIT" ]; then
+            echo "::error::Agent image size regressed vs .sandcastle/gate-baseline.json: ${SIZE} > ${LIMIT} bytes"
+            exit 1
+          fi
+
       - name: Verify toolchain inside image
         run: |
           docker run --rm --entrypoint bash sandcastle:relay -lc '
