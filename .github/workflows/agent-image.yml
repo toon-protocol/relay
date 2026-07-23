@@ -32,15 +32,15 @@ jobs:
       - name: Gate performance no-regression guard (image size)
         run: |
           SIZE=$(docker image inspect sandcastle:relay --format='{{.Size}}')
-          BASELINE=$(jq -r '.performance.dockerImageSizeBytes' .sandcastle/gate-baseline.json)
+          BASELINE_BYTES=$(jq -r '.performance.dockerImageSizeBytes' .sandcastle/gate-baseline.json)
           echo "Agent image size: ${SIZE} bytes"
-          if [ "$BASELINE" = "null" ]; then
+          if [ "$BASELINE_BYTES" = "null" ]; then
             echo "::notice::No frozen image-size baseline yet in .sandcastle/gate-baseline.json — recording ${SIZE} bytes for a follow-up baseline-update commit, not enforcing."
             exit 0
           fi
           TOLERANCE=$(jq -r '.regressionTolerancePercent' .sandcastle/gate-baseline.json)
-          LIMIT=$((BASELINE + BASELINE * TOLERANCE / 100))
-          echo "Frozen baseline ${BASELINE} bytes, +${TOLERANCE}% limit ${LIMIT} bytes"
+          LIMIT=$((BASELINE_BYTES + BASELINE_BYTES * TOLERANCE / 100))
+          echo "Frozen baseline ${BASELINE_BYTES} bytes, +${TOLERANCE}% limit ${LIMIT} bytes"
           if [ "$SIZE" -gt "$LIMIT" ]; then
             echo "::error::Agent image size regressed vs .sandcastle/gate-baseline.json: ${SIZE} > ${LIMIT} bytes"
             exit 1

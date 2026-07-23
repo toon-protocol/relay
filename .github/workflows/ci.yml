@@ -42,10 +42,10 @@ jobs:
         run: |
           END=$(date +%s)
           ELAPSED=$((END - ${{ steps.gate-timer.outputs.start }}))
-          BASELINE=$(jq -r '.speed.gateWallClockSeconds' .sandcastle/gate-baseline.json)
+          BASELINE_SECONDS=$(jq -r '.speed.gateWallClockSeconds' .sandcastle/gate-baseline.json)
           TOLERANCE=$(jq -r '.regressionTolerancePercent' .sandcastle/gate-baseline.json)
-          LIMIT=$((BASELINE + BASELINE * TOLERANCE / 100))
-          echo "Gate took ${ELAPSED}s (frozen baseline ${BASELINE}s, +${TOLERANCE}% limit ${LIMIT}s)"
+          LIMIT=$((BASELINE_SECONDS + BASELINE_SECONDS * TOLERANCE / 100))
+          echo "Gate took ${ELAPSED}s (frozen baseline ${BASELINE_SECONDS}s, +${TOLERANCE}% limit ${LIMIT}s)"
           if [ "$ELAPSED" -gt "$LIMIT" ]; then
             echo "::error::Gate speed regressed vs .sandcastle/gate-baseline.json: ${ELAPSED}s > ${LIMIT}s"
             exit 1

@@ -1,5 +1,5 @@
 {
-  "$schema": "https://toon-protocol/relay/.sandcastle/gate-baseline.schema (informal — see method below)",
+  "_schemaNote": "No formal JSON Schema for this file (informal shape — see method below); deliberately not using the \"$schema\" key so editors don't try to fetch it as a real schema URL.",
   "capturedAt": "2026-07-23",
   "capturedFromCommit": "2c9b3fa4665bed0a58eb4a6488bede7b962ad933",
   "regressionTolerancePercent": 30,
