@@ -20,21 +20,29 @@ jobs:
           node-version: '22'
           cache: pnpm
 
-      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm install --frozen-lockfile
 
       - name: Start gate timer
         id: gate-timer
         run: echo "start=$(date +%s)" >> "$GITHUB_OUTPUT"
 
+      - name: Cache ESLint
+        uses: actions/cache@v4
+        with:
+          path: .eslintcache
+          key: eslint-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'eslint.config.js') }}
+          restore-keys: |
+            eslint-${{ runner.os }}-
+
       - name: Lint (frozen correctness baseline)
         run: |
           BASELINE_WARNINGS=$(jq -r '.correctness.eslintWarnings' .sandcastle/gate-baseline.json)
           echo "Failing on any eslint error, or more than the frozen $BASELINE_WARNINGS warnings."
-          pnpm exec eslint . --max-warnings "$BASELINE_WARNINGS"
-
-      - run: pnpm run typecheck
+          pnpm exec eslint . --cache --cache-location .eslintcache --max-warnings "$BASELINE_WARNINGS"
 
       - run: pnpm -r build
+
+      - run: pnpm run typecheck
 
       - run: pnpm -r test --if-present
 
@@ -75,4 +83,4 @@ jobs:
           echo "✅ All devbox tools resolved at expected versions"
 
       - name: Smoke build
-        run: devbox run -- bash -c "pnpm install --no-frozen-lockfile && pnpm build"
+        run: devbox run -- bash -c "pnpm install --frozen-lockfile && pnpm build"
