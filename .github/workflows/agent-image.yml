@@ -31,6 +31,7 @@ jobs:
 
       - name: Gate performance no-regression guard (image size)
         run: |
+          set -euo pipefail
           SIZE=$(docker image inspect sandcastle:relay --format='{{.Size}}')
           BASELINE_BYTES=$(jq -r '.performance.dockerImageSizeBytes' .sandcastle/gate-baseline.json)
           echo "Agent image size: ${SIZE} bytes"

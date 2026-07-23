@@ -36,18 +36,20 @@ jobs:
 
       - name: Lint (frozen correctness baseline)
         run: |
+          set -euo pipefail
           BASELINE_WARNINGS=$(jq -r '.correctness.eslintWarnings' .sandcastle/gate-baseline.json)
           echo "Failing on any eslint error, or more than the frozen $BASELINE_WARNINGS warnings."
           pnpm exec eslint . --cache --cache-location .eslintcache --max-warnings "$BASELINE_WARNINGS"
 
       - run: pnpm -r build
 
-      - run: pnpm run typecheck
+      - run: pnpm typecheck
 
       - run: pnpm -r test --if-present
 
       - name: Gate speed no-regression guard
         run: |
+          set -euo pipefail
           END=$(date +%s)
           ELAPSED=$((END - ${{ steps.gate-timer.outputs.start }}))
           BASELINE_SECONDS=$(jq -r '.speed.gateWallClockSeconds' .sandcastle/gate-baseline.json)
