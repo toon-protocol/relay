@@ -22,12 +22,34 @@ jobs:
 
       - run: pnpm install --no-frozen-lockfile
 
-      - run: pnpm lint
-        continue-on-error: true
+      - name: Start gate timer
+        id: gate-timer
+        run: echo "start=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Lint (frozen correctness baseline)
+        run: |
+          BASELINE_WARNINGS=$(jq -r '.correctness.eslintWarnings' .sandcastle/gate-baseline.json)
+          echo "Failing on any eslint error, or more than the frozen $BASELINE_WARNINGS warnings."
+          pnpm exec eslint . --max-warnings "$BASELINE_WARNINGS"
+
+      - run: pnpm run typecheck
 
       - run: pnpm -r build
 
       - run: pnpm -r test --if-present
+
+      - name: Gate speed no-regression guard
+        run: |
+          END=$(date +%s)
+          ELAPSED=$((END - ${{ steps.gate-timer.outputs.start }}))
+          BASELINE=$(jq -r '.speed.gateWallClockSeconds' .sandcastle/gate-baseline.json)
+          TOLERANCE=$(jq -r '.regressionTolerancePercent' .sandcastle/gate-baseline.json)
+          LIMIT=$((BASELINE + BASELINE * TOLERANCE / 100))
+          echo "Gate took ${ELAPSED}s (frozen baseline ${BASELINE}s, +${TOLERANCE}% limit ${LIMIT}s)"
+          if [ "$ELAPSED" -gt "$LIMIT" ]; then
+            echo "::error::Gate speed regressed vs .sandcastle/gate-baseline.json: ${ELAPSED}s > ${LIMIT}s"
+            exit 1
+          fi
 
   devbox-validate:
     name: Devbox Environment Validation

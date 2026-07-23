@@ -1,0 +1,45 @@
+{
+  "$schema": "https://toon-protocol/relay/.sandcastle/gate-baseline.schema (informal — see method below)",
+  "capturedAt": "2026-07-23",
+  "capturedFromCommit": "2c9b3fa4665bed0a58eb4a6488bede7b962ad933",
+  "regressionTolerancePercent": 30,
+  "method": [
+    "correctness: `npx eslint . -f json` (sum of errorCount/warningCount across all files)",
+    "and `pnpm run typecheck` (count of `error TS` lines) run on packages/*/src against",
+    "commit 2c9b3fa4 — the same commit this file was added on top of, i.e. the gate SHAPE",
+    "this baseline describes already includes the fixes from relay#75 (typecheck wired into",
+    "CI, eslint --max-warnings enforced, continue-on-error removed). Correctness counts were",
+    "0 eslint errors / 57 eslint warnings (pre-existing `any` usage in test files) / 0",
+    "typecheck errors — no debt was frozen beyond those pre-existing warnings.",
+    "speed: GitHub Actions run 29951182082 (ci.yml, job \"build\", push of PR #73 to main,",
+    "2026-07-22T19:29:36Z-2026-07-22T19:30:08Z = 32s) is the last representative main-branch",
+    "gate run BEFORE this change. That run's gate shape (lint with continue-on-error, no",
+    "typecheck step) is cheaper than the shape landing in this commit, so the 32s figure is",
+    "a conservative floor, not a like-for-like number — the 30% tolerance absorbs the added",
+    "typecheck step (~2-3s locally) plus normal CI variance. Re-baseline once a representative",
+    "run of the NEW gate shape is available (see note below).",
+    "performance.runnerMinutes: derived from the same run (single ubuntu-latest runner job,",
+    "so runner-minutes ~= wall-clock minutes for this job): 32s / 60 ~= 0.6min (rounded up).",
+    "performance.dockerImageSizeBytes: not captured in this pass — no docker CLI available in",
+    "the sandbox this baseline was authored in, and .github/workflows/agent-image.yml did not",
+    "previously report image size. This change adds a size-report + guard step to that",
+    "workflow; its first run will log the measured size for a human to fold into a follow-up",
+    "baseline-update commit. Until then the guard treats a null baseline as 'record only'.",
+    "performance.cacheHitRate: single-sample observation from the same run (the pnpm",
+    "actions/setup-node cache hit its primary key). Not a rolling rate — needs several",
+    "historical runs to become meaningful; tracked as a follow-up."
+  ],
+  "correctness": {
+    "eslintErrors": 0,
+    "eslintWarnings": 57,
+    "typecheckErrors": 0
+  },
+  "speed": {
+    "gateWallClockSeconds": 32
+  },
+  "performance": {
+    "runnerMinutes": 0.6,
+    "dockerImageSizeBytes": null,
+    "pnpmCacheHitObserved": true
+  }
+}
