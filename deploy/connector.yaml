@@ -91,8 +91,8 @@ chainProviders:
 #
 # SETTLEMENT IDENTITY: reuse the apex's demo seed so existing client channels
 # (to g.proxy.store / g.proxy.relay.store) survive the cutover. Set in .env:
-#   TOON_MNEMONIC="giant goat guide develop boy wolf target embody leave sunny paddle neutral"
-#   → EVM 0xC0E55cD2E967a4F625627DaE5d4946f54267C7ab (NIP-06 path m/44'/1237'/0'/0/0)
+#   TOON_MNEMONIC=<provisioned out of band; not recorded in this repo>
+#   → EVM 0xF29fD62C4848B9573C9b90adbF61b664F386d9CF (NIP-06 path m/44'/1237'/0'/0/0)
 # It is DISTINCT from the store (0x1f4E12…), so the relay-connector↔store-box
 # channel settles correctly (no self-pay).
 peers:
@@ -116,7 +116,7 @@ peers:
 # g.proxy.relay terminates at the relay.
 #
 # settlementAddresses.evm is this node's OWN address (the fee recipient) =
-# the apex demo identity 0xC0E55… set via TOON_MNEMONIC above.
+# the apex demo identity 0xF29fD… set via TOON_MNEMONIC above.
 routes:
   - prefix: g.proxy.relay
     nextHop: connector
@@ -126,7 +126,7 @@ routes:
       - evm
     ilpAddress: g.proxy.relay
     settlementAddresses:
-      evm: '0xC0E55cD2E967a4F625627DaE5d4946f54267C7ab'
+      evm: '0xF29fD62C4848B9573C9b90adbF61b664F386d9CF'
 
   - prefix: g.proxy.relay.store
     nextHop: store-box
@@ -135,7 +135,7 @@ routes:
       - evm
     ilpAddress: g.proxy.relay.store
     settlementAddresses:
-      evm: '0xC0E55cD2E967a4F625627DaE5d4946f54267C7ab'
+      evm: '0xF29fD62C4848B9573C9b90adbF61b664F386d9CF'
 
   - prefix: g.proxy.store
     nextHop: store-box
@@ -144,7 +144,7 @@ routes:
       - evm
     ilpAddress: g.proxy.store
     settlementAddresses:
-      evm: '0xC0E55cD2E967a4F625627DaE5d4946f54267C7ab'
+      evm: '0xF29fD62C4848B9573C9b90adbF61b664F386d9CF'
 
 # ── Self-announce (kind:10032 IlpPeerInfo) ────────────────────────────────────
 # Closes the discovery gap behind toon-protocol/relay#37 + toon-protocol/store#22.
