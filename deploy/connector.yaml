@@ -93,7 +93,7 @@ chainProviders:
 # (to g.proxy.store / g.proxy.relay.store) survive the cutover. Set in .env:
 #   TOON_MNEMONIC=<provisioned out of band; not recorded in this repo>
 #   → EVM 0xF29fD62C4848B9573C9b90adbF61b664F386d9CF (NIP-06 path m/44'/1237'/0'/0/0)
-# It is DISTINCT from the store (0x1f4E12…), so the relay-connector↔store-box
+# It is DISTINCT from the store (0x6B6c2D…), so the relay-connector↔store-box
 # channel settles correctly (no self-pay).
 peers:
   - id: store-box
@@ -102,7 +102,7 @@ peers:
     authToken: ''
     chain: evm:31337
     # The store box's settlement address (its distinct mnemonic, NIP-06 path).
-    settlementAddress: '0x1f4E12A9357a3c46477F95F6f9813eeBF49f106e'
+    settlementAddress: '0x6B6c2DACf7Ac1F1273F72beF2E6084F9Ee6D3bff'
 
 # ── Routes ──────────────────────────────────────────────────────────────────
 # THREE routes — this node is the g.proxy entry point + the relay hop:
