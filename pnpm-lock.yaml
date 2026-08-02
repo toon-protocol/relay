@@ -149,6 +149,9 @@ importers:
       nostr-tools:
         specifier: 2.23.1
         version: 2.23.1(typescript@5.9.3)
+      tiny-secp256k1:
+        specifier: ^2.2.4
+        version: 2.2.4
       ws:
         specifier: ^8.0.0
         version: 8.19.0
@@ -9673,6 +9676,13 @@ packages:
       convert-hrtime: 5.0.0
     dev: true
 
+  /tiny-secp256k1@2.2.4:
+    resolution: {integrity: sha512-FoDTcToPqZE454Q04hH9o2EhxWsm7pOSpicyHkgTwKhdKWdsTUuqfP5MLq3g+VjAtl2vSx6JpXGdwA2qpYkI0Q==}
+    engines: {node: '>=14.0.0'}
+    dependencies:
+      uint8array-tools: 0.0.7
+    dev: false
+
   /tinybench@2.9.0:
     resolution: {integrity: sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==}
     dev: true
@@ -9903,6 +9913,11 @@ packages:
     requiresBuild: true
     dev: true
     optional: true
+
+  /uint8array-tools@0.0.7:
+    resolution: {integrity: sha512-vrrNZJiusLWoFWBqz5Y5KMCgP9W9hnjZHzZiZRT8oNAkq3d5Z5Oe76jAvVVSRh4U8GGR90N2X1dWtrhvx6L8UQ==}
+    engines: {node: '>=14.0.0'}
+    dev: false
 
   /uint8arrays@3.1.0:
     resolution: {integrity: sha512-ei5rfKtoRO8OyOIor2Rz5fhzjThwIHJZ3uyDPnDHTXbP0aMQ1RN/6AI5B5d9dBxJOU+BvOAk7ZQ1xphsX8Lrog==}

@@ -28,6 +28,7 @@ import { Hono, type Context } from 'hono';
 import { getPublicKey } from 'nostr-tools/pure';
 import { privateKeyFromSeedWords } from 'nostr-tools/nip06';
 import type { Filter } from 'nostr-tools/filter';
+import { verifyImplementation } from '../crypto/index.js';
 import { SqliteEventStore } from '../storage/index.js';
 import type { EventStore } from '../storage/index.js';
 import { NostrRelayServer } from '../websocket/index.js';
@@ -79,6 +80,15 @@ export interface RelayConfig {
 
   /** Skip event-signature verification on `POST /write` (default: false). */
   devMode?: boolean;
+
+  // --- Observability ---
+
+  /**
+   * Log one line per accepted `POST /write` (default: false). Per-event
+   * console I/O is measurable tail jitter on the write hot path (relay#85),
+   * so this is a debug switch, not an access log.
+   */
+  logWrites?: boolean;
 }
 
 /**
@@ -90,6 +100,7 @@ export interface ResolvedRelayConfig {
   host: string;
   dataDir: string;
   devMode: boolean;
+  logWrites: boolean;
 }
 
 /**
@@ -240,6 +251,7 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
   const host = config.host ?? '0.0.0.0';
   const dataDir = config.dataDir ?? './data';
   const devMode = config.devMode ?? false;
+  const logWrites = config.logWrites ?? false;
 
   const resolvedConfig: ResolvedRelayConfig = {
     relayPort,
@@ -247,6 +259,7 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
     host,
     dataDir,
     devMode,
+    logWrites,
   };
 
   // --- 3. Event store ---
@@ -271,9 +284,13 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
 
   // POST /write: trust the upstream terminator's injected payment headers,
   // verify only the event signature, store, and broadcast to live WS readers.
+  // Logged once: the noble fallback is a silent ~7x verify-throughput loss,
+  // so make the active implementation visible at startup (relay#85).
+  console.log(`[relay] event signature verify: ${verifyImplementation}`);
   const writeHandler = createWriteHandler({
     eventStore,
     devMode,
+    logWrites,
     onStored: (event) => {
       try {
         wsRelay.broadcastEvent(event);
