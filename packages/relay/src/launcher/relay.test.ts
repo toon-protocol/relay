@@ -283,6 +283,39 @@ describe('startRelay() — HTTP/WS relay app', () => {
     );
   });
 
+  it('serves GET /metrics with event-loop lag and verify timings (relay#85)', async () => {
+    instance = await boot();
+
+    // A persistent-kind write exercises the (possibly pooled) verify path.
+    const event = createSignedEvent('metrics probe');
+    const writeRes = await fetch(`http://localhost:${BLS_PORT}/write`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event }),
+    });
+    expect(writeRes.status).toBe(200);
+
+    const res = await fetch(`http://localhost:${BLS_PORT}/metrics`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      timestamp: number;
+      eventLoopDelayMs: Record<string, number>;
+      verify: Record<string, unknown>;
+    };
+    expect(body.timestamp).toBeGreaterThan(0);
+    for (const key of ['mean', 'p50', 'p99', 'max']) {
+      expect(typeof body.eventLoopDelayMs[key], `eventLoopDelayMs.${key}`).toBe(
+        'number'
+      );
+    }
+    expect(['libsecp256k1-wasm', 'noble-pure-js']).toContain(
+      body.verify['implementation']
+    );
+    expect(typeof body.verify['workers']).toBe('number');
+    expect(body.verify['count']).toBeGreaterThanOrEqual(1);
+    expect(typeof body.verify['meanMs']).toBe('number');
+  });
+
   it('accepts a paid ephemeral write with an invalid signature end-to-end (relay#85 skip)', async () => {
     // Pins the default skip through the full startRelay() wiring: garbage
     // sig + valid id on an ephemeral kind -> 200 (id check only).
