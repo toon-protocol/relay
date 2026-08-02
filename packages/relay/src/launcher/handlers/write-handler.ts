@@ -15,8 +15,16 @@
  * 1. Parse JSON body `{ event }` -> 400 on malformed/missing event
  * 2. Capture trusted X-TOON-Payer / X-TOON-Amount / X-TOON-Chain headers
  * 3. Verify the event signature (skipped in devMode) -> 422 on invalid sig
- * 4. Store the event in the EventStore
- * 5. Fire the optional onStored callback
+ * 4. Store the event in the EventStore -- unless its kind is ephemeral
+ *    (NIP-16: 20000 <= kind < 30000), which is delivered live and never
+ *    persisted. Skipping the store here is not only NIP-16 semantics: the
+ *    synchronous per-event disk write was the serialization point that
+ *    capped the whole paid-write pipeline at ~150 events/s globally
+ *    (connector#685), and ephemeral traffic -- audio frames -- is exactly
+ *    the traffic that hits that path hardest.
+ * 5. Fire the optional onStored callback (ephemeral events included: it is
+ *    the live-broadcast hook, and ephemeral events exist only as that
+ *    broadcast)
  * 6. Respond 200 with the event id, storedAt timestamp, and echoed headers
  *
  * @module
@@ -26,6 +34,14 @@ import type { Context } from 'hono';
 import { verifyEvent } from 'nostr-tools/pure';
 import type { NostrEvent } from 'nostr-tools/pure';
 import type { EventStore } from '../../storage/index.js';
+
+/**
+ * Whether `kind` is ephemeral per NIP-16 (20000 <= kind < 30000): delivered
+ * to live subscribers but never persisted or served from REQ history.
+ */
+function isEphemeralKind(kind: number): boolean {
+  return kind >= 20000 && kind < 30000;
+}
 
 /**
  * Configuration for the write handler.
@@ -53,9 +69,7 @@ export interface WriteHandler {
  * @param config - Handler configuration.
  * @returns A WriteHandler with a handleWrite method.
  */
-export function createWriteHandler(
-  config: WriteHandlerConfig
-): WriteHandler {
+export function createWriteHandler(config: WriteHandlerConfig): WriteHandler {
   return {
     async handleWrite(c: Context): Promise<Response> {
       // --- Parse request body ---
@@ -86,10 +100,12 @@ export function createWriteHandler(
         return c.json({ error: 'Invalid event signature' }, 422);
       }
 
-      // --- Store the event ---
-      config.eventStore.store(event);
+      // --- Store the event (ephemeral kinds are broadcast-only, NIP-16) ---
+      if (!isEphemeralKind(event.kind)) {
+        config.eventStore.store(event);
+      }
 
-      // --- Fire the optional stored callback ---
+      // --- Fire the optional stored callback (the live-broadcast hook) ---
       config.onStored?.(event);
 
       // --- Build response (echo trusted headers) ---

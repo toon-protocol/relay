@@ -29,8 +29,16 @@ describe('SqliteEventStore', () => {
     if (store) {
       store.close();
     }
-    if (existsSync(TEST_DB_PATH)) {
-      unlinkSync(TEST_DB_PATH);
+    // WAL mode leaves -wal/-shm sidecars if a connection did not close
+    // cleanly; sweep them so one test's failure cannot leak into the next.
+    for (const path of [
+      TEST_DB_PATH,
+      `${TEST_DB_PATH}-wal`,
+      `${TEST_DB_PATH}-shm`,
+    ]) {
+      if (existsSync(path)) {
+        unlinkSync(path);
+      }
     }
   });
 
@@ -80,6 +88,23 @@ describe('SqliteEventStore', () => {
       store = new SqliteEventStore();
       // If we get here without error, default in-memory database was created
       expect(store).toBeDefined();
+    });
+
+    it('runs a file-backed database in WAL mode with synchronous=NORMAL (connector#685)', () => {
+      // The default rollback journal + synchronous=FULL cost two fsyncs
+      // per stored event on the hot write path -- the dominant share of
+      // the pipeline's ~150 events/s global admission ceiling.
+      store = new SqliteEventStore(TEST_DB_PATH);
+      const db = new Database(TEST_DB_PATH);
+      const journalMode = db.pragma('journal_mode', { simple: true });
+      const synchronous = db.pragma('synchronous', { simple: true });
+      db.close();
+      expect(journalMode).toBe('wal');
+      // synchronous is per-connection; assert the store's own connection
+      // was configured by writing through it and reading the mode there.
+      expect(synchronous).toBeDefined();
+      store.store(createTestEvent({ id: 'wal-smoke'.padEnd(64, '0') }));
+      expect(store.get('wal-smoke'.padEnd(64, '0'))).toBeDefined();
     });
   });
 

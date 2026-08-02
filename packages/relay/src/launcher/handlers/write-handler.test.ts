@@ -118,9 +118,12 @@ describe('Write handler', () => {
 
   it('returns 400 when the event field is missing', async () => {
     const eventStore = new InMemoryEventStore();
-    const response = await makeRequest({ eventStore, devMode: false }, {
-      somethingElse: true,
-    });
+    const response = await makeRequest(
+      { eventStore, devMode: false },
+      {
+        somethingElse: true,
+      }
+    );
 
     expect(response.status).toBe(400);
     const body = (await response.json()) as Record<string, unknown>;
@@ -174,9 +177,12 @@ describe('Write handler', () => {
     const event = createValidSignedEvent();
 
     // When: no X-TOON-* headers are sent
-    const response = await makeRequest({ eventStore, devMode: false }, {
-      event,
-    });
+    const response = await makeRequest(
+      { eventStore, devMode: false },
+      {
+        event,
+      }
+    );
 
     // Then: 200, stored, and the echoed header fields are absent/undefined
     expect(response.status).toBe(200);
@@ -186,5 +192,54 @@ describe('Write handler', () => {
     expect(body['amount']).toBeUndefined();
     expect(body['chain']).toBeUndefined();
     expect(eventStore.get(event.id)?.id).toBe(event.id);
+  });
+
+  it('broadcasts but never stores an ephemeral event (NIP-16, connector#685)', async () => {
+    // Given: a signed ephemeral event (the huddle audio-frame kind)
+    const eventStore = new InMemoryEventStore();
+    const onStored = vi.fn();
+    const event = createValidSignedEvent({ kind: 20001 });
+
+    // When: it arrives on the paid-write surface
+    const response = await makeRequest(
+      { eventStore, devMode: false, onStored },
+      { event }
+    );
+
+    // Then: 200 and the live-broadcast hook fired -- but nothing was
+    // persisted, so REQ history will never serve it and the synchronous
+    // per-event disk write is off the ephemeral hot path entirely.
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body['eventId']).toBe(event.id);
+    expect(onStored).toHaveBeenCalledTimes(1);
+    expect(onStored).toHaveBeenCalledWith(event);
+    expect(eventStore.get(event.id)).toBeUndefined();
+  });
+
+  it('treats the whole NIP-16 ephemeral range as broadcast-only, and its edges as stored', async () => {
+    const cases: { kind: number; stored: boolean }[] = [
+      { kind: 19999, stored: true }, // last replaceable kind
+      { kind: 20000, stored: false }, // first ephemeral kind
+      { kind: 29999, stored: false }, // last ephemeral kind
+      { kind: 30000, stored: true }, // first parameterized-replaceable kind
+    ];
+    for (const { kind, stored } of cases) {
+      const eventStore = new InMemoryEventStore();
+      const event = createValidSignedEvent({
+        kind,
+        // Parameterized-replaceable kinds key on the d tag.
+        tags: kind === 30000 ? [['d', 'x']] : [],
+      });
+      const response = await makeRequest(
+        { eventStore, devMode: false },
+        { event }
+      );
+      expect(response.status).toBe(200);
+      expect(
+        eventStore.get(event.id) !== undefined,
+        `kind ${kind} should ${stored ? '' : 'NOT '}be stored`
+      ).toBe(stored);
+    }
   });
 });

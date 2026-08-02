@@ -83,6 +83,7 @@ function getDTagValue(tags: string[][]): string {
 export class SqliteEventStore implements EventStore {
   private db: Database.Database;
   private insertStmt: Database.Statement;
+  private insertOrIgnoreStmt: Database.Statement;
   private getStmt: Database.Statement;
   private deleteByPubkeyKindStmt: Database.Statement;
   private deleteByPubkeyKindDTagStmt: Database.Statement;
@@ -96,11 +97,29 @@ export class SqliteEventStore implements EventStore {
   constructor(dbPath = ':memory:') {
     try {
       this.db = new Database(dbPath);
+
+      // WAL + synchronous=NORMAL (connector#685): the default rollback
+      // journal with synchronous=FULL costs two fsyncs per autocommit
+      // INSERT -- ~4ms of event-loop blockage per stored event, which was
+      // the dominant share of the paid-write pipeline's ~150 events/s
+      // global admission ceiling. WAL with synchronous=NORMAL keeps
+      // durability at the checkpoint level (an OS crash can lose the last
+      // moments of writes, an app crash loses nothing) and turns each
+      // insert into a memory-speed WAL append. On a ':memory:' database
+      // the pragma is a harmless no-op.
+      this.db.pragma('journal_mode = WAL');
+      this.db.pragma('synchronous = NORMAL');
+
       initializeSchema(this.db);
 
       // Prepare statements for better performance
       this.insertStmt = this.db.prepare(`
         INSERT OR REPLACE INTO events (id, pubkey, kind, content, tags, created_at, sig, received_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      this.insertOrIgnoreStmt = this.db.prepare(`
+        INSERT OR IGNORE INTO events (id, pubkey, kind, content, tags, created_at, sig, received_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
@@ -145,12 +164,10 @@ export class SqliteEventStore implements EventStore {
         // Parameterized replaceable event (30000-39999)
         this.storeParameterizedReplaceableEvent(event, tagsJson, receivedAt);
       } else {
-        // Regular event - INSERT OR IGNORE to handle duplicates
-        const insertOrIgnore = this.db.prepare(`
-          INSERT OR IGNORE INTO events (id, pubkey, kind, content, tags, created_at, sig, received_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        insertOrIgnore.run(
+        // Regular event - INSERT OR IGNORE to handle duplicates. Uses the
+        // statement prepared once in the constructor: re-preparing here on
+        // every call was measurable overhead on the hot write path.
+        this.insertOrIgnoreStmt.run(
           event.id,
           event.pubkey,
           event.kind,
