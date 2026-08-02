@@ -311,6 +311,73 @@ describe('Write handler', () => {
     });
   });
 
+  describe('async verify + per-session ordering (relay#85 worker pool)', () => {
+    it('awaits an injected async verifier (200 on true, 422 on false)', async () => {
+      const eventStore = new InMemoryEventStore();
+      const event = createValidSignedEvent();
+
+      const accept = await makeRequest(
+        { eventStore, devMode: false, verifyEvent: async () => true },
+        { event }
+      );
+      expect(accept.status).toBe(200);
+
+      const reject = await makeRequest(
+        {
+          eventStore: new InMemoryEventStore(),
+          devMode: false,
+          verifyEvent: async () => false,
+        },
+        { event }
+      );
+      expect(reject.status).toBe(422);
+    });
+
+    it('sequential same-session writes are never reordered by async verify (connector-serialization contract)', async () => {
+      // Ordering is enforced UPSTREAM: the connector serializes each BTP
+      // session's POSTs -- it does not send request N+1 until response N
+      // arrived. This test documents and guards the relay-side assumption:
+      // with an adversarially slow-then-fast async verifier, sequentially
+      // awaited requests still store and respond in submission order. (Only
+      // CONCURRENT requests may complete out of order -- which the upstream
+      // contract precludes within a session.)
+      const eventStore = new InMemoryEventStore();
+      const storedOrder: string[] = [];
+      const handler = createWriteHandler({
+        eventStore,
+        devMode: false,
+        // First event verifies slowest -- if the handler leaked concurrency
+        // for sequential callers, later events would overtake it.
+        verifyEvent: (event) =>
+          new Promise<boolean>((resolve) => {
+            const delay = event.content === 'seq-0' ? 30 : 1;
+            setTimeout(() => resolve(true), delay);
+          }),
+        onStored: (event) => storedOrder.push(event.content),
+      });
+      const app = new Hono();
+      app.post('/write', (c) => handler.handleWrite(c));
+
+      const contents = ['seq-0', 'seq-1', 'seq-2', 'seq-3'];
+      for (const content of contents) {
+        const event = createValidSignedEvent({ content });
+        const response = await app.fetch(
+          new Request('http://localhost/write', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ event }),
+          })
+        );
+        expect(response.status).toBe(200);
+        const body = (await response.json()) as Record<string, unknown>;
+        // Each response carries ITS request's event id.
+        expect(body['eventId']).toBe(event.id);
+      }
+
+      expect(storedOrder).toEqual(contents);
+    });
+  });
+
   describe('per-write logging (relay#85)', () => {
     afterEach(() => {
       vi.restoreAllMocks();

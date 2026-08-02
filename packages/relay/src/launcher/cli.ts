@@ -48,6 +48,11 @@ Options:
                            (relay#85). Set this when the write port is
                            fronted by anything other than a payment-gating
                            connector
+  --verify-workers <n>     Worker threads for persistent-kind signature
+                           verification (default: CPU count - 1, minimum 0).
+                           0 = verify inline on the event loop (automatic on
+                           1-core boxes; the escape hatch back to the
+                           pre-pool behavior, relay#85)
   --log-writes             Log one line per accepted POST /write (debug; off
                            by default -- per-event logging is write-path
                            tail jitter, relay#85)
@@ -64,6 +69,7 @@ Environment Variables:
   TOON_DATA_DIR            Same as --data-dir
   TOON_DEV_MODE            Same as --dev-mode (set to "true")
   TOON_VERIFY_EPHEMERAL    Same as --verify-ephemeral (set to "true")
+  TOON_VERIFY_WORKERS      Same as --verify-workers
   TOON_LOG_WRITES          Same as --log-writes (set to "true")
 
 Security:
@@ -86,6 +92,7 @@ function parseCli(): RelayConfig {
       'data-dir': { type: 'string' },
       'dev-mode': { type: 'boolean' },
       'verify-ephemeral': { type: 'boolean' },
+      'verify-workers': { type: 'string' },
       'log-writes': { type: 'boolean' },
       help: { type: 'boolean' },
     },
@@ -185,6 +192,21 @@ function parseCli(): RelayConfig {
     values['verify-ephemeral'] ??
     (process.env['TOON_VERIFY_EPHEMERAL'] === 'true' ? true : undefined);
 
+  // Verify-pool size (relay#85). 0 is a meaningful value (inline path), so
+  // only an absent/blank setting falls through to the default.
+  const verifyWorkersStr =
+    values['verify-workers'] ?? process.env['TOON_VERIFY_WORKERS'] ?? undefined;
+  const verifyWorkers = verifyWorkersStr
+    ? parseInt(verifyWorkersStr, 10)
+    : undefined;
+  if (
+    verifyWorkers !== undefined &&
+    (Number.isNaN(verifyWorkers) || verifyWorkers < 0 || verifyWorkers > 256)
+  ) {
+    console.error('Error: --verify-workers must be an integer >= 0');
+    process.exit(1);
+  }
+
   const logWrites =
     values['log-writes'] ??
     (process.env['TOON_LOG_WRITES'] === 'true' ? true : undefined);
@@ -199,6 +221,7 @@ function parseCli(): RelayConfig {
     ...(dataDir && { dataDir }),
     ...(devMode !== undefined && { devMode }),
     ...(verifyEphemeral !== undefined && { verifyEphemeral }),
+    ...(verifyWorkers !== undefined && { verifyWorkers }),
     ...(logWrites !== undefined && { logWrites }),
   };
 
