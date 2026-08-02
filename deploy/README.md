@@ -129,3 +129,10 @@ npx ts-node -e 'import {SimplePool} from "nostr-tools";const p=new SimplePool();
 - **connector `:8080` / admin `:8081` are never host-published.**
 - The only host-bound ports are the edge **`:3000`** and the free-read WS
   **`:7100`** — both fronted by the environment's TLS terminator.
+- **Since relay#85 this is a security precondition, not just privacy**: the
+  relay skips schnorr verification for paid ephemeral kinds because `:3100`
+  is reachable only through the payment-gating connector. If you change the
+  topology so `:3100` is reachable any other way, set
+  `RELAY_VERIFY_EPHEMERAL=true`. Fleet gotcha: docker `ports:` publishes are
+  internet-reachable even with ufw locked down to 22/80/443 — never convert
+  `:3100` from `expose:` to `ports:`.

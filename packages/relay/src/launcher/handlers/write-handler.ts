@@ -18,7 +18,12 @@
  *    Verification uses the fast WASM libsecp256k1 path (crypto/verify-event)
  *    rather than noble pure-JS: post-#84 the synchronous ~1.3ms noble verify
  *    on the single event loop WAS the write-path ceiling (~240-260 events/s
- *    aggregate, relay#85 / connector#685 Phase G)
+ *    aggregate, relay#85 / connector#685 Phase G).
+ *    PAID-EPHEMERAL EXCEPTION (relay#85, decision 2026-08-02): for ephemeral
+ *    kinds (20000 <= kind < 30000) the schnorr verification is SKIPPED by
+ *    default -- only the SHA-256 id check runs -> 422 on id mismatch. See
+ *    the loud comment at the verify step for why this is safe, and
+ *    `verifyEphemeral` to turn full verification back on.
  * 4. Store the event in the EventStore -- unless its kind is ephemeral
  *    (NIP-16: 20000 <= kind < 30000), which is delivered live and never
  *    persisted. Skipping the store here is not only NIP-16 semantics: the
@@ -36,7 +41,7 @@
 
 import type { Context } from 'hono';
 import type { NostrEvent } from 'nostr-tools/pure';
-import { verifyEventSignature } from '../../crypto/index.js';
+import { verifyEventSignature, verifyEventId } from '../../crypto/index.js';
 import type { EventStore } from '../../storage/index.js';
 
 /**
@@ -55,6 +60,27 @@ export interface WriteHandlerConfig {
   eventStore: EventStore;
   /** Whether dev mode is enabled (skips Schnorr signature verification). */
   devMode: boolean;
+  /**
+   * Run FULL schnorr verification on ephemeral kinds too (default: false --
+   * i.e. the paid-ephemeral verify skip is ON by default).
+   *
+   * ! SECURITY INVARIANT -- READ BEFORE TOUCHING !
+   * The default skip is safe ONLY because this write surface is payment-gated:
+   * every request reaching `POST /write` has already passed the upstream
+   * connector's claim gate (payment IS the admission/spam gate), and the
+   * protocol rule is that clients trust the signature chain and verify every
+   * event themselves -- never the relay. Relay-side schnorr on ephemeral
+   * frames is therefore pure spam defense that payment already provides;
+   * forging a speaker costs real money to emit frames every client discards.
+   * The SHA-256 id check is ALWAYS kept (see handleWrite).
+   *
+   * If you ever add a FREE (non-payment-gated) ephemeral write lane, it MUST
+   * NOT reuse this skip -- free spam with valid-looking ids would be
+   * broadcast to every subscriber. Community operators who front this port
+   * with anything other than a payment-gating connector should set
+   * `verifyEphemeral: true` (TOON_VERIFY_EPHEMERAL=true).
+   */
+  verifyEphemeral?: boolean;
   /** Optional callback fired after an event is successfully stored. */
   onStored?: (event: NostrEvent) => void;
   /**
@@ -83,6 +109,7 @@ export interface WriteHandler {
  */
 export function createWriteHandler(config: WriteHandlerConfig): WriteHandler {
   const logWrites = config.logWrites ?? false;
+  const verifyEphemeral = config.verifyEphemeral ?? false;
   return {
     async handleWrite(c: Context): Promise<Response> {
       // --- Parse request body ---
@@ -111,8 +138,25 @@ export function createWriteHandler(config: WriteHandlerConfig): WriteHandler {
       }
 
       // --- Verify event signature (integrity only; skipped in devMode) ---
-      if (!config.devMode && !verifyEventSignature(event)) {
-        return c.json({ error: 'Invalid event signature' }, 422);
+      //
+      // !!! PAYMENT-GATED VERIFY BYPASS (relay#85, decided 2026-08-02) !!!
+      // Ephemeral kinds (NIP-16, 20000 <= kind < 30000) skip schnorr entirely
+      // by default: payment is already the admission gate (the upstream
+      // connector's claim gate), and clients verify every signature
+      // themselves -- the relay's verdict is never trusted. We KEEP the
+      // SHA-256 id check so the broadcast bytes always match the id clients
+      // index/verify by. This bypass is safe ONLY because POST /write is
+      // payment-gated; a future FREE ephemeral lane MUST NOT reuse it.
+      // Operators can restore full verification with verifyEphemeral
+      // (TOON_VERIFY_EPHEMERAL=true).
+      if (!config.devMode) {
+        if (isEphemeralKind(event.kind) && !verifyEphemeral) {
+          if (!verifyEventId(event)) {
+            return c.json({ error: 'Invalid event id' }, 422);
+          }
+        } else if (!verifyEventSignature(event)) {
+          return c.json({ error: 'Invalid event signature' }, 422);
+        }
       }
 
       // --- Store the event (ephemeral kinds are broadcast-only, NIP-16) ---

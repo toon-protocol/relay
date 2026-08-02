@@ -1,1 +1,5 @@
-export { verifyEventSignature, verifyImplementation } from './verify-event.js';
+export {
+  verifyEventSignature,
+  verifyEventId,
+  verifyImplementation,
+} from './verify-event.js';

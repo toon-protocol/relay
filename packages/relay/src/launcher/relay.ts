@@ -12,7 +12,9 @@
  *   - `POST /write` (TOON_BLS_PORT, default 3100): accepts `{ event }` as JSON,
  *     trusts the injected `X-TOON-Payer`/`-Amount`/`-Chain` headers WITHOUT
  *     re-validating payment, verifies only the event's own signature for
- *     integrity, and stores it. `GET /health` lives on the same port.
+ *     integrity (paid ephemeral kinds skip schnorr by default and keep the
+ *     id check -- relay#85, see `verifyEphemeral`), and stores it.
+ *     `GET /health` lives on the same port.
  *   - Free NIP-01 WebSocket reads (TOON_RELAY_PORT, default 7100).
  *
  * `startRelay()` returns a `RelayInstance` with an explicit `.stop()` for
@@ -63,6 +65,18 @@ export interface RelayConfig {
    * port to localhost only (e.g. when an upstream proxy handles inbound).
    */
   host?: string;
+  /**
+   * Bind host for the HTTP write/health listener (default: 0.0.0.0).
+   *
+   * The write port MUST only be reachable via the payment-gating connector
+   * (see `verifyEphemeral`): in the canonical compose deploy that is enforced
+   * by NOT host-publishing the port (docker `expose:`, never `ports:` --
+   * note that docker `ports:` publishes bypass ufw). When the relay runs
+   * directly on a host, bind this to a loopback/internal address instead.
+   * A non-internal bind while the ephemeral verify skip is active logs a
+   * prominent startup warning (never a hard failure -- topologies vary).
+   */
+  writeHost?: string;
 
   // --- Storage ---
 
@@ -80,6 +94,18 @@ export interface RelayConfig {
 
   /** Skip event-signature verification on `POST /write` (default: false). */
   devMode?: boolean;
+  /**
+   * Run FULL schnorr verification on ephemeral kinds (default: false -- the
+   * paid-ephemeral verify skip is ON by default, relay#85).
+   *
+   * The default skip is safe ONLY because `POST /write` is payment-gated by
+   * the upstream connector and clients verify every signature themselves;
+   * the SHA-256 event-id check always runs. Community operators fronting the
+   * write port with anything other than a payment-gating connector should
+   * set this to true (env: TOON_VERIFY_EPHEMERAL=true). See
+   * `WriteHandlerConfig.verifyEphemeral` for the full invariant.
+   */
+  verifyEphemeral?: boolean;
 
   // --- Observability ---
 
@@ -98,8 +124,10 @@ export interface ResolvedRelayConfig {
   relayPort: number;
   blsPort: number;
   host: string;
+  writeHost: string;
   dataDir: string;
   devMode: boolean;
+  verifyEphemeral: boolean;
   logWrites: boolean;
 }
 
@@ -173,6 +201,74 @@ function deriveIdentity(config: RelayConfig): {
     : (config.secretKey as Uint8Array);
 
   return { secretKey, pubkey: getPublicKey(secretKey) };
+}
+
+// ---------- Write-port exposure guard (relay#85) ----------
+
+/**
+ * Whether `host` is a bind address that cannot be reached from the public
+ * internet directly: loopback, RFC1918 private, IPv6 unique-local/link-local.
+ * `0.0.0.0` / `::` (all interfaces) and public addresses return false.
+ *
+ * Used by the startup exposure guard: with the paid-ephemeral verify skip
+ * active, the write port must only be reachable via the payment-gating
+ * connector. Note a "false" here is not proof of exposure -- inside a
+ * container, 0.0.0.0 is required for the connector to dial the compose
+ * network and the port is kept private by not host-publishing it -- which is
+ * why the guard warns instead of failing.
+ *
+ * @internal Exported for unit testing.
+ */
+export function isInternalBindHost(host: string): boolean {
+  const h = host.trim().toLowerCase();
+  if (h === 'localhost' || h === '::1' || h === '[::1]') return true;
+  if (h.startsWith('127.')) return true; // 127.0.0.0/8 loopback
+  if (h.startsWith('10.')) return true; // 10.0.0.0/8 RFC1918
+  if (h.startsWith('192.168.')) return true; // 192.168.0.0/16 RFC1918
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true; // 172.16.0.0/12
+  if (/^f[cd][0-9a-f]{2}:/.test(h)) return true; // fc00::/7 unique-local
+  if (h.startsWith('fe80:')) return true; // link-local
+  return false;
+}
+
+/**
+ * Log the prominent write-port exposure warning when the paid-ephemeral
+ * verify skip is active and the write listener binds a non-internal
+ * interface. Deliberately a warning, not a hard failure: in the canonical
+ * compose deploy the port binds 0.0.0.0 inside the container and is private
+ * because it is never host-published (docker `expose:`, not `ports:`).
+ *
+ * @internal Exported for unit testing.
+ */
+export function warnIfWritePortExposed(
+  writeHost: string,
+  blsPort: number,
+  options: { verifyEphemeral: boolean; devMode: boolean }
+): boolean {
+  const skipActive = options.devMode || !options.verifyEphemeral;
+  if (!skipActive || isInternalBindHost(writeHost)) {
+    return false;
+  }
+  console.warn(
+    [
+      '',
+      '!'.repeat(72),
+      `[relay] WARNING: POST /write is binding ${writeHost}:${blsPort} (a`,
+      '[relay] non-loopback/non-internal interface) while event verification',
+      options.devMode
+        ? '[relay] is fully DISABLED (devMode).'
+        : '[relay] is SKIPPED for paid ephemeral kinds (relay#85 default).',
+      '[relay] This is safe ONLY if the write port is reachable exclusively',
+      '[relay] through the payment-gating connector. In docker, do NOT',
+      '[relay] host-publish this port (`expose:`, never `ports:` -- published',
+      '[relay] ports bypass ufw). If the port is directly reachable, either',
+      '[relay] bind it internally (TOON_WRITE_HOST=127.0.0.1) or restore full',
+      '[relay] verification (TOON_VERIFY_EPHEMERAL=true).',
+      '!'.repeat(72),
+      '',
+    ].join('\n')
+  );
+  return true;
 }
 
 // ---------- Subscription Helper ----------
@@ -249,16 +345,20 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
   const relayPort = config.relayPort ?? 7100;
   const blsPort = config.blsPort ?? 3100;
   const host = config.host ?? '0.0.0.0';
+  const writeHost = config.writeHost ?? '0.0.0.0';
   const dataDir = config.dataDir ?? './data';
   const devMode = config.devMode ?? false;
+  const verifyEphemeral = config.verifyEphemeral ?? false;
   const logWrites = config.logWrites ?? false;
 
   const resolvedConfig: ResolvedRelayConfig = {
     relayPort,
     blsPort,
     host,
+    writeHost,
     dataDir,
     devMode,
+    verifyEphemeral,
     logWrites,
   };
 
@@ -287,9 +387,22 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
   // Logged once: the noble fallback is a silent ~7x verify-throughput loss,
   // so make the active implementation visible at startup (relay#85).
   console.log(`[relay] event signature verify: ${verifyImplementation}`);
+  console.log(
+    `[relay] ephemeral-kind schnorr verify: ${
+      devMode
+        ? 'skipped (devMode)'
+        : verifyEphemeral
+          ? 'full (TOON_VERIFY_EPHEMERAL)'
+          : 'skipped -- payment-gated write path, id check kept (relay#85)'
+    }`
+  );
+  // Exposure guard (relay#85): the verify skip assumes the write port is only
+  // reachable via the payment-gating connector.
+  warnIfWritePortExposed(writeHost, blsPort, { verifyEphemeral, devMode });
   const writeHandler = createWriteHandler({
     eventStore,
     devMode,
+    verifyEphemeral,
     logWrites,
     onStored: (event) => {
       try {
@@ -304,8 +417,9 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
   // Resolve once the HTTP server is actually listening so callers (and tests)
   // never race a not-yet-bound port.
   const blsServer: ServerType = await new Promise<ServerType>((resolve) => {
-    const server = serve({ fetch: app.fetch, port: blsPort }, () =>
-      resolve(server)
+    const server = serve(
+      { fetch: app.fetch, port: blsPort, hostname: writeHost },
+      () => resolve(server)
     );
   });
 

@@ -12,7 +12,7 @@
  *   - stop() tears the instance down cleanly
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,7 +23,11 @@ import {
   verifyEvent,
 } from 'nostr-tools/pure';
 import type { NostrEvent } from 'nostr-tools/pure';
-import { startRelay } from './relay.js';
+import {
+  startRelay,
+  isInternalBindHost,
+  warnIfWritePortExposed,
+} from './relay.js';
 import type { RelayInstance } from './relay.js';
 import { InMemoryEventStore } from '../storage/index.js';
 
@@ -83,7 +87,11 @@ function collectUntilEose(
     ws.on('message', (data: Buffer) => {
       const parsed: unknown = JSON.parse(data.toString());
       messages.push(parsed);
-      if (Array.isArray(parsed) && parsed[0] === 'EOSE' && parsed[1] === subId) {
+      if (
+        Array.isArray(parsed) &&
+        parsed[0] === 'EOSE' &&
+        parsed[1] === subId
+      ) {
         clearTimeout(timer);
         resolve(messages);
       }
@@ -158,9 +166,7 @@ describe('startRelay() — HTTP/WS relay app', () => {
       chain?: string;
     };
     expect(writeBody.eventId).toBe(event.id);
-    expect(writeBody.payer).toBe(
-      '0x1111111111111111111111111111111111111111'
-    );
+    expect(writeBody.payer).toBe('0x1111111111111111111111111111111111111111');
     expect(writeBody.amount).toBe('1000');
     expect(writeBody.chain).toBe('evm:base:8453');
 
@@ -272,6 +278,104 @@ describe('startRelay() — HTTP/WS relay app', () => {
   });
 
   it('requires exactly one of mnemonic/secretKey', async () => {
-    await expect(startRelay({})).rejects.toThrow(/one of mnemonic or secretKey/);
+    await expect(startRelay({})).rejects.toThrow(
+      /one of mnemonic or secretKey/
+    );
+  });
+
+  it('accepts a paid ephemeral write with an invalid signature end-to-end (relay#85 skip)', async () => {
+    // Pins the default skip through the full startRelay() wiring: garbage
+    // sig + valid id on an ephemeral kind -> 200 (id check only).
+    instance = await boot();
+
+    const sk = generateSecretKey();
+    const event = finalizeEvent(
+      {
+        kind: 20001,
+        content: 'frame',
+        tags: [],
+        created_at: Math.floor(Date.now() / 1000),
+      },
+      sk
+    );
+    const badSig = { ...event, sig: '0'.repeat(128) };
+
+    const res = await fetch(`http://localhost:${BLS_PORT}/write`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event: badSig }),
+    });
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('write-port exposure guard (relay#85)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('classifies loopback/private binds as internal, public/all-interfaces as not', () => {
+    for (const internal of [
+      '127.0.0.1',
+      '127.9.9.9',
+      'localhost',
+      '::1',
+      '10.0.0.5',
+      '172.16.0.1',
+      '172.31.255.255',
+      '192.168.1.10',
+      'fd00::1',
+    ]) {
+      expect(isInternalBindHost(internal), internal).toBe(true);
+    }
+    for (const exposed of [
+      '0.0.0.0',
+      '::',
+      '172.15.0.1',
+      '172.32.0.1',
+      '203.0.113.7',
+      '8.8.8.8',
+    ]) {
+      expect(isInternalBindHost(exposed), exposed).toBe(false);
+    }
+  });
+
+  it('warns when skip-verify is on and the write listener binds non-internally', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warned = warnIfWritePortExposed('0.0.0.0', 3100, {
+      verifyEphemeral: false,
+      devMode: false,
+    });
+    expect(warned).toBe(true);
+    expect(warnSpy).toHaveBeenCalledOnce();
+    expect(String(warnSpy.mock.calls[0]?.[0])).toMatch(/payment-gating/);
+  });
+
+  it('stays silent when full verification is on, or the bind is internal', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(
+      warnIfWritePortExposed('0.0.0.0', 3100, {
+        verifyEphemeral: true,
+        devMode: false,
+      })
+    ).toBe(false);
+    expect(
+      warnIfWritePortExposed('127.0.0.1', 3100, {
+        verifyEphemeral: false,
+        devMode: false,
+      })
+    ).toBe(false);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('warns in devMode too (verification fully off) on a non-internal bind', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(
+      warnIfWritePortExposed('0.0.0.0', 3100, {
+        verifyEphemeral: true,
+        devMode: true,
+      })
+    ).toBe(true);
+    expect(warnSpy).toHaveBeenCalledOnce();
   });
 });
