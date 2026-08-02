@@ -215,8 +215,100 @@ describe('Write handler', () => {
     const body = (await response.json()) as Record<string, unknown>;
     expect(body['eventId']).toBe(event.id);
     expect(onStored).toHaveBeenCalledTimes(1);
-    expect(onStored).toHaveBeenCalledWith(event);
+    // Compare against a symbol-free copy: since the paid-ephemeral verify
+    // skip (relay#85) the handler no longer schnorr-verifies ephemeral
+    // kinds, so the broadcast event carries no nostr-tools verifiedSymbol
+    // stamp (an id check is not a signature verdict).
+    expect(onStored).toHaveBeenCalledWith(JSON.parse(JSON.stringify(event)));
     expect(eventStore.get(event.id)).toBeUndefined();
+  });
+
+  describe('paid-ephemeral verify skip (relay#85)', () => {
+    it('accepts an ephemeral event with an INVALID signature by default (id check only)', async () => {
+      // Given: an ephemeral (huddle-frame kind) event whose sig is garbage
+      // but whose id still matches the bytes. Payment is the admission gate
+      // and clients verify signatures themselves -- the relay must not spend
+      // schnorr time on it.
+      const eventStore = new InMemoryEventStore();
+      const onStored = vi.fn();
+      const event = {
+        ...createValidSignedEvent({ kind: 20001 }),
+        sig: '0'.repeat(128),
+      };
+
+      const response = await makeRequest(
+        { eventStore, devMode: false, onStored },
+        { event }
+      );
+
+      // Then: 200, broadcast fired, nothing persisted (NIP-16)
+      expect(response.status).toBe(200);
+      expect(onStored).toHaveBeenCalledOnce();
+      expect(eventStore.get(event.id)).toBeUndefined();
+    });
+
+    it('still rejects an ephemeral event whose id does not match its bytes (422)', async () => {
+      // The SHA-256 id check is the integrity floor the skip path keeps:
+      // broadcast bytes must never disagree with the id clients verify by.
+      const eventStore = new InMemoryEventStore();
+      const onStored = vi.fn();
+      const event = {
+        ...createValidSignedEvent({ kind: 20001 }),
+        content: 'tampered after signing',
+      };
+
+      const response = await makeRequest(
+        { eventStore, devMode: false, onStored },
+        { event }
+      );
+
+      expect(response.status).toBe(422);
+      const body = (await response.json()) as Record<string, unknown>;
+      expect(String(body['error'])).toMatch(/id/i);
+      expect(onStored).not.toHaveBeenCalled();
+    });
+
+    it('verifyEphemeral: true restores FULL schnorr verification on ephemeral kinds', async () => {
+      // The community-operator escape hatch: same bad-sig ephemeral event,
+      // full verification back on -> 422.
+      const eventStore = new InMemoryEventStore();
+      const onStored = vi.fn();
+      const event = {
+        ...createValidSignedEvent({ kind: 20001 }),
+        sig: '0'.repeat(128),
+      };
+
+      const response = await makeRequest(
+        { eventStore, devMode: false, verifyEphemeral: true, onStored },
+        { event }
+      );
+
+      expect(response.status).toBe(422);
+      const body = (await response.json()) as Record<string, unknown>;
+      expect(String(body['error'])).toMatch(/signature/i);
+      expect(onStored).not.toHaveBeenCalled();
+    });
+
+    it('never skips schnorr for persistent kinds (skip is scoped to 20000 <= kind < 30000)', async () => {
+      // Kinds just outside the ephemeral range keep full verification even
+      // with the skip at its default.
+      for (const kind of [19999, 30000]) {
+        const eventStore = new InMemoryEventStore();
+        const event = {
+          ...createValidSignedEvent({
+            kind,
+            tags: kind === 30000 ? [['d', 'x']] : [],
+          }),
+          sig: '0'.repeat(128),
+        };
+        const response = await makeRequest(
+          { eventStore, devMode: false },
+          { event }
+        );
+        expect(response.status, `kind ${kind} must still verify`).toBe(422);
+        expect(eventStore.get(event.id)).toBeUndefined();
+      }
+    });
   });
 
   describe('per-write logging (relay#85)', () => {

@@ -33,8 +33,21 @@ Options:
   --relay-port <port>      WebSocket read port (default: 7100)
   --bls-port <port>        HTTP write/health port (default: 3100)
   --host <host>            WebSocket bind host (default: 0.0.0.0)
+  --write-host <host>      HTTP write/health bind host (default: 0.0.0.0).
+                           The write port must only be reachable via the
+                           payment-gating connector; bind it to a loopback/
+                           internal address when not isolated by docker
+                           networking (relay#85 exposure guard)
   --data-dir <path>        Data directory for the SQLite store (default: ./data)
   --dev-mode               Skip event-signature verification on POST /write
+  --verify-ephemeral       Run FULL schnorr verification on ephemeral kinds
+                           (20000 <= kind < 30000). Default OFF: the write
+                           path is payment-gated and clients verify
+                           signatures themselves, so ephemeral kinds skip
+                           schnorr and keep only the SHA-256 id check
+                           (relay#85). Set this when the write port is
+                           fronted by anything other than a payment-gating
+                           connector
   --log-writes             Log one line per accepted POST /write (debug; off
                            by default -- per-event logging is write-path
                            tail jitter, relay#85)
@@ -47,8 +60,10 @@ Environment Variables:
   TOON_RELAY_PORT          Same as --relay-port
   TOON_BLS_PORT            Same as --bls-port
   TOON_HOST                Same as --host
+  TOON_WRITE_HOST          Same as --write-host
   TOON_DATA_DIR            Same as --data-dir
   TOON_DEV_MODE            Same as --dev-mode (set to "true")
+  TOON_VERIFY_EPHEMERAL    Same as --verify-ephemeral (set to "true")
   TOON_LOG_WRITES          Same as --log-writes (set to "true")
 
 Security:
@@ -67,8 +82,10 @@ function parseCli(): RelayConfig {
       'relay-port': { type: 'string' },
       'bls-port': { type: 'string' },
       host: { type: 'string' },
+      'write-host': { type: 'string' },
       'data-dir': { type: 'string' },
       'dev-mode': { type: 'boolean' },
+      'verify-ephemeral': { type: 'boolean' },
       'log-writes': { type: 'boolean' },
       help: { type: 'boolean' },
     },
@@ -151,12 +168,22 @@ function parseCli(): RelayConfig {
 
   const host = values.host ?? process.env['TOON_HOST'] ?? undefined;
 
+  const writeHost =
+    values['write-host'] ?? process.env['TOON_WRITE_HOST'] ?? undefined;
+
   const dataDir =
     values['data-dir'] ?? process.env['TOON_DATA_DIR'] ?? undefined;
 
   const devMode =
     values['dev-mode'] ??
     (process.env['TOON_DEV_MODE'] === 'true' ? true : undefined);
+
+  // Paid-ephemeral verify skip (relay#85): full verification on ephemeral
+  // kinds is opt-in (the skip is the default; see RelayConfig.verifyEphemeral
+  // for the payment-gated invariant that makes that safe).
+  const verifyEphemeral =
+    values['verify-ephemeral'] ??
+    (process.env['TOON_VERIFY_EPHEMERAL'] === 'true' ? true : undefined);
 
   const logWrites =
     values['log-writes'] ??
@@ -168,8 +195,10 @@ function parseCli(): RelayConfig {
     ...(relayPort !== undefined && { relayPort }),
     ...(blsPort !== undefined && { blsPort }),
     ...(host && { host }),
+    ...(writeHost && { writeHost }),
     ...(dataDir && { dataDir }),
     ...(devMode !== undefined && { devMode }),
+    ...(verifyEphemeral !== undefined && { verifyEphemeral }),
     ...(logWrites !== undefined && { logWrites }),
   };
 

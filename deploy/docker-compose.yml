@@ -12,6 +12,10 @@
 #   - relay :3100 (paid-write store)  → NEVER host-published; only connector:3100.
 #   - connector admin :8081 / health :8080 → NEVER host-published.
 #   The only host-bound ports are the edge :3000 and the free-read WS :7100.
+#   This invariant is also a SECURITY precondition since relay#85: the relay
+#   skips schnorr verification for paid ephemeral kinds on the assumption that
+#   :3100 is reachable exclusively through the payment-gating connector.
+#   Remember docker `ports:` publishes bypass ufw — keep :3100 on `expose:`.
 #
 # Dev:  docker compose up --build   (builds relay-connector locally from ./Dockerfile)
 # Prod: docker compose up           (pulls the pinned RELAY_CONNECTOR_IMAGE)
@@ -61,6 +65,13 @@ services:
       NOSTR_SECRET_KEY: ${RELAY_NOSTR_SECRET_KEY:?set RELAY_NOSTR_SECRET_KEY in .env (32-byte hex)}
       # Enforce Nostr signature verification on writes (public deploy → false).
       TOON_DEV_MODE: ${RELAY_DEV_MODE:-false}
+      # Paid-ephemeral verify skip (relay#85): ephemeral kinds (20000-29999)
+      # skip schnorr by default (id check kept) because :3100 is reachable
+      # ONLY via the payment-gating connector (see PRIVACY INVARIANT above —
+      # and note docker `ports:` publishes bypass ufw, so :3100 must stay
+      # `expose:`-only). Set RELAY_VERIFY_EPHEMERAL=true to restore full
+      # verification (e.g. if you front :3100 with anything else).
+      TOON_VERIFY_EPHEMERAL: ${RELAY_VERIFY_EPHEMERAL:-false}
     ports:
       - '${RELAY_WS_PORT:-7100}:7100' # free reads (the env's TLS terminator fronts this)
     expose:

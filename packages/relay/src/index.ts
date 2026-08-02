@@ -27,7 +27,11 @@ export {
 export { matchFilter } from './filters/index.js';
 
 // Crypto (fast BIP-340 event verification, relay#85)
-export { verifyEventSignature, verifyImplementation } from './crypto/index.js';
+export {
+  verifyEventSignature,
+  verifyEventId,
+  verifyImplementation,
+} from './crypto/index.js';
 
 // WebSocket
 export type { Subscription } from './websocket/index.js';
@@ -53,7 +57,11 @@ export { RelaySubscriber } from './subscriber/index.js';
 // ---------------------------------------------------------------------------
 
 // Relay launcher lifecycle API
-export { startRelay } from './launcher/relay.js';
+export {
+  startRelay,
+  isInternalBindHost,
+  warnIfWritePortExposed,
+} from './launcher/relay.js';
 export type {
   RelayConfig,
   RelayInstance,

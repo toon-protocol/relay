@@ -23,7 +23,11 @@ import {
   verifyEvent as nobleVerifyEvent,
 } from 'nostr-tools/pure';
 import type { NostrEvent } from 'nostr-tools/pure';
-import { verifyEventSignature, verifyImplementation } from './verify-event.js';
+import {
+  verifyEventSignature,
+  verifyEventId,
+  verifyImplementation,
+} from './verify-event.js';
 
 function signedEvent(overrides: Partial<NostrEvent> = {}): NostrEvent {
   const sk = generateSecretKey();
@@ -138,5 +142,50 @@ describe('verifyEventSignature', () => {
         );
       }
     }
+  });
+});
+
+describe('verifyEventId (paid-ephemeral skip-verify integrity floor, relay#85)', () => {
+  it('accepts a correct id regardless of the signature', () => {
+    // The whole point of the skip path: a garbage signature must NOT fail
+    // the id check (payment is the admission gate; clients verify sigs).
+    const event = fresh(signedEvent());
+    expect(verifyEventId(event)).toBe(true);
+    expect(verifyEventId({ ...event, sig: '0'.repeat(128) })).toBe(true);
+  });
+
+  it('rejects a tampered event (id no longer matches the bytes)', () => {
+    const event = fresh(signedEvent());
+    expect(verifyEventId({ ...event, content: 'tampered' })).toBe(false);
+    expect(verifyEventId({ ...event, kind: 20002 })).toBe(false);
+    expect(verifyEventId({ ...event, id: '0'.repeat(64) })).toBe(false);
+  });
+
+  it('agrees with nostr-tools getEventHash', () => {
+    const event = fresh(signedEvent());
+    expect(getEventHash(event)).toBe(event.id);
+    expect(verifyEventId(event)).toBe(true);
+  });
+
+  it('returns false (never throws) on structurally invalid events', () => {
+    expect(verifyEventId({} as NostrEvent)).toBe(false);
+    expect(
+      verifyEventId({
+        ...fresh(signedEvent()),
+        tags: 'no',
+      } as unknown as NostrEvent)
+    ).toBe(false);
+    expect(
+      verifyEventId({
+        ...fresh(signedEvent()),
+        id: 42,
+      } as unknown as NostrEvent)
+    ).toBe(false);
+  });
+
+  it('does NOT stamp the nostr-tools verified-event cache (id check is not a sig verdict)', () => {
+    const event = fresh(signedEvent());
+    expect(verifyEventId(event)).toBe(true);
+    expect(event[verifiedSymbol]).toBeUndefined();
   });
 });

@@ -30,8 +30,36 @@ NOSTR_SECRET_KEY=<64-char-hex> npx @toon-protocol/relay
 | `TOON_RELAY_PORT` | `7100` | WebSocket read port |
 | `TOON_BLS_PORT` | `3100` | HTTP write/health port |
 | `TOON_HOST` | `0.0.0.0` | WebSocket bind host |
+| `TOON_WRITE_HOST` | `0.0.0.0` | HTTP write/health bind host (see [write-port exposure](#paid-ephemeral-verify-skip-relay85)) |
 | `TOON_DATA_DIR` | `./data` | SQLite data directory |
 | `TOON_DEV_MODE` | `false` | Skip event-signature verification on `POST /write` |
+| `TOON_VERIFY_EPHEMERAL` | `false` | Run FULL schnorr verification on ephemeral kinds too (see below) |
+
+## Paid-ephemeral verify skip (relay#85)
+
+By default the relay **skips schnorr verification for ephemeral kinds**
+(NIP-16, `20000 <= kind < 30000`) on `POST /write` and keeps only the SHA-256
+event-id check. This is a deliberate, payment-gated bypass:
+
+- **Why it is safe here:** every request reaching `POST /write` has already
+  passed the upstream connector's payment claim gate — payment is the
+  admission/spam gate. Protocol rule: clients trust the signature chain and
+  verify every event themselves, never the relay. Relay-side schnorr on paid
+  ephemeral frames buys no additional trust; forging a speaker costs real
+  money to emit frames every client discards.
+- **What is still checked:** the SHA-256 id check always runs, so the relay
+  never broadcasts bytes that disagree with the event id clients verify by.
+- **When you MUST turn it off:** if your write port is fronted by anything
+  other than a payment-gating connector — or you ever add a FREE ephemeral
+  write lane — set `TOON_VERIFY_EPHEMERAL=true` (`--verify-ephemeral`,
+  `verifyEphemeral: true`). A free lane must NOT reuse this skip.
+- **Exposure guard:** the write port must be reachable only via the
+  connector. In docker, never host-publish it (`expose:`, not `ports:` —
+  docker-published ports bypass ufw). Outside docker, bind it internally via
+  `TOON_WRITE_HOST=127.0.0.1`. At startup the relay logs a prominent warning
+  if the write listener binds a non-internal interface while the skip is
+  active (warning only — container topologies legitimately bind `0.0.0.0`
+  and stay private by not publishing the port).
 
 ## Run (programmatic)
 
@@ -47,7 +75,7 @@ await relay.stop();
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/write` | Store an event. Body `{ "event": <NostrEvent> }`. Trusts injected `X-TOON-Payer`/`-Amount`/`-Chain` headers (echoed, not validated); verifies only the event signature. |
+| `POST` | `/write` | Store an event. Body `{ "event": <NostrEvent> }`. Trusts injected `X-TOON-Payer`/`-Amount`/`-Chain` headers (echoed, not validated); verifies only the event signature (ephemeral kinds: id check only by default, see above). |
 | `GET`  | `/health` | Liveness, identity (`pubkey`), `capabilities`, and `version`. |
 
 ## WebSocket Relay Server

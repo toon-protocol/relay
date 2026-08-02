@@ -144,6 +144,40 @@ export const verifyImplementation: 'libsecp256k1-wasm' | 'noble-pure-js' =
   fastVerifySchnorr ? 'libsecp256k1-wasm' : 'noble-pure-js';
 
 /**
+ * Verify ONLY that `event.id` is the correct NIP-01 SHA-256 hash of the
+ * event's serialized form. Does NOT check the schnorr signature and does NOT
+ * stamp nostr-tools' `verifiedSymbol` cache (an id check is not a signature
+ * verdict).
+ *
+ * This is the integrity floor for the paid-ephemeral skip-verify path
+ * (relay#85): when the relay skips schnorr for payment-gated ephemeral kinds,
+ * it still refuses events whose id does not match their content, so a paid
+ * writer cannot make the relay broadcast a frame whose bytes disagree with
+ * the id that clients index/verify by.
+ *
+ * Never throws; structurally invalid events return false.
+ *
+ * @param event - The event whose id to check.
+ * @returns True iff `event.id` equals the NIP-01 SHA-256 of the event.
+ */
+export function verifyEventId(event: NostrEvent): boolean {
+  try {
+    if (typeof event.id !== 'string') {
+      return false;
+    }
+    // serializeEvent validates structure and throws on bad input -- caught
+    // below. Same serializer as the full-verify path, so the two checks can
+    // never disagree about what bytes an id covers.
+    const hash = createHash('sha256')
+      .update(serializeEvent(event), 'utf8')
+      .digest();
+    return hash.toString('hex') === event.id;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Verify a Nostr event's id and BIP-340 signature.
  *
  * Drop-in replacement for nostr-tools' `verifyEvent` on the write hot path:
