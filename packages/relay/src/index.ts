@@ -26,6 +26,9 @@ export {
 // Filters
 export { matchFilter } from './filters/index.js';
 
+// Crypto (fast BIP-340 event verification, relay#85)
+export { verifyEventSignature, verifyImplementation } from './crypto/index.js';
+
 // WebSocket
 export type { Subscription } from './websocket/index.js';
 export { ConnectionHandler, NostrRelayServer } from './websocket/index.js';

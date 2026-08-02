@@ -10,9 +10,11 @@
  * - malformed / missing body -> 400
  * - invalid signature (non-dev) -> 422; same bad event with devMode -> 200
  * - headers absent -> still 200 (trusted-but-optional)
+ * - per-write console logging is OFF by default and opt-in via logWrites
+ *   (per-event console I/O is write-path tail jitter, relay#85)
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { Hono } from 'hono';
 import { generateSecretKey, finalizeEvent } from 'nostr-tools/pure';
 import type { NostrEvent } from 'nostr-tools/pure';
@@ -215,6 +217,45 @@ describe('Write handler', () => {
     expect(onStored).toHaveBeenCalledTimes(1);
     expect(onStored).toHaveBeenCalledWith(event);
     expect(eventStore.get(event.id)).toBeUndefined();
+  });
+
+  describe('per-write logging (relay#85)', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('does NOT log per write by default', async () => {
+      // Given: a console spy and a default (logWrites unset) handler
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const eventStore = new InMemoryEventStore();
+      const event = createValidSignedEvent();
+
+      // When: a write is accepted
+      const response = await makeRequest(
+        { eventStore, devMode: false },
+        { event }
+      );
+
+      // Then: 200, and no per-write line hit the console
+      expect(response.status).toBe(200);
+      expect(logSpy).not.toHaveBeenCalled();
+    });
+
+    it('logs one line per write when logWrites is true', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const eventStore = new InMemoryEventStore();
+      const event = createValidSignedEvent();
+
+      const response = await makeRequest(
+        { eventStore, devMode: false, logWrites: true },
+        { event },
+        { 'X-TOON-Payer': '0xpayer' }
+      );
+
+      expect(response.status).toBe(200);
+      expect(logSpy).toHaveBeenCalledOnce();
+      expect(String(logSpy.mock.calls[0]?.[0])).toContain(event.id);
+    });
   });
 
   it('treats the whole NIP-16 ephemeral range as broadcast-only, and its edges as stored', async () => {

@@ -35,6 +35,9 @@ Options:
   --host <host>            WebSocket bind host (default: 0.0.0.0)
   --data-dir <path>        Data directory for the SQLite store (default: ./data)
   --dev-mode               Skip event-signature verification on POST /write
+  --log-writes             Log one line per accepted POST /write (debug; off
+                           by default -- per-event logging is write-path
+                           tail jitter, relay#85)
   --help                   Show this help message
 
 Environment Variables:
@@ -46,6 +49,7 @@ Environment Variables:
   TOON_HOST                Same as --host
   TOON_DATA_DIR            Same as --data-dir
   TOON_DEV_MODE            Same as --dev-mode (set to "true")
+  TOON_LOG_WRITES          Same as --log-writes (set to "true")
 
 Security:
   Prefer TOON_MNEMONIC / TOON_SECRET_KEY / NOSTR_SECRET_KEY environment
@@ -65,6 +69,7 @@ function parseCli(): RelayConfig {
       host: { type: 'string' },
       'data-dir': { type: 'string' },
       'dev-mode': { type: 'boolean' },
+      'log-writes': { type: 'boolean' },
       help: { type: 'boolean' },
     },
     strict: true,
@@ -118,9 +123,7 @@ function parseCli(): RelayConfig {
     process.exit(1);
   }
   if (mnemonic && secretKey) {
-    console.error(
-      'Error: provide either a mnemonic or a secret key, not both'
-    );
+    console.error('Error: provide either a mnemonic or a secret key, not both');
     process.exit(1);
   }
 
@@ -155,6 +158,10 @@ function parseCli(): RelayConfig {
     values['dev-mode'] ??
     (process.env['TOON_DEV_MODE'] === 'true' ? true : undefined);
 
+  const logWrites =
+    values['log-writes'] ??
+    (process.env['TOON_LOG_WRITES'] === 'true' ? true : undefined);
+
   const config: RelayConfig = {
     ...(mnemonic && { mnemonic }),
     ...(secretKey && { secretKey }),
@@ -163,6 +170,7 @@ function parseCli(): RelayConfig {
     ...(host && { host }),
     ...(dataDir && { dataDir }),
     ...(devMode !== undefined && { devMode }),
+    ...(logWrites !== undefined && { logWrites }),
   };
 
   return config;

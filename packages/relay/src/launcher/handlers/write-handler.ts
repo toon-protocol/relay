@@ -14,7 +14,11 @@
  * Flow:
  * 1. Parse JSON body `{ event }` -> 400 on malformed/missing event
  * 2. Capture trusted X-TOON-Payer / X-TOON-Amount / X-TOON-Chain headers
- * 3. Verify the event signature (skipped in devMode) -> 422 on invalid sig
+ * 3. Verify the event signature (skipped in devMode) -> 422 on invalid sig.
+ *    Verification uses the fast WASM libsecp256k1 path (crypto/verify-event)
+ *    rather than noble pure-JS: post-#84 the synchronous ~1.3ms noble verify
+ *    on the single event loop WAS the write-path ceiling (~240-260 events/s
+ *    aggregate, relay#85 / connector#685 Phase G)
  * 4. Store the event in the EventStore -- unless its kind is ephemeral
  *    (NIP-16: 20000 <= kind < 30000), which is delivered live and never
  *    persisted. Skipping the store here is not only NIP-16 semantics: the
@@ -31,8 +35,8 @@
  */
 
 import type { Context } from 'hono';
-import { verifyEvent } from 'nostr-tools/pure';
 import type { NostrEvent } from 'nostr-tools/pure';
+import { verifyEventSignature } from '../../crypto/index.js';
 import type { EventStore } from '../../storage/index.js';
 
 /**
@@ -53,6 +57,14 @@ export interface WriteHandlerConfig {
   devMode: boolean;
   /** Optional callback fired after an event is successfully stored. */
   onStored?: (event: NostrEvent) => void;
+  /**
+   * Log one line per accepted write (default: false). Off by default because
+   * per-event console I/O on the single event loop is measurable tail jitter
+   * at huddle frame rates (relay#85, connector#685 Phase G): every write's
+   * log line goes through docker's json-file driver, i.e. residual per-event
+   * disk I/O that #84 did not remove.
+   */
+  logWrites?: boolean;
 }
 
 /**
@@ -70,6 +82,7 @@ export interface WriteHandler {
  * @returns A WriteHandler with a handleWrite method.
  */
 export function createWriteHandler(config: WriteHandlerConfig): WriteHandler {
+  const logWrites = config.logWrites ?? false;
   return {
     async handleWrite(c: Context): Promise<Response> {
       // --- Parse request body ---
@@ -91,12 +104,14 @@ export function createWriteHandler(config: WriteHandlerConfig): WriteHandler {
       const amount = c.req.header('X-TOON-Amount');
       const chain = c.req.header('X-TOON-Chain');
 
-      console.log(
-        `[write] event=${event.id} payer=${payer ?? '-'} amount=${amount ?? '-'} chain=${chain ?? '-'}`
-      );
+      if (logWrites) {
+        console.log(
+          `[write] event=${event.id} payer=${payer ?? '-'} amount=${amount ?? '-'} chain=${chain ?? '-'}`
+        );
+      }
 
       // --- Verify event signature (integrity only; skipped in devMode) ---
-      if (!config.devMode && !verifyEvent(event)) {
+      if (!config.devMode && !verifyEventSignature(event)) {
         return c.json({ error: 'Invalid event signature' }, 422);
       }
 
