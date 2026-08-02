@@ -33,6 +33,13 @@ export {
   verifyImplementation,
 } from './crypto/index.js';
 
+// Verify worker pool (verify off the event loop, relay#85)
+export {
+  createVerifyPool,
+  defaultVerifyWorkers,
+} from './crypto/verify-pool.js';
+export type { VerifyPool, VerifyPoolOptions } from './crypto/verify-pool.js';
+
 // WebSocket
 export type { Subscription } from './websocket/index.js';
 export { ConnectionHandler, NostrRelayServer } from './websocket/index.js';
@@ -72,6 +79,14 @@ export type {
 // Health response
 export { createHealthResponse } from './launcher/health.js';
 export type { HealthConfig, HealthResponse } from './launcher/health.js';
+
+// Metrics (GET /metrics telemetry surface, relay#85)
+export { createMetricsRegistry } from './launcher/metrics.js';
+export type {
+  MetricsRegistry,
+  MetricsSnapshot,
+  DurationStats,
+} from './launcher/metrics.js';
 
 // Write handler (POST /write surface)
 export { createWriteHandler } from './launcher/handlers/write-handler.js';

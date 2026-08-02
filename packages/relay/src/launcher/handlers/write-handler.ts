@@ -81,6 +81,21 @@ export interface WriteHandlerConfig {
    * `verifyEphemeral: true` (TOON_VERIFY_EPHEMERAL=true).
    */
   verifyEphemeral?: boolean;
+  /**
+   * Signature verifier for non-skipped (persistent-kind) events. Defaults to
+   * the inline `verifyEventSignature`; the launcher injects the worker-pool
+   * verifier (`crypto/verify-pool.ts`) so verify bursts run off the event
+   * loop (relay#85). May resolve asynchronously -- the handler awaits it.
+   *
+   * ORDERING NOTE: an async verifier means CONCURRENT requests can complete
+   * out of arrival order. Per-session write ordering is enforced UPSTREAM:
+   * the connector serializes each BTP session's POSTs (it does not send the
+   * next request until the previous response arrives), so sequential
+   * same-session writes can never reorder here. Pinned by the ordering test
+   * in write-handler.test.ts -- do not weaken that contract upstream without
+   * revisiting this.
+   */
+  verifyEvent?: (event: NostrEvent) => Promise<boolean> | boolean;
   /** Optional callback fired after an event is successfully stored. */
   onStored?: (event: NostrEvent) => void;
   /**
@@ -110,6 +125,7 @@ export interface WriteHandler {
 export function createWriteHandler(config: WriteHandlerConfig): WriteHandler {
   const logWrites = config.logWrites ?? false;
   const verifyEphemeral = config.verifyEphemeral ?? false;
+  const verifyEvent = config.verifyEvent ?? verifyEventSignature;
   return {
     async handleWrite(c: Context): Promise<Response> {
       // --- Parse request body ---
@@ -154,7 +170,7 @@ export function createWriteHandler(config: WriteHandlerConfig): WriteHandler {
           if (!verifyEventId(event)) {
             return c.json({ error: 'Invalid event id' }, 422);
           }
-        } else if (!verifyEventSignature(event)) {
+        } else if (!(await verifyEvent(event))) {
           return c.json({ error: 'Invalid event signature' }, 422);
         }
       }

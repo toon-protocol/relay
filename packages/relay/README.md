@@ -34,6 +34,7 @@ NOSTR_SECRET_KEY=<64-char-hex> npx @toon-protocol/relay
 | `TOON_DATA_DIR` | `./data` | SQLite data directory |
 | `TOON_DEV_MODE` | `false` | Skip event-signature verification on `POST /write` |
 | `TOON_VERIFY_EPHEMERAL` | `false` | Run FULL schnorr verification on ephemeral kinds too (see below) |
+| `TOON_VERIFY_WORKERS` | CPUs − 1 | Worker threads for persistent-kind signature verification; `0` = inline on the event loop (automatic on 1-core boxes) |
 
 ## Paid-ephemeral verify skip (relay#85)
 
@@ -77,6 +78,7 @@ await relay.stop();
 |--------|------|-------------|
 | `POST` | `/write` | Store an event. Body `{ "event": <NostrEvent> }`. Trusts injected `X-TOON-Payer`/`-Amount`/`-Chain` headers (echoed, not validated); verifies only the event signature (ephemeral kinds: id check only by default, see above). |
 | `GET`  | `/health` | Liveness, identity (`pubkey`), `capabilities`, and `version`. |
+| `GET`  | `/metrics` | JSON telemetry: `eventLoopDelayMs` (mean/p50/p99/max — loop lag is ephemeral-frame tail latency) and `verify` (per-event verify wall time incl. pool queueing, active implementation, worker count). The trigger metrics for scaling decisions (relay#85). |
 
 ## WebSocket Relay Server
 

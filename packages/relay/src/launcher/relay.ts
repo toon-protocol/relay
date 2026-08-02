@@ -14,7 +14,7 @@
  *     re-validating payment, verifies only the event's own signature for
  *     integrity (paid ephemeral kinds skip schnorr by default and keep the
  *     id check -- relay#85, see `verifyEphemeral`), and stores it.
- *     `GET /health` lives on the same port.
+ *     `GET /health` and `GET /metrics` live on the same port.
  *   - Free NIP-01 WebSocket reads (TOON_RELAY_PORT, default 7100).
  *
  * `startRelay()` returns a `RelayInstance` with an explicit `.stop()` for
@@ -31,6 +31,11 @@ import { getPublicKey } from 'nostr-tools/pure';
 import { privateKeyFromSeedWords } from 'nostr-tools/nip06';
 import type { Filter } from 'nostr-tools/filter';
 import { verifyImplementation } from '../crypto/index.js';
+import {
+  createVerifyPool,
+  defaultVerifyWorkers,
+} from '../crypto/verify-pool.js';
+import { createMetricsRegistry } from './metrics.js';
 import { SqliteEventStore } from '../storage/index.js';
 import type { EventStore } from '../storage/index.js';
 import { NostrRelayServer } from '../websocket/index.js';
@@ -106,6 +111,15 @@ export interface RelayConfig {
    * `WriteHandlerConfig.verifyEphemeral` for the full invariant.
    */
   verifyEphemeral?: boolean;
+  /**
+   * Worker-thread verify pool size for persistent-kind signature
+   * verification (default: `max(0, os.cpus().length - 1)`; env:
+   * TOON_VERIFY_WORKERS). `0` -- automatic on 1-core boxes -- is the inline
+   * escape hatch: verification runs synchronously on the event loop as
+   * before. Workers keep bursty agent-writer verify load from stalling the
+   * loop and jittering ephemeral frame latency (relay#85).
+   */
+  verifyWorkers?: number;
 
   // --- Observability ---
 
@@ -128,6 +142,7 @@ export interface ResolvedRelayConfig {
   dataDir: string;
   devMode: boolean;
   verifyEphemeral: boolean;
+  verifyWorkers: number;
   logWrites: boolean;
 }
 
@@ -349,6 +364,7 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
   const dataDir = config.dataDir ?? './data';
   const devMode = config.devMode ?? false;
   const verifyEphemeral = config.verifyEphemeral ?? false;
+  const verifyWorkers = config.verifyWorkers ?? defaultVerifyWorkers();
   const logWrites = config.logWrites ?? false;
 
   const resolvedConfig: ResolvedRelayConfig = {
@@ -359,6 +375,7 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
     dataDir,
     devMode,
     verifyEphemeral,
+    verifyWorkers,
     logWrites,
   };
 
@@ -382,6 +399,21 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
     c.json(createHealthResponse({ pubkey: identity.pubkey }))
   );
 
+  // Metrics registry + verify pool (relay#85): event-loop lag and per-event
+  // verify time are the trigger metrics for scaling decisions; the pool
+  // keeps persistent-kind verify bursts off the event loop.
+  const metrics = createMetricsRegistry({
+    verifyImplementation,
+    verifyWorkers: 0, // updated once the pool reports its live size below
+  });
+  const verifyPool = createVerifyPool({
+    size: verifyWorkers,
+    onMeasure: (ms) => metrics.recordVerify(ms),
+  });
+  metrics.setVerifyWorkers(verifyPool.size);
+
+  app.get('/metrics', (c: Context) => c.json(metrics.snapshot()));
+
   // POST /write: trust the upstream terminator's injected payment headers,
   // verify only the event signature, store, and broadcast to live WS readers.
   // Logged once: the noble fallback is a silent ~7x verify-throughput loss,
@@ -399,10 +431,22 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
   // Exposure guard (relay#85): the verify skip assumes the write port is only
   // reachable via the payment-gating connector.
   warnIfWritePortExposed(writeHost, blsPort, { verifyEphemeral, devMode });
+  console.log(
+    `[relay] verify pool: ${
+      verifyPool.size > 0
+        ? `${verifyPool.size} worker thread(s)`
+        : 'inline (0 workers -- verification on the event loop)'
+    }`
+  );
   const writeHandler = createWriteHandler({
     eventStore,
     devMode,
     verifyEphemeral,
+    verifyEvent: (event) => {
+      // Keep the reported worker count honest if the pool degraded.
+      metrics.setVerifyWorkers(verifyPool.size);
+      return verifyPool.verify(event);
+    },
     logWrites,
     onStored: (event) => {
       try {
@@ -458,6 +502,8 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
 
       await wsRelay.stop();
       blsServer.close();
+      metrics.stop();
+      await verifyPool.destroy();
 
       // Only close a store we created; an injected store is the caller's.
       if (!config.eventStore) {

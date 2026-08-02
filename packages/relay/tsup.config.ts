@@ -6,6 +6,9 @@ export default defineConfig({
   entry: {
     index: 'src/index.ts',
     cli: 'src/launcher/cli.ts',
+    // Worker-thread verify entry (relay#85): worker_threads needs a real
+    // compiled file on disk; the pool resolves dist/verify-worker.js.
+    'verify-worker': 'src/crypto/verify-worker.ts',
   },
   format: ['esm'],
   dts: true,
