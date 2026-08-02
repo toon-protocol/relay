@@ -1,5 +1,0 @@
----
-'@toon-protocol/relay': patch
----
-
-Worker-thread verify pool + `GET /metrics` telemetry (relay#85). Persistent-kind signature verification on `POST /write` now runs on a hand-rolled `worker_threads` pool (default size `max(0, os.cpus().length - 1)`; `--verify-workers` / `TOON_VERIFY_WORKERS`; `0` = the previous inline path, automatic on 1-core boxes). Each worker loads its own WASM libsecp256k1 with the same self-test + noble-fallback semantics; worker failure degrades transparently to inline verification. Rationale: agent writers make persistent-write rates bursty — the pool keeps verify bursts off the event loop so they cannot jitter ephemeral (huddle-frame) latency. Per-session write ordering is unaffected: the upstream connector serializes each BTP session's POSTs, and a test pins that sequentially awaited writes never reorder. New `GET /metrics` on the write/health port exposes the scaling trigger metrics: event-loop delay (mean/p50/p99/max ms) and per-event verify time (count/mean/p50/p99/max ms, including pool queueing) plus the active verify implementation and worker count.
