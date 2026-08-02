@@ -72,6 +72,10 @@ services:
       # `expose:`-only). Set RELAY_VERIFY_EPHEMERAL=true to restore full
       # verification (e.g. if you front :3100 with anything else).
       TOON_VERIFY_EPHEMERAL: ${RELAY_VERIFY_EPHEMERAL:-false}
+      # WS read-connection cap (relay#90): default 4096 (fd-shaped; docker's
+      # default nofile limit is far above this). The stock 100 made >100
+      # huddle listeners impossible.
+      TOON_MAX_CONNECTIONS: ${RELAY_MAX_CONNECTIONS:-4096}
     ports:
       - '${RELAY_WS_PORT:-7100}:7100' # free reads (the env's TLS terminator fronts this)
     expose:

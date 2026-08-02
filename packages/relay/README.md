@@ -35,6 +35,7 @@ NOSTR_SECRET_KEY=<64-char-hex> npx @toon-protocol/relay
 | `TOON_DEV_MODE` | `false` | Skip event-signature verification on `POST /write` |
 | `TOON_VERIFY_EPHEMERAL` | `false` | Run FULL schnorr verification on ephemeral kinds too (see below) |
 | `TOON_VERIFY_WORKERS` | CPUs − 1 | Worker threads for persistent-kind signature verification; `0` = inline on the event loop (automatic on 1-core boxes) |
+| `TOON_MAX_CONNECTIONS` | `4096` | Maximum concurrent WebSocket read connections (each costs one file descriptor — mind `ulimit -n`) |
 
 ## Paid-ephemeral verify skip (relay#85)
 

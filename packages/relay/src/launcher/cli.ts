@@ -53,6 +53,9 @@ Options:
                            0 = verify inline on the event loop (automatic on
                            1-core boxes; the escape hatch back to the
                            pre-pool behavior, relay#85)
+  --max-connections <n>    Maximum concurrent WebSocket read connections
+                           (default: 4096; each costs one file descriptor --
+                           mind ulimit -n, relay#90)
   --log-writes             Log one line per accepted POST /write (debug; off
                            by default -- per-event logging is write-path
                            tail jitter, relay#85)
@@ -70,6 +73,7 @@ Environment Variables:
   TOON_DEV_MODE            Same as --dev-mode (set to "true")
   TOON_VERIFY_EPHEMERAL    Same as --verify-ephemeral (set to "true")
   TOON_VERIFY_WORKERS      Same as --verify-workers
+  TOON_MAX_CONNECTIONS     Same as --max-connections
   TOON_LOG_WRITES          Same as --log-writes (set to "true")
 
 Security:
@@ -93,6 +97,7 @@ function parseCli(): RelayConfig {
       'dev-mode': { type: 'boolean' },
       'verify-ephemeral': { type: 'boolean' },
       'verify-workers': { type: 'string' },
+      'max-connections': { type: 'string' },
       'log-writes': { type: 'boolean' },
       help: { type: 'boolean' },
     },
@@ -207,6 +212,23 @@ function parseCli(): RelayConfig {
     process.exit(1);
   }
 
+  // WS connection cap (relay#90). Each connection costs one fd; the server
+  // logs an advisory warning at startup if the cap exceeds the soft limit.
+  const maxConnectionsStr =
+    values['max-connections'] ??
+    process.env['TOON_MAX_CONNECTIONS'] ??
+    undefined;
+  const maxConnections = maxConnectionsStr
+    ? parseInt(maxConnectionsStr, 10)
+    : undefined;
+  if (
+    maxConnections !== undefined &&
+    (Number.isNaN(maxConnections) || maxConnections <= 0)
+  ) {
+    console.error('Error: --max-connections must be a positive integer');
+    process.exit(1);
+  }
+
   const logWrites =
     values['log-writes'] ??
     (process.env['TOON_LOG_WRITES'] === 'true' ? true : undefined);
@@ -222,6 +244,7 @@ function parseCli(): RelayConfig {
     ...(devMode !== undefined && { devMode }),
     ...(verifyEphemeral !== undefined && { verifyEphemeral }),
     ...(verifyWorkers !== undefined && { verifyWorkers }),
+    ...(maxConnections !== undefined && { maxConnections }),
     ...(logWrites !== undefined && { logWrites }),
   };
 

@@ -17,6 +17,27 @@ export interface Subscription {
 }
 
 /**
+ * Build a NIP-01 EVENT frame from an ALREADY-SERIALIZED event payload,
+ * splicing in the (JSON-escaped) subscription id.
+ *
+ * Byte-identical to `JSON.stringify(['EVENT', subscriptionId, event])` --
+ * pinned by tests -- but lets the broadcast fan-out serialize the event
+ * ONCE and reuse the string across every matching subscriber (relay#91:
+ * 500 subscribers previously meant 500 identical `JSON.stringify(event)`
+ * calls per frame, measured pinning a core in the s500 benchmark run).
+ *
+ * @param subscriptionId - The per-subscriber NIP-01 subscription id.
+ * @param eventJson - `JSON.stringify(event)` output to reuse.
+ * @returns The full EVENT frame string for the wire.
+ */
+export function serializeEventFrame(
+  subscriptionId: string,
+  eventJson: string
+): string {
+  return `["EVENT",${JSON.stringify(subscriptionId)},${eventJson}]`;
+}
+
+/**
  * Handles NIP-01 messages for a single WebSocket connection.
  */
 export class ConnectionHandler {
@@ -145,12 +166,23 @@ export class ConnectionHandler {
   /**
    * Push a new event to all matching subscriptions on this connection.
    * Used when events are stored outside the WebSocket flow (e.g., via ILP).
+   *
+   * @param event - The event to fan out (used for filter matching).
+   * @param eventJson - Optional pre-serialized `JSON.stringify(event)`.
+   *   `NostrRelayServer.broadcastEvent` serializes the event ONCE and passes
+   *   it here so a 500-subscriber fan-out costs one serialization, not 500
+   *   (relay#91). When omitted (direct callers), the event is serialized
+   *   on first matching send.
    */
-  notifyNewEvent(event: NostrEvent): void {
+  notifyNewEvent(event: NostrEvent, eventJson?: string): void {
+    let json = eventJson;
     for (const sub of this.subscriptions.values()) {
       const matches = sub.filters.some((f) => matchFilter(event, f));
       if (matches) {
-        this.sendEvent(sub.id, event);
+        // Serialize lazily: connections with no matching subscription (the
+        // common case in a selective fan-out) never pay for it.
+        json ??= JSON.stringify(event);
+        this.send(serializeEventFrame(sub.id, json));
       }
     }
   }
@@ -177,9 +209,11 @@ export class ConnectionHandler {
    * with the event as a plain JSON object — so any standard nostr client can
    * parse it and verify `id`/`sig` from the wire bytes (#46). Never re-encode
    * the event (TOON text, double-JSON-stringify, etc.) at this boundary.
+   * serializeEventFrame is byte-identical to the full JSON.stringify
+   * envelope (pinned by tests).
    */
   private sendEvent(subscriptionId: string, event: NostrEvent): void {
-    this.send(['EVENT', subscriptionId, event]);
+    this.send(serializeEventFrame(subscriptionId, JSON.stringify(event)));
   }
 
   private sendEose(subscriptionId: string): void {
@@ -194,10 +228,13 @@ export class ConnectionHandler {
     this.send(['NOTICE', message]);
   }
 
-  private send(message: unknown[]): void {
+  /** Send a message: pre-serialized frames go out as-is (relay#91). */
+  private send(message: unknown[] | string): void {
     if (this.ws.readyState === 1) {
       // OPEN
-      this.ws.send(JSON.stringify(message));
+      this.ws.send(
+        typeof message === 'string' ? message : JSON.stringify(message)
+      );
     }
   }
 }
