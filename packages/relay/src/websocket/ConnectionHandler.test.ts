@@ -6,7 +6,7 @@ import {
 } from 'nostr-tools/pure';
 import type { NostrEvent } from 'nostr-tools/pure';
 import type { WebSocket } from 'ws';
-import { ConnectionHandler } from './ConnectionHandler.js';
+import { ConnectionHandler, serializeEventFrame } from './ConnectionHandler.js';
 import type { EventStore } from '../storage/index.js';
 
 function createMockWebSocket(): WebSocket {
@@ -320,5 +320,59 @@ describe('ConnectionHandler', () => {
 
       expect(ws.send).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('serializeEventFrame (serialize-once fan-out, relay#91)', () => {
+  it('is byte-identical to the full JSON.stringify NIP-01 envelope', () => {
+    const event = createMockEvent({
+      content: 'quotes " and \\ slashes \u2603',
+    });
+    const eventJson = JSON.stringify(event);
+    for (const subId of [
+      'sub1',
+      'with "quotes"',
+      'back\\slash',
+      'uni\u00e9\u2603',
+      '',
+    ]) {
+      expect(serializeEventFrame(subId, eventJson)).toBe(
+        JSON.stringify(['EVENT', subId, event])
+      );
+    }
+  });
+
+  it('notifyNewEvent reuses a pre-serialized payload across all matching subscriptions', () => {
+    const ws = createMockWebSocket();
+    const handler = new ConnectionHandler(ws, createMockEventStore());
+    handler.handleMessage(JSON.stringify(['REQ', 'a', { kinds: [1] }]));
+    handler.handleMessage(JSON.stringify(['REQ', 'b', { kinds: [1] }]));
+    (ws.send as ReturnType<typeof vi.fn>).mockClear();
+
+    // A sentinel payload proves the handler used the given string rather
+    // than re-serializing the event object.
+    const event = createMockEvent();
+    const sentinel = '{"sentinel":"payload"}';
+    handler.notifyNewEvent(event, sentinel);
+
+    const frames = (ws.send as ReturnType<typeof vi.fn>).mock.calls.map(
+      (call) => call[0] as string
+    );
+    expect(frames).toEqual([
+      `["EVENT","a",${sentinel}]`,
+      `["EVENT","b",${sentinel}]`,
+    ]);
+  });
+
+  it('notifyNewEvent without a pre-serialized payload still sends canonical frames', () => {
+    const ws = createMockWebSocket();
+    const handler = new ConnectionHandler(ws, createMockEventStore());
+    handler.handleMessage(JSON.stringify(['REQ', 'a', { kinds: [1] }]));
+    (ws.send as ReturnType<typeof vi.fn>).mockClear();
+
+    const event = createMockEvent();
+    handler.notifyNewEvent(event);
+
+    expect(ws.send).toHaveBeenCalledWith(JSON.stringify(['EVENT', 'a', event]));
   });
 });

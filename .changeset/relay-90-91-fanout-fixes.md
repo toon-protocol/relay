@@ -1,0 +1,5 @@
+---
+'@toon-protocol/relay': patch
+---
+
+Two fan-out fixes from the 2026-08-02 benchmarking (relay#90, relay#91). (1) `maxConnections` default raised 100 → 4096 and made clearly configurable (`--max-connections` / `TOON_MAX_CONNECTIONS` / `maxConnections` through the launcher): the stock 100 made more than 100 huddle listeners impossible; connections are fd-shaped (one descriptor + a few KB each), and 4096 supports several hundred-listener huddles while sitting far below docker's default nofile limit (1048576) — an advisory startup warning fires if the cap exceeds the process's soft fd limit, and rejected connections now log. (2) Serialize-once broadcast: the ephemeral fan-out loop stringified the identical event once PER subscriber (500 subscribers = 500 identical serializations per frame, measured pinning a core); `broadcastEvent` now serializes the event payload once and splices the per-subscription NIP-01 envelope (`serializeEventFrame`, pinned byte-identical to the full `JSON.stringify(['EVENT', subId, event])`).

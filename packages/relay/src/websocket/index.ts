@@ -1,3 +1,6 @@
 export type { Subscription } from './ConnectionHandler.js';
-export { ConnectionHandler } from './ConnectionHandler.js';
-export { NostrRelayServer } from './NostrRelayServer.js';
+export { ConnectionHandler, serializeEventFrame } from './ConnectionHandler.js';
+export {
+  NostrRelayServer,
+  readOpenFilesSoftLimit,
+} from './NostrRelayServer.js';

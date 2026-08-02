@@ -39,6 +39,7 @@ import { createMetricsRegistry } from './metrics.js';
 import { SqliteEventStore } from '../storage/index.js';
 import type { EventStore } from '../storage/index.js';
 import { NostrRelayServer } from '../websocket/index.js';
+import { DEFAULT_RELAY_CONFIG } from '../types.js';
 import { RelaySubscriber } from '../subscriber/index.js';
 import { createWriteHandler } from './handlers/write-handler.js';
 import { createHealthResponse } from './health.js';
@@ -82,6 +83,13 @@ export interface RelayConfig {
    * prominent startup warning (never a hard failure -- topologies vary).
    */
   writeHost?: string;
+  /**
+   * Maximum concurrent WebSocket read connections (default: 4096; env:
+   * TOON_MAX_CONNECTIONS). Connections beyond the cap are closed with 1013.
+   * Fd-limit-shaped, not memory-shaped -- see RelayServerConfig
+   * .maxConnections for the sizing reasoning (relay#90).
+   */
+  maxConnections?: number;
 
   // --- Storage ---
 
@@ -139,6 +147,7 @@ export interface ResolvedRelayConfig {
   blsPort: number;
   host: string;
   writeHost: string;
+  maxConnections: number;
   dataDir: string;
   devMode: boolean;
   verifyEphemeral: boolean;
@@ -361,6 +370,8 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
   const blsPort = config.blsPort ?? 3100;
   const host = config.host ?? '0.0.0.0';
   const writeHost = config.writeHost ?? '0.0.0.0';
+  const maxConnections =
+    config.maxConnections ?? DEFAULT_RELAY_CONFIG.maxConnections;
   const dataDir = config.dataDir ?? './data';
   const devMode = config.devMode ?? false;
   const verifyEphemeral = config.verifyEphemeral ?? false;
@@ -372,6 +383,7 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
     blsPort,
     host,
     writeHost,
+    maxConnections,
     dataDir,
     devMode,
     verifyEphemeral,
@@ -390,7 +402,10 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
   }
 
   // --- 4. WebSocket read server (created first so /write can broadcast) ---
-  const wsRelay = new NostrRelayServer({ port: relayPort, host }, eventStore);
+  const wsRelay = new NostrRelayServer(
+    { port: relayPort, host, maxConnections },
+    eventStore
+  );
 
   // --- 5. HTTP write/health server ---
   const app = new Hono();

@@ -42,7 +42,12 @@ export type { VerifyPool, VerifyPoolOptions } from './crypto/verify-pool.js';
 
 // WebSocket
 export type { Subscription } from './websocket/index.js';
-export { ConnectionHandler, NostrRelayServer } from './websocket/index.js';
+export {
+  ConnectionHandler,
+  NostrRelayServer,
+  serializeEventFrame,
+  readOpenFilesSoftLimit,
+} from './websocket/index.js';
 
 // TOON encoding/decoding
 export {

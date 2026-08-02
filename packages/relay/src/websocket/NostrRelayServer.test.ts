@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { WebSocket } from 'ws';
 import { existsSync, unlinkSync } from 'fs';
 import type { NostrEvent } from 'nostr-tools/pure';
-import { NostrRelayServer } from './NostrRelayServer.js';
+import {
+  NostrRelayServer,
+  readOpenFilesSoftLimit,
+} from './NostrRelayServer.js';
+import { DEFAULT_RELAY_CONFIG } from '../types.js';
 import { InMemoryEventStore, SqliteEventStore } from '../storage/index.js';
 
 // Suppress console.log during tests
@@ -351,5 +355,119 @@ describe('NostrRelayServer', () => {
 
       ws.close();
     });
+  });
+});
+
+describe('connection cap (relay#90)', () => {
+  let server: NostrRelayServer;
+  const store = new InMemoryEventStore();
+
+  afterEach(async () => {
+    await server.stop();
+  });
+
+  it('defaults to 4096 concurrent connections (the stock 100 capped huddle listeners)', () => {
+    server = new NostrRelayServer({ port: 0 }, store);
+    expect(DEFAULT_RELAY_CONFIG.maxConnections).toBe(4096);
+  });
+
+  it('rejects connections beyond maxConnections with close code 1013', async () => {
+    server = new NostrRelayServer({ port: 0, maxConnections: 1 }, store);
+    await server.start();
+
+    const ws1 = new WebSocket(`ws://localhost:${server.getPort()}`);
+    await waitForOpen(ws1);
+
+    const ws2 = new WebSocket(`ws://localhost:${server.getPort()}`);
+    const closeCode = await new Promise<number>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('timed out waiting for close')),
+        5000
+      );
+      ws2.on('close', (code: number) => {
+        clearTimeout(timer);
+        resolve(code);
+      });
+      ws2.on('error', () => undefined);
+    });
+
+    expect(closeCode).toBe(1013);
+    expect(server.getClientCount()).toBe(1);
+    ws1.close();
+  });
+});
+
+describe('readOpenFilesSoftLimit (fd-limit advisory, relay#90)', () => {
+  const limitsFile = [
+    'Limit                     Soft Limit           Hard Limit           Units',
+    'Max cpu time              unlimited            unlimited            seconds',
+    'Max open files            1024                 1048576              files',
+    '',
+  ].join('\n');
+
+  it('parses the soft limit from /proc/self/limits content', () => {
+    expect(readOpenFilesSoftLimit(() => limitsFile)).toBe(1024);
+  });
+
+  it('maps "unlimited" to Infinity', () => {
+    expect(
+      readOpenFilesSoftLimit(() => limitsFile.replace(/1024 /, 'unlimited'))
+    ).toBe(Infinity);
+  });
+
+  it('returns null when the file is unreadable (non-Linux) or malformed', () => {
+    expect(
+      readOpenFilesSoftLimit(() => {
+        throw new Error('ENOENT');
+      })
+    ).toBeNull();
+    expect(readOpenFilesSoftLimit(() => 'nothing relevant')).toBeNull();
+  });
+});
+
+describe('serialize-once broadcast (relay#91)', () => {
+  let server: NostrRelayServer;
+
+  afterEach(async () => {
+    await server.stop();
+  });
+
+  it('stringifies the event exactly once per broadcast while every subscriber receives a canonical frame', async () => {
+    server = new NostrRelayServer({ port: 0 }, new InMemoryEventStore());
+    await server.start();
+
+    // Three subscribers with distinct subscription ids, all matching.
+    const clients: WebSocket[] = [];
+    for (let i = 0; i < 3; i++) {
+      const ws = new WebSocket(`ws://localhost:${server.getPort()}`);
+      await waitForOpen(ws);
+      const eose = waitForMessage(ws);
+      ws.send(JSON.stringify(['REQ', `sub${i}`, { kinds: [20001] }]));
+      expect(await eose).toEqual(['EOSE', `sub${i}`]);
+      clients.push(ws);
+    }
+
+    const event = createMockEvent({ id: 'bcast1', kind: 20001 });
+    const framePromises = clients.map((ws) => waitForMessage(ws));
+
+    // The fan-out must serialize the event payload ONCE, not once per
+    // subscriber (relay#91: 500 subscribers = 500 identical stringifies).
+    const spy = vi.spyOn(JSON, 'stringify');
+    server.broadcastEvent(event);
+    const eventSerializations = spy.mock.calls.filter(
+      (call) => call[0] === event
+    ).length;
+    spy.mockRestore();
+    expect(eventSerializations).toBe(1);
+
+    // Every subscriber still gets the canonical NIP-01 envelope with ITS
+    // subscription id (the spliced frame is byte-identical to
+    // JSON.stringify -- pinned in ConnectionHandler tests).
+    const frames = await Promise.all(framePromises);
+    frames.forEach((frame, i) => {
+      expect(frame).toEqual(['EVENT', `sub${i}`, event]);
+    });
+
+    for (const ws of clients) ws.close();
   });
 });
