@@ -1,0 +1,256 @@
+# =============================================================================
+# relay deploy — TOON connector (payment proxy) in front of the oblivious relay
+# =============================================================================
+# BAKED into the relay-connector image at /app/config/connector.toml (see
+# deploy/Dockerfile) — NOT bind-mounted. TLS is terminated by the deployment
+# environment (no Caddy in this compose).
+#
+# Topology (one box, one app — the shape the TOON devnet apex actually runs):
+#
+#   payer ──POST /ilp (3000)──▶ connector ──POST /write──▶ relay:3100  (paid store; PRIVATE)
+#                                (terminates the payment)   (oblivious relay)
+#   reader ──wss REQ (free)───────────────────────────────▶ relay:7100  (Nostr reads; PUBLIC)
+#
+# - The connector's client edge is `POST /ilp` (and `GET /ilp/btp` for a BTP
+#   session). A paid, claim-gated packet addressed to `g.toon.relay` terminates
+#   here and is delivered to `handler_url`; the relay's HTTP response comes back
+#   in the FULFILL. The relay never sees ILP or settlement.
+# - An UNPAID packet is answered with x402 terms and never reaches the relay.
+# - FREE READS do NOT come through here: readers hit the relay's Nostr WS read
+#   port (7100) directly.
+#
+# ── This is the RUST connector's TOML (ADR 0001/0009) ────────────────────────
+# It replaces the TypeScript connector's `connector.yaml`. Three consequences
+# worth reading before editing:
+#
+#   1. There is NO environment-variable layer. Every value comes from this
+#      file; `${...}` is not interpolated and `TOON_MNEMONIC` no longer does
+#      anything. Identity is a KEY FILE mounted into the container (below).
+#   2. The parser is `deny_unknown_fields`. A leftover YAML-ism — `nodeId`,
+#      `adminApi`, `selfAnnounce`, `settlementAddresses`, `nextHop` — is a hard
+#      config-load error, not a silently ignored key. That is deliberate.
+#   3. Startup is FAIL-CLOSED: a missing key file, an unwritable `state_dir`,
+#      or a settlement registry that will not resolve the token is exit 1 with
+#      the reason, never a degraded run.
+#
+# ── What did NOT survive the port ────────────────────────────────────────────
+# The old YAML carried a `selfAnnounce` block (the kind:10032 IlpPeerInfo
+# emitter, connector v3.28.0). The Rust connector has NO self-announce feature —
+# there is no such field in `crates/connector-config` and writing one here would
+# fail config load. A deployment that wants a kind:10032 announcement must
+# publish it itself, as an ordinary paid write through this same edge.
+#
+# The old YAML also claimed this node "ABSORBS the g.proxy apex role" and
+# forwarded `g.proxy.relay.store` / `g.proxy.store` to a `store-box` peer. Both
+# halves are stale: `g.proxy` was renamed to `g.toon`, and the live fleet is two
+# boxes each fronting its OWN app, with no apex absorbing anything. This bundle
+# is now exactly what it says on the tin — one connector in front of one relay.
+# See the commented block at the bottom for how to add the store leg.
+# =============================================================================
+
+# The client edge: POST /ilp, GET /ilp/btp, GET /ilp/identity, the operator
+# surface and /metrics all share this ONE port (there is no separate admin or
+# health port — the TypeScript node's 8080/8081 do not exist here). 0.0.0.0 so
+# the compose port publish reaches it.
+client_edge_addr = "0.0.0.0:3000"
+
+# ── Durable claim state (connector#605) ──────────────────────────────────────
+# The append-only claim journals — `client-edge-claims.log`, `peer-claims.log` —
+# whose replay is what makes a channel's replay watermark survive a restart.
+# Without it every watermark lives in process memory, so a restart resets each
+# channel to "no claim ever seen" and a channel with no watermark accepts any
+# nonce: every claim a client already spent becomes free service again.
+#
+# MUST be a mounted volume, not a path in the container's writable layer — see
+# the `connector_state` named volume in docker-compose.yml. The image ships
+# /app/state owned by uid 10001, which is what a fresh NAMED volume inherits on
+# first mount; a host bind mount inherits nothing and needs `chown 10001:10001`.
+state_dir = "/app/state"
+
+# ── Signer (ADR 0012) ────────────────────────────────────────────────────────
+# A LOCATION, never the key itself. 32 raw bytes or 64 hex characters encoding a
+# secp256k1 secret key. This is the connector's own ILP signing identity — it
+# holds no money and should be fresh random material per box:
+#
+#   openssl rand -hex 32 > deploy/signer.key
+#   chmod 600 deploy/signer.key
+#   chown 10001:10001 deploy/signer.key     # the image runs as uid 10001
+#
+# A bind-mounted file keeps its HOST ownership inside the container, so a
+# root-owned 0600 key is unreadable to the process that needs it and the
+# container restart-loops on "Permission denied". The chown is the fix; do not
+# reach for chmod 644.
+[signer]
+key_file = "/app/data/signer.key"
+
+# ── Routes ───────────────────────────────────────────────────────────────────
+# Static, explicit, durable (ADR 0006). A packet matching `prefix` is delivered
+# to the payment-oblivious app at `handler_url`.
+[[routes]]
+prefix = "g.toon.relay"
+
+# `/write`, NOT the bare origin. `HttpAppClient::deliver` POSTs to exactly this
+# URL and the relay app serves only `POST /write` and `GET /health`; a bare
+# `http://relay:3100` comes back F99 "app declined the delivery with HTTP 404",
+# which is what this route did the first time it was deployed against the Rust
+# connector (connector#492).
+#
+# A sender's own envelope `target` is resolved strictly BENEATH this path, never
+# in place of it (connector#596, ADR 0025) — so nobody can address `/health`, or
+# anywhere else, through this route at this route's price.
+handler_url = "http://relay:3100/write"
+
+# 1 micro-USDC per relay write, in the smallest unit of the settlement asset
+# (6-decimal USDC everywhere — ADR 0010). This is the price the live TOON devnet
+# apex charges for this same prefix (owner decision, 2026-08-04): the route
+# carries the buzz huddles workload, which is one paid write per audio frame at
+# 49 fps, and a per-frame price of 0.001 USDC (`1000`) is not a coherent figure
+# for that. A general-write price is the wrong frame for this route.
+#
+# `price` is REQUIRED on a terminated route (connector#520) — it is never
+# silently free; write `price = 0` if free is what you mean. Keep it non-zero to
+# keep the x402 greeting armed (connector#552/#557): a devnet box booted with a
+# zero price was a free gateway that looked configured.
+price = 1
+
+# `transport` is deliberately left at its default (`both`: HTTP one-shot AND BTP
+# session). Transport is per-connector POLICY, not a protocol constant
+# (connector#701) — the live devnet apex pins `transport = "btp"` on this prefix
+# because huddles hold a persistent 49 fps session that amortizes the handshake
+# and claim round trip. A drop-in operator without that traffic shape should not
+# force every one-shot buyer through a session, so this bundle ships the
+# default. Set `transport = "btp"` here if you are running huddles.
+
+# ── Settlement (ADR 0009, connector#542/#556) ────────────────────────────────
+# What makes this node able to ACCEPT money. With this section, an unaffiliated
+# buyer who opens a channel on chain pays this node with no config edit
+# (connector#611) and the accepted claim's watermark is journaled under
+# `state_dir` above. WITHOUT it — and without a `[[client_channels]]` table
+# naming every channel by hand — this node has a record of no channel, so every
+# claim at its client edge is refused as unknown and every channel operation on
+# the operator surface answers 503.
+#
+# FAIL-CLOSED, and it is worth knowing which way: startup calls
+# `EvmSettlementBackend::connect`, which resolves `token_address` through the
+# registry at `contract_address` and reads the token's own `decimals()`. A wrong
+# RPC URL, a registry that does not answer `getTokenNetwork(token)`, or a
+# `decimals` that disagrees with the chain is an exit 1 AT STARTUP, not a
+# runtime surprise (connector#564/#566). Every chain table you add here is one
+# more endpoint this node must reach before it will boot at all.
+#
+# The values below are the SHARED TOON DEVNET's deployment — the same registry,
+# token and decimals both live boxes settle through. A claim this node accepts
+# is written against the channel the buyer opened on those contracts, so a node
+# pointed at a different registry cannot resolve it. Point them elsewhere only
+# if you are running your own fleet end to end.
+[settlement.evm]
+rpc_url = "https://base-sepolia-rpc.publicnode.com"
+# The deployed TokenNetworkRegistry (a factory, not a channel contract).
+contract_address = "0xcC9079adE929b168B54145f6d25262b64FAB9D5b"
+# 6-decimal devnet USDC — the fleet-wide settlement asset (ADR 0010).
+token_address = "0x49beE1Bca5d15Fb0963117923403F9498119a9Ce"
+decimals = 6
+
+[settlement.evm.key]
+# Deliberately NOT the [signer] key above. The signer key is per-box random
+# material with no funds; this one signs transactions that spend real testnet
+# value, and it is the identity clients open their channels against — so it is
+# the one to provision from a seed you can reproduce, not from `openssl rand`.
+#
+# The TOON fleet derives it from its BIP-39 mnemonic at NIP-06 path
+# m/44'/1237'/0'/0/0 — the NOSTR coin type, not the standard m/44'/60'. That is
+# the historical reason the old `TOON_MNEMONIC` env var existed; there is no env
+# layer now, so derive it outside the container and mount the resulting 64-hex
+# secret here. Deriving at m/44'/60'/0'/0/0 instead yields a valid address that
+# no channel was ever opened against, and a node that cannot resolve a single
+# one — so verify the derived address BEFORE the first `up -d`.
+#
+#   chmod 600 deploy/settlement.key && chown 10001:10001 deploy/settlement.key
+key_file = "/app/data/settlement.key"
+
+# ── (Optional) Solana settlement ─────────────────────────────────────────────
+# The live TOON fleet settles on BOTH chains, because a node that accepts claims
+# is a counterparty on whichever chain the BUYER chose — an EVM-only node
+# refuses every Solana-paid write that reaches it. It is commented out here only
+# because it is a second fail-closed dependency (another reachable RPC, another
+# key file) that a first bring-up does not need. Uncomment both tables together
+# and provision the key, or leave it off and accept EVM-only.
+#
+# [settlement.solana]
+# rpc_url = "https://api.devnet.solana.com"
+# program_id = "2aEVJ8koKD8LTZrLRSGtAtU7LBt4e7QjjCgf1kzQ7Rip"
+# token_address = "xyc5J8MgKFiEN13PnfftdXxUzYH34FEvw1LCrFwN7in"
+# decimals = 6
+#
+# [settlement.solana.key]
+# # A 32-byte ed25519 seed as 64 hex characters. The fleet derives it from the
+# # same mnemonic at m/44'/501'/0'/0'.
+# key_file = "/app/data/settlement-solana.key"
+
+# ── (Optional) Operator surface (ADR 0008) ───────────────────────────────────
+# Omitted deliberately: enabling it means committing — or securely injecting —
+# a real bearer_token and write_keys, which a BAKED config cannot do safely.
+# Every read (peers, routes, channels, claims, exposure, identity, the audit
+# log, GET /metrics) needs the token; every write (POST /packets) needs an RFC
+# 9421 signature from a key on `write_keys`, and a bearer token is never
+# sufficient to move value. An [operator] section with an empty bearer_token or
+# no write_keys is a refuse-to-start error, never a silently open surface.
+#
+# If you want /metrics on this node, add the section — and stop baking this file
+# into the image, or bind-mount over it.
+#
+# [operator]
+# bearer_token = "<openssl rand -hex 32>"
+# write_keys = ["<64 hex chars: an ed25519 public key>"]
+
+# ── (Optional) The store leg ─────────────────────────────────────────────────
+# The relay box does not front a store app; the store box does (see the `store`
+# repo's own deploy bundle). If you want this edge to sell the store route too,
+# there are exactly two shapes, and the live devnet uses the FIRST:
+#
+#   1. TERMINATE at the store box's public TLS front. The link between two TOON
+#      nodes is public and TLS-terminated by each box's own nginx — the same way
+#      any client on the open internet reaches it. This puts the store leg on
+#      the same claim-gated client-edge path the relay route above uses.
+#
+#      [[routes]]
+#      prefix = "g.toon.ario"
+#      handler_url = "https://proxy.store.devnet.toonprotocol.dev/store"
+#      price = 1000
+#
+#      An alias at a second prefix must carry the SAME price: a shared
+#      handler_url reachable at two prices is refused at load, because the
+#      cheaper door would take every packet.
+#
+#      [[routes]]
+#      prefix = "g.toon.store"
+#      handler_url = "https://proxy.store.devnet.toonprotocol.dev/store"
+#      price = 1000
+#
+#   2. FORWARD over a BTP peering. Needs `peer_expose`, a `[[peers]]` entry with
+#      a wss:// endpoint and a shared `credential`, a `[[peer_channels]]` row
+#      binding it to a channel, and a route naming the peer. Note that a
+#      forwarded route carries BOTH numbers, and they answer different questions
+#      (ADR 0028): `price` is what THIS edge charges the client, `fee` is what
+#      this hop retains, and `price - fee` is what reaches the peer. `price` is
+#      REQUIRED — a forwarded route is never silently free.
+#
+#      peer_expose = "btp"
+#
+#      [[peers]]
+#      id = "store"                                    # both operators write the
+#      endpoint = "wss://store.example.net:443/ilp/btp" # SAME string here
+#      credential = { secret = "<openssl rand -hex 32>" }
+#
+#      [[peer_channels]]
+#      peer_id = "store"
+#      channel_id = "0x..."
+#      counterparty_key = "0x..."
+#      chain_id = 84532
+#      token_network = "0x..."
+#
+#      [[routes]]
+#      prefix = "g.toon.store"
+#      peer_id = "store"
+#      price = 1003
+#      fee = 3
