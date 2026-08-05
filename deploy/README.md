@@ -12,56 +12,100 @@ reader ──wss free REQ──────────────────�
 ```
 
 The connector's config is **baked into the `relay-connector` image** (see
-`Dockerfile` — `FROM ghcr.io/toon-protocol/connector` + `COPY connector.yaml`).
+`Dockerfile` — `FROM ghcr.io/toon-protocol/connector` + `COPY connector.toml`).
 The relay app image (`ghcr.io/toon-protocol/relay`) is published separately and
 referenced as a sibling service.
 
+> **This bundle runs the Rust connector** (connector#755). It used to run the
+> TypeScript node pinned at `3.28.0`, reading a `connector.yaml`. The TOON devnet
+> cut over to the Rust connector on 2026-08-04 and stopped both TypeScript
+> containers, so that pin points at a node nobody runs. See
+> [Migrating from `3.28.0`](#migrating-from-3280) if you have an existing `.env`.
+
 ## Files
 
-| file                 | purpose                                                                                  |
-| -------------------- | ---------------------------------------------------------------------------------------- |
-| `Dockerfile`         | `relay-connector` image: pinned connector + baked `connector.yaml`                       |
-| `connector.yaml`     | connector config (route `g.connector.relay` → `http://relay:3100`), devnet RPC baked in  |
-| `docker-compose.yml` | connector (payment proxy) + relay; only the edge `:3000` and free-read WS `:7100` public |
-| `.env.example`       | copy to `.env`; `RELAY_NOSTR_SECRET_KEY` (required) + `TOON_MNEMONIC` + image pins        |
+| file                 | purpose                                                                                   |
+| -------------------- | ----------------------------------------------------------------------------------------- |
+| `Dockerfile`         | `relay-connector` image: pinned Rust connector + baked `connector.toml`                    |
+| `connector.toml`     | connector config (route `g.toon.relay` → `http://relay:3100/write`), devnet RPC baked in   |
+| `docker-compose.yml` | connector (payment proxy) + relay; only the edge `:3000` and free-read WS `:7100` public   |
+| `.env.example`       | copy to `.env`; `RELAY_NOSTR_SECRET_KEY` (required) + image pins + ports                   |
 
 ## Images
 
-| image                                       | what it is                                              |
-| ------------------------------------------- | ------------------------------------------------------- |
-| `ghcr.io/toon-protocol/relay`               | the normal relay app (built by `publish-relay-image.yml`)|
-| `ghcr.io/toon-protocol/relay-connector`     | connector + this repo's `connector.yaml` baked in        |
+| image                                   | what it is                                                |
+| --------------------------------------- | --------------------------------------------------------- |
+| `ghcr.io/toon-protocol/relay`           | the normal relay app (built by `publish-relay-image.yml`) |
+| `ghcr.io/toon-protocol/relay-connector` | connector + this repo's `connector.toml` baked in         |
 
 The `relay-connector` image bakes a **pinned** connector (`CONNECTOR_TAG`, default
-`3.28.0` — the release that ships the `selfAnnounce` feature) so the config schema
-and the HTTP-envelope contract are frozen against a
-known connector. The image's own version tracks this repo's release (`vX.Y.Z` /
-`latest` / `sha`); bump `CONNECTOR_TAG` deliberately to adopt a newer connector.
+`rust-sha-bc9749b`) so the config schema is frozen against a known connector. The
+image's own version tracks this repo's release (`vX.Y.Z` / `latest` / `sha`); bump
+`CONNECTOR_TAG` deliberately to adopt a newer connector.
+
+**Read the tag carefully.** The `connector` package carries two different
+programs under one name. `rust-sha-<short>` and `rust-main` are the Rust
+connector, which reads `connector.toml`. Plain semver tags (`3.28.0`) and
+`latest` are the **retired** TypeScript node, which reads `connector.yaml` and
+will not start on this bundle's config. Always pin an exact `rust-sha-`, never
+the floating `rust-main`: the parser is `deny_unknown_fields` and startup is
+fail-closed, so a schema drift under you is a refuse-to-start.
 
 ## Drop-in steps
 
-1. **Set identities.**
+1. **Generate the connector's two keys.** These are files, not environment
+   variables — there is no env layer on the Rust connector, and no
+   `TOON_MNEMONIC`.
+
+   ```bash
+   # This node's ILP signing identity (ADR 0012). Holds no money. Fresh random
+   # material per box — it must NOT collide with any other node's.
+   openssl rand -hex 32 > signer.key
+
+   # The settlement identity. This one spends real testnet value and is what
+   # clients open their payment channels AGAINST, so derive it from a seed you
+   # can reproduce rather than from `openssl rand`. The TOON fleet uses NIP-06
+   # m/44'/1237'/0'/0/0 — the NOSTR coin type, NOT the standard m/44'/60'.
+   # Deriving at m/44'/60' yields a valid address no channel was ever opened
+   # against, and a node that cannot resolve a single one.
+   #   ...derive it, then:
+   # printf '%s' "<64 hex chars>" > settlement.key
+
+   chmod 600 signer.key settlement.key
+   sudo chown 10001:10001 signer.key settlement.key   # the image runs as uid 10001
+   ```
+
+   Verify the derived settlement address **before** the first `up -d`. Both
+   files are gitignored (`deploy/*.key`).
+
+   > A bind-mounted file keeps its **host** ownership inside the container, so a
+   > root-owned `0600` key is unreadable to uid 10001 and the container
+   > restart-loops on "Permission denied". The `chown` is the fix — do not reach
+   > for `chmod 644`.
+
+2. **Set the relay's identity.**
 
    ```bash
    cp .env.example .env
    # RELAY_NOSTR_SECRET_KEY is REQUIRED (the relay won't boot without it):
    #   openssl rand -hex 32   → paste into RELAY_NOSTR_SECRET_KEY
-   # TOON_MNEMONIC is optional (empty → pre-funded anvil account-0 devnet fallback).
    ```
 
-   If you set `TOON_MNEMONIC`, also set `routes[].settlementAddresses.evm` in
-   `connector.yaml` to the EVM address the connector prints at boot.
-
-2. **Bring it up.**
+3. **Bring it up.**
 
    ```bash
    docker compose up --build -d      # builds relay-connector locally; pulls the relay app image
    docker compose ps                 # only :3000 (edge) and :7100 (free WS) are host-bound
-   docker compose logs -f connector  # watch it register the route + chain provider
+   docker compose logs -f connector  # watch it load the route + connect to settlement
    ```
 
    Production: pin `RELAY_CONNECTOR_IMAGE` to a published tag and run
    `docker compose up -d` (no `--build`).
+
+   **Startup is fail-closed.** A missing key file, an unwritable `/app/state`, or
+   a settlement registry that will not resolve the token is `exit 1` with the
+   reason — never a degraded run. If the connector exits immediately, the log
+   line names which of those it was.
 
 ## Verify the paid round-trip
 
@@ -69,7 +113,6 @@ Reuse the connector repo's acceptance probe against this compose (run from the
 **connector repo root** — it needs the repo + native `libsql`):
 
 ```bash
-NODE_TLS_REJECT_UNAUTHORIZED=0 \
 CONNECTOR_ILP_URL=http://localhost:3000/ilp \
 RELAY_WS_URL=ws://localhost:7100 \
 EVM_RPC_URL=https://evm-rpc.devnet.toonprotocol.dev \
@@ -86,47 +129,54 @@ WS read; an unpaid `POST /ilp` → REJECT; and the relay store (`:3100`) is NOT
 publicly reachable. (Against a public edge, point the URLs at the env's HTTPS
 hostnames instead of `localhost`.)
 
-## Out-of-band discovery (kind:10032 self-announce)
+## Migrating from `3.28.0`
 
-This apex connector publishes a fresh `kind:10032` `IlpPeerInfo` announcement to the
-relay it fronts so a client holding **only the genesis seed** can discover the
-publish (`g.proxy.relay`) **and** store (`g.proxy.store`) routes out of band —
-instead of hardcoding `publishDestination`/`storeDestination` in its config. This
-closes [toon-protocol/relay#37](https://github.com/toon-protocol/relay/issues/37)
-and [toon-protocol/store#22](https://github.com/toon-protocol/store/issues/22).
+If you have an existing `.env` and a running stack, these are the breaking
+differences. None of them fail quietly — a leftover YAML-ism is a config-load
+error by name, because the TOML parser is `deny_unknown_fields`.
 
-- The connector publishes the event **through its own routing** by addressing
-  `announceTo` (an ILP route), so the publish path is the same one any write takes:
-  here `announceTo: g.proxy.relay` is the apex's **own terminated route**, so routing
-  delivers the write **locally = free**. (A node that must announce through a relay it
-  doesn't front — e.g. the store box — sets `announceTo` to a **forwarded** route and
-  the connector pays for the write over ILP from its own channel. See the store deploy.)
-- It signs with its **NIP-06 key derived from `TOON_MNEMONIC`** (the settlement
-  identity; no new secret). The event lands in the relay's event store and surfaces on
-  the free read WS.
-- It **refreshes before the NIP-40 expiration lapses** (`refreshIntervalSecs` →
-  TTL = 2×), so the announcement is continuously fresh while the node is up.
-- The store box **also self-announces** its own `g.proxy.store` peer info (remote/paid),
-  so both routes are discoverable from their owning node — not just advertised here.
-- Config lives in `connector.yaml`'s `selfAnnounce` block. **It REQUIRES connector
-  `>= 3.28.0`** ([toon-protocol/connector#265](https://github.com/toon-protocol/connector/pull/265),
-  shipped in v3.28.0) — `CONNECTOR_TAG` is pinned to `3.28.0`; older images ignore the block.
+| was                                                | now                                                               |
+| -------------------------------------------------- | ----------------------------------------------------------------- |
+| `deploy/connector.yaml`                            | `deploy/connector.toml` — a different config language             |
+| `CONNECTOR_TAG=3.28.0`                             | `CONNECTOR_TAG=rust-sha-…`; a semver tag is the retired node      |
+| `TOON_MNEMONIC` derives the settlement key at boot | derive it yourself; mount `settlement.key`                        |
+| `CONFIG_FILE=/app/config/connector.yaml`           | nothing — the image's `CMD` already names the path                |
+| `NODE_TLS_REJECT_UNAUTHORIZED=0`                   | no equivalent; use an RPC with a real chain of trust              |
+| connector health `:8080`, admin `:8081`            | one port: `:3000` carries the edge, the operator surface, metrics |
+| route prefix `g.proxy.relay`                       | `g.toon.relay` (the apex was renamed)                             |
+| `selfAnnounce` block (kind:10032)                  | **no equivalent — see below**                                     |
+| replay watermarks lived in process memory          | `state_dir = "/app/state"`, on a named volume                     |
 
-Verify it's live (after redeploying the apex against a connector that supports it):
+That last row is the one worth dwelling on: without a durable claim journal, a
+restart resets every channel's replay watermark, a channel with no watermark
+accepts any nonce, and every claim a payer already spent becomes free service
+again (connector#605). That is why `docker-compose.yml` gained a
+`connector_state` named volume.
 
-```bash
-# Query the free read WS for the apex announcement (replace host for a public edge):
-npx ts-node -e 'import {SimplePool} from "nostr-tools";const p=new SimplePool();p.querySync(["ws://localhost:7100"],{kinds:[10032]}).then(e=>{console.log(e);process.exit(0)})'
-# Expect a fresh, UNEXPIRED kind:10032 whose content carries routes {publish,store}.
-```
+### The kind:10032 self-announce did not survive
+
+The old `connector.yaml` carried a `selfAnnounce` block — the `IlpPeerInfo`
+emitter that let a client holding only the genesis seed discover this node's
+routes out of band ([relay#37](https://github.com/toon-protocol/relay/issues/37),
+[store#22](https://github.com/toon-protocol/store/issues/22)). It shipped in
+TypeScript connector v3.28.0 and **has no counterpart in the Rust connector**:
+there is no such field in its config crate, so writing one here fails config load
+rather than being ignored.
+
+A deployment that wants to be discoverable must publish its own `kind:10032`
+event as an ordinary paid write through this same edge. On the TOON devnet that
+job moved to a separate announcer sidecar for exactly this reason.
 
 ## Privacy invariant
 
 - **relay `:3100` (paid-write store) is never host-published** — the only way in
   is a paid `POST /ilp` to the connector. Enforcement is by construction
-  (`expose`, not `ports`). The self-announce writer reaches it over the compose
-  network (`relay:3100`), not the host.
-- **connector `:8080` / admin `:8081` are never host-published.**
+  (`expose`, not `ports`).
+- **The connector publishes exactly one port, `:3000`.** There is no separate
+  health or admin port to leak. The operator surface that shares `:3000` is
+  omitted from `connector.toml` entirely, so there is nothing there to
+  authenticate against — read that file's `[operator]` comment before enabling it
+  on a **baked** config.
 - The only host-bound ports are the edge **`:3000`** and the free-read WS
   **`:7100`** — both fronted by the environment's TLS terminator.
 - **Since relay#85 this is a security precondition, not just privacy**: the
