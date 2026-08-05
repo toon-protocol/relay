@@ -86,3 +86,28 @@ jobs:
 
       - name: Smoke build
         run: devbox run -- bash -c "pnpm install --frozen-lockfile && pnpm build"
+
+  ci-ok:
+    name: CI OK
+    runs-on: ubuntu-latest
+    needs: [build, devbox-validate]
+    if: always()
+    steps:
+      # Fleet-wide aggregate required check (toon-meta#279): this job is the
+      # single required status for the repo. It runs even when upstream jobs
+      # fail, are cancelled, or are skipped (if: always()), and passes ONLY
+      # when every gating job reports result == 'success' — a skipped or
+      # cancelled gating job must never read as a pass.
+      - name: Verify all gating jobs succeeded
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "Gating job results:"
+          echo "$RESULTS" | jq -r 'to_entries[] | "  \(.key): \(.value.result)"'
+          FAILED=$(echo "$RESULTS" | jq -r 'to_entries[] | select(.value.result != "success") | .key')
+          if [ -n "$FAILED" ]; then
+            echo "::error::Gating jobs did not succeed: $(echo "$FAILED" | tr '\n' ' ')"
+            exit 1
+          fi
+          echo "All gating jobs succeeded."
