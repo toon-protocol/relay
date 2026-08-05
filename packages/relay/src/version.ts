@@ -1,2 +1,3 @@
 /** Package version, surfaced on `GET /health`. */
 export const VERSION = '0.1.0';
+const red272Proof: number = "deliberately red";
