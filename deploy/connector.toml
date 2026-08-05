@@ -215,7 +215,7 @@ key_file = "/app/data/settlement.key"
 #
 #      [[routes]]
 #      prefix = "g.toon.ario"
-#      handler_url = "https://proxy.store.devnet.toonprotocol.dev/store"
+#      handler_url = "https://proxy.ario.devnet.toonprotocol.dev/store"
 #      price = 1000
 #
 #      An alias at a second prefix must carry the SAME price: a shared
@@ -224,7 +224,7 @@ key_file = "/app/data/settlement.key"
 #
 #      [[routes]]
 #      prefix = "g.toon.store"
-#      handler_url = "https://proxy.store.devnet.toonprotocol.dev/store"
+#      handler_url = "https://proxy.ario.devnet.toonprotocol.dev/store"
 #      price = 1000
 #
 #   2. FORWARD over a BTP peering. Needs `peer_expose`, a `[[peers]]` entry with
