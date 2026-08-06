@@ -103,6 +103,32 @@ Related:
 
 ---
 
+## The formal review verdict (factory-ops)
+
+Once the reviewer emits its structured `<review>` verdict, the runner submits
+that verdict as a **real GitHub review**, not just a comment — under a second
+identity, **factory-ops**, authenticating via the `FACTORY_OPS_TOKEN` org
+secret (toon-protocol/toon-meta#282). A second identity is required because
+GitHub forbids a PR's author (the factory App) from approving its own PR.
+
+- **`clean` verdict** → factory-ops submits a real **`APPROVED`** review. This
+  is what the green tick on an agent PR means.
+- **`blocking` verdict** → factory-ops submits a **`CHANGES_REQUESTED`**
+  review carrying the reviewer's findings, plus the `needs:human` label.
+
+**A factory-ops approval is a machine verdict, not human judgement.** It
+attests only that the gate passed and the sandcastle reviewer found nothing
+blocking — it is not a substitute for a maintainer reading the PR.
+
+The approver must never be the PR author: the runner compares the
+`FACTORY_OPS_TOKEN` identity against the PR author both before the reviewer
+runs and again at verdict submission. A `FACTORY_OPS_TOKEN` that is missing,
+expired, or authenticates as the wrong identity **fails the review job
+loudly** — it never degrades to a `COMMENTED` review. See
+`.sandcastle/review-verdict.ts`.
+
+---
+
 ## The auto-merge toggle (leave OFF for the pilot)
 
 The implement runner ships in **PR mode**: agent opens a PR, human merges. This
