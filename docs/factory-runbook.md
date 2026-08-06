@@ -108,7 +108,7 @@ Related:
 Once the reviewer emits its structured `<review>` verdict, the runner submits
 that verdict as a **real GitHub review**, not just a comment — under a second
 identity, **factory-ops**, authenticating via the `FACTORY_OPS_TOKEN` org
-secret (toon-protocol/toon-meta#282). A second identity is required because
+secret (toon-meta#282). A second identity is required because
 GitHub forbids a PR's author (the factory App) from approving its own PR.
 
 - **`clean` verdict** → factory-ops submits a real **`APPROVED`** review. This
@@ -120,12 +120,16 @@ GitHub forbids a PR's author (the factory App) from approving its own PR.
 attests only that the gate passed and the sandcastle reviewer found nothing
 blocking — it is not a substitute for a maintainer reading the PR.
 
-The approver must never be the PR author: the runner compares the
-`FACTORY_OPS_TOKEN` identity against the PR author both before the reviewer
-runs and again at verdict submission. A `FACTORY_OPS_TOKEN` that is missing,
-expired, or authenticates as the wrong identity **fails the review job
-loudly** — it never degrades to a `COMMENTED` review. See
-`.sandcastle/review-verdict.ts`.
+The approver must never be the PR author. The review runner resolves the
+`FACTORY_OPS_TOKEN` identity and compares it against the PR author *before*
+the reviewer runs, so a bad credential fails in seconds instead of after a
+full opus pass; the implement runner has no PR at that point, so it preflights
+the credential alone and the author comparison happens at submission. Either
+way, the comparison runs again inside the submission itself.
+
+A `FACTORY_OPS_TOKEN` that is missing, expired, or authenticates as the wrong
+identity **fails the review job loudly** — it never degrades to a `COMMENTED`
+review. See `.sandcastle/review-verdict.ts`.
 
 ---
 
