@@ -142,3 +142,32 @@ The toggle lives in exactly one place — that env var — and is read once in
   (e.g. a body-only checklist) would not be caught — pick clean targets.
 - **Actor permission** is checked via the collaborator-permission API; only
   `admin`/`maintain`/`write` proceed.
+
+---
+
+## Reviewer verdict (structured output)
+
+Every reviewer run — the review phase inside `agent:implement` and the
+standalone `agent:review` runner — must end with a structured verdict block
+(toon-meta#275):
+
+```json
+{"verdict": "clean" | "blocking",
+ "blockingFindings": [{"file": "...", "line": 1, "summary": "...", "why": "..."}]}
+```
+
+emitted inside a `<review>…</review>` tag. The runner parses and validates it;
+a malformed or missing verdict **fails the review run** (after one automatic
+session-resume retry) rather than passing silently.
+
+- **`clean`** — no blocking defects; `blockingFindings` is empty. The run ends
+  quietly.
+- **`blocking`** — the reviewer found defects it could not or must not fix
+  itself. The runner posts the findings on the PR as a PR review and applies
+  the `needs:human` label; a human decides before merge.
+
+The verdict carries the **Spec axis**: the reviewer resolves the target issue
+from the PR body's `Closes #n` (the implement runner writes one into every
+factory PR body) and reviews the diff against that issue's acceptance
+criteria — not just against the diff itself. A PR without a closing reference
+gets a standards-only review.
