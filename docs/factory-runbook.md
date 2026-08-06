@@ -108,8 +108,8 @@ Related:
 Once the reviewer emits its structured `<review>` verdict, the runner submits
 that verdict as a **real GitHub review**, not just a comment — under a second
 identity, **factory-ops**, authenticating via the `FACTORY_OPS_TOKEN` org
-secret (toon-meta#282). A second identity is required because
-GitHub forbids a PR's author (the factory App) from approving its own PR.
+secret (toon-meta#282). A second identity is required because GitHub forbids a
+PR's author (the factory App) from approving its own PR.
 
 - **`clean` verdict** → factory-ops submits a real **`APPROVED`** review. This
   is what the green tick on an agent PR means.
