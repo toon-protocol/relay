@@ -129,16 +129,14 @@ is the safe default and there is no merge code in the default path.
 The toggle lives in exactly one place — that env var — and is read once in
 `agent-implement-issue.ts`.
 
+
 ---
 
-## Guard limitations (known gaps)
+## Who can trigger agent:review
 
-- **Sub-issue detection** uses a GraphQL `subIssues` query. If that field is
-  unavailable on the repo's GitHub plan the query errors; the guard then logs a
-  warning and falls back to the `epic`/`tracking` label check only (it does not
-  hard-block). Keep epics labeled `epic`/`tracking` so they're refused reliably.
-- **PRD-shaped parents** are detected via the `epic`/`tracking` labels + the
-  sub-issue count. A parent that is neither labeled nor has GitHub sub-issues
-  (e.g. a body-only checklist) would not be caught — pick clean targets.
-- **Actor permission** is checked via the collaborator-permission API; only
-  `admin`/`maintain`/`write` proceed.
+Anyone can trigger a review: apply the `agent:review` label to any pull
+request and the runner starts. No repository permissions are required — the
+guard job accepts labels from any GitHub user, including outside
+contributors. This also works on PRs opened from forks, which run with the
+full set of repository secrets available, so external contributors get the
+same review experience as maintainers.
