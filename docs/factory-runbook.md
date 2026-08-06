@@ -142,3 +142,5 @@ The toggle lives in exactly one place — that env var — and is read once in
   (e.g. a body-only checklist) would not be caught — pick clean targets.
 - **Actor permission** is checked via the collaborator-permission API; only
   `admin`/`maintain`/`write` proceed.
+
+<!-- throwaway marker for the toon-meta#282 self-approval-guard proof; this PR will be closed unmerged -->
