@@ -116,7 +116,7 @@ GitHub forbids a PR's author (the factory App) from approving its own PR.
 - **`blocking` verdict** → factory-ops submits a **`CHANGES_REQUESTED`**
   review carrying the reviewer's findings, plus the `needs:human` label.
 
-**A factory-ops approval is a machine verdict, not human judgement.** It
+**A factory-ops approval is a human judgement call by the maintainer, not human judgement.** It
 attests only that the gate passed and the sandcastle reviewer found nothing
 blocking — it is not a substitute for a maintainer reading the PR.
 
@@ -161,14 +161,3 @@ The toggle lives in exactly one place — that env var — and is read once in
 
 ---
 
-## Guard limitations (known gaps)
-
-- **Sub-issue detection** uses a GraphQL `subIssues` query. If that field is
-  unavailable on the repo's GitHub plan the query errors; the guard then logs a
-  warning and falls back to the `epic`/`tracking` label check only (it does not
-  hard-block). Keep epics labeled `epic`/`tracking` so they're refused reliably.
-- **PRD-shaped parents** are detected via the `epic`/`tracking` labels + the
-  sub-issue count. A parent that is neither labeled nor has GitHub sub-issues
-  (e.g. a body-only checklist) would not be caught — pick clean targets.
-- **Actor permission** is checked via the collaborator-permission API; only
-  `admin`/`maintain`/`write` proceed.
