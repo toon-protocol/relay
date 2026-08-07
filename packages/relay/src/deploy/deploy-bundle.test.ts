@@ -25,7 +25,7 @@ const DOCKER_COMPOSE_PATH = resolve(REPO_ROOT, 'deploy/docker-compose.yml');
 // The relay's own paid-write store port (POST /write). It must never be
 // host-published — only the connector may reach it, over the compose network
 // (relay#114).
-const RELAY_BACKEND_PORT = '3100';
+const PAID_WRITE_PORT = '3100';
 
 interface DockerCompose {
   services: Record<string, { ports?: string[]; expose?: (string | number)[] }>;
@@ -211,25 +211,23 @@ describe('deploy bundle', () => {
     }
   });
 
-  it('never publishes the relay backend port; it stays on expose', () => {
+  it('never publishes the paid-write store port; it stays on expose', () => {
     const { services } = readDockerCompose();
 
     for (const [serviceName, service] of Object.entries(services)) {
-      const publishedBackendPort = (service.ports ?? []).find((portEntry) =>
-        resolveComposeDefaults(portEntry)
-          .split(':')
-          .includes(RELAY_BACKEND_PORT)
+      const leakingEntry = (service.ports ?? []).find((portEntry) =>
+        resolveComposeDefaults(portEntry).split(':').includes(PAID_WRITE_PORT)
       );
       expect(
-        publishedBackendPort,
-        `docker-compose.yml service "${serviceName}": paid-write port :${RELAY_BACKEND_PORT} is under \`ports:\` ("${publishedBackendPort}") — it must stay \`expose:\`-only`
+        leakingEntry,
+        `docker-compose.yml service "${serviceName}": paid-write port :${PAID_WRITE_PORT} is under \`ports:\` ("${leakingEntry}") — it must stay \`expose:\`-only`
       ).toBeUndefined();
     }
 
     const exposedByRelay = (services['relay']?.expose ?? []).map(String);
     expect(
       exposedByRelay,
-      `docker-compose.yml relay service: expected :${RELAY_BACKEND_PORT} under \`expose:\`, found ${JSON.stringify(exposedByRelay)}`
-    ).toContain(RELAY_BACKEND_PORT);
+      `docker-compose.yml relay service: expected :${PAID_WRITE_PORT} under \`expose:\`, found ${JSON.stringify(exposedByRelay)}`
+    ).toContain(PAID_WRITE_PORT);
   });
 });
