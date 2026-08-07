@@ -1,8 +1,10 @@
 /**
  * Guards the deploy bundle (../../../../deploy — this repo's published
- * relay-connector artifacts) against the exact defect fixed in relay#113:
- * a settlement registry, a route price, or a CONNECTOR_TAG copy silently
- * drifting from what the live TOON devnet fleet actually runs.
+ * relay-connector artifacts) against the exact defects fixed in relay#113 and
+ * relay#114: a settlement registry, a route price, or a CONNECTOR_TAG copy
+ * silently drifting from what the live TOON devnet fleet actually runs, and a
+ * port published on every interface instead of behind the deployment
+ * environment's TLS terminator.
  *
  * Reads the REAL files under `deploy/`, not fixtures — a fixture would keep
  * passing while the shipped artifact regressed. Expected values are literals
@@ -14,9 +16,54 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse } from 'smol-toml';
+import { parse as parseYaml } from 'yaml';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../../..');
 const CONNECTOR_TOML_PATH = resolve(REPO_ROOT, 'deploy/connector.toml');
+const DOCKER_COMPOSE_PATH = resolve(REPO_ROOT, 'deploy/docker-compose.yml');
+
+// The relay's own paid-write store port (POST /write). It must never be
+// host-published — only the connector may reach it, over the compose network
+// (relay#114).
+const PAID_WRITE_PORT = '3100';
+
+interface DockerCompose {
+  services: Record<string, { ports?: string[]; expose?: (string | number)[] }>;
+}
+
+function readDockerCompose(): DockerCompose {
+  return parseYaml(readFileSync(DOCKER_COMPOSE_PATH, 'utf8')) as DockerCompose;
+}
+
+// Host IPs that mean "every interface", including the empty string a mapping
+// with no IP field at all leaves in that slot.
+const WILDCARD_HOST_IPS = new Set(['', '0.0.0.0', '::']);
+
+// Compose substitutes `${VAR:-default}` from the operator's .env; with no .env
+// — the shape this repo ships — every substitution becomes its default, and a
+// substitution with no default becomes empty. Resolving them yields the
+// mapping compose actually publishes out of the box, which is the thing under
+// test. It also keeps the ':' of ':-' out of the field split below.
+function resolveComposeDefaults(portEntry: string): string {
+  return portEntry.replace(
+    /\$\{([^}]+)\}/g,
+    (_match, reference: string) => reference.split(':-')[1] ?? ''
+  );
+}
+
+// A docker short-form port mapping is either `container` / `host:container`
+// (both bind ALL interfaces) or `ip:host:container` (binds only that
+// interface). An IPv6 host IP is bracketed in this syntax, so peel it off
+// before splitting the rest on ':'.
+function hostIpOf(portEntry: string): string {
+  const entry = resolveComposeDefaults(portEntry);
+  const bracketedIpv6 = entry.match(/^\[([^\]]*)\]:/);
+  if (bracketedIpv6) return bracketedIpv6[1] ?? '';
+
+  const fields = entry.split(':');
+  if (fields.length < 3) return '';
+  return fields[0] ?? '';
+}
 
 // The shared TOON devnet's TokenNetworkRegistry — the same registry, token
 // and decimals both live boxes settle through (relay#113). A node pointed at
@@ -148,5 +195,39 @@ describe('deploy bundle', () => {
       assignment,
       `${PUBLISH_WORKFLOW_PATH}: expected no CONNECTOR_TAG build-arg, found "${assignment?.[0].trim()}" — deploy/Dockerfile's ARG default is the pin of record`
     ).toBeNull();
+  });
+
+  it('never publishes a port on all interfaces', () => {
+    const { services } = readDockerCompose();
+
+    for (const [serviceName, service] of Object.entries(services)) {
+      for (const portEntry of service.ports ?? []) {
+        const hostIp = hostIpOf(portEntry);
+        expect(
+          WILDCARD_HOST_IPS.has(hostIp),
+          `docker-compose.yml service "${serviceName}": port "${portEntry}" binds every interface (host IP "${hostIp}") — prefix it with a host IP such as 127.0.0.1 (relay#114)`
+        ).toBe(false);
+      }
+    }
+  });
+
+  it('never publishes the paid-write store port; it stays on expose', () => {
+    const { services } = readDockerCompose();
+
+    for (const [serviceName, service] of Object.entries(services)) {
+      const leakingEntry = (service.ports ?? []).find((portEntry) =>
+        resolveComposeDefaults(portEntry).split(':').includes(PAID_WRITE_PORT)
+      );
+      expect(
+        leakingEntry,
+        `docker-compose.yml service "${serviceName}": paid-write port :${PAID_WRITE_PORT} is under \`ports:\` ("${leakingEntry}") — it must stay \`expose:\`-only`
+      ).toBeUndefined();
+    }
+
+    const exposedByRelay = (services['relay']?.expose ?? []).map(String);
+    expect(
+      exposedByRelay,
+      `docker-compose.yml relay service: expected :${PAID_WRITE_PORT} under \`expose:\`, found ${JSON.stringify(exposedByRelay)}`
+    ).toContain(PAID_WRITE_PORT);
   });
 });

@@ -9,9 +9,13 @@
 #   reader ──wss REQ (free)───────────────────────▶ relay:7100  (Nostr reads; PUBLIC)
 #
 # PRIVACY INVARIANT (enforced by construction):
-#   - relay :3100 (paid-write store)  → NEVER host-published; only connector:3100.
-#   - connector admin :8081 / health :8080 → NEVER host-published.
-#   The only host-bound ports are the edge :3000 and the free-read WS :7100.
+#   - relay :3100 (paid-write store) → NEVER host-published; only connector:3100.
+#   - The connector publishes exactly one port (:3000); the Rust node has no
+#     separate admin/health port (the TypeScript node's :8081/:8080 do not
+#     exist here — see the connector service's own comment below).
+#   The only host-bound ports are the edge :3000 and the free-read WS :7100,
+#   and both bind BIND_ADDR (default 127.0.0.1, never 0.0.0.0) so the only
+#   public door is the deployment environment's TLS terminator.
 #   This invariant is also a SECURITY precondition since relay#85: the relay
 #   skips schnorr verification for paid ephemeral kinds on the assumption that
 #   :3100 is reachable exclusively through the payment-gating connector.
@@ -58,7 +62,7 @@ services:
       # service again.
       - connector_state:/app/state
     ports:
-      - '${EDGE_PORT:-3000}:3000' # paid POST /ilp edge (the env's TLS terminator fronts this)
+      - '${BIND_ADDR:-127.0.0.1}:${EDGE_PORT:-3000}:3000' # paid POST /ilp edge (the env's TLS terminator fronts this)
     # No `expose: 8080`. The client edge, the operator surface and /metrics all
     # share :3000 on the Rust connector; the TypeScript node's separate health
     # (:8080) and admin (:8081) ports do not exist.
@@ -74,10 +78,8 @@ services:
   relay:
     image: ${RELAY_IMAGE:-ghcr.io/toon-protocol/relay:latest}
     environment:
-      TOON_OBLIVIOUS_MODE: 'true'
       TOON_BLS_PORT: '3100' # paid-write HTTP store (POST /write) — PRIVATE
       TOON_RELAY_PORT: '7100' # free-read Nostr WS — published
-      TOON_CHAIN: 'none' # oblivious forces relay-only; explicit for safety
       # The relay CLI REQUIRES an identity key to boot (this is IDENTITY, not
       # money). Generate an ephemeral 32-byte hex into RELAY_NOSTR_SECRET_KEY in .env.
       NOSTR_SECRET_KEY: ${RELAY_NOSTR_SECRET_KEY:?set RELAY_NOSTR_SECRET_KEY in .env (32-byte hex)}
@@ -95,7 +97,7 @@ services:
       # huddle listeners impossible.
       TOON_MAX_CONNECTIONS: ${RELAY_MAX_CONNECTIONS:-4096}
     ports:
-      - '${RELAY_WS_PORT:-7100}:7100' # free reads (the env's TLS terminator fronts this)
+      - '${BIND_ADDR:-127.0.0.1}:${RELAY_WS_PORT:-7100}:7100' # free reads (the env's TLS terminator fronts this)
     expose:
       - '3100' # paid-write store — PRIVATE (only the connector dials relay:3100)
     healthcheck:

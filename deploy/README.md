@@ -206,7 +206,8 @@ connector predating connector#784 that is the only option.
   authenticate against — read that file's `[operator]` comment before enabling it
   on a **baked** config.
 - The only host-bound ports are the edge **`:3000`** and the free-read WS
-  **`:7100`** — both fronted by the environment's TLS terminator.
+  **`:7100`**, both bound to `BIND_ADDR` (default `127.0.0.1`, never
+  `0.0.0.0`) and fronted by the environment's TLS terminator.
 - **Since relay#85 this is a security precondition, not just privacy**: the
   relay skips schnorr verification for paid ephemeral kinds because `:3100`
   is reachable only through the payment-gating connector. If you change the
