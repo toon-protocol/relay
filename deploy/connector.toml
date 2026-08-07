@@ -33,12 +33,17 @@
 #      or a settlement registry that will not resolve the token is exit 1 with
 #      the reason, never a degraded run.
 #
-# ── What did NOT survive the port ────────────────────────────────────────────
-# The old YAML carried a `selfAnnounce` block (the kind:10032 IlpPeerInfo
-# emitter, connector v3.28.0). The Rust connector has NO self-announce feature —
-# there is no such field in `crates/connector-config` and writing one here would
-# fail config load. A deployment that wants a kind:10032 announcement must
-# publish it itself, as an ordinary paid write through this same edge.
+# ── The kind:10032 self-announce, differently ────────────────────────────────
+# The old YAML carried a `selfAnnounce` block — a background daemon
+# (connector v3.28.0) that republished the node's IlpPeerInfo on a timer. That
+# field has no counterpart in the Rust connector's config crate and writing it
+# here fails config load. But as of `rust-sha-440eab7` (connector#784) there is
+# a real, differently-shaped equivalent: the optional `[announce]` section
+# below, plus a `connector announce` CLI verb — an operator ACTION, not a
+# daemon; the node never runs it on its own. See the commented `[announce]`
+# block below for what this route needs. Without it, a deployment can still
+# publish its own kind:10032 event as an ordinary paid write through this same
+# edge.
 #
 # The old YAML also claimed this node "ABSORBS the g.proxy apex role" and
 # forwarded `g.proxy.relay.store` / `g.proxy.store` to a `store-box` peer. Both
@@ -121,6 +126,30 @@ price = 1
 # force every one-shot buyer through a session, so this bundle ships the
 # default. Set `transport = "btp"` here if you are running huddles.
 
+# ── (Optional) Discovery announce (connector#784) ────────────────────────────
+# Commented out deliberately: every field below is a fact this node cannot
+# introspect about itself (its own PUBLIC hostname, never inferrable from
+# inside a container behind TLS termination), so a baked default would be
+# either wrong or somebody else's. Fill in your own before uncommenting.
+#
+# Publishing is a one-shot CLI action (`connector announce`), never automatic
+# on boot — run it by hand, or wire your own cron/sidecar, whenever you want
+# the announce refreshed. It signs with the [signer] key above by default.
+#
+# [announce]
+# addresses     = ["g.toon.relay"]
+# # This box's OWN public https endpoint for POST /ilp (your TLS terminator's
+# # name for the edge port above), not a container-network address.
+# http_endpoint = "https://<your-public-hostname>/ilp"
+# btp_endpoint  = "wss://<your-public-hostname>/ilp/btp"
+# # Set only if this box serves free reads (it does, by default — see the
+# # topology diagram at the top of this file): your TLS terminator's own name
+# # for the relay's WS read port (7100 in docker-compose.yml), never this
+# # route's handler_url — that is the relay's PRIVATE write ingress, not a
+# # read surface, and advertising it here would publish an unauthenticated
+# # write door to the whole network.
+# relay_url     = "wss://<your-public-hostname-for-reads>"
+
 # ── Settlement (ADR 0009, connector#542/#556) ────────────────────────────────
 # What makes this node able to ACCEPT money. With this section, an unaffiliated
 # buyer who opens a channel on chain pays this node with no config edit
@@ -146,7 +175,7 @@ price = 1
 [settlement.evm]
 rpc_url = "https://base-sepolia-rpc.publicnode.com"
 # The deployed TokenNetworkRegistry (a factory, not a channel contract).
-contract_address = "0xcC9079adE929b168B54145f6d25262b64FAB9D5b"
+contract_address = "0x8263BdD4eB4862395Cb4ef5dA5d637F4b047Eea1"
 # 6-decimal devnet USDC — the fleet-wide settlement asset (ADR 0010).
 token_address = "0x49beE1Bca5d15Fb0963117923403F9498119a9Ce"
 decimals = 6

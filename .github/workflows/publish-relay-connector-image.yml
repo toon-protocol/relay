@@ -8,11 +8,15 @@ name: Publish relay-connector image
 # ghcr.io/toon-protocol/relay). This image bakes a PINNED connector
 # (CONNECTOR_TAG); bump it deliberately to adopt a newer connector.
 #
-# CONNECTOR_TAG must stay in lockstep with deploy/Dockerfile's own ARG default
-# and deploy/.env.example — three copies of one pin, and this is the one that
-# decides what actually gets published. Since connector#755 it names a Rust
-# build (`rust-sha-<short>`); a plain semver tag is the retired TypeScript node,
-# which reads YAML and cannot start on deploy/connector.toml.
+# This build deliberately does NOT pass a CONNECTOR_TAG build-arg (relay#113):
+# deploy/Dockerfile's own ARG default is the pin's single source of truth, so
+# what ships to GHCR is exactly what that file names, with no second literal
+# here to drift out of sync with it. deploy/.env.example carries its own copy
+# too, but only for the local `docker compose up --build` path — it has no
+# effect on this workflow or on the published image. Since connector#755 the
+# pin names a Rust build (`rust-sha-<short>`); a plain semver tag is the
+# retired TypeScript node, which reads YAML and cannot start on
+# deploy/connector.toml.
 #
 # `latest` is (re)published on every push to main; version tags (vX.Y.Z) also
 # publish semver tags for pinning, plus an immutable sha tag.
@@ -59,8 +63,8 @@ jobs:
         with:
           context: deploy
           file: deploy/Dockerfile
-          build-args: |
-            CONNECTOR_TAG=rust-sha-bc9749b
+          # No CONNECTOR_TAG build-arg here on purpose — deploy/Dockerfile's
+          # own ARG default is the pin of record; see this workflow's header.
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

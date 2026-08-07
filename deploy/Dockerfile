@@ -28,8 +28,16 @@
 #     `deny_unknown_fields` and startup is fail-closed, so a schema drift is a
 #     refuse-to-start rather than a degraded run — which is the behaviour you
 #     want, but it means an undeliberate bump is an outage.
-# =============================================================================
-ARG CONNECTOR_TAG=rust-sha-bc9749b
+#
+# This ARG default is the pin's single source of truth: the publish workflow
+# (.github/workflows/publish-relay-connector-image.yml) builds this file
+# without overriding CONNECTOR_TAG, so whatever ships to GHCR is whatever is
+# written here. `rust-sha-440eab7` is the fleet's pin of record chosen in
+# toon-protocol/connector#848 — the earliest Rust build at or after the
+# announce-identity fixes (connector#833/#839) — and is also the first tag
+# this bundle runs that understands `[announce]` (connector#784); see
+# connector.toml's "self-announce" comment.
+ARG CONNECTOR_TAG=rust-sha-440eab7
 FROM ghcr.io/toon-protocol/connector:${CONNECTOR_TAG}
 
 # Bake the relay route config at the path the image's own CMD already names
