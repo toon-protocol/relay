@@ -136,11 +136,22 @@ price = 1
 # hand, or wire your own cron/sidecar, whenever you want the announce
 # refreshed:
 #
-#   connector announce --config /app/config/connector.toml <through-url>
+#   connector announce --config /app/config/connector.toml <through-url> \
+#     --to <that node's terminating prefix>
 #
-# The argument is the relay edge you publish THROUGH, and you pay it like any
-# other client — which is what `pay_channel` below is for. Leave `pay_channel`
-# out and the config still loads; the announce is what fails, naming it.
+# The positional argument is the relay edge you publish THROUGH, and you pay
+# it like any other client — which is what `pay_channel` below is for. `--to`
+# is the ILP address that terminates at THAT node's relay write ingress, and
+# it is required (pass it every time, or write it once as `publish_to` below):
+# it is a fact about somebody else's node, and the through-URL's x402 greeting
+# cannot supply it — the greeting's `payTo` only echoes back whichever
+# destination the asking packet already named. On this fleet every relay box
+# terminates `g.toon.relay`, so the address you pass happens to read the same
+# as this node's own `addresses` — it is still the OTHER node's route.
+#
+# Leave `pay_channel` out and the config still loads; the announce is what
+# fails, naming it. Same for the destination: a missing one is an announce-time
+# error, not a config-load error.
 #
 # Two keys, both already configured above and neither leaving the box: the
 # event itself is signed by [signer] (this node's ILP identity), and the claim
@@ -163,6 +174,10 @@ price = 1
 # # The channel this node PAYS the through-URL from — a channel it opened, not
 # # one it receives on, so it is deliberately not a [[client_channels]] row.
 # pay_channel   = "0x<32-byte channel id>"
+# # The default `--to`: the through-node's terminating prefix, saved here so a
+# # routine refresh does not have to retype it. Omit it and every invocation
+# # must pass `--to`.
+# publish_to    = "g.toon.relay"
 
 # ── Settlement (ADR 0009, connector#542/#556) ────────────────────────────────
 # What makes this node able to ACCEPT money. With this section, an unaffiliated

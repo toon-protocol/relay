@@ -52,6 +52,13 @@ const CONNECTOR_TAG_SITES: { file: string; pattern: RegExp }[] = [
     file: 'deploy/docker-compose.yml',
     pattern: /CONNECTOR_TAG:\s*\$\{CONNECTOR_TAG:-([^}\s]+)\}/,
   },
+  // Prose, but it quotes the literal, so it drifts like any other copy — and a
+  // README naming a pin the image does not carry is how an operator ends up
+  // deploying one connector while reading about another.
+  {
+    file: 'deploy/README.md',
+    pattern: /`CONNECTOR_TAG` ARG, currently `([^`]+)`/,
+  },
 ];
 
 const PUBLISH_WORKFLOW_PATH =
