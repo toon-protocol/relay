@@ -1,8 +1,10 @@
 /**
  * Guards the deploy bundle (../../../../deploy — this repo's published
- * relay-connector artifacts) against the exact defect fixed in relay#113:
- * a settlement registry, a route price, or a CONNECTOR_TAG copy silently
- * drifting from what the live TOON devnet fleet actually runs.
+ * relay-connector artifacts) against the exact defects fixed in relay#113 and
+ * relay#114: a settlement registry, a route price, or a CONNECTOR_TAG copy
+ * silently drifting from what the live TOON devnet fleet actually runs, and a
+ * port published on every interface instead of behind the deployment
+ * environment's TLS terminator.
  *
  * Reads the REAL files under `deploy/`, not fixtures — a fixture would keep
  * passing while the shipped artifact regressed. Expected values are literals
@@ -33,14 +35,34 @@ function readDockerCompose(): DockerCompose {
   return parseYaml(readFileSync(DOCKER_COMPOSE_PATH, 'utf8')) as DockerCompose;
 }
 
+// Host IPs that mean "every interface", including the empty string a mapping
+// with no IP field at all leaves in that slot.
+const WILDCARD_HOST_IPS = new Set(['', '0.0.0.0', '::']);
+
+// Compose substitutes `${VAR:-default}` from the operator's .env; with no .env
+// — the shape this repo ships — every substitution becomes its default, and a
+// substitution with no default becomes empty. Resolving them yields the
+// mapping compose actually publishes out of the box, which is the thing under
+// test. It also keeps the ':' of ':-' out of the field split below.
+function resolveComposeDefaults(portEntry: string): string {
+  return portEntry.replace(
+    /\$\{([^}]+)\}/g,
+    (_match, reference: string) => reference.split(':-')[1] ?? ''
+  );
+}
+
 // A docker short-form port mapping is either `container` / `host:container`
-// (both bind ALL interfaces, i.e. 0.0.0.0) or `ip:host:container` (binds only
-// that interface). `${VAR:-default}` substitutions contain their own ':-', so
-// collapse each one to a single opaque token before splitting on ':' — else
-// the substitution's internal colon is mistaken for a docker separator.
-function isHostIpPrefixed(portEntry: string): boolean {
-  const collapsed = portEntry.replace(/\$\{[^}]+\}/g, 'X');
-  return collapsed.split(':').length >= 3;
+// (both bind ALL interfaces) or `ip:host:container` (binds only that
+// interface). An IPv6 host IP is bracketed in this syntax, so peel it off
+// before splitting the rest on ':'.
+function hostIpOf(portEntry: string): string {
+  const entry = resolveComposeDefaults(portEntry);
+  const bracketedIpv6 = entry.match(/^\[([^\]]*)\]:/);
+  if (bracketedIpv6) return bracketedIpv6[1] ?? '';
+
+  const fields = entry.split(':');
+  if (fields.length < 3) return '';
+  return fields[0] ?? '';
 }
 
 // The shared TOON devnet's TokenNetworkRegistry — the same registry, token
@@ -180,10 +202,11 @@ describe('deploy bundle', () => {
 
     for (const [serviceName, service] of Object.entries(services)) {
       for (const portEntry of service.ports ?? []) {
+        const hostIp = hostIpOf(portEntry);
         expect(
-          isHostIpPrefixed(portEntry),
-          `docker-compose.yml service "${serviceName}": port "${portEntry}" is not host-IP-prefixed and will bind 0.0.0.0 (relay#114)`
-        ).toBe(true);
+          WILDCARD_HOST_IPS.has(hostIp),
+          `docker-compose.yml service "${serviceName}": port "${portEntry}" binds every interface (host IP "${hostIp}") — prefix it with a host IP such as 127.0.0.1 (relay#114)`
+        ).toBe(false);
       }
     }
   });
@@ -193,8 +216,7 @@ describe('deploy bundle', () => {
 
     for (const [serviceName, service] of Object.entries(services)) {
       const publishedBackendPort = (service.ports ?? []).find((portEntry) =>
-        portEntry
-          .replace(/\$\{[^}]+\}/g, 'X')
+        resolveComposeDefaults(portEntry)
           .split(':')
           .includes(RELAY_BACKEND_PORT)
       );
