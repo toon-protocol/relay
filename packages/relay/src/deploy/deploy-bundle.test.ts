@@ -14,9 +14,34 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse } from 'smol-toml';
+import { parse as parseYaml } from 'yaml';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../../..');
 const CONNECTOR_TOML_PATH = resolve(REPO_ROOT, 'deploy/connector.toml');
+const DOCKER_COMPOSE_PATH = resolve(REPO_ROOT, 'deploy/docker-compose.yml');
+
+// The relay's own paid-write store port (POST /write). It must never be
+// host-published — only the connector may reach it, over the compose network
+// (relay#114).
+const RELAY_BACKEND_PORT = '3100';
+
+interface DockerCompose {
+  services: Record<string, { ports?: string[]; expose?: (string | number)[] }>;
+}
+
+function readDockerCompose(): DockerCompose {
+  return parseYaml(readFileSync(DOCKER_COMPOSE_PATH, 'utf8')) as DockerCompose;
+}
+
+// A docker short-form port mapping is either `container` / `host:container`
+// (both bind ALL interfaces, i.e. 0.0.0.0) or `ip:host:container` (binds only
+// that interface). `${VAR:-default}` substitutions contain their own ':-', so
+// collapse each one to a single opaque token before splitting on ':' — else
+// the substitution's internal colon is mistaken for a docker separator.
+function isHostIpPrefixed(portEntry: string): boolean {
+  const collapsed = portEntry.replace(/\$\{[^}]+\}/g, 'X');
+  return collapsed.split(':').length >= 3;
+}
 
 // The shared TOON devnet's TokenNetworkRegistry — the same registry, token
 // and decimals both live boxes settle through (relay#113). A node pointed at
@@ -148,5 +173,41 @@ describe('deploy bundle', () => {
       assignment,
       `${PUBLISH_WORKFLOW_PATH}: expected no CONNECTOR_TAG build-arg, found "${assignment?.[0].trim()}" — deploy/Dockerfile's ARG default is the pin of record`
     ).toBeNull();
+  });
+
+  it('never publishes a port on all interfaces', () => {
+    const { services } = readDockerCompose();
+
+    for (const [serviceName, service] of Object.entries(services)) {
+      for (const portEntry of service.ports ?? []) {
+        expect(
+          isHostIpPrefixed(portEntry),
+          `docker-compose.yml service "${serviceName}": port "${portEntry}" is not host-IP-prefixed and will bind 0.0.0.0 (relay#114)`
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('never publishes the relay backend port; it stays on expose', () => {
+    const { services } = readDockerCompose();
+
+    for (const [serviceName, service] of Object.entries(services)) {
+      const publishedBackendPort = (service.ports ?? []).find((portEntry) =>
+        portEntry
+          .replace(/\$\{[^}]+\}/g, 'X')
+          .split(':')
+          .includes(RELAY_BACKEND_PORT)
+      );
+      expect(
+        publishedBackendPort,
+        `docker-compose.yml service "${serviceName}": paid-write port :${RELAY_BACKEND_PORT} is under \`ports:\` ("${publishedBackendPort}") — it must stay \`expose:\`-only`
+      ).toBeUndefined();
+    }
+
+    const exposedByRelay = (services['relay']?.expose ?? []).map(String);
+    expect(
+      exposedByRelay,
+      `docker-compose.yml relay service: expected :${RELAY_BACKEND_PORT} under \`expose:\`, found ${JSON.stringify(exposedByRelay)}`
+    ).toContain(RELAY_BACKEND_PORT);
   });
 });
