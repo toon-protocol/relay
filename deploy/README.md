@@ -38,10 +38,19 @@ referenced as a sibling service.
 | `ghcr.io/toon-protocol/relay`           | the normal relay app (built by `publish-relay-image.yml`) |
 | `ghcr.io/toon-protocol/relay-connector` | connector + this repo's `connector.toml` baked in         |
 
-The `relay-connector` image bakes a **pinned** connector (`CONNECTOR_TAG`, default
-`rust-sha-bc9749b`) so the config schema is frozen against a known connector. The
-image's own version tracks this repo's release (`vX.Y.Z` / `latest` / `sha`); bump
-`CONNECTOR_TAG` deliberately to adopt a newer connector.
+The `relay-connector` image bakes a **pinned** connector (`deploy/Dockerfile`'s
+`CONNECTOR_TAG` ARG, currently `rust-sha-440eab7`) so the config schema is frozen
+against a known connector. The image's own version tracks this repo's release
+(`vX.Y.Z` / `latest` / `sha`); bump `CONNECTOR_TAG` deliberately to adopt a newer
+connector.
+
+**The `.env` variable of the same name is not a production control.** It only
+feeds `docker compose up --build` (a local build). The published image on GHCR
+is built by CI from `deploy/Dockerfile`'s own ARG default, with no build-arg
+override — see the workflow's header — so pulling `RELAY_CONNECTOR_IMAGE` and
+running `up` without `--build` (the documented production path below) ignores
+`.env`'s `CONNECTOR_TAG` entirely. To adopt a newer connector in production,
+bump the ARG default in `deploy/Dockerfile` and cut a new release.
 
 **Read the tag carefully.** The `connector` package carries two different
 programs under one name. `rust-sha-<short>` and `rust-main` are the Rust
@@ -144,7 +153,7 @@ error by name, because the TOML parser is `deny_unknown_fields`.
 | `NODE_TLS_REJECT_UNAUTHORIZED=0`                   | no equivalent; use an RPC with a real chain of trust              |
 | connector health `:8080`, admin `:8081`            | one port: `:3000` carries the edge, the operator surface, metrics |
 | route prefix `g.proxy.relay`                       | `g.toon.relay` (the apex was renamed)                             |
-| `selfAnnounce` block (kind:10032)                  | **no equivalent — see below**                                     |
+| `selfAnnounce` block (kind:10032)                  | `[announce]` + `connector announce` — see below                   |
 | replay watermarks lived in process memory          | `state_dir = "/app/state"`, on a named volume                     |
 
 That last row is the one worth dwelling on: without a durable claim journal, a
@@ -153,19 +162,38 @@ accepts any nonce, and every claim a payer already spent becomes free service
 again (connector#605). That is why `docker-compose.yml` gained a
 `connector_state` named volume.
 
-### The kind:10032 self-announce did not survive
+### The kind:10032 self-announce, differently
 
 The old `connector.yaml` carried a `selfAnnounce` block — the `IlpPeerInfo`
 emitter that let a client holding only the genesis seed discover this node's
 routes out of band ([relay#37](https://github.com/toon-protocol/relay/issues/37),
 [store#22](https://github.com/toon-protocol/store/issues/22)). It shipped in
-TypeScript connector v3.28.0 and **has no counterpart in the Rust connector**:
-there is no such field in its config crate, so writing one here fails config load
-rather than being ignored.
+TypeScript connector v3.28.0 and has no field-for-field counterpart in the
+Rust connector — but connector#784 gave it a real one, and the pin above
+carries it: an optional `[announce]` section in `connector.toml` plus a
+`connector announce` CLI verb. It is deliberately NOT the same shape:
+`selfAnnounce` was a background daemon that republished on a timer;
+`connector announce` is a one-shot **operator action** the node never runs on
+its own — you invoke it against the relay URL you want to publish *through*, by
+hand or from your own cron/sidecar, whenever you want the announce refreshed:
 
-A deployment that wants to be discoverable must publish its own `kind:10032`
-event as an ordinary paid write through this same edge. On the TOON devnet that
-job moved to a separate announcer sidecar for exactly this reason.
+```bash
+connector announce --config /app/config/connector.toml <through-url> \
+  --to <that node's terminating prefix>
+```
+
+It pays that URL like any other client, so the section also needs a
+`pay_channel` naming a funded channel to pay from. `--to` is required and is
+**not** discoverable from the through-URL — write it once as `publish_to` if you
+always publish to the same address. See `connector.toml`'s commented
+`[announce]` block for the fields this bundle's route needs (`addresses`,
+`http_endpoint`, `btp_endpoint`, and `relay_url` since this box fronts a relay)
+and fill in your own public hostnames before uncommenting it — none of them are
+inferrable from inside the container.
+
+A deployment that leaves `[announce]` unset can still publish its own
+`kind:10032` event as an ordinary paid write through this same edge; on any
+connector predating connector#784 that is the only option.
 
 ## Privacy invariant
 
