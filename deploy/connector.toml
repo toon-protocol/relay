@@ -37,8 +37,8 @@
 # The old YAML carried a `selfAnnounce` block — a background daemon
 # (connector v3.28.0) that republished the node's IlpPeerInfo on a timer. That
 # field has no counterpart in the Rust connector's config crate and writing it
-# here fails config load. But as of `rust-sha-440eab7` (connector#784) there is
-# a real, differently-shaped equivalent: the optional `[announce]` section
+# here fails config load. But connector#784 added a real, differently-shaped
+# equivalent, and this bundle's pin carries it: the optional `[announce]` section
 # below, plus a `connector announce` CLI verb — an operator ACTION, not a
 # daemon; the node never runs it on its own. See the commented `[announce]`
 # block below for what this route needs. Without it, a deployment can still
@@ -132,9 +132,20 @@ price = 1
 # inside a container behind TLS termination), so a baked default would be
 # either wrong or somebody else's. Fill in your own before uncommenting.
 #
-# Publishing is a one-shot CLI action (`connector announce`), never automatic
-# on boot — run it by hand, or wire your own cron/sidecar, whenever you want
-# the announce refreshed. It signs with the [signer] key above by default.
+# Publishing is a one-shot CLI action, never automatic on boot — run it by
+# hand, or wire your own cron/sidecar, whenever you want the announce
+# refreshed:
+#
+#   connector announce --config /app/config/connector.toml <through-url>
+#
+# The argument is the relay edge you publish THROUGH, and you pay it like any
+# other client — which is what `pay_channel` below is for. Leave `pay_channel`
+# out and the config still loads; the announce is what fails, naming it.
+#
+# Two keys, both already configured above and neither leaving the box: the
+# event itself is signed by [signer] (this node's ILP identity), and the claim
+# that pays for the write by [settlement.evm.key] (the on-chain participant of
+# the channel it pays from).
 #
 # [announce]
 # addresses     = ["g.toon.relay"]
@@ -149,6 +160,9 @@ price = 1
 # # read surface, and advertising it here would publish an unauthenticated
 # # write door to the whole network.
 # relay_url     = "wss://<your-public-hostname-for-reads>"
+# # The channel this node PAYS the through-URL from — a channel it opened, not
+# # one it receives on, so it is deliberately not a [[client_channels]] row.
+# pay_channel   = "0x<32-byte channel id>"
 
 # ── Settlement (ADR 0009, connector#542/#556) ────────────────────────────────
 # What makes this node able to ACCEPT money. With this section, an unaffiliated

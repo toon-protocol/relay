@@ -5,18 +5,17 @@ name: Publish relay-connector image
 # GHCR. This is the payment-proxy image that runs in front of the relay app.
 #
 # The relay app image is published separately (publish-relay-image.yml →
-# ghcr.io/toon-protocol/relay). This image bakes a PINNED connector
-# (CONNECTOR_TAG); bump it deliberately to adopt a newer connector.
+# ghcr.io/toon-protocol/relay). This image bakes a PINNED connector; bump
+# deploy/Dockerfile's `ARG CONNECTOR_TAG` deliberately to adopt a newer one.
 #
-# This build deliberately does NOT pass a CONNECTOR_TAG build-arg (relay#113):
-# deploy/Dockerfile's own ARG default is the pin's single source of truth, so
-# what ships to GHCR is exactly what that file names, with no second literal
-# here to drift out of sync with it. deploy/.env.example carries its own copy
-# too, but only for the local `docker compose up --build` path — it has no
-# effect on this workflow or on the published image. Since connector#755 the
-# pin names a Rust build (`rust-sha-<short>`); a plain semver tag is the
-# retired TypeScript node, which reads YAML and cannot start on
-# deploy/connector.toml.
+# That ARG default is the pin's single source of truth, which is why this build
+# deliberately does NOT pass a CONNECTOR_TAG build-arg (relay#113): what ships
+# to GHCR is exactly what that file names, with no second literal here to drift
+# out of sync with it. deploy/.env.example carries its own copy too, but only
+# for the local `docker compose up --build` path — it has no effect on this
+# workflow or on the published image. Since connector#755 the pin names a Rust
+# build (`rust-sha-<short>`); a plain semver tag is the retired TypeScript
+# node, which reads YAML and cannot start on deploy/connector.toml.
 #
 # `latest` is (re)published on every push to main; version tags (vX.Y.Z) also
 # publish semver tags for pinning, plus an immutable sha tag.

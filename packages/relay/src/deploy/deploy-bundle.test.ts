@@ -35,14 +35,16 @@ const EXPECTED_ROUTE_PRICES: Record<string, number> = {
 
 // The fleet's pin of record, chosen in toon-protocol/connector#848 (merged
 // as connector PR #859): rust-sha-440eab7 is the earliest Rust connector
-// build at or after the announce-identity fixes (connector#833/#839), and
-// the earliest this bundle runs that understands `[announce]` (connector#784).
+// build at or after the announce-identity fixes (connector#833/#839), and the
+// first pin this bundle has shipped that understands `[announce]`
+// (connector#784).
 const EXPECTED_CONNECTOR_TAG = 'rust-sha-440eab7';
 
-// Every site in the repo that names the pin, and how to pull the value back
-// out of each one's own syntax. A textual scan, not a parser, matching the
-// issue's guidance: this sweep spans a Dockerfile and a GitHub Actions
-// workflow, neither of which is TOML.
+// Every site that names the pin, and how to pull the value back out of each
+// one's own syntax. A textual scan rather than a parser because no two of
+// these are the same language, and none of them is TOML. The publish workflow
+// is deliberately absent: it passes no CONNECTOR_TAG build-arg, so the
+// Dockerfile ARG default below is what it ships (relay#113).
 const CONNECTOR_TAG_SITES: { file: string; pattern: RegExp }[] = [
   { file: 'deploy/Dockerfile', pattern: /ARG CONNECTOR_TAG=(\S+)/ },
   { file: 'deploy/.env.example', pattern: /^CONNECTOR_TAG=(\S+)/m },
@@ -51,6 +53,9 @@ const CONNECTOR_TAG_SITES: { file: string; pattern: RegExp }[] = [
     pattern: /CONNECTOR_TAG:\s*\$\{CONNECTOR_TAG:-([^}\s]+)\}/,
   },
 ];
+
+const PUBLISH_WORKFLOW_PATH =
+  '.github/workflows/publish-relay-connector-image.yml';
 
 interface ConnectorToml {
   routes: { prefix: string; price: number }[];
@@ -64,7 +69,9 @@ interface ConnectorToml {
 }
 
 function readConnectorToml(): ConnectorToml {
-  return parse(readFileSync(CONNECTOR_TOML_PATH, 'utf8')) as unknown as ConnectorToml;
+  return parse(
+    readFileSync(CONNECTOR_TOML_PATH, 'utf8')
+  ) as unknown as ConnectorToml;
 }
 
 describe('deploy bundle', () => {
@@ -108,11 +115,31 @@ describe('deploy bundle', () => {
       const content = readFileSync(resolve(REPO_ROOT, site.file), 'utf8');
       const match = content.match(site.pattern);
 
-      expect(match, `${site.file}: CONNECTOR_TAG not found matching ${site.pattern}`).not.toBeNull();
+      expect(
+        match,
+        `${site.file}: CONNECTOR_TAG not found matching ${site.pattern}`
+      ).not.toBeNull();
       expect(
         match?.[1],
         `${site.file}: expected CONNECTOR_TAG=${EXPECTED_CONNECTOR_TAG}, found CONNECTOR_TAG=${match?.[1]}`
       ).toBe(EXPECTED_CONNECTOR_TAG);
     }
+  });
+
+  it('leaves the publish workflow with no CONNECTOR_TAG of its own', () => {
+    // The other half of "the ARG default is the pin of record": a build-arg
+    // reintroduced here would silently outrank deploy/Dockerfile and decide
+    // what actually ships to GHCR, and it is the one copy the sweep above
+    // cannot compare because there is nothing to compare it against.
+    const content = readFileSync(
+      resolve(REPO_ROOT, PUBLISH_WORKFLOW_PATH),
+      'utf8'
+    );
+    const assignment = content.match(/^[^#\n]*CONNECTOR_TAG\s*[=:].*$/m);
+
+    expect(
+      assignment,
+      `${PUBLISH_WORKFLOW_PATH}: expected no CONNECTOR_TAG build-arg, found "${assignment?.[0].trim()}" — deploy/Dockerfile's ARG default is the pin of record`
+    ).toBeNull();
   });
 });

@@ -169,21 +169,24 @@ emitter that let a client holding only the genesis seed discover this node's
 routes out of band ([relay#37](https://github.com/toon-protocol/relay/issues/37),
 [store#22](https://github.com/toon-protocol/store/issues/22)). It shipped in
 TypeScript connector v3.28.0 and has no field-for-field counterpart in the
-Rust connector — but as of `rust-sha-440eab7` (connector#784) it has a real
-one: an optional `[announce]` section in `connector.toml` plus a
+Rust connector — but connector#784 gave it a real one, and the pin above
+carries it: an optional `[announce]` section in `connector.toml` plus a
 `connector announce` CLI verb. It is deliberately NOT the same shape:
 `selfAnnounce` was a background daemon that republished on a timer;
 `connector announce` is a one-shot **operator action** the node never runs on
-its own — you invoke it (by hand, or from your own cron/sidecar) whenever you
-want the announce refreshed. See `connector.toml`'s commented `[announce]`
-block for the fields this bundle's route needs (`addresses`, `http_endpoint`,
-`btp_endpoint`, and `relay_url` since this box fronts a relay) and fill in
-your own public hostnames before uncommenting it — none of them are
-inferrable from inside the container.
+its own — you invoke it against the relay URL you want to publish *through*
+(`connector announce --config /app/config/connector.toml <through-url>`), by
+hand or from your own cron/sidecar, whenever you want the announce refreshed.
+It pays that URL like any other client, so the section also needs a
+`pay_channel` naming a funded channel to pay from. See `connector.toml`'s
+commented `[announce]` block for the fields this bundle's route needs
+(`addresses`, `http_endpoint`, `btp_endpoint`, and `relay_url` since this box
+fronts a relay) and fill in your own public hostnames before uncommenting it —
+none of them are inferrable from inside the container.
 
 A deployment that leaves `[announce]` unset can still publish its own
-`kind:10032` event as an ordinary paid write through this same edge; that
-remains the only option below `rust-sha-440eab7`.
+`kind:10032` event as an ordinary paid write through this same edge; on any
+connector predating connector#784 that is the only option.
 
 ## Privacy invariant
 
