@@ -164,39 +164,39 @@ const FRESH_CREDENTIAL_HELPER =
  * `bestEffort` is for the early publish after the implementer phase: a failure
  * there costs us recoverability but must not abandon a run that still has a
  * review phase to do. The final push is never best-effort — it fails loud.
+ *
+ * Returns true when the branch reached origin, false only on a best-effort
+ * failure.
  */
-type Sandbox = Awaited<ReturnType<typeof sandcastle.createSandbox>>;
-
 async function pushBranch(
-  sandbox: Sandbox,
+  sandbox: sandcastle.Sandbox,
   label: string,
   { bestEffort = false }: { bestEffort?: boolean } = {},
 ): Promise<boolean> {
+  // Every failure below is handled identically: warn and report failure when
+  // best-effort, throw otherwise.
+  const failed = (reason: string): false => {
+    const msg = `[${label}] ${reason}`;
+    if (!bestEffort) throw new Error(msg);
+    console.warn(`  WARNING: ${msg}`);
+    return false;
+  };
+
   let token: string;
   try {
     const minted = await mintAppToken();
     token = minted.token;
     // Keep the host in step with the container.
     process.env.GH_TOKEN = token;
-    console.log(`  [${label}] credential: freshly minted (source=${minted.source})`);
+    console.log(`  [${label}] push credential source: ${minted.source}`);
   } catch (err) {
-    const msg = `[${label}] could not obtain a push credential: ${(err as Error).message}`;
-    if (bestEffort) {
-      console.warn(`  WARNING: ${msg}`);
-      return false;
-    }
-    throw new Error(msg);
+    return failed(`could not obtain a push credential: ${(err as Error).message}`);
   }
 
   // `umask 077` so the file is 600 from creation — never briefly world-readable.
   const stage = await sandbox.exec(`umask 077 && cat > ${TOKEN_PATH}`, { stdin: token });
   if (stage.exitCode !== 0) {
-    const msg = `[${label}] failed to stage the push credential (exit ${stage.exitCode}).`;
-    if (bestEffort) {
-      console.warn(`  WARNING: ${msg}`);
-      return false;
-    }
-    throw new Error(msg);
+    return failed(`failed to stage the push credential (exit ${stage.exitCode}).`);
   }
 
   try {
@@ -206,12 +206,9 @@ async function pushBranch(
       { onLine: (line) => console.log(`  [${label}] ${line}`) },
     );
     if (push.exitCode !== 0) {
-      const msg = `[${label}] git push of '${branch}' failed (exit ${push.exitCode}).\n${push.stderr}`;
-      if (bestEffort) {
-        console.warn(`  WARNING: ${msg}`);
-        return false;
-      }
-      throw new Error(msg);
+      return failed(
+        `git push of '${branch}' failed (exit ${push.exitCode}).\n${push.stderr}`,
+      );
     }
     return true;
   } finally {
