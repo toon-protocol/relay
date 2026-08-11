@@ -25,7 +25,12 @@ Related:
   - `APP_ID` + `APP_PRIVATE_KEY` — the GitHub App the existing loops already use.
     The engine opens the PR with this App token so the PR triggers `ci.yml`
     (the green gate). A PR opened with the default `GITHUB_TOKEN` would NOT
-    trigger CI.
+    trigger CI. The same two secrets are also passed to the runner step
+    directly (host-only) so it can mint a FRESH installation token
+    immediately before each `git push` (toon-meta#248): the initial App
+    token expires one hour after issue, and the job's wall clock is 180
+    minutes, so pushing with the stale initial token would silently lose a
+    completed implementation. See `.sandcastle/mint-app-token.ts`.
 - `agent-implement.yml` / `agent-review.yml` are merged to `main`. Issue- and
   PR-`labeled` workflows only fire from the default branch, so nothing runs
   until these land on `main`.
