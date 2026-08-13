@@ -72,9 +72,11 @@ VOLUME /data
 RUN mkdir -p /data && chown node:node /data
 USER node
 
-# Health check
+# Health check. 127.0.0.1, not localhost (relay#94): the BLS listener binds
+# 0.0.0.0 (IPv4-only), but "localhost" inside the container can resolve to
+# ::1, which nothing is listening on.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -q --spider http://localhost:3100/health || exit 1
+  CMD wget -q --spider http://127.0.0.1:3100/health || exit 1
 
 # Start with full-featured entrypoint (now the default)
 CMD ["node", "dist/entrypoint.js"]

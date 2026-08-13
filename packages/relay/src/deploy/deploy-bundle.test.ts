@@ -111,6 +111,31 @@ const CONNECTOR_TAG_SITES: { file: string; pattern: RegExp }[] = [
 const PUBLISH_WORKFLOW_PATH =
   '.github/workflows/publish-relay-connector-image.yml';
 
+// Every site that runs a `wget`-based healthcheck against the write listener's
+// /health endpoint, and how to pull the target host back out of each site's
+// own syntax. Inside a container, "localhost" can resolve to ::1 while the
+// listener (config default: 0.0.0.0) binds only IPv4 — the healthcheck must
+// dial 127.0.0.1 explicitly instead of relying on resolution (relay#94).
+const HEALTHCHECK_WGET_SITES: { file: string; pattern: RegExp }[] = [
+  {
+    file: 'deploy/docker-compose.yml',
+    pattern: /wget -q --spider http:\/\/([^:/]+):3100\/health/,
+  },
+  {
+    file: 'packages/relay/Dockerfile',
+    pattern:
+      /wget -q --spider "http:\/\/([^:/]+):\$\{TOON_BLS_PORT:-3100\}\/health"/,
+  },
+  {
+    file: 'packages/bls/Dockerfile',
+    pattern: /wget -q --spider http:\/\/([^:/]+):3100\/health/,
+  },
+  {
+    file: 'packages/bls/Dockerfile.bootstrap',
+    pattern: /wget -q --spider http:\/\/([^:/]+):3100\/health/,
+  },
+];
+
 interface ConnectorToml {
   routes: { prefix: string; price: number }[];
   settlement: {
@@ -229,5 +254,21 @@ describe('deploy bundle', () => {
       exposedByRelay,
       `docker-compose.yml relay service: expected :${PAID_WRITE_PORT} under \`expose:\`, found ${JSON.stringify(exposedByRelay)}`
     ).toContain(PAID_WRITE_PORT);
+  });
+
+  it('healthchecks dial 127.0.0.1, never localhost (relay#94)', () => {
+    for (const site of HEALTHCHECK_WGET_SITES) {
+      const content = readFileSync(resolve(REPO_ROOT, site.file), 'utf8');
+      const match = content.match(site.pattern);
+
+      expect(
+        match,
+        `${site.file}: healthcheck wget target not found matching ${site.pattern}`
+      ).not.toBeNull();
+      expect(
+        match?.[1],
+        `${site.file}: healthcheck targets "${match?.[1]}" — inside a container "localhost" can resolve to ::1 while the listener binds only IPv4, so it must dial 127.0.0.1 explicitly`
+      ).toBe('127.0.0.1');
+    }
   });
 });

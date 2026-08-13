@@ -88,9 +88,12 @@ VOLUME /data
 RUN mkdir -p /data && chown node:node /data
 USER node
 
-# Compose healthcheck target — GET /health on the BLS port
+# Compose healthcheck target — GET /health on the BLS port. 127.0.0.1, not
+# localhost (relay#94): the write listener's host default is 0.0.0.0
+# (IPv4-only), but "localhost" inside the container can resolve to ::1, which
+# nothing is listening on.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -q --spider "http://localhost:${TOON_BLS_PORT:-3100}/health" || exit 1
+  CMD wget -q --spider "http://127.0.0.1:${TOON_BLS_PORT:-3100}/health" || exit 1
 
 # Entrypoint = the relay CLI
 CMD ["node", "dist/cli.js"]
