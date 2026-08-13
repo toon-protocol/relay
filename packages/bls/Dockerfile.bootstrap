@@ -72,9 +72,9 @@ VOLUME /data
 RUN mkdir -p /data && chown node:node /data
 USER node
 
-# Health check. 127.0.0.1, not localhost (relay#94): the BLS listener binds
-# 0.0.0.0 (IPv4-only), but "localhost" inside the container can resolve to
-# ::1, which nothing is listening on.
+# Health check. 127.0.0.1, not localhost (relay#94): "localhost" inside the
+# container can resolve to ::1, so dialing it makes the check depend on which
+# families the listener happened to bind. An explicit IPv4 loopback does not.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -q --spider http://127.0.0.1:3100/health || exit 1
 

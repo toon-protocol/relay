@@ -111,11 +111,12 @@ const CONNECTOR_TAG_SITES: { file: string; pattern: RegExp }[] = [
 const PUBLISH_WORKFLOW_PATH =
   '.github/workflows/publish-relay-connector-image.yml';
 
-// Every site that runs a `wget`-based healthcheck against the write listener's
-// /health endpoint, and how to pull the target host back out of each site's
-// own syntax. Inside a container, "localhost" can resolve to ::1 while the
-// listener (config default: 0.0.0.0) binds only IPv4 — the healthcheck must
-// dial 127.0.0.1 explicitly instead of relying on resolution (relay#94).
+// Every `wget`-based /health healthcheck this repo ships in a deploy file or
+// an image, and how to pull the target host back out of each site's own
+// syntax. Inside a container "localhost" can resolve to ::1, which the relay's
+// write listener — bound to 0.0.0.0, its config default — never answers on, so
+// each healthcheck dials 127.0.0.1 rather than relying on resolution
+// (relay#94).
 const HEALTHCHECK_WGET_SITES: { file: string; pattern: RegExp }[] = [
   {
     file: 'deploy/docker-compose.yml',
@@ -267,7 +268,7 @@ describe('deploy bundle', () => {
       ).not.toBeNull();
       expect(
         match?.[1],
-        `${site.file}: healthcheck targets "${match?.[1]}" — inside a container "localhost" can resolve to ::1 while the listener binds only IPv4, so it must dial 127.0.0.1 explicitly`
+        `${site.file}: healthcheck targets "${match?.[1]}" — inside a container "localhost" can resolve to ::1, which an IPv4-bound listener never answers on, so it must dial 127.0.0.1 explicitly`
       ).toBe('127.0.0.1');
     }
   });
