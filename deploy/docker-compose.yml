@@ -101,7 +101,11 @@ services:
     expose:
       - '3100' # paid-write store — PRIVATE (only the connector dials relay:3100)
     healthcheck:
-      test: ['CMD-SHELL', 'wget -q --spider http://localhost:3100/health || exit 1']
+      # 127.0.0.1, not localhost (relay#94): the write listener's host default
+      # is 0.0.0.0 (IPv4-only), but "localhost" inside the container can
+      # resolve to ::1, which nothing is listening on — wget then fails and
+      # the container flaps unhealthy despite the app being fine.
+      test: ['CMD-SHELL', 'wget -q --spider http://127.0.0.1:3100/health || exit 1']
       interval: 10s
       timeout: 5s
       retries: 12
