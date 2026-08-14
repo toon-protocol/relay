@@ -7,9 +7,17 @@ directly. Settlement runs against the **shared live devnet**. **TLS is terminate
 by the deployment environment** (no Caddy here).
 
 ```
-payer  ──paid POST /ilp──▶ connector ──paid write (POST /write)──▶ relay :3100  (store; PRIVATE)
-reader ──wss free REQ──────────────────────────────────────────▶ relay :7100  (Nostr reads; PUBLIC)
+payer  ──paid POST /ilp──▶ connector ──paid write (POST /write)────────▶ relay :3100  (store; PRIVATE)
+                                      ──free write (POST /write-ephemeral)▶ relay :3100  (broadcast-only; PRIVATE)
+reader ──wss free REQ──────────────────────────────────────────────────▶ relay :7100  (Nostr reads; PUBLIC)
 ```
+
+The second write leg (relay#129) is the **free ephemeral write lane** —
+presence/typing kinds (20000-29999) ride a `price = 0` route to a _separate_
+relay endpoint (the connector cannot carry two prices on one `handler_url`).
+It is still claim-gated at the client edge like every route here; the relay
+always runs full signature verification on it (no payment gate to lean on)
+and enforces its own rate limit + body-size cap.
 
 The connector's config is **baked into the `relay-connector` image** (see
 `Dockerfile` — `FROM ghcr.io/toon-protocol/connector` + `COPY connector.toml`).
@@ -24,12 +32,12 @@ referenced as a sibling service.
 
 ## Files
 
-| file                 | purpose                                                                                   |
-| -------------------- | ----------------------------------------------------------------------------------------- |
-| `Dockerfile`         | `relay-connector` image: pinned Rust connector + baked `connector.toml`                    |
-| `connector.toml`     | connector config (route `g.toon.relay` → `http://relay:3100/write`), devnet RPC baked in   |
-| `docker-compose.yml` | connector (payment proxy) + relay; only the edge `:3000` and free-read WS `:7100` public   |
-| `.env.example`       | copy to `.env`; `RELAY_NOSTR_SECRET_KEY` (required) + image pins + ports                   |
+| file                 | purpose                                                                                                                                                                    |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Dockerfile`         | `relay-connector` image: pinned Rust connector + baked `connector.toml`                                                                                                    |
+| `connector.toml`     | connector config: `g.toon.relay` (paid) → `http://relay:3100/write`, `g.toon.relay.ephemeral` (free, relay#129) → `http://relay:3100/write-ephemeral`, devnet RPC baked in |
+| `docker-compose.yml` | connector (payment proxy) + relay; only the edge `:3000` and free-read WS `:7100` public                                                                                   |
+| `.env.example`       | copy to `.env`; `RELAY_NOSTR_SECRET_KEY` (required) + image pins + ports                                                                                                   |
 
 ## Images
 
@@ -144,17 +152,17 @@ If you have an existing `.env` and a running stack, these are the breaking
 differences. None of them fail quietly — a leftover YAML-ism is a config-load
 error by name, because the TOML parser is `deny_unknown_fields`.
 
-| was                                                | now                                                               |
-| -------------------------------------------------- | ----------------------------------------------------------------- |
-| `deploy/connector.yaml`                            | `deploy/connector.toml` — a different config language             |
-| `CONNECTOR_TAG=3.28.0`                             | `CONNECTOR_TAG=rust-sha-…`; a semver tag is the retired node      |
-| `TOON_MNEMONIC` derives the settlement key at boot | derive it yourself; mount `settlement.key`                        |
-| `CONFIG_FILE=/app/config/connector.yaml`           | nothing — the image's `CMD` already names the path                |
-| `NODE_TLS_REJECT_UNAUTHORIZED=0`                   | no equivalent; use an RPC with a real chain of trust              |
-| connector health `:8080`, admin `:8081`            | one port: `:3000` carries the edge, the operator surface, metrics |
+| was                                                | now                                                                                                                                       |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `deploy/connector.yaml`                            | `deploy/connector.toml` — a different config language                                                                                     |
+| `CONNECTOR_TAG=3.28.0`                             | `CONNECTOR_TAG=rust-sha-…`; a semver tag is the retired node                                                                              |
+| `TOON_MNEMONIC` derives the settlement key at boot | derive it yourself; mount `settlement.key`                                                                                                |
+| `CONFIG_FILE=/app/config/connector.yaml`           | nothing — the image's `CMD` already names the path                                                                                        |
+| `NODE_TLS_REJECT_UNAUTHORIZED=0`                   | no equivalent; use an RPC with a real chain of trust                                                                                      |
+| connector health `:8080`, admin `:8081`            | one port: `:3000` carries the edge, the operator surface, metrics                                                                         |
 | route prefix `g.proxy.relay`                       | `g.toon.relay` (`g.proxy` was renamed to `g.toon`; the node that answered there is retired — toon-meta's `docs/two-node-architecture.md`) |
-| `selfAnnounce` block (kind:10032)                  | `[announce]` + `connector announce` — see below                   |
-| replay watermarks lived in process memory          | `state_dir = "/app/state"`, on a named volume                     |
+| `selfAnnounce` block (kind:10032)                  | `[announce]` + `connector announce` — see below                                                                                           |
+| replay watermarks lived in process memory          | `state_dir = "/app/state"`, on a named volume                                                                                             |
 
 That last row is the one worth dwelling on: without a durable claim journal, a
 restart resets every channel's replay watermark, a channel with no watermark
@@ -174,7 +182,7 @@ carries it: an optional `[announce]` section in `connector.toml` plus a
 `connector announce` CLI verb. It is deliberately NOT the same shape:
 `selfAnnounce` was a background daemon that republished on a timer;
 `connector announce` is a one-shot **operator action** the node never runs on
-its own — you invoke it against the relay URL you want to publish *through*, by
+its own — you invoke it against the relay URL you want to publish _through_, by
 hand or from your own cron/sidecar, whenever you want the announce refreshed:
 
 ```bash
@@ -197,9 +205,12 @@ connector predating connector#784 that is the only option.
 
 ## Privacy invariant
 
-- **relay `:3100` (paid-write store) is never host-published** — the only way in
-  is a paid `POST /ilp` to the connector. Enforcement is by construction
-  (`expose`, not `ports`).
+- **relay `:3100` (paid-write store + free ephemeral broadcast, relay#129) is
+  never host-published** — the only way in is a `POST /ilp` to the connector
+  (paid or the zero-priced ephemeral route). Enforcement is by construction
+  (`expose`, not `ports`). The free lane doesn't rely on this for its own
+  safety (it always verifies in full regardless of exposure), but it shares
+  the port with the paid lane, which does.
 - **The connector publishes exactly one port, `:3000`.** There is no separate
   health or admin port to leak. The operator surface that shares `:3000` is
   omitted from `connector.toml` entirely, so there is nothing there to

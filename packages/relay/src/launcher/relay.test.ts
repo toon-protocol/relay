@@ -10,6 +10,10 @@
  *   - GET /publish and POST /handle-packet -> 404 (no payment routes exist)
  *   - POST /write with a valid signed event -> 200, then the event is queryable
  *     over the NIP-01 WebSocket (proves reads + that the write reached storage)
+ *   - POST /write-ephemeral (relay#129): broadcasts an unpaid ephemeral kind
+ *     to a live subscriber, rejects non-ephemeral kinds, always verifies
+ *     (unlike the paid path's ephemeral skip), and its bounds are visible in
+ *     the startup log and GET /metrics
  *   - stop() tears the instance down cleanly
  */
 
@@ -336,6 +340,145 @@ describe('startRelay() — HTTP/WS relay app', () => {
       body: JSON.stringify({ event: badSig }),
     });
     expect(res.status).toBe(200);
+  });
+});
+
+describe('POST /write-ephemeral -- free ephemeral write lane (relay#129)', () => {
+  function createEphemeralSignedEvent(
+    kind: number,
+    content: string
+  ): NostrEvent {
+    const sk = generateSecretKey();
+    return finalizeEvent(
+      { kind, content, tags: [], created_at: Math.floor(Date.now() / 1000) },
+      sk
+    );
+  }
+
+  it('broadcasts an unpaid kind:20002 write to a live subscriber', async () => {
+    instance = await boot();
+
+    const ws = new WebSocket(`ws://localhost:${RELAY_PORT}`);
+    await waitForOpen(ws);
+    try {
+      const subId = 'ephemeral-sub';
+      const eose = collectUntilEose(ws, subId);
+      ws.send(JSON.stringify(['REQ', subId, { kinds: [20002] }]));
+      await eose;
+
+      const liveFrame = new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error('timed out waiting for live EVENT')),
+          5000
+        );
+        ws.on('message', (data: Buffer) => {
+          clearTimeout(timer);
+          resolve(data.toString());
+        });
+      });
+
+      const event = createEphemeralSignedEvent(20002, 'typing indicator');
+      const writeRes = await fetch(
+        `http://localhost:${BLS_PORT}/write-ephemeral`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ event }),
+        }
+      );
+      expect(writeRes.status).toBe(200);
+      const writeBody = (await writeRes.json()) as { eventId: string };
+      expect(writeBody.eventId).toBe(event.id);
+
+      const parsed = JSON.parse(await liveFrame) as [
+        string,
+        string,
+        NostrEvent,
+      ];
+      expect(parsed[0]).toBe('EVENT');
+      expect(parsed[1]).toBe(subId);
+      expect(parsed[2].id).toBe(event.id);
+    } finally {
+      ws.close();
+    }
+  });
+
+  it('rejects a non-ephemeral kind (kind:9) on the free lane (400) while the paid path is unaffected', async () => {
+    instance = await boot();
+
+    const badLaneEvent = createEphemeralSignedEvent(9, 'chat message');
+    const freeRes = await fetch(
+      `http://localhost:${BLS_PORT}/write-ephemeral`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event: badLaneEvent }),
+      }
+    );
+    expect(freeRes.status).toBe(400);
+
+    // The paid path (write-handler.ts) is byte-for-byte unchanged: the same
+    // shape of event, sent to /write instead, is still accepted there.
+    const paidEvent = createEphemeralSignedEvent(9, 'chat message 2');
+    const paidRes = await fetch(`http://localhost:${BLS_PORT}/write`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event: paidEvent }),
+    });
+    expect(paidRes.status).toBe(200);
+  });
+
+  it('rejects a bad signature on the free lane (422) -- verify is ALWAYS on here, unlike the paid ephemeral skip', async () => {
+    instance = await boot();
+
+    const event = createEphemeralSignedEvent(20001, 'presence');
+    const badSig = { ...event, sig: '0'.repeat(128) };
+
+    const res = await fetch(`http://localhost:${BLS_PORT}/write-ephemeral`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event: badSig }),
+    });
+    expect(res.status).toBe(422);
+  });
+
+  it('logs the ephemeral lane bounds at startup', async () => {
+    const logSpy = vi.spyOn(console, 'log');
+    instance = await boot();
+
+    const startupLine = logSpy.mock.calls
+      .map((call) => String(call[0]))
+      .find((line) => line.includes('ephemeral free write lane'));
+    expect(startupLine).toBeDefined();
+    expect(startupLine).toContain('/write-ephemeral');
+    expect(startupLine).toMatch(/rate limit/i);
+    expect(startupLine).toMatch(/max body/i);
+
+    logSpy.mockRestore();
+  });
+
+  it('surfaces enablement and bounds on GET /metrics', async () => {
+    instance = await boot();
+
+    const res = await fetch(`http://localhost:${BLS_PORT}/metrics`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ephemeralWriteLane: {
+        enabled: boolean;
+        rateLimit: { maxRequests: number; windowMs: number };
+        maxBodyBytes: number;
+      };
+    };
+    expect(body.ephemeralWriteLane.enabled).toBe(true);
+    expect(body.ephemeralWriteLane.rateLimit.maxRequests).toBe(
+      instance.config.ephemeralRateLimit.maxRequests
+    );
+    expect(body.ephemeralWriteLane.rateLimit.windowMs).toBe(
+      instance.config.ephemeralRateLimit.windowMs
+    );
+    expect(body.ephemeralWriteLane.maxBodyBytes).toBe(
+      instance.config.ephemeralMaxBodyBytes
+    );
   });
 });
 

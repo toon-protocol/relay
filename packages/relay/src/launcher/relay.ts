@@ -7,7 +7,7 @@
  * time a write reaches this process it is already proven paid, so the relay
  * simply stores the event and serves reads.
  *
- * Two surfaces:
+ * Three surfaces:
  *
  *   - `POST /write` (TOON_BLS_PORT, default 3100): accepts `{ event }` as JSON.
  *     By the time a request reaches this surface it is already proven paid;
@@ -17,6 +17,13 @@
  *     integrity (paid ephemeral kinds skip schnorr by default and keep the
  *     id check -- relay#85, see `verifyEphemeral`), and stores it.
  *     `GET /health` and `GET /metrics` live on the same port.
+ *   - `POST /write-ephemeral` (same port, relay#129): the FREE ephemeral
+ *     write lane. Accepts only ephemeral kinds (NIP-16, 20000 <= kind <
+ *     30000), always runs FULL schnorr verification (no skip -- this lane
+ *     has no payment gate), and never stores. Bounded by a per-key rate
+ *     limit and a body-size cap (see `ephemeralRateLimit` /
+ *     `ephemeralMaxBodyBytes`). Terminated at the connector by its own
+ *     zero-priced route (`deploy/connector.toml`'s `g.toon.relay.ephemeral`).
  *   - Free NIP-01 WebSocket reads (TOON_RELAY_PORT, default 7100).
  *
  * `startRelay()` returns a `RelayInstance` with an explicit `.stop()` for
@@ -31,6 +38,7 @@ import { serve, type ServerType } from '@hono/node-server';
 import { Hono, type Context } from 'hono';
 import { getPublicKey } from 'nostr-tools/pure';
 import { privateKeyFromSeedWords } from 'nostr-tools/nip06';
+import type { NostrEvent } from 'nostr-tools/pure';
 import type { Filter } from 'nostr-tools/filter';
 import { verifyImplementation } from '../crypto/index.js';
 import {
@@ -44,6 +52,11 @@ import { NostrRelayServer } from '../websocket/index.js';
 import { DEFAULT_RELAY_CONFIG } from '../types.js';
 import { RelaySubscriber } from '../subscriber/index.js';
 import { createWriteHandler } from './handlers/write-handler.js';
+import {
+  createEphemeralWriteHandler,
+  DEFAULT_EPHEMERAL_RATE_LIMIT,
+  DEFAULT_EPHEMERAL_MAX_BODY_BYTES,
+} from './handlers/write-ephemeral-handler.js';
 import { createHealthResponse } from './health.js';
 
 // ---------- Configuration ----------
@@ -131,6 +144,22 @@ export interface RelayConfig {
    */
   verifyWorkers?: number;
 
+  // --- Free ephemeral write lane (relay#129) ---
+
+  /**
+   * Per-key sliding-window rate limit for `POST /write-ephemeral` (default:
+   * 200 requests / 10s; env: TOON_EPHEMERAL_RATE_LIMIT /
+   * TOON_EPHEMERAL_RATE_WINDOW_MS). This lane has no payment gate, so this
+   * bound (plus `ephemeralMaxBodyBytes`) IS its admission control -- see
+   * `EphemeralWriteHandlerConfig` for the full reasoning.
+   */
+  ephemeralRateLimit?: { maxRequests: number; windowMs: number };
+  /**
+   * Request-body size cap in bytes for `POST /write-ephemeral` (default:
+   * 8192; env: TOON_EPHEMERAL_MAX_BODY_BYTES).
+   */
+  ephemeralMaxBodyBytes?: number;
+
   // --- Observability ---
 
   /**
@@ -154,6 +183,8 @@ export interface ResolvedRelayConfig {
   devMode: boolean;
   verifyEphemeral: boolean;
   verifyWorkers: number;
+  ephemeralRateLimit: { maxRequests: number; windowMs: number };
+  ephemeralMaxBodyBytes: number;
   logWrites: boolean;
 }
 
@@ -263,6 +294,12 @@ export function isInternalBindHost(host: string): boolean {
  * interface. Deliberately a warning, not a hard failure: in the canonical
  * compose deploy the port binds 0.0.0.0 inside the container and is private
  * because it is never host-published (docker `expose:`, not `ports:`).
+ *
+ * `POST /write-ephemeral` (relay#129) shares this same port/host but needs
+ * no exposure check of its own: it always runs full verification (no skip
+ * for exposure to weaken) and enforces its own rate limit/size cap
+ * regardless of how a request reaches it. This guard's warning is scoped to
+ * the paid-write skip above, which stays the one exposure risk on this port.
  *
  * @internal Exported for unit testing.
  */
@@ -378,6 +415,10 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
   const devMode = config.devMode ?? false;
   const verifyEphemeral = config.verifyEphemeral ?? false;
   const verifyWorkers = config.verifyWorkers ?? defaultVerifyWorkers();
+  const ephemeralRateLimit =
+    config.ephemeralRateLimit ?? DEFAULT_EPHEMERAL_RATE_LIMIT;
+  const ephemeralMaxBodyBytes =
+    config.ephemeralMaxBodyBytes ?? DEFAULT_EPHEMERAL_MAX_BODY_BYTES;
   const logWrites = config.logWrites ?? false;
 
   const resolvedConfig: ResolvedRelayConfig = {
@@ -390,6 +431,8 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
     devMode,
     verifyEphemeral,
     verifyWorkers,
+    ephemeralRateLimit,
+    ephemeralMaxBodyBytes,
     logWrites,
   };
 
@@ -422,6 +465,8 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
   const metrics = createMetricsRegistry({
     verifyImplementation,
     verifyWorkers: 0, // updated once the pool reports its live size below
+    ephemeralRateLimit,
+    ephemeralMaxBodyBytes,
   });
   const verifyPool = createVerifyPool({
     size: verifyWorkers,
@@ -455,25 +500,54 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
         : 'inline (0 workers -- verification on the event loop)'
     }`
   );
+  // Shared by both write surfaces: the pool-backed verifier and the live-WS
+  // broadcast hook behave identically on either lane -- only WHEN each lane
+  // calls them differs (the paid lane may skip verify for ephemeral kinds;
+  // the free lane never does).
+  const verifyViaPool = (event: NostrEvent): Promise<boolean> => {
+    // Keep the reported worker count honest if the pool degraded.
+    metrics.setVerifyWorkers(verifyPool.size);
+    return verifyPool.verify(event);
+  };
+  const broadcastToReaders = (event: NostrEvent): void => {
+    try {
+      wsRelay.broadcastEvent(event);
+    } catch {
+      // Non-broadcastable payloads -- ignore.
+    }
+  };
+
   const writeHandler = createWriteHandler({
     eventStore,
     devMode,
     verifyEphemeral,
-    verifyEvent: (event) => {
-      // Keep the reported worker count honest if the pool degraded.
-      metrics.setVerifyWorkers(verifyPool.size);
-      return verifyPool.verify(event);
-    },
+    verifyEvent: verifyViaPool,
     logWrites,
-    onStored: (event) => {
-      try {
-        wsRelay.broadcastEvent(event);
-      } catch {
-        // Non-broadcastable payloads -- ignore.
-      }
-    },
+    onStored: broadcastToReaders,
   });
   app.post('/write', (c: Context) => writeHandler.handleWrite(c));
+
+  // POST /write-ephemeral (relay#129): the FREE ephemeral write lane. No
+  // payment gate, so unlike /write above, verification here is ALWAYS full
+  // (never skipped) and the rate limit + size cap below ARE its admission
+  // control -- see write-ephemeral-handler.ts's module doc for the full
+  // reasoning. Shares the verify pool with the paid handler.
+  console.log(
+    `[relay] ephemeral free write lane: enabled on POST /write-ephemeral ` +
+      `(full schnorr verify always; rate limit ` +
+      `${ephemeralRateLimit.maxRequests} req / ${ephemeralRateLimit.windowMs}ms per key; ` +
+      `max body ${ephemeralMaxBodyBytes} bytes)`
+  );
+  const ephemeralWriteHandler = createEphemeralWriteHandler({
+    rateLimit: ephemeralRateLimit,
+    maxBodyBytes: ephemeralMaxBodyBytes,
+    verifyEvent: verifyViaPool,
+    logWrites,
+    onBroadcast: broadcastToReaders,
+  });
+  app.post('/write-ephemeral', (c: Context) =>
+    ephemeralWriteHandler.handleWrite(c)
+  );
 
   // Resolve once the HTTP server is actually listening so callers (and tests)
   // never race a not-yet-bound port.

@@ -63,6 +63,18 @@ export interface MetricsSnapshot {
     /** Verify-pool worker count (0 = inline on the event loop). */
     workers: number;
   } & DurationStats;
+  /**
+   * Free ephemeral write lane (relay#129, `POST /write-ephemeral`). Always
+   * present -- the lane is always mounted -- and static for the process
+   * lifetime: it has no payment gate, so these bounds ARE its admission
+   * control, and the acceptance criteria requires them to be visible here
+   * alongside the startup log line.
+   */
+  ephemeralWriteLane: {
+    enabled: true;
+    rateLimit: { maxRequests: number; windowMs: number };
+    maxBodyBytes: number;
+  };
 }
 
 /** Live registry behind `GET /metrics`. */
@@ -100,11 +112,14 @@ function round(value: number): number {
  * `recordVerify` into the verify pool's `onMeasure` and serves `snapshot()`
  * from `GET /metrics`.
  *
- * @param info - Static verify metadata surfaced in the snapshot.
+ * @param info - Static verify metadata + ephemeral-lane bounds surfaced in
+ *   the snapshot (relay#129).
  */
 export function createMetricsRegistry(info: {
   verifyImplementation: string;
   verifyWorkers: number;
+  ephemeralRateLimit: { maxRequests: number; windowMs: number };
+  ephemeralMaxBodyBytes: number;
 }): MetricsRegistry {
   const loopDelay: IntervalHistogram = monitorEventLoopDelay({
     resolution: 20,
@@ -147,6 +162,11 @@ export function createMetricsRegistry(info: {
           maxMs: round(maxMs),
           p50Ms: round(percentileOf(recent, 0.5)),
           p99Ms: round(percentileOf(recent, 0.99)),
+        },
+        ephemeralWriteLane: {
+          enabled: true,
+          rateLimit: info.ephemeralRateLimit,
+          maxBodyBytes: info.ephemeralMaxBodyBytes,
         },
       };
     },

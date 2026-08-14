@@ -19,6 +19,7 @@
 import { parseArgs } from 'node:util';
 import { startRelay } from './relay.js';
 import type { RelayConfig, RelayInstance } from './relay.js';
+import { DEFAULT_EPHEMERAL_RATE_LIMIT } from './handlers/write-ephemeral-handler.js';
 
 // ---------- CLI Parsing ----------
 
@@ -56,6 +57,17 @@ Options:
   --max-connections <n>    Maximum concurrent WebSocket read connections
                            (default: 4096; each costs one file descriptor --
                            mind ulimit -n, relay#90)
+  --ephemeral-rate-limit <n>
+                           Free ephemeral write lane (POST /write-ephemeral,
+                           relay#129): max requests per key per window
+                           (default: 200). This lane has no payment gate, so
+                           this bound IS its admission control
+  --ephemeral-rate-window-ms <n>
+                           Free ephemeral write lane: rate-limit window in
+                           milliseconds (default: 10000)
+  --ephemeral-max-body-bytes <n>
+                           Free ephemeral write lane: request body size cap
+                           in bytes (default: 8192)
   --log-writes             Log one line per accepted POST /write (debug; off
                            by default -- per-event logging is write-path
                            tail jitter, relay#85)
@@ -74,6 +86,9 @@ Environment Variables:
   TOON_VERIFY_EPHEMERAL    Same as --verify-ephemeral (set to "true")
   TOON_VERIFY_WORKERS      Same as --verify-workers
   TOON_MAX_CONNECTIONS     Same as --max-connections
+  TOON_EPHEMERAL_RATE_LIMIT       Same as --ephemeral-rate-limit
+  TOON_EPHEMERAL_RATE_WINDOW_MS   Same as --ephemeral-rate-window-ms
+  TOON_EPHEMERAL_MAX_BODY_BYTES   Same as --ephemeral-max-body-bytes
   TOON_LOG_WRITES          Same as --log-writes (set to "true")
 
 Security:
@@ -82,6 +97,30 @@ Security:
   to other users on the system via process listings (e.g. ps aux). See CWE-214.
 `.trim()
   );
+}
+
+/**
+ * Parse an optional numeric option that must be a positive integer.
+ *
+ * @param flag - The flag name, used verbatim in the error message.
+ * @param raw - The flag value, or its env-var fallback, or undefined.
+ * @returns The parsed value, or undefined when neither source is set (so the
+ *   caller leaves the field off `RelayConfig` and `startRelay()` applies its
+ *   own default). Exits the process on a non-positive/non-numeric value.
+ */
+function parsePositiveIntOption(
+  flag: string,
+  raw: string | undefined
+): number | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  const parsed = parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    console.error(`Error: --${flag} must be a positive integer`);
+    process.exit(1);
+  }
+  return parsed;
 }
 
 function parseCli(): RelayConfig {
@@ -98,6 +137,9 @@ function parseCli(): RelayConfig {
       'verify-ephemeral': { type: 'boolean' },
       'verify-workers': { type: 'string' },
       'max-connections': { type: 'string' },
+      'ephemeral-rate-limit': { type: 'string' },
+      'ephemeral-rate-window-ms': { type: 'string' },
+      'ephemeral-max-body-bytes': { type: 'string' },
       'log-writes': { type: 'boolean' },
       help: { type: 'boolean' },
     },
@@ -229,6 +271,38 @@ function parseCli(): RelayConfig {
     process.exit(1);
   }
 
+  // Free ephemeral write lane bounds (relay#129) -- POST /write-ephemeral has
+  // no payment gate, so these ARE its admission control. All three share the
+  // same shape: unset falls through to startRelay()'s own default, anything
+  // that is not a positive integer is a startup error.
+  const ephemeralRateLimitMax = parsePositiveIntOption(
+    'ephemeral-rate-limit',
+    values['ephemeral-rate-limit'] ?? process.env['TOON_EPHEMERAL_RATE_LIMIT']
+  );
+  const ephemeralRateWindowMs = parsePositiveIntOption(
+    'ephemeral-rate-window-ms',
+    values['ephemeral-rate-window-ms'] ??
+      process.env['TOON_EPHEMERAL_RATE_WINDOW_MS']
+  );
+  const ephemeralMaxBodyBytes = parsePositiveIntOption(
+    'ephemeral-max-body-bytes',
+    values['ephemeral-max-body-bytes'] ??
+      process.env['TOON_EPHEMERAL_MAX_BODY_BYTES']
+  );
+
+  // maxRequests/windowMs travel together as one RelayConfig field -- only
+  // build it once at least one half was actually provided, so an unset pair
+  // still falls through to startRelay()'s own default.
+  const ephemeralRateLimit =
+    ephemeralRateLimitMax !== undefined || ephemeralRateWindowMs !== undefined
+      ? {
+          maxRequests:
+            ephemeralRateLimitMax ?? DEFAULT_EPHEMERAL_RATE_LIMIT.maxRequests,
+          windowMs:
+            ephemeralRateWindowMs ?? DEFAULT_EPHEMERAL_RATE_LIMIT.windowMs,
+        }
+      : undefined;
+
   const logWrites =
     values['log-writes'] ??
     (process.env['TOON_LOG_WRITES'] === 'true' ? true : undefined);
@@ -245,6 +319,8 @@ function parseCli(): RelayConfig {
     ...(verifyEphemeral !== undefined && { verifyEphemeral }),
     ...(verifyWorkers !== undefined && { verifyWorkers }),
     ...(maxConnections !== undefined && { maxConnections }),
+    ...(ephemeralRateLimit !== undefined && { ephemeralRateLimit }),
+    ...(ephemeralMaxBodyBytes !== undefined && { ephemeralMaxBodyBytes }),
     ...(logWrites !== undefined && { logWrites }),
   };
 
@@ -266,9 +342,16 @@ async function main(): Promise<void> {
   console.log('TOON Relay Ready');
   console.log('='.repeat(50));
   console.log(`  Pubkey:  ${instance.pubkey}`);
-  console.log(`  Reads:   ws://localhost:${instance.config.relayPort}`);
-  console.log(`  Writes:  http://localhost:${instance.config.blsPort}/write`);
-  console.log(`  Health:  http://localhost:${instance.config.blsPort}/health`);
+  console.log(`  Reads:      ws://localhost:${instance.config.relayPort}`);
+  console.log(
+    `  Writes:     http://localhost:${instance.config.blsPort}/write`
+  );
+  console.log(
+    `  Ephemeral:  http://localhost:${instance.config.blsPort}/write-ephemeral (free, relay#129)`
+  );
+  console.log(
+    `  Health:     http://localhost:${instance.config.blsPort}/health`
+  );
   console.log('='.repeat(50) + '\n');
 
   // Wire graceful shutdown

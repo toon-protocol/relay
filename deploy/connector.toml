@@ -7,9 +7,19 @@
 #
 # Topology (one box, one app — the shape the devnet relay box runs):
 #
-#   payer ──POST /ilp (3000)──▶ connector ──POST /write──▶ relay:3100  (paid store; PRIVATE)
-#                                (terminates the payment)   (oblivious relay)
+#   payer ──POST /ilp (3000)──▶ connector ──POST /write────────────▶ relay:3100  (paid store; PRIVATE)
+#                                (terminates the payment)  ──POST /write-ephemeral▶ relay:3100  (free broadcast-only; PRIVATE)
 #   reader ──wss REQ (free)───────────────────────────────▶ relay:7100  (Nostr reads; PUBLIC)
+#
+# The second write leg (relay#129, ephemeral epic toon-meta#393 E2) is the
+# FREE ephemeral write lane: presence/typing kinds (20000-29999) ride a
+# `price = 0` route to a SEPARATE relay endpoint, because the same
+# `handler_url` cannot carry two prices (`ConflictingHandlerPrice`,
+# connector `route.rs:378-399`). It is still fully claim-gated at the client
+# edge like every other route here — "free" means price 0, not "skips the
+# connector" — and the relay itself always runs full schnorr verification on
+# this endpoint (no payment admission gate to lean on, unlike the paid
+# `g.toon.relay` route's ephemeral verify skip).
 #
 # This connector terminates `g.toon.relay` and delivers straight to the
 # payment-oblivious relay app, paid directly by clients — no hub in front of it,
@@ -137,6 +147,31 @@ price = 1
 # so this bundle ships the default. Set `transport = "btp"` here if you are
 # running huddles.
 
+# ── Free ephemeral write lane (relay#129, ephemeral epic toon-meta#393 E2) ───
+# A SEPARATE route, not a second alias for the price above: the same
+# `handler_url` cannot carry two prices (`ConflictingHandlerPrice`, connector
+# `route.rs:378-399`), so presence/typing traffic needs its own prefix
+# terminating at its own relay endpoint.
+[[routes]]
+prefix = "g.toon.relay.ephemeral"
+
+# The relay's SECOND write surface (write-ephemeral-handler.ts). It accepts
+# ONLY ephemeral kinds (NIP-16, 20000-29999) — anything else is a 400 — never
+# stores, and always runs FULL schnorr verification: this route has no
+# payment admission gate the way `g.toon.relay` above does, so the relay
+# cannot lean on payment as spam defense the way write-handler.ts's
+# paid-ephemeral verify skip does. Bounded by a per-key rate limit and a
+# request-body size cap on the relay side (relay#129).
+handler_url = "http://relay:3100/write-ephemeral"
+
+# EXPLICITLY free. `price` is REQUIRED on a terminated route (connector#520)
+# — it is never silently free — so `price = 0` states the intent plainly
+# rather than leaving it implicit. This is the one route on this bundle
+# where zero is the deliberate, documented price: presence/typing is
+# "pay-for-what-persists" traffic that never persists (buzz ADR 0001,
+# toon-meta#393), so charging it a per-write fee was never the design.
+price = 0
+
 # ── (Optional) Discovery announce (connector#784) ────────────────────────────
 # Commented out deliberately: every field below is a fact this node cannot
 # introspect about itself (its own PUBLIC hostname, never inferrable from
@@ -170,7 +205,10 @@ price = 1
 # the channel it pays from).
 #
 # [announce]
-# addresses     = ["g.toon.relay"]
+# # Both routes this box terminates ride along in one announce (relay#129):
+# # the paid write and the free ephemeral lane are separate prefixes, so
+# # clients need both addresses to discover the free lane at all.
+# addresses     = ["g.toon.relay", "g.toon.relay.ephemeral"]
 # # This box's OWN public https endpoint for POST /ilp (your TLS terminator's
 # # name for the edge port above), not a container-network address.
 # http_endpoint = "https://<your-public-hostname>/ilp"
