@@ -99,6 +99,30 @@ Security:
   );
 }
 
+/**
+ * Parse an optional numeric option that must be a positive integer.
+ *
+ * @param flag - The flag name, used verbatim in the error message.
+ * @param raw - The flag value, or its env-var fallback, or undefined.
+ * @returns The parsed value, or undefined when neither source is set (so the
+ *   caller leaves the field off `RelayConfig` and `startRelay()` applies its
+ *   own default). Exits the process on a non-positive/non-numeric value.
+ */
+function parsePositiveIntOption(
+  flag: string,
+  raw: string | undefined
+): number | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  const parsed = parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    console.error(`Error: --${flag} must be a positive integer`);
+    process.exit(1);
+  }
+  return parsed;
+}
+
 function parseCli(): RelayConfig {
   const { values } = parseArgs({
     options: {
@@ -248,55 +272,23 @@ function parseCli(): RelayConfig {
   }
 
   // Free ephemeral write lane bounds (relay#129) -- POST /write-ephemeral has
-  // no payment gate, so these ARE its admission control.
-  const ephemeralRateLimitStr =
-    values['ephemeral-rate-limit'] ??
-    process.env['TOON_EPHEMERAL_RATE_LIMIT'] ??
-    undefined;
-  const ephemeralRateLimitMax = ephemeralRateLimitStr
-    ? parseInt(ephemeralRateLimitStr, 10)
-    : undefined;
-  if (
-    ephemeralRateLimitMax !== undefined &&
-    (Number.isNaN(ephemeralRateLimitMax) || ephemeralRateLimitMax <= 0)
-  ) {
-    console.error('Error: --ephemeral-rate-limit must be a positive integer');
-    process.exit(1);
-  }
-
-  const ephemeralRateWindowMsStr =
+  // no payment gate, so these ARE its admission control. All three share the
+  // same shape: unset falls through to startRelay()'s own default, anything
+  // that is not a positive integer is a startup error.
+  const ephemeralRateLimitMax = parsePositiveIntOption(
+    'ephemeral-rate-limit',
+    values['ephemeral-rate-limit'] ?? process.env['TOON_EPHEMERAL_RATE_LIMIT']
+  );
+  const ephemeralRateWindowMs = parsePositiveIntOption(
+    'ephemeral-rate-window-ms',
     values['ephemeral-rate-window-ms'] ??
-    process.env['TOON_EPHEMERAL_RATE_WINDOW_MS'] ??
-    undefined;
-  const ephemeralRateWindowMs = ephemeralRateWindowMsStr
-    ? parseInt(ephemeralRateWindowMsStr, 10)
-    : undefined;
-  if (
-    ephemeralRateWindowMs !== undefined &&
-    (Number.isNaN(ephemeralRateWindowMs) || ephemeralRateWindowMs <= 0)
-  ) {
-    console.error(
-      'Error: --ephemeral-rate-window-ms must be a positive integer'
-    );
-    process.exit(1);
-  }
-
-  const ephemeralMaxBodyBytesStr =
+      process.env['TOON_EPHEMERAL_RATE_WINDOW_MS']
+  );
+  const ephemeralMaxBodyBytes = parsePositiveIntOption(
+    'ephemeral-max-body-bytes',
     values['ephemeral-max-body-bytes'] ??
-    process.env['TOON_EPHEMERAL_MAX_BODY_BYTES'] ??
-    undefined;
-  const ephemeralMaxBodyBytes = ephemeralMaxBodyBytesStr
-    ? parseInt(ephemeralMaxBodyBytesStr, 10)
-    : undefined;
-  if (
-    ephemeralMaxBodyBytes !== undefined &&
-    (Number.isNaN(ephemeralMaxBodyBytes) || ephemeralMaxBodyBytes <= 0)
-  ) {
-    console.error(
-      'Error: --ephemeral-max-body-bytes must be a positive integer'
-    );
-    process.exit(1);
-  }
+      process.env['TOON_EPHEMERAL_MAX_BODY_BYTES']
+  );
 
   // maxRequests/windowMs travel together as one RelayConfig field -- only
   // build it once at least one half was actually provided, so an unset pair

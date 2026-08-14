@@ -143,7 +143,7 @@ describe('Ephemeral write handler (relay#129)', () => {
       sig: '0'.repeat(128),
     };
     const response = await makeRequest(
-      { ...({ devMode: true } as unknown as EphemeralWriteHandlerConfig) },
+      { devMode: true } as unknown as EphemeralWriteHandlerConfig,
       { event: badEvent }
     );
     expect(response.status).toBe(422);

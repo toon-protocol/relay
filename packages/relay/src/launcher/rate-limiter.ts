@@ -52,17 +52,18 @@ export function createRateLimiter(options: RateLimiterOptions): RateLimiter {
     allow(key: string): boolean {
       const t = now();
       const windowStart = t - windowMs;
+      // Drop hits that aged out of the trailing window, then keep the pruned
+      // log either way -- a rejected call still shrinks the key's entry.
       const timestamps = (hits.get(key) ?? []).filter(
         (ts) => ts >= windowStart
       );
+      hits.set(key, timestamps);
 
       if (timestamps.length >= maxRequests) {
-        hits.set(key, timestamps);
         return false;
       }
 
       timestamps.push(t);
-      hits.set(key, timestamps);
       return true;
     },
   };

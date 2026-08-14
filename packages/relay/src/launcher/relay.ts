@@ -38,6 +38,7 @@ import { serve, type ServerType } from '@hono/node-server';
 import { Hono, type Context } from 'hono';
 import { getPublicKey } from 'nostr-tools/pure';
 import { privateKeyFromSeedWords } from 'nostr-tools/nip06';
+import type { NostrEvent } from 'nostr-tools/pure';
 import type { Filter } from 'nostr-tools/filter';
 import { verifyImplementation } from '../crypto/index.js';
 import {
@@ -499,23 +500,30 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
         : 'inline (0 workers -- verification on the event loop)'
     }`
   );
+  // Shared by both write surfaces: the pool-backed verifier and the live-WS
+  // broadcast hook behave identically on either lane -- only WHEN each lane
+  // calls them differs (the paid lane may skip verify for ephemeral kinds;
+  // the free lane never does).
+  const verifyViaPool = (event: NostrEvent): Promise<boolean> => {
+    // Keep the reported worker count honest if the pool degraded.
+    metrics.setVerifyWorkers(verifyPool.size);
+    return verifyPool.verify(event);
+  };
+  const broadcastToReaders = (event: NostrEvent): void => {
+    try {
+      wsRelay.broadcastEvent(event);
+    } catch {
+      // Non-broadcastable payloads -- ignore.
+    }
+  };
+
   const writeHandler = createWriteHandler({
     eventStore,
     devMode,
     verifyEphemeral,
-    verifyEvent: (event) => {
-      // Keep the reported worker count honest if the pool degraded.
-      metrics.setVerifyWorkers(verifyPool.size);
-      return verifyPool.verify(event);
-    },
+    verifyEvent: verifyViaPool,
     logWrites,
-    onStored: (event) => {
-      try {
-        wsRelay.broadcastEvent(event);
-      } catch {
-        // Non-broadcastable payloads -- ignore.
-      }
-    },
+    onStored: broadcastToReaders,
   });
   app.post('/write', (c: Context) => writeHandler.handleWrite(c));
 
@@ -533,19 +541,9 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
   const ephemeralWriteHandler = createEphemeralWriteHandler({
     rateLimit: ephemeralRateLimit,
     maxBodyBytes: ephemeralMaxBodyBytes,
-    verifyEvent: (event) => {
-      // Keep the reported worker count honest if the pool degraded.
-      metrics.setVerifyWorkers(verifyPool.size);
-      return verifyPool.verify(event);
-    },
+    verifyEvent: verifyViaPool,
     logWrites,
-    onBroadcast: (event) => {
-      try {
-        wsRelay.broadcastEvent(event);
-      } catch {
-        // Non-broadcastable payloads -- ignore.
-      }
-    },
+    onBroadcast: broadcastToReaders,
   });
   app.post('/write-ephemeral', (c: Context) =>
     ephemeralWriteHandler.handleWrite(c)
