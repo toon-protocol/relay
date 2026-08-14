@@ -1,20 +1,21 @@
 /**
  * Write handler for @toon-protocol/relay.
  *
- * Exposes a plain-HTTP write surface that accepts an event-as-JSON, trusts
- * (but does NOT validate) injected payment headers, verifies ONLY the event
- * signature for integrity, and stores the event.
+ * Exposes a plain-HTTP write surface that accepts an event-as-JSON, verifies
+ * ONLY the event signature for integrity, and stores the event.
  *
  * This handler is intentionally decoupled from any payment layer: it contains
  * no claim/settlement/ILP logic and imports none of it. Payment validation is
- * the upstream terminator's concern; by the time a request reaches this surface
- * the trusted `X-TOON-*` headers are assumed already proven. The handler
- * captures them purely for the response echo and a log line.
+ * the upstream terminator's concern; by the time a request reaches this
+ * surface it is already proven paid. The terminating connector asserts
+ * nothing about that payment to this relay -- no payer, amount, or chain
+ * (`toon-protocol/connector` ADR 0036) -- so the handler has nothing to read
+ * or echo and asserts only what it can honestly know: the event id and that
+ * this handler accepted it.
  *
  * Flow:
  * 1. Parse JSON body `{ event }` -> 400 on malformed/missing event
- * 2. Capture trusted X-TOON-Payer / X-TOON-Amount / X-TOON-Chain headers
- * 3. Verify the event signature (skipped in devMode) -> 422 on invalid sig.
+ * 2. Verify the event signature (skipped in devMode) -> 422 on invalid sig.
  *    Verification uses the fast WASM libsecp256k1 path (crypto/verify-event)
  *    rather than noble pure-JS: post-#84 the synchronous ~1.3ms noble verify
  *    on the single event loop WAS the write-path ceiling (~240-260 events/s
@@ -24,17 +25,17 @@
  *    default -- only the SHA-256 id check runs -> 422 on id mismatch. See
  *    the loud comment at the verify step for why this is safe, and
  *    `verifyEphemeral` to turn full verification back on.
- * 4. Store the event in the EventStore -- unless its kind is ephemeral
+ * 3. Store the event in the EventStore -- unless its kind is ephemeral
  *    (NIP-16: 20000 <= kind < 30000), which is delivered live and never
  *    persisted. Skipping the store here is not only NIP-16 semantics: the
  *    synchronous per-event disk write was the serialization point that
  *    capped the whole paid-write pipeline at ~150 events/s globally
  *    (connector#685), and ephemeral traffic -- audio frames -- is exactly
  *    the traffic that hits that path hardest.
- * 5. Fire the optional onStored callback (ephemeral events included: it is
+ * 4. Fire the optional onStored callback (ephemeral events included: it is
  *    the live-broadcast hook, and ephemeral events exist only as that
  *    broadcast)
- * 6. Respond 200 with the event id, storedAt timestamp, and echoed headers
+ * 5. Respond 200 with the event id and storedAt timestamp
  *
  * @module
  */
@@ -142,15 +143,8 @@ export function createWriteHandler(config: WriteHandlerConfig): WriteHandler {
 
       const event = body.event;
 
-      // --- Capture trusted payment headers (NOT validated here) ---
-      const payer = c.req.header('X-TOON-Payer');
-      const amount = c.req.header('X-TOON-Amount');
-      const chain = c.req.header('X-TOON-Chain');
-
       if (logWrites) {
-        console.log(
-          `[write] event=${event.id} payer=${payer ?? '-'} amount=${amount ?? '-'} chain=${chain ?? '-'}`
-        );
+        console.log(`[write] event=${event.id} handler=write`);
       }
 
       // --- Verify event signature (integrity only; skipped in devMode) ---
@@ -183,14 +177,11 @@ export function createWriteHandler(config: WriteHandlerConfig): WriteHandler {
       // --- Fire the optional stored callback (the live-broadcast hook) ---
       config.onStored?.(event);
 
-      // --- Build response (echo trusted headers) ---
+      // --- Build response ---
       return c.json(
         {
           eventId: event.id,
           storedAt: Math.floor(Date.now() / 1000),
-          payer,
-          amount,
-          chain,
         },
         200
       );

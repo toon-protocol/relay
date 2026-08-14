@@ -2,9 +2,10 @@
  * Integration tests for startRelay() — the relay as a plain HTTP/WebSocket app.
  *
  * The relay has no payment, connector, or settlement layer: it exposes a
- * plain-HTTP `POST /write` surface (trusting injected `X-TOON-*` headers) plus
- * free NIP-01 WebSocket reads. These tests boot a real instance and exercise
- * that surface:
+ * plain-HTTP `POST /write` surface (no payment headers are read or echoed --
+ * the terminating connector asserts nothing about payment to this relay,
+ * `toon-protocol/connector` ADR 0036) plus free NIP-01 WebSocket reads.
+ * These tests boot a real instance and exercise that surface:
  *   - GET /health -> 200 with identity + capabilities
  *   - GET /publish and POST /handle-packet -> 404 (no payment routes exist)
  *   - POST /write with a valid signed event -> 200, then the event is queryable
@@ -151,10 +152,6 @@ describe('startRelay() — HTTP/WS relay app', () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        // Trusted-but-not-validated payment headers, echoed back.
-        'X-TOON-Payer': '0x1111111111111111111111111111111111111111',
-        'X-TOON-Amount': '1000',
-        'X-TOON-Chain': 'evm:base:8453',
       },
       body: JSON.stringify({ event }),
     });
@@ -166,9 +163,9 @@ describe('startRelay() — HTTP/WS relay app', () => {
       chain?: string;
     };
     expect(writeBody.eventId).toBe(event.id);
-    expect(writeBody.payer).toBe('0x1111111111111111111111111111111111111111');
-    expect(writeBody.amount).toBe('1000');
-    expect(writeBody.chain).toBe('evm:base:8453');
+    expect(writeBody.payer).toBeUndefined();
+    expect(writeBody.amount).toBeUndefined();
+    expect(writeBody.chain).toBeUndefined();
 
     // The stored event must be readable over the free NIP-01 WS surface.
     const ws = new WebSocket(`ws://localhost:${RELAY_PORT}`);

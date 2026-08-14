@@ -77,7 +77,7 @@ await relay.stop();
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/write` | Store an event. Body `{ "event": <NostrEvent> }`. Trusts injected `X-TOON-Payer`/`-Amount`/`-Chain` headers (echoed, not validated); verifies only the event signature (ephemeral kinds: id check only by default, see above). |
+| `POST` | `/write` | Store an event. Body `{ "event": <NostrEvent> }`. No payment headers are read or echoed (the terminating connector asserts nothing about payment to this relay); verifies only the event signature (ephemeral kinds: id check only by default, see above). |
 | `GET`  | `/health` | Liveness, identity (`pubkey`), `capabilities`, and `version`. |
 | `GET`  | `/metrics` | JSON telemetry: `eventLoopDelayMs` (mean/p50/p99/max — loop lag is ephemeral-frame tail latency) and `verify` (per-event verify wall time incl. pool queueing, active implementation, worker count). The trigger metrics for scaling decisions (relay#85). |
 
