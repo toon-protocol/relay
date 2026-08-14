@@ -76,8 +76,19 @@ const EXPECTED_DECIMALS = 6;
 
 // The price the live TOON devnet apex charges per prefix (owner decision,
 // 2026-08-04 for g.toon.relay — see connector.toml's own route comment).
+// g.toon.relay.ephemeral (relay#129) is deliberately, explicitly 0 -- the
+// free ephemeral write lane.
 const EXPECTED_ROUTE_PRICES: Record<string, number> = {
   'g.toon.relay': 1,
+  'g.toon.relay.ephemeral': 0,
+};
+
+// Each route's handler_url must point at the relay endpoint that actually
+// enforces that route's semantics -- a copy/paste route pointed at the wrong
+// handler would carry the wrong price's guarantees (relay#129).
+const EXPECTED_ROUTE_HANDLER_URLS: Record<string, string> = {
+  'g.toon.relay': 'http://relay:3100/write',
+  'g.toon.relay.ephemeral': 'http://relay:3100/write-ephemeral',
 };
 
 // The fleet's pin of record, chosen in toon-protocol/connector#848 (merged
@@ -138,7 +149,7 @@ const HEALTHCHECK_WGET_SITES: { file: string; pattern: RegExp }[] = [
 ];
 
 interface ConnectorToml {
-  routes: { prefix: string; price: number }[];
+  routes: { prefix: string; price: number; handler_url: string }[];
   settlement: {
     evm: {
       contract_address: string;
@@ -188,6 +199,24 @@ describe('deploy bundle', () => {
         `route ${route.prefix}: expected price ${expectedPrice}, found ${route.price}`
       ).toBe(expectedPrice);
     }
+  });
+
+  it('terminates each route at the relay endpoint that enforces its price (relay#129)', () => {
+    const { routes } = readConnectorToml();
+
+    for (const route of routes) {
+      const expectedHandlerUrl = EXPECTED_ROUTE_HANDLER_URLS[route.prefix];
+      expect(
+        route.handler_url,
+        `route ${route.prefix}: expected handler_url ${expectedHandlerUrl}, found ${route.handler_url}`
+      ).toBe(expectedHandlerUrl);
+    }
+
+    // The free lane and the paid lane must never collapse onto the same
+    // handler_url -- that is exactly the ConflictingHandlerPrice shape the
+    // epic says a free lane must avoid.
+    const handlerUrls = routes.map((route) => route.handler_url);
+    expect(new Set(handlerUrls).size).toBe(handlerUrls.length);
   });
 
   it('pins the same CONNECTOR_TAG everywhere it appears', () => {

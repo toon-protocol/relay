@@ -2,14 +2,20 @@
 # relay deploy — connector (payment proxy) + oblivious Nostr relay. NO Caddy.
 # =============================================================================
 # The connector monetizes WRITES; READS are free and hit the relay's WS directly.
+# A second, zero-priced route (relay#129) carries the FREE ephemeral write
+# lane (presence/typing, kinds 20000-29999) to its own relay endpoint — still
+# claim-gated at the client edge like every route here, just priced at 0; see
+# connector.toml's own comment on `g.toon.relay.ephemeral`.
 # TLS is terminated by the deployment environment, which reverse-proxies to the
 # host-published edge (:3000) and to the free-read WS (:7100).
 #
-#   payer ──POST /ilp──▶ connector ──POST /write──▶ relay:3100  (paid store; PRIVATE)
-#   reader ──wss REQ (free)───────────────────────▶ relay:7100  (Nostr reads; PUBLIC)
+#   payer ──POST /ilp──▶ connector ──POST /write────────────▶ relay:3100  (paid store; PRIVATE)
+#                                  ──POST /write-ephemeral──▶ relay:3100  (free broadcast-only; PRIVATE)
+#   reader ──wss REQ (free)───────────────────────────────▶ relay:7100  (Nostr reads; PUBLIC)
 #
 # PRIVACY INVARIANT (enforced by construction):
-#   - relay :3100 (paid-write store) → NEVER host-published; only connector:3100.
+#   - relay :3100 (paid-write store + free ephemeral broadcast) → NEVER
+#     host-published; only connector:3100.
 #   - The connector publishes exactly one port (:3000); the Rust node has no
 #     separate admin/health port (the TypeScript node's :8081/:8080 do not
 #     exist here — see the connector service's own comment below).
@@ -18,7 +24,10 @@
 #   public door is the deployment environment's TLS terminator.
 #   This invariant is also a SECURITY precondition since relay#85: the relay
 #   skips schnorr verification for paid ephemeral kinds on the assumption that
-#   :3100 is reachable exclusively through the payment-gating connector.
+#   :3100 is reachable exclusively through the payment-gating connector. The
+#   free ephemeral write lane (relay#129) does NOT rely on this precondition
+#   — it always runs full verification regardless of exposure — but it stays
+#   behind the same private port like everything else on :3100.
 #   Remember docker `ports:` publishes bypass ufw — keep :3100 on `expose:`.
 #
 # Dev:  docker compose up --build   (builds relay-connector locally from ./Dockerfile)
@@ -96,6 +105,13 @@ services:
       # default nofile limit is far above this). The stock 100 made >100
       # huddle listeners impossible.
       TOON_MAX_CONNECTIONS: ${RELAY_MAX_CONNECTIONS:-4096}
+      # Free ephemeral write lane bounds (relay#129, POST /write-ephemeral —
+      # see connector.toml's `g.toon.relay.ephemeral` route). This lane has
+      # no payment gate, so these ARE its admission control; the relay's own
+      # conservative defaults apply if left unset.
+      TOON_EPHEMERAL_RATE_LIMIT: ${RELAY_EPHEMERAL_RATE_LIMIT:-200}
+      TOON_EPHEMERAL_RATE_WINDOW_MS: ${RELAY_EPHEMERAL_RATE_WINDOW_MS:-10000}
+      TOON_EPHEMERAL_MAX_BODY_BYTES: ${RELAY_EPHEMERAL_MAX_BODY_BYTES:-8192}
     ports:
       - '${BIND_ADDR:-127.0.0.1}:${RELAY_WS_PORT:-7100}:7100' # free reads (the env's TLS terminator fronts this)
     expose:
@@ -105,7 +121,8 @@ services:
       # is 0.0.0.0 (IPv4-only), but "localhost" inside the container can
       # resolve to ::1, which nothing is listening on — wget then fails and
       # the container flaps unhealthy despite the app being fine.
-      test: ['CMD-SHELL', 'wget -q --spider http://127.0.0.1:3100/health || exit 1']
+      test:
+        ['CMD-SHELL', 'wget -q --spider http://127.0.0.1:3100/health || exit 1']
       interval: 10s
       timeout: 5s
       retries: 12

@@ -15,6 +15,8 @@ describe('createMetricsRegistry', () => {
     const registry = createMetricsRegistry({
       verifyImplementation: 'libsecp256k1-wasm',
       verifyWorkers: 3,
+      ephemeralRateLimit: { maxRequests: 200, windowMs: 10_000 },
+      ephemeralMaxBodyBytes: 8192,
     });
     try {
       const snap = registry.snapshot();
@@ -31,6 +33,13 @@ describe('createMetricsRegistry', () => {
       for (const value of Object.values(snap.eventLoopDelayMs)) {
         expect(Number.isFinite(value)).toBe(true);
       }
+      // Ephemeral write lane bounds (relay#129) -- always present, always
+      // enabled, and static for the process lifetime.
+      expect(snap.ephemeralWriteLane).toEqual({
+        enabled: true,
+        rateLimit: { maxRequests: 200, windowMs: 10_000 },
+        maxBodyBytes: 8192,
+      });
     } finally {
       registry.stop();
     }
@@ -40,6 +49,8 @@ describe('createMetricsRegistry', () => {
     const registry = createMetricsRegistry({
       verifyImplementation: 'noble-pure-js',
       verifyWorkers: 0,
+      ephemeralRateLimit: { maxRequests: 200, windowMs: 10_000 },
+      ephemeralMaxBodyBytes: 8192,
     });
     try {
       for (const ms of [1, 2, 3, 4, 100]) {
@@ -60,6 +71,8 @@ describe('createMetricsRegistry', () => {
     const registry = createMetricsRegistry({
       verifyImplementation: 'libsecp256k1-wasm',
       verifyWorkers: 4,
+      ephemeralRateLimit: { maxRequests: 200, windowMs: 10_000 },
+      ephemeralMaxBodyBytes: 8192,
     });
     try {
       registry.setVerifyWorkers(1);
@@ -73,6 +86,8 @@ describe('createMetricsRegistry', () => {
     const registry = createMetricsRegistry({
       verifyImplementation: 'libsecp256k1-wasm',
       verifyWorkers: 2,
+      ephemeralRateLimit: { maxRequests: 200, windowMs: 10_000 },
+      ephemeralMaxBodyBytes: 8192,
     });
     try {
       // One early outlier, then a long steady stream that evicts it from

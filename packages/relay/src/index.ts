@@ -100,5 +100,23 @@ export type {
   WriteHandlerConfig,
 } from './launcher/handlers/write-handler.js';
 
+// Ephemeral write handler (POST /write-ephemeral surface, relay#129)
+export {
+  createEphemeralWriteHandler,
+  DEFAULT_EPHEMERAL_RATE_LIMIT,
+  DEFAULT_EPHEMERAL_MAX_BODY_BYTES,
+} from './launcher/handlers/write-ephemeral-handler.js';
+export type {
+  EphemeralWriteHandler,
+  EphemeralWriteHandlerConfig,
+} from './launcher/handlers/write-ephemeral-handler.js';
+
+// Rate limiter (relay#129) backing the ephemeral write lane's bounds
+export { createRateLimiter } from './launcher/rate-limiter.js';
+export type {
+  RateLimiter,
+  RateLimiterOptions,
+} from './launcher/rate-limiter.js';
+
 // Re-exports from @toon-protocol/bls removed to avoid circular dependency
 // Downstream consumers should import directly from @toon-protocol/bls instead
