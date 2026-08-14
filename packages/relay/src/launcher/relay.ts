@@ -9,9 +9,11 @@
  *
  * Two surfaces:
  *
- *   - `POST /write` (TOON_BLS_PORT, default 3100): accepts `{ event }` as JSON,
- *     trusts the injected `X-TOON-Payer`/`-Amount`/`-Chain` headers WITHOUT
- *     re-validating payment, verifies only the event's own signature for
+ *   - `POST /write` (TOON_BLS_PORT, default 3100): accepts `{ event }` as JSON.
+ *     By the time a request reaches this surface it is already proven paid;
+ *     the terminating connector asserts nothing about that payment to this
+ *     relay -- no payer, amount, or chain (`toon-protocol/connector` ADR
+ *     0036) -- so the handler verifies only the event's own signature for
  *     integrity (paid ephemeral kinds skip schnorr by default and keep the
  *     id check -- relay#85, see `verifyEphemeral`), and stores it.
  *     `GET /health` and `GET /metrics` live on the same port.

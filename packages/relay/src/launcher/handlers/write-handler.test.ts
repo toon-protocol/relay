@@ -1,15 +1,14 @@
 /**
  * Unit tests for the write handler.
  *
- * The handler accepts an event-as-JSON, trusts (does not validate) injected
- * X-TOON-* payment headers, verifies only the event signature for integrity,
- * and stores the event. These tests cover:
+ * The handler accepts an event-as-JSON, verifies only the event signature
+ * for integrity, and stores the event. No payment headers are read or
+ * echoed -- the terminating connector asserts nothing about payment to this
+ * relay (`toon-protocol/connector` ADR 0036). These tests cover:
  *
- * - valid signed event + all three X-TOON headers -> 200, event stored,
- *   headers echoed, onStored called exactly once
+ * - valid signed event -> 200, event stored, onStored called exactly once
  * - malformed / missing body -> 400
  * - invalid signature (non-dev) -> 422; same bad event with devMode -> 200
- * - headers absent -> still 200 (trusted-but-optional)
  * - per-write console logging is OFF by default and opt-in via logWrites
  *   (per-event console I/O is write-path tail jitter, relay#85)
  */
@@ -67,30 +66,25 @@ async function makeRequest(
 }
 
 describe('Write handler', () => {
-  it('stores a valid signed event, echoes headers, and calls onStored once', async () => {
+  it('stores a valid signed event and calls onStored once', async () => {
     // Given: an in-memory store, a tracking callback, and a signed event
     const eventStore = new InMemoryEventStore();
     const onStored = vi.fn();
     const event = createValidSignedEvent();
 
-    // When: the request carries all three trusted X-TOON headers
+    // When: the write is submitted
     const response = await makeRequest(
       { eventStore, devMode: false, onStored },
-      { event },
-      {
-        'X-TOON-Payer': '0xpayer',
-        'X-TOON-Amount': '5500',
-        'X-TOON-Chain': '31337',
-      }
+      { event }
     );
 
-    // Then: 200 with the event id and echoed headers
+    // Then: 200 with the event id (no payment fields -- nothing to echo)
     expect(response.status).toBe(200);
     const body = (await response.json()) as Record<string, unknown>;
     expect(body['eventId']).toBe(event.id);
-    expect(body['payer']).toBe('0xpayer');
-    expect(body['amount']).toBe('5500');
-    expect(body['chain']).toBe('31337');
+    expect(body['payer']).toBeUndefined();
+    expect(body['amount']).toBeUndefined();
+    expect(body['chain']).toBeUndefined();
     expect(typeof body['storedAt']).toBe('number');
 
     // And: the event is present in the store
@@ -173,20 +167,23 @@ describe('Write handler', () => {
     expect(onStored).toHaveBeenCalledOnce();
   });
 
-  it('still returns 200 when the X-TOON headers are absent (trusted-but-optional)', async () => {
-    // Given: a valid signed event and no payment headers
+  it('ignores X-TOON-* headers entirely if a stale caller still sends them (no successor header, connector ADR 0036)', async () => {
+    // Given: a valid signed event and a caller that still sends the retired
+    // headers (e.g. a stale terminator build)
     const eventStore = new InMemoryEventStore();
     const event = createValidSignedEvent();
 
-    // When: no X-TOON-* headers are sent
     const response = await makeRequest(
       { eventStore, devMode: false },
+      { event },
       {
-        event,
+        'X-TOON-Payer': '0xpayer',
+        'X-TOON-Amount': '5500',
+        'X-TOON-Chain': '31337',
       }
     );
 
-    // Then: 200, stored, and the echoed header fields are absent/undefined
+    // Then: 200, stored, and the response echoes none of them
     expect(response.status).toBe(200);
     const body = (await response.json()) as Record<string, unknown>;
     expect(body['eventId']).toBe(event.id);
@@ -407,13 +404,14 @@ describe('Write handler', () => {
 
       const response = await makeRequest(
         { eventStore, devMode: false, logWrites: true },
-        { event },
-        { 'X-TOON-Payer': '0xpayer' }
+        { event }
       );
 
       expect(response.status).toBe(200);
       expect(logSpy).toHaveBeenCalledOnce();
-      expect(String(logSpy.mock.calls[0]?.[0])).toContain(event.id);
+      const logLine = String(logSpy.mock.calls[0]?.[0]);
+      expect(logLine).toContain(event.id);
+      expect(logLine).not.toMatch(/payer|amount|chain/i);
     });
   });
 
