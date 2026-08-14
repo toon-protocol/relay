@@ -11,15 +11,15 @@
 #                                (terminates the payment)   (oblivious relay)
 #   reader ──wss REQ (free)───────────────────────────────▶ relay:7100  (Nostr reads; PUBLIC)
 #
-# This connector terminates g.toon.relay and delivers straight to the
-# payment-oblivious relay app, paid directly by clients — no hub in front of
-# it, no forwarding hop to reach it. The devnet fleet is two independent
-# boxes on this same one-box-one-app shape (this one, and a `store` box
-# terminating g.toon.ario on its own connector) — with no peering, no
-# forwarding and no fee between them (see
-# toon-protocol/toon-meta's docs/two-node-architecture.md). "The store leg"
-# near the bottom of this file documents an OPTIONAL route an operator can
-# add to sell the store prefix too; the fleet does not run it.
+# This connector terminates `g.toon.relay` and delivers straight to the
+# payment-oblivious relay app, paid directly by clients — no hub in front of it,
+# no forwarding hop to reach it. The devnet fleet is two independent boxes on
+# this same one-box-one-app shape (this one, and a `store` box terminating
+# `g.toon.ario` on its own connector), with no peering, no forwarding and no fee
+# between them — the fleet's settled topology (toon-protocol/toon-meta#310, and
+# that repo's `docs/two-node-architecture.md` for the box-by-box write-up).
+# "The store leg" near the bottom of this file documents an OPTIONAL route an
+# operator can add to sell the store prefix too; the fleet does not run it.
 #
 # - The connector's client edge is `POST /ilp` (and `GET /ilp/btp` for a BTP
 #   session). A paid, claim-gated packet addressed to `g.toon.relay` terminates
@@ -131,7 +131,7 @@ price = 1
 # `transport` is deliberately left at its default (`both`: HTTP one-shot AND BTP
 # session). Transport is per-connector POLICY, not a protocol constant
 # (connector#701) — the devnet relay box pins `transport = "btp"` on its own
-# g.toon.relay route because huddles hold a persistent 49 fps session that
+# `g.toon.relay` route because huddles hold a persistent 49 fps session that
 # amortizes the handshake and claim round trip. A drop-in operator without
 # that traffic shape should not force every one-shot buyer through a session,
 # so this bundle ships the default. Set `transport = "btp"` here if you are
@@ -274,10 +274,9 @@ key_file = "/app/data/settlement.key"
 
 # ── (Optional) The store leg ─────────────────────────────────────────────────
 # The relay box does not front a store app; the store box does (see the `store`
-# repo's own deploy bundle), and the two boxes do not peer with each other —
-# the live devnet fleet has no forwarding hop and no fee between them (see the
-# topology note at the top of this file). If you want this edge to sell the
-# store route too anyway, there are exactly two shapes:
+# repo's own deploy bundle), and the two do not peer — no forwarding hop and no
+# fee between them, per the topology note at the top of this file. If you want
+# this edge to sell the store route too, there are exactly two shapes:
 #
 #   1. TERMINATE at the store box's public TLS front. The link between two TOON
 #      nodes is public and TLS-terminated by each box's own nginx — the same way
