@@ -152,7 +152,7 @@ error by name, because the TOML parser is `deny_unknown_fields`.
 | `CONFIG_FILE=/app/config/connector.yaml`           | nothing — the image's `CMD` already names the path                |
 | `NODE_TLS_REJECT_UNAUTHORIZED=0`                   | no equivalent; use an RPC with a real chain of trust              |
 | connector health `:8080`, admin `:8081`            | one port: `:3000` carries the edge, the operator surface, metrics |
-| route prefix `g.proxy.relay`                       | `g.toon.relay` (the apex was renamed)                             |
+| route prefix `g.proxy.relay`                       | `g.toon.relay` (`g.proxy` was renamed to `g.toon`; the node that answered there is retired — toon-meta's `docs/two-node-architecture.md`) |
 | `selfAnnounce` block (kind:10032)                  | `[announce]` + `connector announce` — see below                   |
 | replay watermarks lived in process memory          | `state_dir = "/app/state"`, on a named volume                     |
 
