@@ -9,6 +9,8 @@
  * - valid signed event -> 200, event stored, onStored called exactly once
  * - malformed / missing body -> 400
  * - invalid signature (non-dev) -> 422; same bad event with devMode -> 200
+ * - retired X-TOON-* headers from a stale caller -> read-and-ignored, never
+ *   echoed back
  * - per-write console logging is OFF by default and opt-in via logWrites
  *   (per-event console I/O is write-path tail jitter, relay#85)
  */
@@ -167,12 +169,13 @@ describe('Write handler', () => {
     expect(onStored).toHaveBeenCalledOnce();
   });
 
-  it('ignores X-TOON-* headers entirely if a stale caller still sends them (no successor header, connector ADR 0036)', async () => {
-    // Given: a valid signed event and a caller that still sends the retired
-    // headers (e.g. a stale terminator build)
+  it('ignores retired X-TOON-* headers from a stale caller (no successor header, connector ADR 0036)', async () => {
+    // Given: a valid signed event
     const eventStore = new InMemoryEventStore();
     const event = createValidSignedEvent();
 
+    // When: the caller still sends the retired headers (e.g. a stale
+    // terminator build)
     const response = await makeRequest(
       { eventStore, devMode: false },
       { event },
