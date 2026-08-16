@@ -20,6 +20,13 @@
  * - BOOTSTRAP_PEERS: Comma-separated peer pubkeys to bootstrap with
  * - BASE_PRICE_PER_BYTE: Base price per byte (default: 10)
  * - DATA_DIR: Data directory for persistent storage
+ * - ANNOUNCE_TTL_SECONDS: NIP-40 expiry stamped on this node's own kind:10032
+ *   (default: 600, the fleet-wide `[announce] ttl_secs` convention). `0`
+ *   publishes a NON-expiring announce, which is unretractable once this node's
+ *   key is gone — see the genesis-peer publish below.
+ * - ANNOUNCE_REFRESH_SECONDS: how often that announce is republished
+ *   (default: 240). Must comfortably beat ANNOUNCE_TTL_SECONDS. `0` publishes
+ *   once at boot and never again.
  */
 
 import { serve } from '@hono/node-server';
@@ -36,6 +43,11 @@ interface NIP34HandlerLike {
     metadata?: unknown;
   }>;
 }
+import {
+  resolveAnnounceSchedule,
+  startSelfAnnounce,
+  type SelfAnnounce,
+} from './announce.js';
 import { loadBlsConfigFromEnv } from './config.js';
 import { ConfigError } from './errors.js';
 import { PricingService } from './pricing/index.js';
@@ -48,7 +60,6 @@ import {
   ILP_PEER_INFO_KIND,
   type IlpPeerInfo,
   type SettlementConfig,
-  buildIlpPeerInfoEvent,
   type HandlePacketRequest,
   type HandlePacketResponse,
   createHttpChannelClient,
@@ -88,6 +99,11 @@ async function main(): Promise<void> {
   const connectorUrl = process.env['CONNECTOR_URL'];
   const btpEndpoint = process.env['BTP_ENDPOINT'];
   const wsPort = parseInt(process.env['WS_PORT'] || '7100', 10);
+  // NIP-40 expiry on this node's own kind:10032, and the cadence that keeps it
+  // alive. Both OPTIONAL with fleet-convention defaults, and neither can fail
+  // boot — see ./announce.ts. Resolved here, at the top with the rest of the
+  // env, so its diagnostics land before any of the bring-up noise.
+  const announceSchedule = resolveAnnounceSchedule(process.env);
   const bootstrapRelays = process.env['BOOTSTRAP_RELAYS']
     ? process.env['BOOTSTRAP_RELAYS'].split(',').filter((s) => s.trim())
     : [];
@@ -368,14 +384,41 @@ async function main(): Promise<void> {
   await bootstrapService.bootstrap();
   console.log(`✅ Bootstrap completed`);
 
-  // If genesis peer (no bootstrap peers), publish own ILP info to local relay
+  // If genesis peer (no bootstrap peers), publish own ILP info to local relay.
+  //
+  // kind:10032 is a REPLACEABLE event and this one is written straight into
+  // this node's own store, from which it is served to every client that ever
+  // reads discovery here. Without a NIP-40 `expiration` tag it is served
+  // FOREVER — long after this process is gone — and because the only retraction
+  // path is a newer event signed by the same key, a rotated or lost
+  // NOSTR_SECRET_KEY makes it permanent by construction. Devnet is carrying
+  // exactly that today (`b23599a6…`/`g.toon.swap.sol`, key gone, advertising a
+  // `ws://127.0.0.1:3401` loopback literal), which is what motivated this
+  // relay's own NIP-40 serve-time enforcement and NIP-09 delete support (#137).
+  // A publisher that opts out of the convention its own relay now enforces is
+  // the last hole in it.
+  //
+  // The tag alone would be an outage, not a fix: this was a ONE-SHOT publish at
+  // boot with no refresh of any kind, so an expiry with nothing renewing it
+  // would take a LIVE genesis peer out of its own discovery `ANNOUNCE_TTL_
+  // SECONDS` after start-up. `startSelfAnnounce` owns both halves.
+  let selfAnnounce: SelfAnnounce | undefined;
   if (bootstrapPeers.length === 0) {
-    const ilpInfoEvent = buildIlpPeerInfoEvent(ilpInfo, secretKey);
-    eventStore.store(ilpInfoEvent);
+    selfAnnounce = startSelfAnnounce({
+      info: ilpInfo,
+      secretKey,
+      schedule: announceSchedule,
+      publish: (event) => eventStore.store(event),
+    });
     console.log(
       `✅ Genesis peer: Published ILP info (kind:10032) to local relay`
     );
-    console.log(`   Event ID: ${ilpInfoEvent.id}`);
+    console.log(`   Event ID: ${selfAnnounce.initialEvent.id}`);
+    console.log(
+      announceSchedule.ttlSeconds > 0
+        ? `   Expires in ${announceSchedule.ttlSeconds}s; refreshed every ${announceSchedule.refreshSeconds}s`
+        : `   ⚠️  NO expiration tag — this announce will be served forever, and cannot be retracted if this key is lost`
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -433,6 +476,9 @@ async function main(): Promise<void> {
   // -------------------------------------------------------------------------
   const shutdown = async () => {
     console.log('Shutting down...');
+    // Stop renewing this node's own liveness signal. A stopped node that kept
+    // refreshing its announce would make the TTL meaningless.
+    selfAnnounce?.stop();
     server.close();
     pool.close([]);
     await relay.stop();
