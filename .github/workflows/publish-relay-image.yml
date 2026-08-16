@@ -5,7 +5,12 @@ name: Publish relay image
 # RELAY_IMAGE at this image.
 #
 # `latest` is (re)published on every push to main; version tags (vX.Y.Z) also
-# publish semver tags for pinning, plus an immutable sha tag.
+# publish semver tags for pinning, plus an immutable sha tag. `release` is the
+# same green-main-gated moving tag as swap#131/toon-meta#403's fleet-wide
+# convention: each Linode box's label-scoped Watchtower watches `:release`
+# (not `:latest`) so an auto-redeploy only follows a push that reached this
+# workflow by landing on main, never an unbuilt/untagged commit. Keep the
+# immutable `:sha-*` tag for pinning/rollback.
 
 on:
   push:
@@ -38,10 +43,12 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/relay
-          # `latest` tracks main; semver tags publish on vX.Y.Z; sha tags give
-          # an immutable handle.
+          # `latest` tracks main; `release` is the Watchtower target (moves on
+          # the same green-main pushes as `latest`); semver tags publish on
+          # vX.Y.Z; sha tags give an immutable handle.
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=release,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha

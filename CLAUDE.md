@@ -22,7 +22,7 @@ Canonical rules/decisions: `toon-meta` → `_bmad-output/project-context.md`.
 ## Cross-repo dependencies
 - `relay` and `bls` are co-located workspace packages. `relay` no longer depends on `@toon-protocol/{core,sdk,connector}`; `bls` still consumes them from **npm** (pinned semver).
 - The ILP payment engine is the separate **[toon-protocol/connector](https://github.com/toon-protocol/connector)** repo (npm `@toon-protocol/connector` + Docker image). **All payment-claim validation lives ONLY in the connector — never re-implement it here.** The relay trusts that any request reaching `POST /write` was already proven paid.
-- The `relay` Docker image is built + pushed to GHCR by `.github/workflows/publish-relay-image.yml` (`ghcr.io/toon-protocol/relay:latest`).
+- The `relay` Docker image is built + pushed to GHCR by `.github/workflows/publish-relay-image.yml` (`ghcr.io/toon-protocol/relay:latest`, plus a green-main-gated moving `:release` tag — the fleet's Watchtower auto-redeploy target, toon-meta#403 — and immutable `:sha-*` tags).
 
 ## Publishing
 CI publishes via **changesets + `pnpm`** using the org `NPM_TOKEN` secret. **Never run `npm publish`** (it ships unresolved `workspace:*`).
