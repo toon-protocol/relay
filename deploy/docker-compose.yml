@@ -105,6 +105,29 @@ services:
       # default nofile limit is far above this). The stock 100 made >100
       # huddle listeners impossible.
       TOON_MAX_CONNECTIONS: ${RELAY_MAX_CONNECTIONS:-4096}
+      # ── Retention (relay#137) ──────────────────────────────────────────────
+      # NIP-40 expiry enforcement. ON by default: an event past its own
+      # `expiration` tag stops being served, and the reaper deletes it after
+      # the grace window. Devnet's kind:10032 announces carry a 600s TTL and
+      # are refreshed every 240s, so the live margin is 2.5 refresh periods —
+      # but the store and swap announce loops PAY for each republish, so a
+      # drained payment channel turns "a stale announce is still served" into
+      # "the node vanishes from discovery".
+      #
+      # RELAY_ENFORCE_EXPIRATION=false is the KILL SWITCH: set it in .env and
+      # restart, and every still-stored event is served again. That recovery
+      # only works while the data is still on disk, which is what the reap
+      # grace (default 24h) buys. See docs/retention.md.
+      TOON_ENFORCE_EXPIRATION: ${RELAY_ENFORCE_EXPIRATION:-true}
+      TOON_EXPIRATION_REAP_GRACE_SECONDS: ${RELAY_EXPIRATION_REAP_GRACE_SECONDS:-86400}
+      TOON_EXPIRATION_REAP_INTERVAL_SECONDS: ${RELAY_EXPIRATION_REAP_INTERVAL_SECONDS:-3600}
+      # Operator blocklist: comma-separated 64-hex EVENT IDS this relay
+      # refuses to store or serve. The last resort for an event whose author
+      # key is gone, so neither NIP-01 replacement nor NIP-09 deletion can
+      # reach it. Ids only, never pubkeys — read the hazard section in
+      # docs/retention.md before adding one. Empty by default; every entry is
+      # logged at startup.
+      TOON_BLOCKED_EVENT_IDS: ${RELAY_BLOCKED_EVENT_IDS:-}
       # Free ephemeral write lane bounds (relay#129, POST /write-ephemeral —
       # see connector.toml's `g.toon.relay.ephemeral` route). This lane has
       # no payment gate, so these ARE its admission control; the relay's own

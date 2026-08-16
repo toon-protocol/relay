@@ -118,6 +118,57 @@ export interface RelayConfig {
    */
   eventStore?: EventStore;
 
+  // --- Retention (NIP-40 / NIP-09 / operator blocklist, relay#137) ---
+
+  /**
+   * Enforce NIP-40 expiration (default: true; env: TOON_ENFORCE_EXPIRATION).
+   *
+   * When true, an event past its `expiration` tag is not served from history
+   * and not fanned out live. Setting this false is the KILL SWITCH back to
+   * the pre-relay#137 behaviour of serving everything forever.
+   *
+   * ! READ THIS BEFORE ASSUMING THE DEFAULT IS FREE !
+   * On the TOON devnet the only events carrying an `expiration` tag are
+   * kind:10032 node announces, published with a 600s TTL and refreshed by a
+   * shell loop every 240s — 2.5 refresh periods of margin, and the loop's
+   * failure backoff (5s doubling, capped at 240s) needs SEVEN consecutive
+   * failed publishes before an announce goes past its expiry. That margin is
+   * comfortable, but it is a margin, not a guarantee: the store and swap
+   * announce loops PAY for each republish out of a payment channel, so a
+   * drained channel makes every republish fail indefinitely. Before this
+   * flag existed, that failure degraded to "a stale announce is still
+   * served"; with enforcement on, it becomes "the node vanishes from
+   * discovery". That is the intended semantics — a node that cannot afford
+   * to say it is alive should not be advertised — but it is a real change in
+   * blast radius, and this flag is how an operator buys time.
+   */
+  enforceExpiration?: boolean;
+  /**
+   * How long an expired event is kept on disk before the reaper deletes it
+   * (default: 86400 = 24h; env: TOON_EXPIRATION_REAP_GRACE_SECONDS).
+   *
+   * Serve-time filtering is reversible; a DELETE is not. The grace window is
+   * what makes flipping `enforceExpiration` back off an actual recovery
+   * rather than an apology. Set 0 to reap the moment an event expires.
+   */
+  expirationReapGraceSeconds?: number;
+  /**
+   * How often the reaper sweeps (default: 3600 = hourly; env:
+   * TOON_EXPIRATION_REAP_INTERVAL_SECONDS). 0 disables reaping entirely;
+   * serve-time filtering is unaffected.
+   */
+  expirationReapIntervalSeconds?: number;
+  /**
+   * Operator-blocked event ids (env: TOON_BLOCKED_EVENT_IDS, comma-separated).
+   *
+   * The narrow escape hatch for an event that neither NIP-01 replacement nor
+   * NIP-09 deletion can reach because its author's key is gone. Ids only,
+   * never pubkeys; startup configuration only, never an API. See
+   * `nips/blocklist.ts` for the full reasoning and the censorship hazard it
+   * is drawn around.
+   */
+  blockedEventIds?: string[];
+
   // --- Development ---
 
   /** Skip event-signature verification on `POST /write` (default: false). */
@@ -186,6 +237,10 @@ export interface ResolvedRelayConfig {
   ephemeralRateLimit: { maxRequests: number; windowMs: number };
   ephemeralMaxBodyBytes: number;
   logWrites: boolean;
+  enforceExpiration: boolean;
+  expirationReapGraceSeconds: number;
+  expirationReapIntervalSeconds: number;
+  blockedEventIds: string[];
 }
 
 /**
@@ -420,6 +475,11 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
   const ephemeralMaxBodyBytes =
     config.ephemeralMaxBodyBytes ?? DEFAULT_EPHEMERAL_MAX_BODY_BYTES;
   const logWrites = config.logWrites ?? false;
+  const enforceExpiration = config.enforceExpiration ?? true;
+  const expirationReapGraceSeconds = config.expirationReapGraceSeconds ?? 86400;
+  const expirationReapIntervalSeconds =
+    config.expirationReapIntervalSeconds ?? 3600;
+  const blockedEventIds = config.blockedEventIds ?? [];
 
   const resolvedConfig: ResolvedRelayConfig = {
     relayPort,
@@ -434,6 +494,10 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
     ephemeralRateLimit,
     ephemeralMaxBodyBytes,
     logWrites,
+    enforceExpiration,
+    expirationReapGraceSeconds,
+    expirationReapIntervalSeconds,
+    blockedEventIds,
   };
 
   // --- 3. Event store ---
@@ -443,14 +507,76 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
     eventStore = config.eventStore;
   } else {
     mkdirSync(dataDir, { recursive: true });
-    eventStore = new SqliteEventStore(join(dataDir, 'events.db'));
+    eventStore = new SqliteEventStore(join(dataDir, 'events.db'), {
+      enforceExpiration,
+      blockedEventIds,
+    });
+  }
+
+  // Retention posture, printed every boot. NIP-40 enforcement changes what
+  // readers see, and a relay withholding events should say so out loud --
+  // especially the operator blocklist, which is this node declining to carry
+  // specific events rather than anything the protocol decided.
+  console.log(
+    `[relay] NIP-40 expiration: ${
+      enforceExpiration
+        ? `enforced (reap grace ${expirationReapGraceSeconds}s, sweep ${
+            expirationReapIntervalSeconds > 0
+              ? `every ${expirationReapIntervalSeconds}s`
+              : 'disabled'
+          })`
+        : 'NOT enforced -- expired events are still served (TOON_ENFORCE_EXPIRATION=false)'
+    }`
+  );
+  console.log('[relay] NIP-09 deletion: enabled (author-signed kind:5 only)');
+  if (blockedEventIds.length > 0) {
+    console.warn(
+      `[relay] OPERATOR BLOCKLIST ACTIVE -- ${blockedEventIds.length} event id(s) ` +
+        'refused on write and swept from storage:'
+    );
+    for (const id of blockedEventIds) {
+      console.warn(`[relay]   blocked ${id}`);
+    }
   }
 
   // --- 4. WebSocket read server (created first so /write can broadcast) ---
   const wsRelay = new NostrRelayServer(
-    { port: relayPort, host, maxConnections },
+    { port: relayPort, host, maxConnections, enforceExpiration },
     eventStore
   );
+
+  // NIP-40 reaper. Unref'd so it can never hold the process open, and driven
+  // off the same `enforceExpiration` switch as serve-time filtering: a relay
+  // that is still serving expired events must not be quietly deleting them.
+  let reapTimer: NodeJS.Timeout | undefined;
+  if (
+    enforceExpiration &&
+    expirationReapIntervalSeconds > 0 &&
+    eventStore.reapExpired
+  ) {
+    const reap = (): void => {
+      try {
+        const removed = eventStore.reapExpired?.(
+          Math.floor(Date.now() / 1000),
+          expirationReapGraceSeconds
+        );
+        if (removed) {
+          console.log(
+            `[relay] NIP-40 reaper removed ${removed} expired event(s)`
+          );
+        }
+      } catch (error) {
+        // A failed sweep is a housekeeping miss, never a reason to take the
+        // relay down: the events it would have deleted are already unserved.
+        console.warn(
+          `[relay] NIP-40 reaper failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    };
+    reap();
+    reapTimer = setInterval(reap, expirationReapIntervalSeconds * 1000);
+    reapTimer.unref();
+  }
 
   // --- 5. HTTP write/health server ---
   const app = new Hono();
@@ -590,6 +716,8 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
         sub.close();
       }
       activeSubscriptions.clear();
+
+      if (reapTimer) clearInterval(reapTimer);
 
       await wsRelay.stop();
       blsServer.close();

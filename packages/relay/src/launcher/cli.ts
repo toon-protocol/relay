@@ -20,6 +20,7 @@ import { parseArgs } from 'node:util';
 import { startRelay } from './relay.js';
 import type { RelayConfig, RelayInstance } from './relay.js';
 import { DEFAULT_EPHEMERAL_RATE_LIMIT } from './handlers/write-ephemeral-handler.js';
+import { parseBlockedEventIds } from '../nips/blocklist.js';
 
 // ---------- CLI Parsing ----------
 
@@ -71,6 +72,25 @@ Options:
   --log-writes             Log one line per accepted POST /write (debug; off
                            by default -- per-event logging is write-path
                            tail jitter, relay#85)
+  --no-enforce-expiration  Serve events past their NIP-40 expiration tag.
+                           KILL SWITCH back to the pre-relay#137 behaviour;
+                           enforcement is ON by default. Also disables the
+                           reaper -- a relay still serving expired events
+                           must not be silently deleting them
+  --expiration-reap-grace-seconds <n>
+                           How long an expired event stays on disk before the
+                           reaper deletes it (default: 86400). The window in
+                           which flipping enforcement back off is a real
+                           recovery rather than an apology. 0 = reap at once
+  --expiration-reap-interval-seconds <n>
+                           Reaper sweep interval (default: 3600). 0 disables
+                           reaping; serve-time filtering is unaffected
+  --blocked-event-ids <ids>
+                           Comma-separated 64-hex event ids this relay
+                           refuses to store or serve. The escape hatch for an
+                           event whose author key is gone, so neither NIP-01
+                           replacement nor NIP-09 deletion can reach it. Ids
+                           only, never pubkeys; every id is logged at startup
   --help                   Show this help message
 
 Environment Variables:
@@ -90,6 +110,10 @@ Environment Variables:
   TOON_EPHEMERAL_RATE_WINDOW_MS   Same as --ephemeral-rate-window-ms
   TOON_EPHEMERAL_MAX_BODY_BYTES   Same as --ephemeral-max-body-bytes
   TOON_LOG_WRITES          Same as --log-writes (set to "true")
+  TOON_ENFORCE_EXPIRATION  Set to "false" for --no-enforce-expiration
+  TOON_EXPIRATION_REAP_GRACE_SECONDS     Same as --expiration-reap-grace-seconds
+  TOON_EXPIRATION_REAP_INTERVAL_SECONDS  Same as --expiration-reap-interval-seconds
+  TOON_BLOCKED_EVENT_IDS   Same as --blocked-event-ids
 
 Security:
   Prefer TOON_MNEMONIC / TOON_SECRET_KEY / NOSTR_SECRET_KEY environment
@@ -123,6 +147,32 @@ function parsePositiveIntOption(
   return parsed;
 }
 
+/**
+ * Parse an optional numeric option that must be a non-negative integer.
+ *
+ * Separate from `parsePositiveIntOption` because 0 is MEANINGFUL for the
+ * retention knobs: a 0 reap grace means "delete the moment it expires" and a
+ * 0 reap interval means "never sweep", both deliberate operator choices.
+ *
+ * @param flag - The flag name, used verbatim in the error message.
+ * @param raw - The flag value, or its env-var fallback, or undefined.
+ * @returns The parsed value, or undefined when neither source is set.
+ */
+function parseNonNegativeIntOption(
+  flag: string,
+  raw: string | undefined
+): number | undefined {
+  if (raw === undefined || raw === '') {
+    return undefined;
+  }
+  const parsed = parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed < 0) {
+    console.error(`Error: --${flag} must be an integer >= 0`);
+    process.exit(1);
+  }
+  return parsed;
+}
+
 function parseCli(): RelayConfig {
   const { values } = parseArgs({
     options: {
@@ -141,6 +191,10 @@ function parseCli(): RelayConfig {
       'ephemeral-rate-window-ms': { type: 'string' },
       'ephemeral-max-body-bytes': { type: 'string' },
       'log-writes': { type: 'boolean' },
+      'no-enforce-expiration': { type: 'boolean' },
+      'expiration-reap-grace-seconds': { type: 'string' },
+      'expiration-reap-interval-seconds': { type: 'string' },
+      'blocked-event-ids': { type: 'string' },
       help: { type: 'boolean' },
     },
     strict: true,
@@ -307,6 +361,43 @@ function parseCli(): RelayConfig {
     values['log-writes'] ??
     (process.env['TOON_LOG_WRITES'] === 'true' ? true : undefined);
 
+  // --- Retention (relay#137) ---
+  // Enforcement is ON by default, so the only thing worth expressing here is
+  // turning it OFF. `TOON_ENFORCE_EXPIRATION` is compared against the exact
+  // string 'false' so a typo ('False', 'no', '0') fails SAFE -- towards
+  // enforcing -- rather than silently reopening the hole this closed.
+  const enforceExpiration =
+    values['no-enforce-expiration'] === true ||
+    process.env['TOON_ENFORCE_EXPIRATION'] === 'false'
+      ? false
+      : undefined;
+
+  const expirationReapGraceSeconds = parseNonNegativeIntOption(
+    'expiration-reap-grace-seconds',
+    values['expiration-reap-grace-seconds'] ??
+      process.env['TOON_EXPIRATION_REAP_GRACE_SECONDS']
+  );
+  const expirationReapIntervalSeconds = parseNonNegativeIntOption(
+    'expiration-reap-interval-seconds',
+    values['expiration-reap-interval-seconds'] ??
+      process.env['TOON_EXPIRATION_REAP_INTERVAL_SECONDS']
+  );
+
+  // Operator blocklist. A malformed id is a hard startup error, not a warning:
+  // its failure mode is an operator who believes an event is blocked while the
+  // relay keeps serving it.
+  const blocklist = parseBlockedEventIds(
+    values['blocked-event-ids'] ?? process.env['TOON_BLOCKED_EVENT_IDS']
+  );
+  if (blocklist.invalid.length > 0) {
+    console.error(
+      'Error: --blocked-event-ids entries must be 64-character hex event ids; ' +
+        `rejected: ${blocklist.invalid.join(', ')}`
+    );
+    process.exit(1);
+  }
+  const blockedEventIds = blocklist.ids.length > 0 ? blocklist.ids : undefined;
+
   const config: RelayConfig = {
     ...(mnemonic && { mnemonic }),
     ...(secretKey && { secretKey }),
@@ -322,6 +413,14 @@ function parseCli(): RelayConfig {
     ...(ephemeralRateLimit !== undefined && { ephemeralRateLimit }),
     ...(ephemeralMaxBodyBytes !== undefined && { ephemeralMaxBodyBytes }),
     ...(logWrites !== undefined && { logWrites }),
+    ...(enforceExpiration !== undefined && { enforceExpiration }),
+    ...(expirationReapGraceSeconds !== undefined && {
+      expirationReapGraceSeconds,
+    }),
+    ...(expirationReapIntervalSeconds !== undefined && {
+      expirationReapIntervalSeconds,
+    }),
+    ...(blockedEventIds !== undefined && { blockedEventIds }),
   };
 
   return config;

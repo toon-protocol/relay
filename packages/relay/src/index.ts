@@ -16,7 +16,7 @@ export type { RelayServerConfig } from './types.js';
 export { DEFAULT_RELAY_CONFIG } from './types.js';
 
 // Storage
-export type { EventStore } from './storage/index.js';
+export type { EventStore, EventStoreOptions } from './storage/index.js';
 export {
   InMemoryEventStore,
   SqliteEventStore,
@@ -25,6 +25,20 @@ export {
 
 // Filters
 export { matchFilter } from './filters/index.js';
+
+// Retention policy: NIP-40 expiration, NIP-09 deletion, operator blocklist
+export {
+  EXPIRATION_TAG,
+  getExpiration,
+  isExpired,
+  DELETION_KIND,
+  isDeletionKind,
+  isDeletableBy,
+  parseAddressCoordinate,
+  parseDeletionTargets,
+  parseBlockedEventIds,
+} from './nips/index.js';
+export type { AddressCoordinate, DeletionTargets } from './nips/index.js';
 
 // Crypto (fast BIP-340 event verification, relay#85)
 export {
