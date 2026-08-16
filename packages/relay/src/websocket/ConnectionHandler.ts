@@ -5,6 +5,7 @@ import type { EventStore } from '../storage/index.js';
 import type { RelayServerConfig } from '../types.js';
 import { DEFAULT_RELAY_CONFIG } from '../types.js';
 import { matchFilter } from '../filters/index.js';
+import { isExpired } from '../nips/expiration.js';
 
 /**
  * Represents an active subscription from a client.
@@ -175,6 +176,16 @@ export class ConnectionHandler {
    *   on first matching send.
    */
   notifyNewEvent(event: NostrEvent, eventJson?: string): void {
+    // NIP-40 (relay#137): an event that arrives already past its own
+    // `expiration` is never fanned out. Without this, live subscribers would
+    // receive an event that a REQ one second later would refuse to serve.
+    if (
+      this.config.enforceExpiration &&
+      isExpired(event, Math.floor(Date.now() / 1000))
+    ) {
+      return;
+    }
+
     let json = eventJson;
     for (const sub of this.subscriptions.values()) {
       const matches = sub.filters.some((f) => matchFilter(event, f));

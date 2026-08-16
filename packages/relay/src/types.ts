@@ -24,6 +24,15 @@ export interface RelayServerConfig {
   maxFiltersPerSubscription?: number;
   /** Path to SQLite database file (default: ':memory:' for in-memory) */
   databasePath?: string;
+  /**
+   * Enforce NIP-40 expiration on the live broadcast path (default: true).
+   *
+   * The stored-history path is enforced by the EventStore; this flag covers
+   * the other way an event reaches a subscriber — the fan-out of a freshly
+   * written event. Both are driven from the same launcher setting so a relay
+   * cannot serve an expired event on one path while hiding it on the other.
+   */
+  enforceExpiration?: boolean;
 }
 
 /**
@@ -36,4 +45,5 @@ export const DEFAULT_RELAY_CONFIG: Required<RelayServerConfig> = {
   maxSubscriptionsPerConnection: 20,
   maxFiltersPerSubscription: 10,
   databasePath: ':memory:',
+  enforceExpiration: true,
 };
