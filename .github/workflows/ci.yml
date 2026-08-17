@@ -6,6 +6,57 @@ on:
     branches: [main]
 
 jobs:
+  # `release.yml`'s `changesets/action` runs `pnpm changeset version` AFTER
+  # merge to main, where a failure gates nothing and reads like any other
+  # post-merge red (#140). Nothing before that point parses a changeset --
+  # only that a `.changeset/*.md` file exists, if anything -- so an invalid
+  # release plan (a changeset naming a package not in the workspace, a
+  # misspelled version keyword, or one mixing an `ignore`d package with a
+  # non-ignored one, which changesets refuses outright) is invisible until
+  # `release.yml` is the first thing in the repo to read it. That is exactly
+  # what happened in toon-client#611: release.yml went red on every push to
+  # main for a day, hiding five stacked offending changesets behind the
+  # first error `changeset version` stopped at.
+  #
+  # This job runs the byte-identical command as release.yml's `version:`
+  # input, so green here means the release actually gets past versioning --
+  # no second implementation of "is this a valid plan" to drift out of sync.
+  # Deliberately NOT `changeset status`: it additionally resolves
+  # `baseBranch` through git and fails when IT decides packages changed with
+  # no changeset, which is a different (and heavier) assertion this repo
+  # hasn't asked for. Mutating the tree costs nothing -- this is a throwaway
+  # checkout that commits, pushes and publishes nothing -- so the resulting
+  # diff is printed rather than discarded.
+  changeset:
+    name: Changeset
+    runs-on: ubuntu-latest
+    # release.yml itself runs on push-to-main, i.e. after merge -- by then
+    # there is nothing left to gate, so this only needs to run pre-merge.
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Assert the changesets form a valid release plan
+        run: |
+          set -euo pipefail
+          pnpm changeset version
+          echo "--- the release plan this PR would produce ---"
+          git --no-pager diff --stat
+          echo "✅ changeset version succeeds — release.yml can get past versioning"
+
   build:
     runs-on: ubuntu-latest
     steps:
@@ -109,7 +160,7 @@ jobs:
   ci-ok:
     name: CI OK
     runs-on: ubuntu-latest
-    needs: [build, devbox-validate, no-op-merge]
+    needs: [build, devbox-validate, no-op-merge, changeset]
     if: always()
     steps:
       # Fleet-wide aggregate required check (toon-meta#279): this job is the
@@ -117,14 +168,29 @@ jobs:
       # fail, are cancelled, or are skipped (if: always()), and passes ONLY
       # when every gating job reports result == 'success' — a skipped or
       # cancelled gating job must never read as a pass.
+      #
+      # `changeset` is the one deliberate exception: it carries its own
+      # `if: github.event_name == 'pull_request'`, so on a push event its
+      # result is 'skipped' by design (release.yml already re-derives the
+      # same release plan post-merge) — that must read as a pass. On a
+      # pull_request event it has no `if:` of its own to skip it, so a
+      # 'skipped' result there is still a real failure to catch.
       - name: Verify all gating jobs succeeded
         env:
           RESULTS: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
+          echo "event: $EVENT_NAME"
           echo "Gating job results:"
           echo "$RESULTS" | jq -r 'to_entries[] | "  \(.key): \(.value.result)"'
-          FAILED=$(echo "$RESULTS" | jq -r 'to_entries[] | select(.value.result != "success") | .key')
+
+          CHANGESET_RESULT=$(echo "$RESULTS" | jq -r '.changeset.result')
+          if [ "$EVENT_NAME" = "push" ] && [ "$CHANGESET_RESULT" = "skipped" ]; then
+            FAILED=$(echo "$RESULTS" | jq -r 'to_entries[] | select(.key != "changeset" and .value.result != "success") | .key')
+          else
+            FAILED=$(echo "$RESULTS" | jq -r 'to_entries[] | select(.value.result != "success") | .key')
+          fi
           if [ -n "$FAILED" ]; then
             echo "::error::Gating jobs did not succeed: $(echo "$FAILED" | tr '\n' ' ')"
             exit 1
