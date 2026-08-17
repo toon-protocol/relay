@@ -1,4 +1,5 @@
 ---
+'@toon-protocol/bls': minor
 ---
 
 The genesis-peer self-announce now carries a NIP-40 `["expiration", created_at + ttl]` tag and is republished on a refresh loop, instead of being written into this node's own event store exactly once at boot with no expiry at all.
