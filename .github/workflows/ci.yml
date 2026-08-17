@@ -8,17 +8,17 @@ on:
 jobs:
   # `release.yml`'s `changesets/action` runs `pnpm changeset version` AFTER
   # merge to main, where a failure gates nothing and reads like any other
-  # post-merge red (#140). Nothing before that point parses a changeset --
-  # only that a `.changeset/*.md` file exists, if anything -- so an invalid
-  # release plan (a changeset naming a package not in the workspace, a
-  # misspelled version keyword, or one mixing an `ignore`d package with a
-  # non-ignored one, which changesets refuses outright) is invisible until
-  # `release.yml` is the first thing in the repo to read it. That is exactly
-  # what happened in toon-client#611: release.yml went red on every push to
-  # main for a day, hiding five stacked offending changesets behind the
-  # first error `changeset version` stopped at.
+  # post-merge red (#140). Until this job there was no changeset job in
+  # `ci.yml` at all, so an invalid release plan (a changeset naming a package
+  # not in the workspace, a misspelled version keyword, or one mixing an
+  # `ignore`d package with a non-ignored one, which changesets refuses
+  # outright) stayed invisible until `release.yml` read it post-merge. That is
+  # exactly what happened in toon-client#611, whose changeset job asserted only
+  # that a `.changeset/*.md` file EXISTS and never parsed one: release.yml went
+  # red on every push to main for a day, hiding five stacked offending
+  # changesets behind the first error `changeset version` stopped at.
   #
-  # This job runs the byte-identical command as release.yml's `version:`
+  # This job runs the byte-identical command to release.yml's `version:`
   # input, so green here means the release actually gets past versioning --
   # no second implementation of "is this a valid plan" to drift out of sync.
   # Deliberately NOT `changeset status`: it additionally resolves
@@ -185,12 +185,11 @@ jobs:
           echo "Gating job results:"
           echo "$RESULTS" | jq -r 'to_entries[] | "  \(.key): \(.value.result)"'
 
-          CHANGESET_RESULT=$(echo "$RESULTS" | jq -r '.changeset.result')
-          if [ "$EVENT_NAME" = "push" ] && [ "$CHANGESET_RESULT" = "skipped" ]; then
-            FAILED=$(echo "$RESULTS" | jq -r 'to_entries[] | select(.key != "changeset" and .value.result != "success") | .key')
-          else
-            FAILED=$(echo "$RESULTS" | jq -r 'to_entries[] | select(.value.result != "success") | .key')
-          fi
+          FAILED=$(echo "$RESULTS" | jq -r --arg event "$EVENT_NAME" '
+            to_entries[]
+            | select(.value.result != "success")
+            | select((.key == "changeset" and .value.result == "skipped" and $event == "push") | not)
+            | .key')
           if [ -n "$FAILED" ]; then
             echo "::error::Gating jobs did not succeed: $(echo "$FAILED" | tr '\n' ' ')"
             exit 1
