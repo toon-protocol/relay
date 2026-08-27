@@ -1,5 +1,34 @@
 # @toon-protocol/relay
 
+## 2.1.0
+
+### Minor Changes
+
+- 3eec8b3: Enforce NIP-40 expiration, implement NIP-09 deletion, and add an operator event blocklist.
+
+  Until now the relay had no way to stop serving an event. Expiry tags were parsed by nothing, kind:5 was stored as an ordinary note, and the only retraction path was a newer event signed by the same key — so a node whose key was lost advertised itself forever.
+  - **NIP-40**: events past their `expiration` tag are no longer served from history or fanned out live, and a background reaper deletes them after a grace period. On by default; `TOON_ENFORCE_EXPIRATION=false` is the kill switch back to the old behaviour.
+  - **NIP-09**: a kind:5 request retracts the author's own events by `e` id or `a` coordinate, and a tombstone stops a re-publish from resurrecting them. A request naming another key's event is a no-op.
+  - **Operator blocklist** (`TOON_BLOCKED_EVENT_IDS`): startup-configured event ids this relay refuses to store or serve — the escape hatch for litter whose author key is gone, so neither NIP can reach it. Ids only, never pubkeys; logged loudly on every boot.
+
+  Existing SQLite databases are migrated in place (an `expires_at` column, backfilled from stored tags), so a pre-existing expired event stops being served on the first boot after upgrading with no republish required.
+
+- f616690: Record the payment the connector states on a delivery, and make `deploy/` the deployment of record.
+
+  `POST /write` reads `X-TOON-Payer` / `X-TOON-Amount` / `X-TOON-Chain` again (connector ADR 0040, relay#133). #128 removed them on the strength of ADR 0036's "no successor header is coming"; one came, and it is a different value: the payer is now the chain-verified client channel key whose claim the terminating connector checked at its own edge, not the previous hop. A well-formed triple is echoed on the 200 as `payment` and carried on the write's log line; a partial or malformed one is discarded whole rather than half-recorded, and **absence is never read as "unpaid"** — the headers are stated only by the hop that took the payment, so they are absent on a forwarded packet and on every free route.
+
+  `deploy/` now runs the connector this contract comes from (`rust-sha-6ea6009`, up from `rust-sha-440eab7`) and carries the whole node rather than half of it: Caddy terminates TLS for both public hostnames, a Watchtower overlay follows the two `:release` tags, and a local overlay runs the stack without TLS. The connector config drops `[announce]` — the current connector refuses that section by name and serves the same facts on `GET /ilp` from a `[node]` table instead.
+
+  Also: `packages/bls` is removed (nothing depended on it, no CI built its images, and it was the only ILP-speaking code in a repo that documents itself as speaking none), the unused TOON codec re-export is gone, `DEFAULT_RELAY_CONFIG.port` now matches the launcher's actual default of 7100, and `GET /health` reports the version the package actually shipped instead of a hardcoded `0.1.0`.
+
+### Patch Changes
+
+- dd5c8a9: Take `VERSION` from `package.json` at build time instead of hand-copying it.
+
+  The constant behind `GET /health` was written down in `src/version.ts`, and `changeset version` bumps `package.json` and nothing else — so the two parted company the moment a release was cut. That is how `/health` came to serve a hardcoded `0.1.0` from a shipped `2.0.2`. The guard added alongside that fix compared the two, which turned the drift into a red Release PR rather than removing it: every release now failed CI until someone edited the source by hand.
+
+  `src/version.ts` now carries a `__RELAY_VERSION__` placeholder that tsup substitutes from `package.json` when it builds the bundle, and that both vitest configs substitute the same way when they run the tests. `package.json` is the only place a version is written, a release needs no source edit, and the shipped bundle reports the version it was cut from.
+
 ## 2.0.2
 
 ### Patch Changes
