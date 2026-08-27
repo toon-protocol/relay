@@ -39,7 +39,12 @@ RUN pnpm install --no-frozen-lockfile
 # Source + build config. The relay has no runtime dependency on the other
 # workspace package, so the relay alone is sufficient to build.
 COPY packages/relay/src/ packages/relay/src/
-COPY packages/relay/tsconfig.json packages/relay/tsup.config.ts packages/relay/
+# tsup.config.ts imports version-define.ts, which reads the version out of the
+# package.json copied above -- so both files must be here or the build fails on
+# `Could not resolve "./version-define"`. This COPY list is explicit rather than
+# a whole-directory copy (it keeps the layer small and the cache sharp), which
+# means a new build-time file at the package root has to be added here too.
+COPY packages/relay/tsconfig.json packages/relay/tsup.config.ts packages/relay/version-define.ts packages/relay/
 
 # Build the relay (produces dist/cli.js — the `relay` bin)
 RUN pnpm --filter @toon-protocol/relay build
