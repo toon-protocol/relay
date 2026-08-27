@@ -3,12 +3,13 @@
 # The relay is a plain HTTP/WebSocket app behind an external terminator — it
 # contains no ILP/connector/settlement logic. Entrypoint is the `relay` CLI
 # (dist/cli.js):
-#   * POST /write on TOON_BLS_PORT (default 3100) — body { "event": <NostrEvent> }
-#   * GET  /health on TOON_BLS_PORT — compose healthcheck
-#   * free NIP-01 WS reads on TOON_RELAY_PORT (default 7100)
+#   * POST /write            on TOON_BLS_PORT (default 3100) — { "event": <NostrEvent> }
+#   * POST /write-ephemeral   on TOON_BLS_PORT — the free presence/typing lane
+#   * GET  /health, /metrics  on TOON_BLS_PORT
+#   * free NIP-01 WS reads    on TOON_RELAY_PORT (default 7100)
 #
-# Published as ghcr.io/toon-protocol/relay:latest (the connector's
-# `app-behind-terminator` compose points RELAY_IMAGE here).
+# Published as ghcr.io/toon-protocol/relay by publish-relay-image.yml, which
+# also moves the `:release` tag deploy/docker-compose.yml pulls by default.
 #
 # Build from repo root:
 #   docker build -f packages/relay/Dockerfile -t ghcr.io/toon-protocol/relay:latest .
@@ -27,9 +28,8 @@ WORKDIR /app
 # Workspace root files for dependency resolution
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.json .npmrc ./
 
-# Workspace package manifests (both packages — the workspace resolves as a unit)
+# Workspace package manifest
 COPY packages/relay/package.json packages/relay/
-COPY packages/bls/package.json packages/bls/
 
 # Install all deps (incl. dev) for the build. --no-frozen-lockfile mirrors CI
 # (release.yml / ci.yml): an upstream tarball was re-published in place, so a
@@ -45,10 +45,9 @@ COPY packages/relay/tsconfig.json packages/relay/tsup.config.ts packages/relay/
 RUN pnpm --filter @toon-protocol/relay build
 
 # Isolated production install. We deliberately do NOT use `pnpm deploy` here:
-# it bundles the workspace-root dependencies (@ardrive/turbo-sdk, arweave — and
-# their large web3 transitive tree) into the deployment even though the relay
-# does not use them. Installing relay's own manifest in a clean dir pulls ONLY
-# its real prod closure (hono, better-sqlite3, nostr-tools, @toon-format/toon, ws).
+# it bundles the workspace-root devDependencies into the deployment even though
+# the relay does not use them. Installing relay's own manifest in a clean dir
+# pulls ONLY its real prod closure (hono, better-sqlite3, nostr-tools, ws).
 RUN mkdir /prod \
     && cp packages/relay/package.json /prod/package.json \
     && cp -r packages/relay/dist /prod/dist

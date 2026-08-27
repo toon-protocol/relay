@@ -1,0 +1,33 @@
+# =============================================================================
+# Local overlay — run the node on your machine, without TLS.
+# =============================================================================
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+#
+# Two changes from the production file:
+#   * Caddy is dropped. There is no public hostname to get a certificate for,
+#     so EDGE_HOST / READ_HOST / ACME_EMAIL are not needed either.
+#   * The connector edge and the relay's read port are published on loopback,
+#     because with Caddy gone nothing else would reach them.
+#
+# The relay's WRITE port (3100) stays unpublished even here. Publishing it
+# would put a free, unauthenticated write door on your machine and break the
+# assumption the paid-ephemeral verify skip rests on.
+# =============================================================================
+
+services:
+  caddy:
+    # `docker compose up` ignores a service whose profile is not active, and
+    # no profile is ever activated here. Cleaner than a second copy of the
+    # file with the service deleted.
+    profiles: ['never']
+
+  connector:
+    ports:
+      - '127.0.0.1:3000:3000' # POST /ilp, GET /ilp, GET /ilp/btp
+    depends_on:
+      relay:
+        condition: service_healthy
+
+  relay:
+    ports:
+      - '127.0.0.1:7100:7100' # free NIP-01 reads

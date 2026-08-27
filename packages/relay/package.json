@@ -1,7 +1,7 @@
 {
   "name": "@toon-protocol/relay",
   "version": "2.0.2",
-  "description": "Nostr relay app: free NIP-01 reads + HTTP POST /write",
+  "description": "Nostr relay app: free NIP-01 WebSocket reads + an HTTP POST /write surface",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -29,8 +29,12 @@
   "keywords": [
     "nostr",
     "relay",
-    "ilp",
-    "interledger"
+    "toon",
+    "nip-01",
+    "nip-09",
+    "nip-16",
+    "nip-40",
+    "websocket"
   ],
   "license": "MIT",
   "repository": {
@@ -44,7 +48,6 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.0.0",
-    "@toon-format/toon": "^1.0.0",
     "better-sqlite3": "^11.0.0",
     "hono": "^4.11.10",
     "nostr-tools": "^2.20.0",

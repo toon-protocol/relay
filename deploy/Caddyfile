@@ -1,0 +1,28 @@
+# TLS for the relay node. Caddy obtains and renews Let's Encrypt certificates
+# on its own — there is no certbot sidecar and no renewal timer to forget.
+#
+# Two names, two upstreams:
+#   EDGE_HOST → the connector's client edge (paid writes, the x402 greeting,
+#               and the free GET /ilp self-description)
+#   READ_HOST → the relay's Nostr WebSocket (free reads; Caddy proxies the
+#               upgrade with no extra configuration)
+#
+# The relay's write port (3100) is deliberately absent from this file and from
+# every route in it. It must never be publicly reachable: it is the
+# payment-oblivious surface, and a public path to it is a free door.
+#
+# Upstreams are named, not addressed. Caddy re-resolves a container name per
+# dial, so a Watchtower recreate that moves `connector` or `relay` to a new
+# address on the compose network heals itself with no reload.
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$EDGE_HOST} {
+	reverse_proxy connector:3000
+}
+
+{$READ_HOST} {
+	reverse_proxy relay:7100
+}

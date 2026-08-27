@@ -1,151 +1,159 @@
 # =============================================================================
-# relay deploy — connector (payment proxy) + oblivious Nostr relay. NO Caddy.
+# A TOON relay node: Caddy (TLS) → connector (payments) → relay (Nostr).
 # =============================================================================
-# The connector monetizes WRITES; READS are free and hit the relay's WS directly.
-# A second, zero-priced route (relay#129) carries the FREE ephemeral write
-# lane (presence/typing, kinds 20000-29999) to its own relay endpoint — still
-# claim-gated at the client edge like every route here, just priced at 0; see
-# connector.toml's own comment on `g.toon.relay.ephemeral`.
-# TLS is terminated by the deployment environment, which reverse-proxies to the
-# host-published edge (:3000) and to the free-read WS (:7100).
 #
-#   payer ──POST /ilp──▶ connector ──POST /write────────────▶ relay:3100  (paid store; PRIVATE)
-#                                  ──POST /write-ephemeral──▶ relay:3100  (free broadcast-only; PRIVATE)
-#   reader ──wss REQ (free)───────────────────────────────▶ relay:7100  (Nostr reads; PUBLIC)
+#   payer  ──POST /ilp──▶ caddy ─▶ connector ──POST /write───────────▶ relay  (stored)
+#                                             ──POST /write-ephemeral▶ relay  (broadcast only)
+#   reader ──wss────────▶ caddy ─────────────────────────────────────▶ relay  (free reads)
 #
-# PRIVACY INVARIANT (enforced by construction):
-#   - relay :3100 (paid-write store + free ephemeral broadcast) → NEVER
-#     host-published; only connector:3100.
-#   - The connector publishes exactly one port (:3000); the Rust node has no
-#     separate admin/health port (the TypeScript node's :8081/:8080 do not
-#     exist here — see the connector service's own comment below).
-#   The only host-bound ports are the edge :3000 and the free-read WS :7100,
-#   and both bind BIND_ADDR (default 127.0.0.1, never 0.0.0.0) so the only
-#   public door is the deployment environment's TLS terminator.
-#   This invariant is also a SECURITY precondition since relay#85: the relay
-#   skips schnorr verification for paid ephemeral kinds on the assumption that
-#   :3100 is reachable exclusively through the payment-gating connector. The
-#   free ephemeral write lane (relay#129) does NOT rely on this precondition
-#   — it always runs full verification regardless of exposure — but it stays
-#   behind the same private port like everything else on :3100.
-#   Remember docker `ports:` publishes bypass ufw — keep :3100 on `expose:`.
+# The connector monetizes WRITES. READS are free and never touch it.
 #
-# Dev:  docker compose up --build   (builds relay-connector locally from ./Dockerfile)
-# Prod: docker compose up           (pulls the pinned RELAY_CONNECTOR_IMAGE)
+# ── The privacy invariant, enforced by construction ──────────────────────────
+# Caddy is the ONLY service that publishes a port. The connector's edge (3000)
+# and the relay's write (3100) and read (7100) ports are `expose`d on the
+# compose network and nothing else, so the only way to a write is a payment
+# through the connector.
+#
+# This is a security precondition, not just tidiness: the relay skips schnorr
+# verification for PAID ephemeral kinds on the assumption that 3100 is
+# reachable exclusively through the payment-gating connector. If you change
+# that, set RELAY_VERIFY_EPHEMERAL=true. And remember a docker `ports:`
+# publish is internet-reachable even with ufw locked to 22/80/443 — never
+# convert an `expose:` here into a `ports:`.
+#
+#   Production:  docker compose up -d
+#   Local, no TLS:
+#     docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+#   With auto-redeploy:
+#     docker compose -f docker-compose.yml -f docker-compose.watchtower.yml up -d
 # =============================================================================
 
+name: relay
+
 services:
-  # ── The payment proxy (connector + baked relay route config) ────────────────
+  # ── TLS ────────────────────────────────────────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      # The public names this node answers to, and the address Let's Encrypt
+      # sends expiry notices to. All three are required — see .env.example.
+      EDGE_HOST: ${EDGE_HOST:?set EDGE_HOST in .env (the connector edge hostname)}
+      READ_HOST: ${READ_HOST:?set READ_HOST in .env (the free-read WS hostname)}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and ACME account keys. Named, so a `docker compose up`
+      # that recreates this container does not re-issue every certificate and
+      # walk into Let's Encrypt's rate limit.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      connector:
+        condition: service_healthy
+      relay:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── The payment proxy ──────────────────────────────────────────────────────
   connector:
-    image: ${RELAY_CONNECTOR_IMAGE:-ghcr.io/toon-protocol/relay-connector:latest}
+    image: ${RELAY_CONNECTOR_IMAGE:-ghcr.io/toon-protocol/relay-connector:release}
+    # Only used by `docker compose up --build`. The published image is built by
+    # CI from ./Dockerfile's own ARG default with no build-arg override, so
+    # that ARG is the single pin of record.
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        CONNECTOR_TAG: ${CONNECTOR_TAG:-rust-sha-440eab7}
-    # NO `environment:` block, deliberately. The Rust connector has no
-    # environment-variable layer at all (connector#755): every value comes from
-    # the baked ./connector.toml, so there is exactly one place any value comes
-    # from. The three variables that used to live here are all gone —
-    # CONFIG_FILE (the image's CMD already names the path), TOON_MNEMONIC (the
-    # settlement key is a mounted FILE now, derived outside the container), and
-    # NODE_TLS_REJECT_UNAUTHORIZED (a Node.js escape hatch with no equivalent;
-    # a self-signed RPC cert is now a hard TLS failure, so point the config at
-    # an RPC with a real chain of trust).
+    # No `environment:` block, deliberately: the connector has no
+    # environment-variable layer at all. Every value comes from the baked
+    # ./connector.toml, so there is exactly one place any value comes from.
+    labels:
+      # Watchtower only ever touches a container carrying this label, and only
+      # when docker-compose.watchtower.yml is in the file set.
+      com.centurylinklabs.watchtower.enable: 'true'
     volumes:
-      # Two key files, provisioned two DIFFERENT ways — see ./connector.toml.
-      # In short: the signer is this node's ILP identity and holds no money, so
-      # it is fresh random material per box; the settlement key spends real
-      # testnet value and is the identity clients open their channels against,
-      # so it is derived from a seed you can reproduce. Both must exist and be
-      # readable by uid 10001 before the first `up -d` — a bind mount keeps its
-      # HOST ownership inside the container, so `chown 10001:10001` them or the
-      # container restart-loops on "Permission denied".
+      # Two identities, provisioned two different ways — see connector.toml.
+      # In short: the signer holds no money and is fresh random material per
+      # box; the settlement key is what clients open channels against, so it
+      # comes from a seed you can reproduce. Both must exist and be readable
+      # by uid 10001 before the first `up -d`.
       - ./signer.key:/app/data/signer.key:ro
       - ./settlement.key:/app/data/settlement.key:ro
-      # The durable claim journal (connector#605). NAMED, not a host bind: the
-      # image ships /app/state owned by uid 10001, which is what a fresh named
-      # volume inherits on first mount and what a bind mount does not. Replaying
-      # this journal is what makes a channel's replay watermark survive a
-      # restart; without it, every claim a payer already spent becomes free
-      # service again.
+      # Drop this line (and connector.toml's [settlement.solana]) for EVM-only.
+      - ./settlement-solana.key:/app/data/settlement-solana.key:ro
+      # The claim journal. NAMED, not a host bind: the image ships /app/state
+      # owned by uid 10001, which is what a fresh named volume inherits on
+      # first mount and what a bind mount does not. Replaying it is what stops
+      # a restart from re-accepting a claim the payer already spent.
       - connector_state:/app/state
-    ports:
-      - '${BIND_ADDR:-127.0.0.1}:${EDGE_PORT:-3000}:3000' # paid POST /ilp edge (the env's TLS terminator fronts this)
-    # No `expose: 8080`. The client edge, the operator surface and /metrics all
-    # share :3000 on the Rust connector; the TypeScript node's separate health
-    # (:8080) and admin (:8081) ports do not exist.
+    expose:
+      - '3000'
+    healthcheck:
+      # The connector has no /health route. GET /ilp/identity answers 200 only
+      # once the process is serving AND has read its signer key file.
+      # 127.0.0.1, never localhost: the listener is IPv4-only, but "localhost"
+      # in a container can resolve to ::1, where nothing is listening.
+      test: ['CMD-SHELL', 'wget -q --spider http://127.0.0.1:3000/ilp/identity || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
     depends_on:
       relay:
         condition: service_healthy
     restart: unless-stopped
 
-  # ── The oblivious relay (real Nostr relay) ──────────────────────────────────
-  # Published relay image. The paid-write HTTP store port (3100, POST /write) is
-  # NOT published — only the connector dials it over the compose network
-  # (relay:3100), which enforces the privacy invariant.
+  # ── The relay ──────────────────────────────────────────────────────────────
   relay:
-    image: ${RELAY_IMAGE:-ghcr.io/toon-protocol/relay:latest}
+    image: ${RELAY_IMAGE:-ghcr.io/toon-protocol/relay:release}
+    labels:
+      com.centurylinklabs.watchtower.enable: 'true'
     environment:
-      TOON_BLS_PORT: '3100' # paid-write HTTP store (POST /write) — PRIVATE
-      TOON_RELAY_PORT: '7100' # free-read Nostr WS — published
-      # The relay CLI REQUIRES an identity key to boot (this is IDENTITY, not
-      # money). Generate an ephemeral 32-byte hex into RELAY_NOSTR_SECRET_KEY in .env.
+      TOON_BLS_PORT: '3100' # writes  — private
+      TOON_RELAY_PORT: '7100' # reads   — fronted by Caddy
+      TOON_DATA_DIR: /data
+      # The relay's own Nostr IDENTITY (not money). It will not boot without
+      # one, and changing it changes the pubkey clients know this relay by.
       NOSTR_SECRET_KEY: ${RELAY_NOSTR_SECRET_KEY:?set RELAY_NOSTR_SECRET_KEY in .env (32-byte hex)}
-      # Enforce Nostr signature verification on writes (public deploy → false).
+      # true skips event-signature verification on writes. Smoke tests only.
       TOON_DEV_MODE: ${RELAY_DEV_MODE:-false}
-      # Paid-ephemeral verify skip (relay#85): ephemeral kinds (20000-29999)
-      # skip schnorr by default (id check kept) because :3100 is reachable
-      # ONLY via the payment-gating connector (see PRIVACY INVARIANT above —
-      # and note docker `ports:` publishes bypass ufw, so :3100 must stay
-      # `expose:`-only). Set RELAY_VERIFY_EPHEMERAL=true to restore full
-      # verification (e.g. if you front :3100 with anything else).
+      # Paid-ephemeral verify skip: ephemeral kinds (20000-29999) keep the id
+      # check but skip schnorr, which is safe only because 3100 is reachable
+      # exclusively through the payment-gating connector (see the privacy
+      # invariant above). Set true if you front 3100 with anything else.
       TOON_VERIFY_EPHEMERAL: ${RELAY_VERIFY_EPHEMERAL:-false}
-      # WS read-connection cap (relay#90): default 4096 (fd-shaped; docker's
-      # default nofile limit is far above this). The stock 100 made >100
-      # huddle listeners impossible.
+      # WS read-connection cap. Each costs one file descriptor.
       TOON_MAX_CONNECTIONS: ${RELAY_MAX_CONNECTIONS:-4096}
-      # ── Retention (relay#137) ──────────────────────────────────────────────
-      # NIP-40 expiry enforcement. ON by default: an event past its own
-      # `expiration` tag stops being served, and the reaper deletes it after
-      # the grace window. Devnet's kind:10032 announces carry a 600s TTL and
-      # are refreshed every 240s, so the live margin is 2.5 refresh periods —
-      # but the store and swap announce loops PAY for each republish, so a
-      # drained payment channel turns "a stale announce is still served" into
-      # "the node vanishes from discovery".
-      #
-      # RELAY_ENFORCE_EXPIRATION=false is the KILL SWITCH: set it in .env and
+      # Retention. With enforcement on, an event past its own NIP-40
+      # `expiration` stops being served and is deleted after the grace window.
+      # RELAY_ENFORCE_EXPIRATION=false is the kill switch — set it and
       # restart, and every still-stored event is served again. That recovery
-      # only works while the data is still on disk, which is what the reap
-      # grace (default 24h) buys. See docs/retention.md.
+      # only works while the data is still on disk, which is what the grace
+      # buys. See docs/retention.md.
       TOON_ENFORCE_EXPIRATION: ${RELAY_ENFORCE_EXPIRATION:-true}
       TOON_EXPIRATION_REAP_GRACE_SECONDS: ${RELAY_EXPIRATION_REAP_GRACE_SECONDS:-86400}
       TOON_EXPIRATION_REAP_INTERVAL_SECONDS: ${RELAY_EXPIRATION_REAP_INTERVAL_SECONDS:-3600}
-      # Operator blocklist: comma-separated 64-hex EVENT IDS this relay
-      # refuses to store or serve. The last resort for an event whose author
-      # key is gone, so neither NIP-01 replacement nor NIP-09 deletion can
-      # reach it. Ids only, never pubkeys — read the hazard section in
-      # docs/retention.md before adding one. Empty by default; every entry is
-      # logged at startup.
+      # Comma-separated 64-hex EVENT IDS this relay refuses to store or serve.
+      # The last resort for an event whose author key is gone. Ids only, never
+      # pubkeys — read docs/retention.md before adding one.
       TOON_BLOCKED_EVENT_IDS: ${RELAY_BLOCKED_EVENT_IDS:-}
-      # Free ephemeral write lane bounds (relay#129, POST /write-ephemeral —
-      # see connector.toml's `g.toon.relay.ephemeral` route). This lane has
-      # no payment gate, so these ARE its admission control; the relay's own
-      # conservative defaults apply if left unset.
+      # Free ephemeral lane bounds. This lane has no payment gate, so these
+      # ARE its admission control.
       TOON_EPHEMERAL_RATE_LIMIT: ${RELAY_EPHEMERAL_RATE_LIMIT:-200}
       TOON_EPHEMERAL_RATE_WINDOW_MS: ${RELAY_EPHEMERAL_RATE_WINDOW_MS:-10000}
       TOON_EPHEMERAL_MAX_BODY_BYTES: ${RELAY_EPHEMERAL_MAX_BODY_BYTES:-8192}
-    ports:
-      - '${BIND_ADDR:-127.0.0.1}:${RELAY_WS_PORT:-7100}:7100' # free reads (the env's TLS terminator fronts this)
+    volumes:
+      # events.db. Named so it has a name an operator can find and a stray
+      # `docker volume prune` — which reaps unused ANONYMOUS volumes — cannot
+      # take it.
+      - relay_data:/data
     expose:
-      - '3100' # paid-write store — PRIVATE (only the connector dials relay:3100)
+      - '3100' # writes — PRIVATE, only the connector dials this
+      - '7100' # reads  — fronted by Caddy
     healthcheck:
-      # 127.0.0.1, not localhost (relay#94): the write listener's host default
-      # is 0.0.0.0 (IPv4-only), but "localhost" inside the container can
-      # resolve to ::1, which nothing is listening on — wget then fails and
-      # the container flaps unhealthy despite the app being fine.
-      test:
-        ['CMD-SHELL', 'wget -q --spider http://127.0.0.1:3100/health || exit 1']
+      test: ['CMD-SHELL', 'wget -q --spider http://127.0.0.1:3100/health || exit 1']
       interval: 10s
       timeout: 5s
       retries: 12
@@ -153,11 +161,7 @@ services:
     restart: unless-stopped
 
 volumes:
-  # The claim journal. Named so a fresh mount inherits the image's uid-10001
-  # ownership of /app/state; see the connector service's `volumes:` above for
-  # why it must outlive the container.
+  caddy_data:
+  caddy_config:
   connector_state:
-
-networks:
-  default:
-    name: relay_deploy_net
+  relay_data:

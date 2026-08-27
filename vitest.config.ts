@@ -9,8 +9,11 @@ export default defineConfig({
     poolOptions: {
       forks: { minForks: 1, maxForks: 4 },
     },
-    include: ['packages/*/src/**/*.test.ts'],
-    exclude: ['**/node_modules/**', '**/dist/**', '**/__integration__/**'],
+    // The relay package's own suites, plus deploy/bundle.test.ts — the guard
+    // that reads the real deploy artifacts (it is not relay source, so it
+    // lives next to the files it guards).
+    include: ['packages/*/src/**/*.test.ts', 'deploy/*.test.ts'],
+    exclude: ['**/node_modules/**', '**/dist/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
@@ -19,7 +22,6 @@ export default defineConfig({
         '**/node_modules/**',
         '**/dist/**',
         '**/*.test.ts',
-        '**/__integration__/**',
         '**/index.ts',
       ],
     },

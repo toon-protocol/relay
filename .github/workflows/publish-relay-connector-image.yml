@@ -2,23 +2,26 @@ name: Publish relay-connector image
 
 # Builds the relay-connector image (deploy/Dockerfile: the published TOON
 # connector with this repo's deploy/connector.toml baked in) and pushes it to
-# GHCR. This is the payment-proxy image that runs in front of the relay app.
+# GHCR. This is the payment proxy that runs in front of the relay app; the
+# relay app image is published separately (publish-relay-image.yml →
+# ghcr.io/toon-protocol/relay).
 #
-# The relay app image is published separately (publish-relay-image.yml →
-# ghcr.io/toon-protocol/relay). This image bakes a PINNED connector; bump
-# deploy/Dockerfile's `ARG CONNECTOR_TAG` deliberately to adopt a newer one.
+# The image bakes a PINNED connector, and deploy/Dockerfile's
+# `ARG CONNECTOR_TAG` is the pin's single source of truth — which is why this
+# build deliberately passes NO CONNECTOR_TAG build-arg: what ships to GHCR is
+# exactly what that file names, with no second literal here to drift out of
+# sync with it. Baking the config alongside the pin is what makes the two move
+# in one reviewed commit, so a connector build can never reach a box ahead of
+# the config it needs. deploy/bundle.test.ts fails the build if a second copy
+# of the pin ever appears.
 #
-# That ARG default is the pin's single source of truth, which is why this build
-# deliberately does NOT pass a CONNECTOR_TAG build-arg (relay#113): what ships
-# to GHCR is exactly what that file names, with no second literal here to drift
-# out of sync with it. deploy/.env.example carries its own copy too, but only
-# for the local `docker compose up --build` path — it has no effect on this
-# workflow or on the published image. Since connector#755 the pin names a Rust
-# build (`rust-sha-<short>`); a plain semver tag is the retired TypeScript
-# node, which reads YAML and cannot start on deploy/connector.toml.
-#
-# `latest` is (re)published on every push to main; version tags (vX.Y.Z) also
-# publish semver tags for pinning, plus an immutable sha tag.
+# Tags, matching publish-relay-image.yml so the two images move together:
+#   latest  — every push to main
+#   release — every push to main; the moving tag each box's label-scoped
+#             Watchtower follows, so an auto-redeploy only ever follows a
+#             commit that landed on main and built here
+#   sha-*   — immutable, the pinning/rollback handle
+#   vX.Y.Z  — semver tags, on a version tag push
 
 on:
   push:
@@ -53,6 +56,7 @@ jobs:
           images: ghcr.io/${{ github.repository_owner }}/relay-connector
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=release,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
