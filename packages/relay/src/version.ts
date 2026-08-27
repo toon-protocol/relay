@@ -1,9 +1,16 @@
 /**
  * Package version, surfaced on `GET /health`.
  *
- * Kept in lockstep with `packages/relay/package.json` by
- * `version.test.ts`, which fails the build if the two ever disagree — a
- * `/health` that reports a version the image is not running is worse than
- * no version at all.
+ * `__RELAY_VERSION__` is replaced at build time with `package.json`'s
+ * `version` -- by tsup for the shipped bundle, and by vitest for the tests
+ * (both configs read the same file).
+ *
+ * It is injected rather than written down here because `changeset version`
+ * bumps `package.json` and nothing else. A hand-maintained copy in the source
+ * drifts the moment a release is cut, and then `/health` reports a version the
+ * image is not running -- which is exactly what happened before this: a
+ * hardcoded `0.1.0` served by a shipped `2.0.2`.
  */
-export const VERSION = '2.0.2';
+declare const __RELAY_VERSION__: string;
+
+export const VERSION: string = __RELAY_VERSION__;

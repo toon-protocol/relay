@@ -1,6 +1,9 @@
 import { defineConfig } from 'tsup';
+import { relayVersionDefine } from './version-define';
 
 export default defineConfig({
+  // Substitutes src/version.ts's placeholder from package.json.
+  define: relayVersionDefine,
   // Named entries so the launcher CLI lands at dist/cli.js (not
   // dist/launcher/cli.js) for the `relay` bin and the "./cli" export.
   entry: {

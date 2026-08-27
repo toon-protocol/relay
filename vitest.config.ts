@@ -1,6 +1,10 @@
 import { defineConfig } from 'vitest/config';
+import { relayVersionDefine } from './packages/relay/version-define';
 
 export default defineConfig({
+  // This config runs the relay package's suites, so it needs the same
+  // build-time version substitution that package's own configs apply.
+  define: relayVersionDefine,
   test: {
     globals: true,
     environment: 'node',
