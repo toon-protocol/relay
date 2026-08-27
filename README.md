@@ -129,7 +129,7 @@ websocat wss://$READ_HOST
 
 `POST /ilp` speaks binary ILP packets, so curl is not the tool for it — an
 arbitrary body is answered `400 invalid packet type byte`, which tells you the
-edge is up but nothing about payment. A well-formed *unpaid* packet is what
+edge is up but nothing about payment. A well-formed _unpaid_ packet is what
 gets the `402` payment terms back.
 
 For the real round trip — open a channel, sign a claim, write an event — use
@@ -195,6 +195,22 @@ the ephemeral lane never sees them.
 Whatever the relay answers — `200`, `404`, `422` — is delivered back to the
 payer as a fulfilled payment: the payer paid for an answer, not for the answer
 they hoped for. Only an unreachable app is a rejection.
+
+### How anyone finds it
+
+By its URL. This node publishes **no announce** and registers with nothing:
+the two hostnames in step 1 are the whole of its public identity.
+
+- Hand someone `READ_HOST` and they can read from it with any Nostr client.
+- Hand someone `EDGE_HOST` and `GET /ilp` tells them everything they need to
+  pay it — its ILP addresses, both endpoints, every route and price, the key a
+  packet is sealed to, and the chains and contracts it settles on. No account,
+  no registry, no prior knowledge of the protocol.
+
+There used to be a kind:10032 announce that carried a subset of those facts
+into the relay corpus on a timer. It is gone (connector ADR 0046 / 0050): a
+node that answers for itself at a known URL does not need to advertise, and
+the announce could go stale in ways the node itself never could.
 
 ### The privacy invariant
 

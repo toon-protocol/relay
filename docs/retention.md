@@ -15,10 +15,11 @@ narrowly as the job allows — see [Unretractable events](#unretractable-events)
 
 ## The problem this closed
 
-Discovery on TOON is kind:10032 node announces: which node terminates a
-destination, its BTP endpoint, its settlement addresses. Before this work the
-relay enforced none of the above, so an announce, once published, was served
-for as long as the database survived. Live devnet state at the time:
+TOON's discovery used to run on kind:10032 node announces — which node
+terminates a destination, its BTP endpoint, its settlement addresses — and
+before this work the relay enforced none of the above, so an announce, once
+published, was served for as long as the database survived. Live devnet state
+at the time:
 
 ```
 pk=915d2990  g.toon.relay      expired 2026-08-09  still served (186h past its own 10-minute TTL)
@@ -30,6 +31,14 @@ The first two said "I am valid for ten minutes" and were handed to clients a
 week later. The third is worse: a throwaway proof rig that advertised a
 loopback endpoint — an address that resolves to whatever machine _reads_ it —
 with no expiry and no surviving key.
+
+**That discovery mechanism is retired**, and this relay no longer publishes an
+announce of its own: a node is reached at its URL, and everything about its
+paid side is served on the connector's own `GET /ilp` (connector ADR 0046 /
+0050). None of that makes this page obsolete, because the relay still _stores
+and serves_ whatever its clients write — kind:10032 events among them — and
+these are the mechanisms that decide when any of it stops being served. The
+announce is simply the example that made the gap visible.
 
 ## NIP-40 — expiration
 
@@ -80,6 +89,9 @@ refreshing — compare `created_at` on two reads a few minutes apart:
 ```bash
 websocat wss://relay-ws.devnet.toonprotocol.dev <<< '["REQ","a",{"kinds":[10032]}]'
 ```
+
+(kind:10032 is a convenient probe because it is the kind most likely to carry
+an `expiration` in a devnet corpus, not because this node publishes one.)
 
 ## NIP-09 — deletion
 
