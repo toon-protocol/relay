@@ -1,6 +1,6 @@
 {
   "name": "@toon-protocol/relay",
-  "version": "2.0.2",
+  "version": "2.1.0",
   "description": "Nostr relay app: free NIP-01 WebSocket reads + an HTTP POST /write surface",
   "type": "module",
   "main": "./dist/index.js",
