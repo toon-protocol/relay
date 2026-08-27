@@ -31,20 +31,9 @@ export default tseslint.config(
       ],
     },
   },
-  // Relaxed rules for test files and examples
+  // Relaxed rules for test files
   {
-    files: [
-      '**/*.test.ts',
-      '**/*.test.tsx',
-      '**/*.stories.ts',
-      '**/*.stories.tsx',
-      '**/test-setup.ts',
-      '**/__integration__/**',
-      '**/__tests__/**',
-      '**/tests/**',
-      '**/e2e/**',
-      '**/examples/**',
-    ],
+    files: ['**/*.test.ts'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-non-null-assertion': 'warn',
@@ -61,8 +50,6 @@ export default tseslint.config(
       '**/*.js',
       '**/*.cjs',
       '**/*.mjs',
-      'archive/**',
-      '.cache/**',
       '.claude/**',
       '.sandcastle/**',
     ],

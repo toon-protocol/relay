@@ -7,20 +7,6 @@ dist/
 # ESLint cache (CI-cached via actions/cache; not meaningful to commit locally)
 .eslintcache
 
-# Turbo
-.turbo/
-
-# Akash deploy state — leases (mutable, contains DSEQ + provider) and the
-# ATOR probe's v3 hidden-service keypair. The secret key is sensitive — never
-# commit it. The .anyone hostname is derived from the public key; if that
-# directory is removed, redeploying ator-probe generates a fresh hostname.
-deploy/akash/leases.json
-deploy/akash/denylist.json
-deploy/akash/ator-probe-keys/
-
-# Vendored external sources cloned by build scripts
-.cache/
-
 # IDE
 .idea/
 .vscode/
@@ -35,32 +21,19 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
-.env.publish
-.env.oyster
-.env.oyster.runtime
-.env.sdk-e2e
 
 # Test
 coverage/
 **/data/*.db
-# Root-level log dir for e2e scripts (NFR18)
-e2e-real-hs-logs/
 
 # Logs
 *.log
 npm-debug.log*
 pnpm-debug.log*
 
-# Legal documents (private, not for version control)
-_bmad-output/legal/
-
 # Misc
 *.tgz
-.auto-bmad-tmp/
-
-# Python bytecode
-__pycache__/
-*.pyc
+*.backup
 
 # Claude Code local config (exclude skills/ which are project deliverables)
 .claude/*
@@ -69,31 +42,8 @@ __pycache__/
 # MCP config
 .mcp.json
 
-# Backup files
-*.backup
-
-# Images
-*.png
-*.jpg
-*.jpeg
-!_bmad-output/branding/**/*.png
-!_bmad-output/dev-signals/assets/**/*.png
-
-# Devbox local Nix environment (symlinks to /nix/store; devbox.json + devbox.lock are committed)
+# Devbox local Nix environment (devbox.json + devbox.lock are committed)
 .devbox/
 
 # Nix build output (symlink to /nix/store result)
 /result
-
-# Generated deployment files
-docker-compose-peer*.yml
-genesis.env
-.playwright-cli/
-wallet-*.yaml
-
-# Local e2e public-testnet dev wallet (never commit the seed phrase)
-.env.e2e.local
-*.e2e-wallet
-
-# Plugin MCP declaration must be committed (no secrets — just an npx command)
-!toon-plugin/.mcp.json

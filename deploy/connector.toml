@@ -1,364 +1,152 @@
 # =============================================================================
-# relay deploy — TOON connector (payment proxy) in front of the oblivious relay
+# The connector in front of this relay — the payment proxy.
 # =============================================================================
-# BAKED into the relay-connector image at /app/config/connector.toml (see
-# deploy/Dockerfile) — NOT bind-mounted. TLS is terminated by the deployment
-# environment (no Caddy in this compose).
+# Baked into the relay-connector image at /app/config/connector.toml (see
+# ./Dockerfile), so the image is a self-contained deployable: one artifact
+# carries both the connector build and the config it was validated against.
 #
-# Topology (one box, one app — the shape the devnet relay box runs):
+# This is the config the live TOON devnet relay runs. To run your own node,
+# change [node] to your hostnames and the prices to yours; everything else
+# can stay as it is.
 #
-#   payer ──POST /ilp (3000)──▶ connector ──POST /write────────────▶ relay:3100  (paid store; PRIVATE)
-#                                (terminates the payment)  ──POST /write-ephemeral▶ relay:3100  (free broadcast-only; PRIVATE)
-#   reader ──wss REQ (free)───────────────────────────────▶ relay:7100  (Nostr reads; PUBLIC)
-#
-# The second write leg (relay#129, ephemeral epic toon-meta#393 E2) is the
-# FREE ephemeral write lane: presence/typing kinds (20000-29999) ride a
-# `price = 0` route to a SEPARATE relay endpoint, because the same
-# `handler_url` cannot carry two prices (`ConflictingHandlerPrice`,
-# connector `route.rs:378-399`). It is still fully claim-gated at the client
-# edge like every other route here — "free" means price 0, not "skips the
-# connector" — and the relay itself always runs full schnorr verification on
-# this endpoint (no payment admission gate to lean on, unlike the paid
-# `g.toon.relay` route's ephemeral verify skip).
-#
-# This connector terminates `g.toon.relay` and delivers straight to the
-# payment-oblivious relay app, paid directly by clients — no hub in front of it,
-# no forwarding hop to reach it. The devnet fleet is two independent boxes on
-# this same one-box-one-app shape (this one, and a `store` box terminating
-# `g.toon.ario` on its own connector), with no peering, no forwarding and no fee
-# between them — the fleet's settled topology (toon-protocol/toon-meta#310, and
-# that repo's `docs/two-node-architecture.md` for the box-by-box write-up).
-# "The store leg" near the bottom of this file documents an OPTIONAL route an
-# operator can add to sell the store prefix too; the fleet does not run it.
-#
-# - The connector's client edge is `POST /ilp` (and `GET /ilp/btp` for a BTP
-#   session). A paid, claim-gated packet addressed to `g.toon.relay` terminates
-#   here and is delivered to `handler_url`; the relay's HTTP response comes back
-#   in the FULFILL. The relay never sees ILP or settlement.
-# - An UNPAID packet is answered with x402 terms and never reaches the relay.
-# - FREE READS do NOT come through here: readers hit the relay's Nostr WS read
-#   port (7100) directly.
-#
-# ── This is the RUST connector's TOML (ADR 0001/0009) ────────────────────────
-# It replaces the TypeScript connector's `connector.yaml`. Three consequences
-# worth reading before editing:
-#
+# Three things to know before editing:
 #   1. There is NO environment-variable layer. Every value comes from this
-#      file; `${...}` is not interpolated and `TOON_MNEMONIC` no longer does
-#      anything. Identity is a KEY FILE mounted into the container (below).
-#   2. The parser is `deny_unknown_fields`. A leftover YAML-ism — `nodeId`,
-#      `adminApi`, `selfAnnounce`, `settlementAddresses`, `nextHop` — is a hard
-#      config-load error, not a silently ignored key. That is deliberate.
-#   3. Startup is FAIL-CLOSED: a missing key file, an unwritable `state_dir`,
-#      or a settlement registry that will not resolve the token is exit 1 with
-#      the reason, never a degraded run.
-#
-# ── The kind:10032 self-announce, differently ────────────────────────────────
-# The old YAML carried a `selfAnnounce` block — a background daemon
-# (connector v3.28.0) that republished the node's IlpPeerInfo on a timer. That
-# field has no counterpart in the Rust connector's config crate and writing it
-# here fails config load. But connector#784 added a real, differently-shaped
-# equivalent, and this bundle's pin carries it: the optional `[announce]` section
-# below, plus a `connector announce` CLI verb — an operator ACTION, not a
-# daemon; the node never runs it on its own. See the commented `[announce]`
-# block below for what this route needs. Without it, a deployment can still
-# publish its own kind:10032 event as an ordinary paid write through this same
-# edge.
-#
-# The old YAML also claimed this node "ABSORBS the g.proxy apex role" and
-# forwarded `g.proxy.relay.store` / `g.proxy.store` to a `store-box` peer. Both
-# halves are stale: `g.proxy` was renamed to `g.toon`, and the live fleet is two
-# boxes each fronting its OWN app, with no apex absorbing anything. This bundle
-# is now exactly what it says on the tin — one connector in front of one relay.
-# See the commented block at the bottom for how to add the store leg.
+#      file. The only variable the binary reads is RUST_LOG.
+#   2. Every table is `deny_unknown_fields`. An unrecognised key — a typo, or
+#      one from an older connector — is a load failure that names it.
+#   3. Startup is FAIL-CLOSED. A missing key file, an unwritable state_dir, or
+#      a settlement chain it cannot reach is `exit 1` with the reason, never a
+#      degraded run.
 # =============================================================================
 
-# The client edge: POST /ilp, GET /ilp/btp, GET /ilp/identity, the operator
-# surface and /metrics all share this ONE port (there is no separate admin or
-# health port — the TypeScript node's 8080/8081 do not exist here). 0.0.0.0 so
-# the compose port publish reaches it.
+# The one listener. POST /ilp, GET /ilp (self-description), GET /ilp/btp,
+# GET /ilp/identity and the operator surface all share it — there is no
+# separate admin or health port. 0.0.0.0 so the compose network reaches it;
+# the port is never published to the host (see docker-compose.yml).
 client_edge_addr = "0.0.0.0:3000"
 
-# ── Durable claim state (connector#605) ──────────────────────────────────────
-# The append-only claim journals — `client-edge-claims.log`, `peer-claims.log` —
-# whose replay is what makes a channel's replay watermark survive a restart.
-# Without it every watermark lives in process memory, so a restart resets each
-# channel to "no claim ever seen" and a channel with no watermark accepts any
-# nonce: every claim a client already spent becomes free service again.
+# Durable claim state, on a named volume.
 #
-# MUST be a mounted volume, not a path in the container's writable layer — see
-# the `connector_state` named volume in docker-compose.yml. The image ships
-# /app/state owned by uid 10001, which is what a fresh NAMED volume inherits on
-# first mount; a host bind mount inherits nothing and needs `chown 10001:10001`.
+# The append-only claim journals live here, and replaying them is what makes a
+# channel's replay watermark survive a restart. Without a volume, every
+# watermark resets on restart, a channel with no watermark accepts any nonce,
+# and every claim a payer already spent buys service again.
 state_dir = "/app/state"
 
-# ── Signer (ADR 0012) ────────────────────────────────────────────────────────
-# A LOCATION, never the key itself. 32 raw bytes or 64 hex characters encoding a
-# secp256k1 secret key. This is the connector's own ILP signing identity — it
-# holds no money and should be fresh random material per box:
+# ── Identity ─────────────────────────────────────────────────────────────────
+# A LOCATION, never the key itself: 64 hex characters holding a secp256k1
+# secret key. This is the connector's own ILP signing identity — it holds no
+# money, so it is fresh random material per box:
 #
-#   openssl rand -hex 32 > deploy/signer.key
-#   chmod 600 deploy/signer.key
-#   chown 10001:10001 deploy/signer.key     # the image runs as uid 10001
+#   openssl rand -hex 32 > signer.key
+#   chmod 600 signer.key && sudo chown 10001:10001 signer.key
 #
 # A bind-mounted file keeps its HOST ownership inside the container, so a
-# root-owned 0600 key is unreadable to the process that needs it and the
-# container restart-loops on "Permission denied". The chown is the fix; do not
-# reach for chmod 644.
+# root-owned key is unreadable to uid 10001 and the container restart-loops on
+# "Permission denied". The chown is the fix; `chmod 644` is not.
 [signer]
 key_file = "/app/data/signer.key"
 
-# ── Routes ───────────────────────────────────────────────────────────────────
-# Static, explicit, durable (ADR 0006). A packet matching `prefix` is delivered
-# to the payment-oblivious app at `handler_url`.
+# ── What this node says about itself ─────────────────────────────────────────
+# The facts a node cannot introspect: from inside a container it sees
+# 0.0.0.0:3000 and a private network, never its own public name. They are
+# served, free and unauthenticated, on `GET /ilp` — a stranger with this URL
+# needs nothing else to transact with it.
+#
+# Replace all three with your own hostnames.
+[node]
+addresses = ["g.toon.relay", "g.toon.relay.ephemeral"]
+http_endpoint = "https://proxy.relay.devnet.toonprotocol.dev/ilp"
+btp_endpoint = "wss://proxy.relay.devnet.toonprotocol.dev/ilp/btp"
+
+# ── Paid writes ──────────────────────────────────────────────────────────────
 [[routes]]
 prefix = "g.toon.relay"
 
-# `/write`, NOT the bare origin. `HttpAppClient::deliver` POSTs to exactly this
-# URL and the relay app serves only `POST /write` and `GET /health`; a bare
-# `http://relay:3100` comes back F99 "app declined the delivery with HTTP 404",
-# which is what this route did the first time it was deployed against the Rust
-# connector (connector#492).
-#
-# A sender's own envelope `target` is resolved strictly BENEATH this path, never
-# in place of it (connector#596, ADR 0025) — so nobody can address `/health`, or
-# anywhere else, through this route at this route's price.
+# `/write`, not the bare origin: the connector POSTs to exactly this URL, and
+# the relay serves only /write, /write-ephemeral, /health and /metrics. A
+# sender's own envelope target resolves strictly BENEATH this path, so nobody
+# can address /health through this route at this route's price.
 handler_url = "http://relay:3100/write"
 
-# 1 micro-USDC per relay write, in the smallest unit of the settlement asset
-# (6-decimal USDC everywhere — ADR 0010). Owner decision, 2026-08-04: the
-# route carries the buzz huddles workload, which is one paid write per audio
-# frame at 49 fps, and a per-frame price of 0.001 USDC (`1000`) is not a
-# coherent figure for that. A general-write price is the wrong frame for this
-# route.
-#
-# `price` is REQUIRED on a terminated route (connector#520) — it is never
-# silently free; write `price = 0` if free is what you mean. Keep it non-zero to
-# keep the x402 greeting armed (connector#552/#557): a devnet box booted with a
-# zero price was a free gateway that looked configured.
+# 1 micro-USDC per write, in the settlement asset's smallest unit (6-decimal
+# USDC). A price is REQUIRED on a terminated route — it is never silently
+# free — and keeping it non-zero is what keeps the x402 greeting armed.
 price = 1
 
-# `transport` is deliberately left at its default (`both`: HTTP one-shot AND BTP
-# session). Transport is per-connector POLICY, not a protocol constant
-# (connector#701) — the devnet relay box pins `transport = "btp"` on its own
-# `g.toon.relay` route because huddles hold a persistent 49 fps session that
-# amortizes the handshake and claim round trip. A drop-in operator without
-# that traffic shape should not force every one-shot buyer through a session,
-# so this bundle ships the default. Set `transport = "btp"` here if you are
-# running huddles.
+# The devnet relay pins BTP because its heaviest client holds a persistent
+# session at 49 frames/second, where a session amortizes the handshake and
+# claim round trip. Transport is per-connector policy, not a protocol
+# constant: drop this line to serve one-shot HTTP buyers too.
+transport = "btp"
 
-# ── Free ephemeral write lane (relay#129, ephemeral epic toon-meta#393 E2) ───
-# A SEPARATE route, not a second alias for the price above: the same
-# `handler_url` cannot carry two prices (`ConflictingHandlerPrice`, connector
-# `route.rs:378-399`), so presence/typing traffic needs its own prefix
-# terminating at its own relay endpoint.
+# ── Free ephemeral writes (presence, typing) ─────────────────────────────────
+# A separate route, not a second alias: the same handler_url cannot carry two
+# prices, so free traffic needs its own prefix and its own relay endpoint.
 [[routes]]
 prefix = "g.toon.relay.ephemeral"
 
-# The relay's SECOND write surface (write-ephemeral-handler.ts). It accepts
-# ONLY ephemeral kinds (NIP-16, 20000-29999) — anything else is a 400 — never
-# stores, and always runs FULL schnorr verification: this route has no
-# payment admission gate the way `g.toon.relay` above does, so the relay
-# cannot lean on payment as spam defense the way write-handler.ts's
-# paid-ephemeral verify skip does. Bounded by a per-key rate limit and a
-# request-body size cap on the relay side (relay#129).
+# The relay's second write surface. It accepts ONLY ephemeral kinds
+# (20000-29999), never stores, and always runs full signature verification —
+# this route has no payment gate to lean on, unlike the paid one above.
 handler_url = "http://relay:3100/write-ephemeral"
 
-# EXPLICITLY free. `price` is REQUIRED on a terminated route (connector#520)
-# — it is never silently free — so `price = 0` states the intent plainly
-# rather than leaving it implicit. This is the one route on this bundle
-# where zero is the deliberate, documented price: presence/typing is
-# "pay-for-what-persists" traffic that never persists (buzz ADR 0001,
-# toon-meta#393), so charging it a per-write fee was never the design.
+# Explicitly free. Presence and typing are pay-for-what-persists traffic that
+# never persists, so charging per write was never the design. `price = 0`
+# states that rather than leaving it implicit — the parser requires a price
+# either way.
 price = 0
 
-# ── (Optional) Discovery announce (connector#784) ────────────────────────────
-# Commented out deliberately: every field below is a fact this node cannot
-# introspect about itself (its own PUBLIC hostname, never inferrable from
-# inside a container behind TLS termination), so a baked default would be
-# either wrong or somebody else's. Fill in your own before uncommenting.
+# ── Getting paid ─────────────────────────────────────────────────────────────
+# With this section, anyone who opens a channel on chain can pay this node
+# with no config edit, and the accepted claim's watermark is journaled under
+# state_dir. Without it, this node has a record of no channel and refuses
+# every claim at its edge as unknown.
 #
-# Publishing is a one-shot CLI action, never automatic on boot — run it by
-# hand, or wire your own cron/sidecar, whenever you want the announce
-# refreshed:
+# Fail-closed at STARTUP: the connector resolves token_address through the
+# registry at contract_address and reads the token's own decimals(). A wrong
+# RPC, a registry that does not answer, or a decimals mismatch is exit 1
+# before it serves anything. Every chain below is one more endpoint this node
+# must reach before it will boot.
 #
-#   connector announce --config /app/config/connector.toml <through-url> \
-#     --to <that node's terminating prefix>
-#
-# The positional argument is the relay edge you publish THROUGH, and you pay
-# it like any other client — which is what `pay_channel` below is for. `--to`
-# is the ILP address that terminates at THAT node's relay write ingress, and
-# it is required (pass it every time, or write it once as `publish_to` below):
-# it is a fact about somebody else's node, and the through-URL's x402 greeting
-# cannot supply it — the greeting's `payTo` only echoes back whichever
-# destination the asking packet already named. On this fleet every relay box
-# terminates `g.toon.relay`, so the address you pass happens to read the same
-# as this node's own `addresses` — it is still the OTHER node's route.
-#
-# Leave `pay_channel` out and the config still loads; the announce is what
-# fails, naming it. Same for the destination: a missing one is an announce-time
-# error, not a config-load error.
-#
-# Two keys, both already configured above and neither leaving the box: the
-# event itself is signed by [signer] (this node's ILP identity), and the claim
-# that pays for the write by [settlement.evm.key] (the on-chain participant of
-# the channel it pays from).
-#
-# [announce]
-# # Both routes this box terminates ride along in one announce (relay#129):
-# # the paid write and the free ephemeral lane are separate prefixes, so
-# # clients need both addresses to discover the free lane at all.
-# addresses     = ["g.toon.relay", "g.toon.relay.ephemeral"]
-# # This box's OWN public https endpoint for POST /ilp (your TLS terminator's
-# # name for the edge port above), not a container-network address.
-# http_endpoint = "https://<your-public-hostname>/ilp"
-# btp_endpoint  = "wss://<your-public-hostname>/ilp/btp"
-# # Set only if this box serves free reads (it does, by default — see the
-# # topology diagram at the top of this file): your TLS terminator's own name
-# # for the relay's WS read port (7100 in docker-compose.yml), never this
-# # route's handler_url — that is the relay's PRIVATE write ingress, not a
-# # read surface, and advertising it here would publish an unauthenticated
-# # write door to the whole network.
-# relay_url     = "wss://<your-public-hostname-for-reads>"
-# # The channel this node PAYS the through-URL from — a channel it opened, not
-# # one it receives on, so it is deliberately not a [[client_channels]] row.
-# pay_channel   = "0x<32-byte channel id>"
-# # The default `--to`: the through-node's terminating prefix, saved here so a
-# # routine refresh does not have to retype it. Omit it and every invocation
-# # must pass `--to`.
-# publish_to    = "g.toon.relay"
-
-# ── Settlement (ADR 0009, connector#542/#556) ────────────────────────────────
-# What makes this node able to ACCEPT money. With this section, an unaffiliated
-# buyer who opens a channel on chain pays this node with no config edit
-# (connector#611) and the accepted claim's watermark is journaled under
-# `state_dir` above. WITHOUT it — and without a `[[client_channels]]` table
-# naming every channel by hand — this node has a record of no channel, so every
-# claim at its client edge is refused as unknown and every channel operation on
-# the operator surface answers 503.
-#
-# FAIL-CLOSED, and it is worth knowing which way: startup calls
-# `EvmSettlementBackend::connect`, which resolves `token_address` through the
-# registry at `contract_address` and reads the token's own `decimals()`. A wrong
-# RPC URL, a registry that does not answer `getTokenNetwork(token)`, or a
-# `decimals` that disagrees with the chain is an exit 1 AT STARTUP, not a
-# runtime surprise (connector#564/#566). Every chain table you add here is one
-# more endpoint this node must reach before it will boot at all.
-#
-# The values below are the SHARED TOON DEVNET's deployment — the same registry,
-# token and decimals both live boxes settle through. A claim this node accepts
-# is written against the channel the buyer opened on those contracts, so a node
-# pointed at a different registry cannot resolve it. Point them elsewhere only
-# if you are running your own fleet end to end.
+# These values are the shared TOON devnet's deployment. Point them elsewhere
+# only if you are running your own fleet end to end.
 [settlement.evm]
 rpc_url = "https://base-sepolia-rpc.publicnode.com"
-# The deployed TokenNetworkRegistry (a factory, not a channel contract).
 contract_address = "0x8263BdD4eB4862395Cb4ef5dA5d637F4b047Eea1"
-# 6-decimal devnet USDC — the fleet-wide settlement asset (ADR 0010).
 token_address = "0x49beE1Bca5d15Fb0963117923403F9498119a9Ce"
 decimals = 6
 
+# Deliberately NOT the [signer] key above. That one is per-box random material
+# with no funds; this one is the identity clients open their channels AGAINST,
+# so provision it from a seed you can reproduce, not from `openssl rand`. The
+# TOON fleet derives it at NIP-06 m/44'/1237'/0'/0/0 — the NOSTR coin type,
+# not the standard m/44'/60'. Deriving at m/44'/60' yields a valid address no
+# channel was ever opened against; verify the derived address BEFORE the first
+# `up -d`.
 [settlement.evm.key]
-# Deliberately NOT the [signer] key above. The signer key is per-box random
-# material with no funds; this one signs transactions that spend real testnet
-# value, and it is the identity clients open their channels against — so it is
-# the one to provision from a seed you can reproduce, not from `openssl rand`.
-#
-# The TOON fleet derives it from its BIP-39 mnemonic at NIP-06 path
-# m/44'/1237'/0'/0/0 — the NOSTR coin type, not the standard m/44'/60'. That is
-# the historical reason the old `TOON_MNEMONIC` env var existed; there is no env
-# layer now, so derive it outside the container and mount the resulting 64-hex
-# secret here. Deriving at m/44'/60'/0'/0/0 instead yields a valid address that
-# no channel was ever opened against, and a node that cannot resolve a single
-# one — so verify the derived address BEFORE the first `up -d`.
-#
-#   chmod 600 deploy/settlement.key && chown 10001:10001 deploy/settlement.key
 key_file = "/app/data/settlement.key"
 
-# ── (Optional) Solana settlement ─────────────────────────────────────────────
-# The live TOON fleet settles on BOTH chains, because a node that accepts claims
-# is a counterparty on whichever chain the BUYER chose — an EVM-only node
-# refuses every Solana-paid write that reaches it. It is commented out here only
-# because it is a second fail-closed dependency (another reachable RPC, another
-# key file) that a first bring-up does not need. Uncomment both tables together
-# and provision the key, or leave it off and accept EVM-only.
-#
-# [settlement.solana]
-# rpc_url = "https://api.devnet.solana.com"
-# program_id = "2aEVJ8koKD8LTZrLRSGtAtU7LBt4e7QjjCgf1kzQ7Rip"
-# token_address = "xyc5J8MgKFiEN13PnfftdXxUzYH34FEvw1LCrFwN7in"
-# decimals = 6
-#
-# [settlement.solana.key]
-# # A 32-byte ed25519 seed as 64 hex characters. The fleet derives it from the
-# # same mnemonic at m/44'/501'/0'/0'.
-# key_file = "/app/data/settlement-solana.key"
+# A node that accepts claims is a counterparty on whichever chain the BUYER
+# chose, so an EVM-only node refuses every Solana-paid write that reaches it.
+# The devnet relay accepts both. Drop these two tables (and the key mount in
+# docker-compose.yml) to run EVM-only.
+[settlement.solana]
+rpc_url = "https://api.devnet.solana.com"
+program_id = "2aEVJ8koKD8LTZrLRSGtAtU7LBt4e7QjjCgf1kzQ7Rip"
+token_address = "xyc5J8MgKFiEN13PnfftdXxUzYH34FEvw1LCrFwN7in"
+decimals = 6
 
-# ── (Optional) Operator surface (ADR 0008) ───────────────────────────────────
-# Omitted deliberately: enabling it means committing — or securely injecting —
-# a real bearer_token and write_keys, which a BAKED config cannot do safely.
-# Every read (peers, routes, channels, claims, exposure, identity, the audit
-# log, GET /metrics) needs the token; every write (POST /packets) needs an RFC
-# 9421 signature from a key on `write_keys`, and a bearer token is never
-# sufficient to move value. An [operator] section with an empty bearer_token or
-# no write_keys is a refuse-to-start error, never a silently open surface.
-#
-# If you want /metrics on this node, add the section — and stop baking this file
-# into the image, or bind-mount over it.
-#
-# [operator]
-# bearer_token = "<openssl rand -hex 32>"
-# write_keys = ["<64 hex chars: an ed25519 public key>"]
+[settlement.solana.key]
+# A 32-byte ed25519 seed as 64 hex characters; the fleet derives it from the
+# same mnemonic at m/44'/501'/0'/0'.
+key_file = "/app/data/settlement-solana.key"
 
-# ── (Optional) The store leg ─────────────────────────────────────────────────
-# The relay box does not front a store app; the store box does (see the `store`
-# repo's own deploy bundle), and the two do not peer — no forwarding hop and no
-# fee between them, per the topology note at the top of this file. If you want
-# this edge to sell the store route too, there are exactly two shapes:
-#
-#   1. TERMINATE at the store box's public TLS front. The link between two TOON
-#      nodes is public and TLS-terminated by each box's own nginx — the same way
-#      any client on the open internet reaches it. This puts the store leg on
-#      the same claim-gated client-edge path the relay route above uses.
-#
-#      [[routes]]
-#      prefix = "g.toon.ario"
-#      handler_url = "https://proxy.ario.devnet.toonprotocol.dev/store"
-#      price = 1000
-#
-#      An alias at a second prefix must carry the SAME price: a shared
-#      handler_url reachable at two prices is refused at load, because the
-#      cheaper door would take every packet.
-#
-#      [[routes]]
-#      prefix = "g.toon.store"
-#      handler_url = "https://proxy.ario.devnet.toonprotocol.dev/store"
-#      price = 1000
-#
-#   2. FORWARD over a BTP peering. Needs `peer_expose`, a `[[peers]]` entry with
-#      a wss:// endpoint and a shared `credential`, a `[[peer_channels]]` row
-#      binding it to a channel, and a route naming the peer. Note that a
-#      forwarded route carries BOTH numbers, and they answer different questions
-#      (ADR 0028): `price` is what THIS edge charges the client, `fee` is what
-#      this hop retains, and `price - fee` is what reaches the peer. `price` is
-#      REQUIRED — a forwarded route is never silently free.
-#
-#      peer_expose = "btp"
-#
-#      [[peers]]
-#      id = "store"                                    # both operators write the
-#      endpoint = "wss://store.example.net:443/ilp/btp" # SAME string here
-#      credential = { secret = "<openssl rand -hex 32>" }
-#
-#      [[peer_channels]]
-#      peer_id = "store"
-#      channel_id = "0x..."
-#      counterparty_key = "0x..."
-#      chain_id = 84532
-#      token_network = "0x..."
-#
-#      [[routes]]
-#      prefix = "g.toon.store"
-#      peer_id = "store"
-#      price = 1003
-#      fee = 3
+# ── (Optional) The operator surface ──────────────────────────────────────────
+# Omitted here: it is off unless configured, and every read (peers, routes,
+# channels, claims, /metrics) needs a bearer token while every write needs an
+# RFC 9421 signature. Both are credentials, and this file is BAKED into a
+# published image — so enable it by mounting the two file-valued forms
+# (`bearer_token_file` / `write_keys_file`) and bind-mounting over this config
+# rather than baking the values. A section with an empty token is a
+# refuse-to-start, never a silently open surface.

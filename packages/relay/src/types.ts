@@ -2,7 +2,7 @@
  * Configuration options for the Nostr relay.
  */
 export interface RelayServerConfig {
-  /** Port to listen on (default: 7000) */
+  /** Port to listen on (default: 7100) */
   port: number;
   /** Host/IP to bind to (default: '0.0.0.0'). Set to '127.0.0.1' for hidden service mode. */
   host?: string;
@@ -39,7 +39,7 @@ export interface RelayServerConfig {
  * Default relay configuration values.
  */
 export const DEFAULT_RELAY_CONFIG: Required<RelayServerConfig> = {
-  port: 7000,
+  port: 7100,
   host: '0.0.0.0',
   maxConnections: 4096,
   maxSubscriptionsPerConnection: 20,

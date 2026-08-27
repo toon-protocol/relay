@@ -2,15 +2,16 @@
  * Unit tests for the write handler.
  *
  * The handler accepts an event-as-JSON, verifies only the event signature
- * for integrity, and stores the event. No payment headers are read or
- * echoed -- the terminating connector asserts nothing about payment to this
- * relay (`toon-protocol/connector` ADR 0036). These tests cover:
+ * for integrity, stores the event, and records the payment the terminating
+ * connector states it verified (`toon-protocol/connector` ADR 0040,
+ * relay#133). These tests cover:
  *
  * - valid signed event -> 200, event stored, onStored called exactly once
  * - malformed / missing body -> 400
  * - invalid signature (non-dev) -> 422; same bad event with devMode -> 200
- * - retired X-TOON-* headers from a stale caller -> read-and-ignored, never
- *   echoed back
+ * - a stated X-TOON-* triple -> echoed back on the 200 and logged
+ * - absent / partial / malformed X-TOON-* -> no `payment` key, never a
+ *   rejection (absence means "this hop was not paid", not "unpaid")
  * - per-write console logging is OFF by default and opt-in via logWrites
  *   (per-event console I/O is write-path tail jitter, relay#85)
  */
@@ -80,13 +81,12 @@ describe('Write handler', () => {
       { event }
     );
 
-    // Then: 200 with the event id (no payment fields -- nothing to echo)
+    // Then: 200 with the event id, and no payment key -- this delivery
+    // carried no connector statement to record
     expect(response.status).toBe(200);
     const body = (await response.json()) as Record<string, unknown>;
     expect(body['eventId']).toBe(event.id);
-    expect(body['payer']).toBeUndefined();
-    expect(body['amount']).toBeUndefined();
-    expect(body['chain']).toBeUndefined();
+    expect(body['payment']).toBeUndefined();
     expect(typeof body['storedAt']).toBe('number');
 
     // And: the event is present in the store
@@ -169,31 +169,101 @@ describe('Write handler', () => {
     expect(onStored).toHaveBeenCalledOnce();
   });
 
-  it('ignores retired X-TOON-* headers from a stale caller (no successor header, connector ADR 0036)', async () => {
+  it('echoes the payment the connector stated it verified (ADR 0040, relay#133)', async () => {
     // Given: a valid signed event
     const eventStore = new InMemoryEventStore();
     const event = createValidSignedEvent();
 
-    // When: the caller still sends the retired headers (e.g. a stale
-    // terminator build)
+    // When: the terminating connector states the triple for a payment it
+    // verified at its own client edge
     const response = await makeRequest(
       { eventStore, devMode: false },
       { event },
       {
-        'X-TOON-Payer': '0xpayer',
-        'X-TOON-Amount': '5500',
-        'X-TOON-Chain': '31337',
+        'X-TOON-Payer': `evm:0x${'a'.repeat(64)}`,
+        'X-TOON-Amount': '1',
+        'X-TOON-Chain': 'evm',
       }
     );
 
-    // Then: 200, stored, and the response echoes none of them
+    // Then: 200, stored, and the statement is recorded verbatim
     expect(response.status).toBe(200);
     const body = (await response.json()) as Record<string, unknown>;
     expect(body['eventId']).toBe(event.id);
-    expect(body['payer']).toBeUndefined();
-    expect(body['amount']).toBeUndefined();
-    expect(body['chain']).toBeUndefined();
+    expect(body['payment']).toEqual({
+      payer: `evm:0x${'a'.repeat(64)}`,
+      amount: '1',
+      chain: 'evm',
+    });
     expect(eventStore.get(event.id)?.id).toBe(event.id);
+  });
+
+  it('records a Solana payer under its own namespace', async () => {
+    const eventStore = new InMemoryEventStore();
+    const event = createValidSignedEvent();
+
+    const response = await makeRequest(
+      { eventStore, devMode: false },
+      { event },
+      {
+        'X-TOON-Payer': 'solana:9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
+        'X-TOON-Amount': '1000',
+        'X-TOON-Chain': 'solana',
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body['payment']).toEqual({
+      payer: 'solana:9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
+      amount: '1000',
+      chain: 'solana',
+    });
+  });
+
+  it('discards a partial or inconsistent statement whole, and never rejects for it', async () => {
+    // Every one of these is a statement the relay must not half-record: a
+    // missing leg, a chain that disagrees with the payer's namespace, a
+    // non-decimal amount, and the TypeScript-era shapes relay#122 was right
+    // to distrust (a bare address, a numeric chain id).
+    const cases: Record<string, string>[] = [
+      { 'X-TOON-Payer': `evm:0x${'a'.repeat(64)}` },
+      { 'X-TOON-Payer': `evm:0x${'a'.repeat(64)}`, 'X-TOON-Amount': '1' },
+      {
+        'X-TOON-Payer': `evm:0x${'a'.repeat(64)}`,
+        'X-TOON-Amount': '1',
+        'X-TOON-Chain': 'solana',
+      },
+      {
+        'X-TOON-Payer': `evm:0x${'a'.repeat(64)}`,
+        'X-TOON-Amount': '1.5',
+        'X-TOON-Chain': 'evm',
+      },
+      {
+        'X-TOON-Payer': '0xpayer',
+        'X-TOON-Amount': '5500',
+        'X-TOON-Chain': '31337',
+      },
+    ];
+
+    for (const headers of cases) {
+      const eventStore = new InMemoryEventStore();
+      const event = createValidSignedEvent();
+
+      const response = await makeRequest(
+        { eventStore, devMode: false },
+        { event },
+        headers
+      );
+
+      // The write still succeeds -- the payment gate is upstream, and this
+      // handler never turns a bad statement into a refusal.
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as Record<string, unknown>;
+      expect(body['eventId']).toBe(event.id);
+      expect(body['payment']).toBeUndefined();
+      expect(eventStore.get(event.id)?.id).toBe(event.id);
+    }
   });
 
   it('broadcasts but never stores an ephemeral event (NIP-16, connector#685)', async () => {
@@ -414,7 +484,31 @@ describe('Write handler', () => {
       expect(logSpy).toHaveBeenCalledOnce();
       const logLine = String(logSpy.mock.calls[0]?.[0]);
       expect(logLine).toContain(event.id);
+      // No connector statement on this delivery -- nothing to attribute
       expect(logLine).not.toMatch(/payer|amount|chain/i);
+    });
+
+    it('carries the stated payment on the log line when there is one', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const eventStore = new InMemoryEventStore();
+      const event = createValidSignedEvent();
+
+      const response = await makeRequest(
+        { eventStore, devMode: false, logWrites: true },
+        { event },
+        {
+          'X-TOON-Payer': `evm:0x${'b'.repeat(64)}`,
+          'X-TOON-Amount': '1',
+          'X-TOON-Chain': 'evm',
+        }
+      );
+
+      expect(response.status).toBe(200);
+      const logLine = String(logSpy.mock.calls[0]?.[0]);
+      expect(logLine).toContain(event.id);
+      expect(logLine).toContain(`payer=evm:0x${'b'.repeat(64)}`);
+      expect(logLine).toContain('amount=1');
+      expect(logLine).toContain('chain=evm');
     });
   });
 

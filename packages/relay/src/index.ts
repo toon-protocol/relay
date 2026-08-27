@@ -63,14 +63,6 @@ export {
   readOpenFilesSoftLimit,
 } from './websocket/index.js';
 
-// TOON encoding/decoding
-export {
-  encodeEventToToon,
-  decodeEventFromToon,
-  ToonEncodeError,
-  ToonDecodeError,
-} from './toon/index.js';
-
 // Subscriber
 export type { RelaySubscriberConfig } from './subscriber/index.js';
 export { RelaySubscriber } from './subscriber/index.js';
@@ -113,6 +105,10 @@ export type {
   WriteHandler,
   WriteHandlerConfig,
 } from './launcher/handlers/write-handler.js';
+
+// The connector's payment statement, as read off a delivery (ADR 0040)
+export { readPaymentAttribution } from './launcher/handlers/payment-attribution.js';
+export type { PaymentAttribution } from './launcher/handlers/payment-attribution.js';
 
 // Ephemeral write handler (POST /write-ephemeral surface, relay#129)
 export {

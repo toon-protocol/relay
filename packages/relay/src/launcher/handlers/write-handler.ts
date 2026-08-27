@@ -7,11 +7,15 @@
  * This handler is intentionally decoupled from any payment layer: it contains
  * no claim/settlement/ILP logic and imports none of it. Payment validation is
  * the upstream terminator's concern; by the time a request reaches this
- * surface it is already proven paid. The terminating connector asserts
- * nothing about that payment to this relay -- no payer, amount, or chain
- * (`toon-protocol/connector` ADR 0036) -- so the handler has nothing to read
- * or echo and asserts only what it can honestly know: the event id and that
- * this handler accepted it.
+ * surface it is already proven paid.
+ *
+ * What the terminator DOES state, it records. A terminating connector states
+ * `X-TOON-Payer` / `X-TOON-Amount` / `X-TOON-Chain` on a delivery whose
+ * payment it verified at its own client edge (`toon-protocol/connector`
+ * ADR 0040, relay#133); the handler reads them, echoes a well-formed triple
+ * back on the 200, and treats their absence as "this hop was not the one
+ * paid" -- NEVER as "unpaid". See payment-attribution.ts for the contract and
+ * for why the same header names were right to distrust before ADR 0040.
  *
  * Flow:
  * 1. Parse JSON body `{ event }` -> 400 on malformed/missing event
@@ -35,7 +39,8 @@
  * 4. Fire the optional onStored callback (ephemeral events included: it is
  *    the live-broadcast hook, and ephemeral events exist only as that
  *    broadcast)
- * 5. Respond 200 with the event id and storedAt timestamp
+ * 5. Respond 200 with the event id, storedAt timestamp, and -- when the
+ *    connector stated one -- the payment it attributed the write to
  *
  * @module
  */
@@ -44,6 +49,7 @@ import type { Context } from 'hono';
 import type { NostrEvent } from 'nostr-tools/pure';
 import { verifyEventSignature, verifyEventId } from '../../crypto/index.js';
 import type { EventStore } from '../../storage/index.js';
+import { readPaymentAttribution } from './payment-attribution.js';
 
 /**
  * Whether `kind` is ephemeral per NIP-16 (20000 <= kind < 30000): delivered
@@ -143,8 +149,16 @@ export function createWriteHandler(config: WriteHandlerConfig): WriteHandler {
 
       const event = body.event;
 
+      // The connector's own statement about the payment it verified for this
+      // delivery, if it made one (ADR 0040). Read before verification so the
+      // log line below carries it even for a write that goes on to fail.
+      const payment = readPaymentAttribution(c);
+
       if (logWrites) {
-        console.log(`[write] event=${event.id} handler=write`);
+        const attribution = payment
+          ? ` payer=${payment.payer} amount=${payment.amount} chain=${payment.chain}`
+          : '';
+        console.log(`[write] event=${event.id} handler=write${attribution}`);
       }
 
       // --- Verify event signature (integrity only; skipped in devMode) ---
@@ -178,10 +192,15 @@ export function createWriteHandler(config: WriteHandlerConfig): WriteHandler {
       config.onStored?.(event);
 
       // --- Build response ---
+      //
+      // `payment` is present only when the connector stated a well-formed
+      // triple; the key is omitted entirely otherwise, so a client can never
+      // read a null/empty payer as an assertion that nobody paid.
       return c.json(
         {
           eventId: event.id,
           storedAt: Math.floor(Date.now() / 1000),
+          ...(payment ? { payment } : {}),
         },
         200
       );

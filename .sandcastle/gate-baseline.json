@@ -1,5 +1,5 @@
 {
-  "_schemaNote": "No formal JSON Schema for this file (informal shape — see method below); deliberately not using the \"$schema\" key so editors don't try to fetch it as a real schema URL. The flat top-level `correctness`/`speed`/`performance`/`regressionTolerancePercent` keys are the machine-read contract that the CI guards in .github/workflows/ci.yml and agent-image.yml consume — keep them stable. The `gateShape`/`gateCorrectness`/`gateSpeed`/`gatePerformance`/`reproducibilityNotes`/`environment` sections are the richer human-readable capture (relay#74) layered on top; they add detail and do not change the machine contract.",
+  "_schemaNote": "No formal JSON Schema for this file (informal shape \u2014 see method below); deliberately not using the \"$schema\" key so editors don't try to fetch it as a real schema URL. The flat top-level `correctness`/`speed`/`performance`/`regressionTolerancePercent` keys are the machine-read contract that the CI guards in .github/workflows/ci.yml and agent-image.yml consume \u2014 keep them stable. The `gateShape`/`gateCorrectness`/`gateSpeed`/`gatePerformance`/`reproducibilityNotes`/`environment` sections are the richer human-readable capture (relay#74) layered on top; they add detail and do not change the machine contract.",
   "schemaVersion": 1,
   "repo": "relay",
   "capturedAt": "2026-07-23",
@@ -14,33 +14,33 @@
   "method": [
     "correctness: `npx eslint . -f json` (sum of errorCount/warningCount across all files)",
     "and `pnpm run typecheck` (count of `error TS` lines) run on packages/*/src against",
-    "commit 2c9b3fa4 — the same commit this file was added on top of, i.e. the gate SHAPE",
+    "commit 2c9b3fa4 \u2014 the same commit this file was added on top of, i.e. the gate SHAPE",
     "this baseline describes already includes the fixes from relay#75 (typecheck wired into",
     "CI, eslint --max-warnings enforced, continue-on-error removed). Correctness counts were",
     "0 eslint errors / 57 eslint warnings (pre-existing `any` usage in test files) / 0",
-    "typecheck errors — no debt was frozen beyond those pre-existing warnings.",
+    "typecheck errors \u2014 no debt was frozen beyond those pre-existing warnings.",
     "speed: GitHub Actions run 29951182082 (ci.yml, job \"build\", push of PR #73 to main,",
     "2026-07-22T19:29:36Z-2026-07-22T19:30:08Z = 32s) is the last representative main-branch",
     "gate run BEFORE this change. That run's gate shape (lint with continue-on-error, no",
     "typecheck step) is cheaper than the shape landing in this commit, so the 32s figure is",
-    "a conservative floor, not a like-for-like number — the 30% tolerance absorbs the added",
+    "a conservative floor, not a like-for-like number \u2014 the 30% tolerance absorbs the added",
     "typecheck step (~2-3s locally) plus normal CI variance. Re-baseline once a representative",
     "run of the NEW gate shape is available (see note below).",
     "performance.runnerMinutes: derived from the same run (single ubuntu-latest runner job,",
     "so runner-minutes ~= wall-clock minutes for this job): 32s / 60 ~= 0.6min (rounded up).",
-    "performance.dockerImageSizeBytes: not captured in this pass — no docker CLI available in",
+    "performance.dockerImageSizeBytes: not captured in this pass \u2014 no docker CLI available in",
     "the sandbox this baseline was authored in, and .github/workflows/agent-image.yml did not",
     "previously report image size. This change adds a size-report + guard step to that",
     "workflow; its first run will log the measured size for a human to fold into a follow-up",
     "baseline-update commit. Until then the guard treats a null baseline as 'record only'.",
     "performance.cacheHitRate: single-sample observation from the same run (the pnpm",
-    "actions/setup-node cache hit its primary key). Not a rolling rate — needs several",
+    "actions/setup-node cache hit its primary key). Not a rolling rate \u2014 needs several",
     "historical runs to become meaningful; tracked as a follow-up."
   ],
-  "methodNarrative": "Two independent measurements against the same commit (2c9b3fa, HEAD of main at capture time, matching this branch's merge-base with origin/main). (1) CI: read actual GitHub Actions job/step timestamps for the 5 most recent push-to-main runs of ci.yml via `gh api repos/toon-protocol/relay/actions/runs/<id>/jobs` and `.../timing`, and grepped each run's `build`/`Devbox Environment Validation` job logs for 'Cache hit for:' vs 'Cache not found'. (2) Local: ran the 4 gate commands against a fresh `pnpm install --frozen-lockfile`, timing each with `time`. Reproduce locally with: `pnpm install --frozen-lockfile && pnpm -r run build && eslint . ; pnpm run typecheck ; vitest run` (build must run before typecheck — see reproducibilityNotes below).",
+  "methodNarrative": "Two independent measurements against the same commit (2c9b3fa, HEAD of main at capture time, matching this branch's merge-base with origin/main). (1) CI: read actual GitHub Actions job/step timestamps for the 5 most recent push-to-main runs of ci.yml via `gh api repos/toon-protocol/relay/actions/runs/<id>/jobs` and `.../timing`, and grepped each run's `build`/`Devbox Environment Validation` job logs for 'Cache hit for:' vs 'Cache not found'. (2) Local: ran the 4 gate commands against a fresh `pnpm install --frozen-lockfile`, timing each with `time`. Reproduce locally with: `pnpm install --frozen-lockfile && pnpm -r run build && eslint . ; pnpm run typecheck ; vitest run` (build must run before typecheck \u2014 see reproducibilityNotes below).",
   "correctness": {
     "eslintErrors": 0,
-    "eslintWarnings": 57,
+    "eslintWarnings": 16,
     "typecheckErrors": 0
   },
   "speed": {
@@ -53,7 +53,10 @@
   },
   "gateShape": {
     "packageManager": "pnpm@8.15.9",
-    "workspaces": ["packages/relay", "packages/bls"],
+    "workspaces": [
+      "packages/relay",
+      "packages/bls"
+    ],
     "commands": {
       "lint": "eslint .",
       "typecheck": "pnpm run typecheck",
@@ -68,15 +71,16 @@
     }
   },
   "reproducibilityNotes": [
-    "`pnpm run typecheck` depends on `packages/relay` being built first: `packages/bls` imports the workspace package `@toon-protocol/relay` by its published entry point, which only exists once `packages/relay/dist/` has been generated by `pnpm -r run build`. Running typecheck against a clean checkout before building fails with `TS2307: Cannot find module '@toon-protocol/relay'` at packages/bls/src/entrypoint.ts:44 — a false FAIL from command-ordering, not a real type error. Verified by reproducing it here (rm -rf packages/{relay,bls}/dist; pnpm run typecheck fails; pnpm -r run build; pnpm run typecheck then passes clean).",
-    "CI's `build` job runs lint -> build -> test in that order; the typecheck number is sourced from a local run (see gateShape.ciWiring.typecheck for the CI wiring landed by relay#75)."
+    "`pnpm run typecheck` depends on `packages/relay` being built first. (Before the removal of `packages/bls`, this was because that package imported `@toon-protocol/relay` by its published entry point, which only exists once `packages/relay/dist/` has been generated. The build-before-typecheck ordering CI uses is unchanged.)",
+    "CI's `build` job runs lint -> build -> test in that order; the typecheck number is sourced from a local run (see gateShape.ciWiring.typecheck for the CI wiring landed by relay#75).",
+    "correctness.eslintWarnings was recaptured at 16 (from 57) when `packages/bls` was removed: every warning it contributed went with it. The number is a ratchet, not an allowance \u2014 it may be lowered when warnings are genuinely fixed, and raising it needs the same justification any new warning would."
   ],
   "environment": {
     "node": "v22.23.1",
     "pnpm": "8.15.9",
     "localSandboxCpus": 4,
     "localSandboxMemGb": 15,
-    "ciRunner": "ubuntu-24.04 (GitHub-hosted, public repo — Actions minutes unmetered)"
+    "ciRunner": "ubuntu-24.04 (GitHub-hosted, public repo \u2014 Actions minutes unmetered)"
   },
   "gateSpeed": {
     "description": "CI wall-clock time for ci.yml. Both jobs (`build`, `Devbox Environment Validation`) run in parallel; wall-clock as experienced by a PR author is the whole-workflow duration, not either job alone. NOTE: the machine-read `speed.gateWallClockSeconds` (32s) is the conservative floor the CI guard enforces against; the numbers below are the fuller multi-sample capture.",
@@ -94,7 +98,7 @@
       "sampleSize": 5
     },
     "local": {
-      "description": "Sequential run of the 4 gate commands against a fresh install, on the capture sandbox (4 vCPU / 15GB — not representative of CI's per-job isolation, provided for local-reproduction reference only).",
+      "description": "Sequential run of the 4 gate commands against a fresh install, on the capture sandbox (4 vCPU / 15GB \u2014 not representative of CI's per-job isolation, provided for local-reproduction reference only).",
       "pnpmInstallFrozenLockfileSeconds": 1.3,
       "lintSeconds": 9.8,
       "typecheckSeconds": 4.6,
@@ -104,18 +108,24 @@
     }
   },
   "gatePerformance": {
-    "description": "Runner cost & cache efficiency. relay is a PUBLIC repo, so GitHub bills $0 regardless of runner-minutes used (the Actions API always reports billable.UBUNTU.total_ms=0) — raw job-second totals are recorded as a cost proxy, not a bill. The machine-read `performance` block above is the guard's contract; this section is the fuller capture.",
+    "description": "Runner cost & cache efficiency. relay is a PUBLIC repo, so GitHub bills $0 regardless of runner-minutes used (the Actions API always reports billable.UBUNTU.total_ms=0) \u2014 raw job-second totals are recorded as a cost proxy, not a bill. The machine-read `performance` block above is the guard's contract; this section is the fuller capture.",
     "runnerMinutes": {
       "unit": "raw job-seconds summed across both ci.yml jobs (build + Devbox Environment Validation), NOT GitHub-billed minutes",
       "averagePerRunSeconds": 64,
       "billedMinutes": 0,
-      "billedMinutesNote": "Public repo — GitHub-hosted Actions minutes are free; `gh api .../actions/runs/<id>/timing` reports billable.UBUNTU.total_ms=0 for every sampled run."
+      "billedMinutesNote": "Public repo \u2014 GitHub-hosted Actions minutes are free; `gh api .../actions/runs/<id>/timing` reports billable.UBUNTU.total_ms=0 for every sampled run."
     },
     "cacheHitRate": {
-      "pnpmDependencyCache": "5/5 (100%) — action: actions/setup-node@v4 with cache: pnpm, keyed on pnpm-lock.yaml, in the `build` job.",
-      "devboxCliCache": "5/5 (100%) — action: jetify-com/devbox-install-action in the `devbox-validate` job (Linux-X64-devbox-cli-0.17.5).",
-      "devboxNixStoreCache": "5/5 (100%) — same job, Linux-X64-devbox-nix-store key.",
-      "sampleRunIds": [29951182082, 29945813749, 29933238970, 29932676397, 29931776783]
+      "pnpmDependencyCache": "5/5 (100%) \u2014 action: actions/setup-node@v4 with cache: pnpm, keyed on pnpm-lock.yaml, in the `build` job.",
+      "devboxCliCache": "5/5 (100%) \u2014 action: jetify-com/devbox-install-action in the `devbox-validate` job (Linux-X64-devbox-cli-0.17.5).",
+      "devboxNixStoreCache": "5/5 (100%) \u2014 same job, Linux-X64-devbox-nix-store key.",
+      "sampleRunIds": [
+        29951182082,
+        29945813749,
+        29933238970,
+        29932676397,
+        29931776783
+      ]
     },
     "dockerImageSize": {
       "status": "not yet measured",
@@ -123,7 +133,7 @@
     }
   },
   "gateCorrectness": {
-    "description": "Current violation counts against a clean checkout of capturedFromCommit. These are the frozen baseline the epic (toon-protocol/toon-meta#210) ratchets toward zero in follow-up slices — this issue only captures the number. The machine-read `correctness` block above mirrors these counts. relay has no existing correctness debt to freeze.",
+    "description": "Current violation counts against a clean checkout of capturedFromCommit. These are the frozen baseline the epic (toon-protocol/toon-meta#210) ratchets toward zero in follow-up slices \u2014 this issue only captures the number. The machine-read `correctness` block above mirrors these counts. relay has no existing correctness debt to freeze.",
     "lint": {
       "command": "eslint .",
       "errors": 0,

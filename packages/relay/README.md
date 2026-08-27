@@ -1,13 +1,14 @@
 # @toon-protocol/relay
 
 A Nostr relay app: free NIP-01 WebSocket reads, an HTTP `POST /write` surface
-for storing events, and a free `POST /write-ephemeral` lane for
-presence/typing traffic (relay#129).
+for storing events, and a free `POST /write-ephemeral` lane for presence and
+typing traffic.
 
-The relay contains **no ILP, connector, settlement, or pricing logic**. Payment
-is enforced entirely upstream by an external terminator — by the time a write
-reaches this process it is already proven paid, so the relay simply stores the
-event and serves reads.
+The relay contains **no payment, settlement, or ILP logic**. Payment is
+enforced upstream by a terminating connector; by the time a write reaches this
+process it is already paid for, so the relay verifies the event signature,
+stores it, and serves reads. To run one behind a payment proxy, see the
+[repository README](https://github.com/toon-protocol/relay#readme).
 
 ## Install
 
@@ -15,106 +16,118 @@ event and serves reads.
 npm install @toon-protocol/relay
 ```
 
-## Run (CLI)
+## Run
 
 ```bash
 NOSTR_SECRET_KEY=<64-char-hex> npx @toon-protocol/relay
 # reads:      ws://localhost:7100
 # writes:     http://localhost:3100/write
-# ephemeral:  http://localhost:3100/write-ephemeral (free, relay#129)
+# ephemeral:  http://localhost:3100/write-ephemeral
 # health:     http://localhost:3100/health
 ```
 
-| Env var                                | Default   | Description                                                                                                                       |
-| -------------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `TOON_SECRET_KEY` / `NOSTR_SECRET_KEY` | —         | 64-char hex identity key (one of these or `TOON_MNEMONIC` is required)                                                            |
-| `TOON_MNEMONIC`                        | —         | BIP-39 mnemonic (NIP-06 derivation)                                                                                               |
-| `TOON_RELAY_PORT`                      | `7100`    | WebSocket read port                                                                                                               |
-| `TOON_BLS_PORT`                        | `3100`    | HTTP write/health port                                                                                                            |
-| `TOON_HOST`                            | `0.0.0.0` | WebSocket bind host                                                                                                               |
-| `TOON_WRITE_HOST`                      | `0.0.0.0` | HTTP write/health bind host (see [write-port exposure](#paid-ephemeral-verify-skip-relay85))                                      |
-| `TOON_DATA_DIR`                        | `./data`  | SQLite data directory                                                                                                             |
-| `TOON_DEV_MODE`                        | `false`   | Skip event-signature verification on `POST /write`                                                                                |
-| `TOON_VERIFY_EPHEMERAL`                | `false`   | Run FULL schnorr verification on ephemeral kinds too (see below)                                                                  |
-| `TOON_VERIFY_WORKERS`                  | CPUs − 1  | Worker threads for persistent-kind signature verification; `0` = inline on the event loop (automatic on 1-core boxes)             |
-| `TOON_MAX_CONNECTIONS`                 | `4096`    | Maximum concurrent WebSocket read connections (each costs one file descriptor — mind `ulimit -n`)                                 |
-| `TOON_EPHEMERAL_RATE_LIMIT`            | `200`     | Free ephemeral lane (`POST /write-ephemeral`): max requests per key per window — see [below](#free-ephemeral-write-lane-relay129) |
-| `TOON_EPHEMERAL_RATE_WINDOW_MS`        | `10000`   | Free ephemeral lane: rate-limit window in milliseconds                                                                            |
-| `TOON_EPHEMERAL_MAX_BODY_BYTES`        | `8192`    | Free ephemeral lane: request body size cap in bytes                                                                               |
+An identity key is required: one of `--secret-key` / `TOON_SECRET_KEY` /
+`NOSTR_SECRET_KEY` (64 hex characters), or `--mnemonic` / `TOON_MNEMONIC`
+(BIP-39, NIP-06 derivation). Prefer the environment variables — a secret
+passed as a flag is visible in process listings, and the CLI warns when you do
+it.
 
-## Paid-ephemeral verify skip (relay#85)
+| Flag                                 | Environment variable                    | Default   | Description                                                                 |
+| ------------------------------------ | --------------------------------------- | --------- | --------------------------------------------------------------------------- |
+| `--secret-key`                       | `TOON_SECRET_KEY`, `NOSTR_SECRET_KEY`   | —         | 64-hex identity key                                                         |
+| `--mnemonic`                         | `TOON_MNEMONIC`                         | —         | BIP-39 mnemonic (NIP-06)                                                    |
+| `--relay-port`                       | `TOON_RELAY_PORT`                       | `7100`    | WebSocket read port                                                         |
+| `--bls-port`                         | `TOON_BLS_PORT`                         | `3100`    | HTTP write / health / metrics port                                          |
+| `--host`                             | `TOON_HOST`                             | `0.0.0.0` | read-port bind address                                                      |
+| `--write-host`                       | `TOON_WRITE_HOST`                       | `0.0.0.0` | write-port bind address (see [exposure](#the-write-port-must-stay-private)) |
+| `--data-dir`                         | `TOON_DATA_DIR`                         | `./data`  | SQLite directory                                                            |
+| `--dev-mode`                         | `TOON_DEV_MODE`                         | `false`   | skip signature verification entirely — smoke tests only                     |
+| `--verify-ephemeral`                 | `TOON_VERIFY_EPHEMERAL`                 | `false`   | full verification on paid ephemeral kinds too                               |
+| `--verify-workers`                   | `TOON_VERIFY_WORKERS`                   | CPUs − 1  | verify-pool threads; `0` verifies on the event loop                         |
+| `--max-connections`                  | `TOON_MAX_CONNECTIONS`                  | `4096`    | concurrent WS reads (one file descriptor each)                              |
+| `--log-writes`                       | `TOON_LOG_WRITES`                       | `false`   | one log line per accepted write                                             |
+| `--no-enforce-expiration`            | `TOON_ENFORCE_EXPIRATION`               | enforced  | serve events past their NIP-40 `expiration` again                           |
+| `--expiration-reap-grace-seconds`    | `TOON_EXPIRATION_REAP_GRACE_SECONDS`    | `86400`   | how long an expired event stays on disk                                     |
+| `--expiration-reap-interval-seconds` | `TOON_EXPIRATION_REAP_INTERVAL_SECONDS` | `3600`    | how often the reaper sweeps; `0` never                                      |
+| `--blocked-event-ids`                | `TOON_BLOCKED_EVENT_IDS`                | —         | comma-separated 64-hex event ids to refuse                                  |
+| `--ephemeral-rate-limit`             | `TOON_EPHEMERAL_RATE_LIMIT`             | `200`     | free-lane requests per key per window                                       |
+| `--ephemeral-rate-window-ms`         | `TOON_EPHEMERAL_RATE_WINDOW_MS`         | `10000`   | free-lane rate-limit window                                                 |
+| `--ephemeral-max-body-bytes`         | `TOON_EPHEMERAL_MAX_BODY_BYTES`         | `8192`    | free-lane request body cap                                                  |
 
-By default the relay **skips schnorr verification for ephemeral kinds**
-(NIP-16, `20000 <= kind < 30000`) on `POST /write` and keeps only the SHA-256
-event-id check. This is a deliberate, payment-gated bypass:
+Retention behaviour — NIP-40 expiry, NIP-09 deletion, the blocklist — is
+documented in
+[`docs/retention.md`](https://github.com/toon-protocol/relay/blob/main/docs/retention.md).
 
-- **Why it is safe here:** every request reaching `POST /write` has already
-  passed the upstream connector's payment claim gate — payment is the
-  admission/spam gate. Protocol rule: clients trust the signature chain and
-  verify every event themselves, never the relay. Relay-side schnorr on paid
-  ephemeral frames buys no additional trust; forging a speaker costs real
-  money to emit frames every client discards.
-- **What is still checked:** the SHA-256 id check always runs, so the relay
-  never broadcasts bytes that disagree with the event id clients verify by.
-- **When you MUST turn it off:** if your write port is fronted by anything
-  other than a payment-gating connector — or you ever add a FREE ephemeral
-  write lane — set `TOON_VERIFY_EPHEMERAL=true` (`--verify-ephemeral`,
-  `verifyEphemeral: true`). A free lane must NOT reuse this skip.
-- **Exposure guard:** the write port must be reachable only via the
-  connector. In docker, never host-publish it (`expose:`, not `ports:` —
-  docker-published ports bypass ufw). Outside docker, bind it internally via
-  `TOON_WRITE_HOST=127.0.0.1`. At startup the relay logs a prominent warning
-  if the write listener binds a non-internal interface while the skip is
-  active (warning only — container topologies legitimately bind `0.0.0.0`
-  and stay private by not publishing the port).
+## HTTP surface
 
-## Free ephemeral write lane (relay#129)
+| Method | Path               | Description                                                                                                                                                                                    |
+| ------ | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST` | `/write`           | Store an event. Body `{ "event": <NostrEvent> }`. Verifies the signature (ephemeral kinds: id check only, by default). Echoes the connector's payment statement when there is one — see below. |
+| `POST` | `/write-ephemeral` | The free ephemeral lane. Ephemeral kinds only (`400` otherwise), always fully verified, never stored, rate-limited and size-capped (`429` / `413`).                                            |
+| `GET`  | `/health`          | Liveness, identity (`pubkey`), `capabilities`, `version`.                                                                                                                                      |
+| `GET`  | `/metrics`         | JSON telemetry: event-loop delay, per-event verify timings and pool state, and the ephemeral lane's bounds.                                                                                    |
 
-`POST /write-ephemeral` is a SECOND write surface, distinct from the paid
-`POST /write` above, because the connector cannot carry two prices on one
-`handler_url` (`ConflictingHandlerPrice`) — a free lane needs its own
-endpoint, terminated by its own `price = 0` route
-(`deploy/connector.toml`'s `g.toon.relay.ephemeral`).
+### The payment statement
 
-- **Ephemeral kinds only** (NIP-16, `20000 <= kind < 30000`) — anything else
-  is a `400`. A persistent kind on this lane would be a free ride around
-  pay-to-write.
-- **Never stores.** Ephemeral kinds are never persisted on the paid path
-  either (NIP-16); this lane broadcasts to live WS subscribers and nothing
-  else.
-- **Full schnorr verification, always.** Unlike the paid handler's
-  payment-gated ephemeral verify skip, this lane has no payment admission
-  gate — signature verification IS its only defense against forged-signature
-  spam, so there is no config knob to skip it here.
-- **Bounded**, because free + broadcast = spam surface: a per-key sliding-
-  window rate limit and a request-body size cap, both config-gated with
-  conservative defaults (`TOON_EPHEMERAL_RATE_LIMIT` /
-  `TOON_EPHEMERAL_RATE_WINDOW_MS` / `TOON_EPHEMERAL_MAX_BODY_BYTES` above).
-  Both bounds are logged at startup and surfaced on `GET /metrics`
-  (`ephemeralWriteLane`).
+A terminating connector states three headers on a delivery whose payment it
+verified at its own client edge:
 
-## Run (programmatic)
+| Header          | Value                                                          |
+| --------------- | -------------------------------------------------------------- |
+| `X-TOON-Payer`  | the client channel key — `evm:0x<64 hex>` or `solana:<base58>` |
+| `X-TOON-Amount` | the route's price, decimal, in base units                      |
+| `X-TOON-Chain`  | `evm` or `solana`                                              |
+
+When all three are present and well-formed, `POST /write` returns them as a
+`payment` object and includes them on its log line. The relay re-validates
+none of it — it holds no chain state — but a malformed or partial statement is
+discarded whole rather than half-recorded.
+
+**Absence is not "unpaid".** The headers are stated only by the hop that took
+the payment, so they are absent on a forwarded packet and on every free route.
+Never treat their absence as a reason to refuse a write.
+
+## The write port must stay private
+
+By default the relay **skips signature verification for ephemeral kinds**
+(NIP-16, `20000 <= kind < 30000`) on `POST /write`, keeping only the SHA-256
+id check. That is a deliberate, payment-gated bypass:
+
+- **Why it is safe:** every request reaching `POST /write` has already passed
+  the connector's payment gate — payment is the admission control. Clients
+  verify every signature themselves and never trust the relay's verdict, so
+  relay-side verification of paid ephemeral frames buys no trust that payment
+  has not already bought.
+- **What is still checked:** the id check always runs, so the relay never
+  broadcasts bytes that disagree with the id clients index by.
+- **When to turn it off:** if the write port is fronted by anything other than
+  a payment-gating connector, set `TOON_VERIFY_EPHEMERAL=true`.
+
+In Docker, never host-publish the write port (`expose:`, not `ports:` — a
+docker publish bypasses ufw). Outside Docker, bind it with
+`TOON_WRITE_HOST=127.0.0.1`. The relay logs a warning at startup if the write
+listener binds a non-internal interface while the skip is active.
+
+## The free ephemeral lane
+
+`POST /write-ephemeral` is a second write surface, distinct from the paid one,
+because a connector cannot carry two prices on a single handler URL. It is
+terminated by its own zero-priced route.
+
+It accepts **only** ephemeral kinds, **never** stores, and **always** verifies
+signatures in full — it has no payment gate to lean on, so verification is its
+only defence against forged-signature spam. It is bounded by a per-key sliding
+window and a body-size cap, both surfaced on `GET /metrics`.
+
+## Programmatic use
 
 ```ts
 import { startRelay } from '@toon-protocol/relay';
 
 const relay = await startRelay({ secretKey });
-// ... POST /write on 3100, read NIP-01 on 7100 ...
+// POST /write on 3100, NIP-01 reads on 7100
 await relay.stop();
 ```
-
-## HTTP surface
-
-| Method | Path               | Description                                                                                                                                                                                                                                                                                                                             |
-| ------ | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST` | `/write`           | Store an event. Body `{ "event": <NostrEvent> }`. No payment headers are read or echoed (the terminating connector asserts nothing about payment to this relay); verifies only the event signature (ephemeral kinds: id check only by default, see above).                                                                              |
-| `POST` | `/write-ephemeral` | Free ephemeral write lane (relay#129, see above). Body `{ "event": <NostrEvent> }`. Ephemeral kinds only (`400` otherwise); always full schnorr verification; never stores; rate-limited and size-capped (`429` / `413`).                                                                                                               |
-| `GET`  | `/health`          | Liveness, identity (`pubkey`), `capabilities`, and `version`.                                                                                                                                                                                                                                                                           |
-| `GET`  | `/metrics`         | JSON telemetry: `eventLoopDelayMs` (mean/p50/p99/max — loop lag is ephemeral-frame tail latency), `verify` (per-event verify wall time incl. pool queueing, active implementation, worker count — the trigger metrics for scaling decisions, relay#85), and `ephemeralWriteLane` (enablement + rate-limit/body-size bounds, relay#129). |
-
-## WebSocket Relay Server
-
-NIP-01 compliant WebSocket server that stores and serves Nostr events in TOON format.
 
 ```ts
 import { NostrRelayServer, SqliteEventStore } from '@toon-protocol/relay';
@@ -127,40 +140,17 @@ relay.broadcastEvent(event); // push to matching subscriptions
 await relay.stop();
 ```
 
-## Event Storage
-
-```ts
-import { InMemoryEventStore, SqliteEventStore } from '@toon-protocol/relay';
-
-const memStore = new InMemoryEventStore(); // ephemeral
-const sqlStore = new SqliteEventStore('./events.db'); // persistent
-
-memStore.store(event);
-const found = memStore.get(event.id);
-const results = memStore.query([{ kinds: [1], limit: 10 }]);
-```
-
-## TOON Codec
-
-Vendored in-repo (`src/toon/codec.ts`) so the relay depends only on the lightweight `@toon-format/toon` encoder rather than `@toon-protocol/core`'s full transitive tree. The relay has no runtime dependency on `@toon-protocol/core`.
-
-```ts
-import { encodeEventToToon, decodeEventFromToon } from '@toon-protocol/relay';
-```
-
-## Full API
-
-| Category          | Exports                                                                                  |
-| ----------------- | ---------------------------------------------------------------------------------------- |
-| **Launcher**      | `startRelay`, `RelayConfig`, `RelayInstance`, `RelaySubscription`, `ResolvedRelayConfig` |
-| **Relay**         | `NostrRelayServer`, `ConnectionHandler`, `RelayServerConfig`, `DEFAULT_RELAY_CONFIG`     |
-| **Storage**       | `EventStore`, `InMemoryEventStore`, `SqliteEventStore`, `RelayError`                     |
-| **Write/Health**  | `createWriteHandler`, `createEphemeralWriteHandler`, `createHealthResponse`              |
-| **Rate limiting** | `createRateLimiter` (backs the ephemeral write lane's bounds, relay#129)                 |
-| **Codec**         | `encodeEventToToon`, `decodeEventFromToon`, `ToonEncodeError`, `ToonDecodeError`         |
-| **Subscriber**    | `RelaySubscriber`, `RelaySubscriberConfig`                                               |
-| **Filter**        | `matchFilter`                                                                            |
-| **Constants**     | `VERSION`                                                                                |
+| Category              | Exports                                                                                  |
+| --------------------- | ---------------------------------------------------------------------------------------- |
+| **Launcher**          | `startRelay`, `RelayConfig`, `RelayInstance`, `RelaySubscription`, `ResolvedRelayConfig` |
+| **Relay**             | `NostrRelayServer`, `ConnectionHandler`, `RelayServerConfig`, `DEFAULT_RELAY_CONFIG`     |
+| **Storage**           | `EventStore`, `InMemoryEventStore`, `SqliteEventStore`, `RelayError`                     |
+| **Write / health**    | `createWriteHandler`, `createEphemeralWriteHandler`, `createHealthResponse`              |
+| **Payment statement** | `readPaymentAttribution`, `PaymentAttribution`                                           |
+| **Rate limiting**     | `createRateLimiter`                                                                      |
+| **Subscriber**        | `RelaySubscriber`, `RelaySubscriberConfig`                                               |
+| **Filter**            | `matchFilter`                                                                            |
+| **Constants**         | `VERSION`                                                                                |
 
 ## License
 

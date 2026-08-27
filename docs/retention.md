@@ -3,12 +3,12 @@
 Three mechanisms decide when an event leaves this relay's read surface. They
 are deliberately different in who holds the power.
 
-| Mechanism | Who decides | Reaches |
-| --- | --- | --- |
-| NIP-01 replacement | the author's key | a newer event, same `(pubkey, kind, d)` |
-| NIP-40 expiration | the author, at publish time | events whose stated lifetime has passed |
-| NIP-09 deletion | the author's key | any of that author's own events |
-| Operator blocklist | this node's operator | one explicitly named event id |
+| Mechanism          | Who decides                 | Reaches                                 |
+| ------------------ | --------------------------- | --------------------------------------- |
+| NIP-01 replacement | the author's key            | a newer event, same `(pubkey, kind, d)` |
+| NIP-40 expiration  | the author, at publish time | events whose stated lifetime has passed |
+| NIP-09 deletion    | the author's key            | any of that author's own events         |
+| Operator blocklist | this node's operator        | one explicitly named event id           |
 
 The first three are the protocol. The fourth is not, and is scoped as
 narrowly as the job allows — see [Unretractable events](#unretractable-events).
@@ -28,7 +28,7 @@ pk=b23599a6  g.toon.swap.sol   no expiration tag   ws://127.0.0.1:3401, key gone
 
 The first two said "I am valid for ten minutes" and were handed to clients a
 week later. The third is worse: a throwaway proof rig that advertised a
-loopback endpoint — an address that resolves to whatever machine *reads* it —
+loopback endpoint — an address that resolves to whatever machine _reads_ it —
 with no expiry and no surviving key.
 
 ## NIP-40 — expiration
@@ -37,11 +37,11 @@ An event carrying `["expiration", "<unix seconds>"]` stops being served at
 that timestamp: not from a REQ against history, not from a live fan-out.
 A background reaper then deletes it.
 
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `TOON_ENFORCE_EXPIRATION` | `true` | `false` restores the old serve-forever behaviour |
-| `TOON_EXPIRATION_REAP_GRACE_SECONDS` | `86400` | how long an expired event stays on disk |
-| `TOON_EXPIRATION_REAP_INTERVAL_SECONDS` | `3600` | sweep interval; `0` disables reaping |
+| Setting                                 | Default | Meaning                                          |
+| --------------------------------------- | ------- | ------------------------------------------------ |
+| `TOON_ENFORCE_EXPIRATION`               | `true`  | `false` restores the old serve-forever behaviour |
+| `TOON_EXPIRATION_REAP_GRACE_SECONDS`    | `86400` | how long an expired event stays on disk          |
+| `TOON_EXPIRATION_REAP_INTERVAL_SECONDS` | `3600`  | sweep interval; `0` disables reaping             |
 
 Parsing **fails open**: an `expiration` tag that is not a plain non-negative
 integer is treated as "never expires". A publisher-side typo must not become
@@ -51,37 +51,33 @@ an unrecoverable read outage.
 
 Enforcement changes a failure mode. Read this before assuming it is free.
 
-On devnet the only events carrying an `expiration` tag are kind:10032
-announces. They are published with a **600s TTL** and refreshed by a shell
-loop every **240s** (`connector` repo,
-`infra/linode-*/docker-compose.*.announce.yml`) — 2.5 refresh periods of
-margin. On failure the loop backs off 5s, doubling, capped at the 240s
-refresh, so an announce needs **seven consecutive failed publishes** (~360s of
-continuous failure) before it goes past its expiry.
+Enforcement turns "a stale event is still served" into "that event is gone
+from every read". For most traffic that is exactly what an `expiration` tag
+asks for. It matters most for events a **client republishes on a timer** —
+anything whose absence means a peer stops being discoverable, rather than
+merely stale.
 
-That margin is comfortable, but it is a margin. The store and swap announce
-loops **pay** for each republish out of a payment channel, so a drained
-channel makes every republish fail indefinitely. Before enforcement that
-degraded to "a stale announce is still served". With enforcement it becomes
-"the node vanishes from discovery", and client discovery is fail-closed
-(`TERMINATOR_UNRESOLVED`).
+The failure mode to reason about is a publisher that stops publishing: a
+crashed refresh loop, a drained payment channel, an operator who forgot the
+cron. Before enforcement, its last event stayed readable indefinitely. With
+enforcement, it disappears the moment its TTL passes, and any consumer whose
+discovery is fail-closed sees the publisher vanish.
 
-That is the intended semantics — a node that cannot afford to say it is alive
-should not be advertised — but it is a real change in blast radius. Two things
-de-risk it:
+That is the intended semantics — something that cannot say it is alive should
+not be advertised as alive — but it is a real change in blast radius. Two
+things de-risk it:
 
 - **The kill switch is an env var, not a release.** `TOON_ENFORCE_EXPIRATION=false`
   and a restart puts every still-stored event back on the wire.
 - **The reap grace makes that reversible.** Serve-time filtering is a
   decision; a `DELETE` is not. The 24h default means an operator who
-  discovers enforcement broke discovery can undo it without having lost the
-  data. Shorten it only once you trust the refresh loops.
+  discovers enforcement broke something can undo it without having lost the
+  data. Shorten it only once you trust the publishers.
 
-Before enabling on a new fleet, confirm each announce loop is actually
+Before enabling on a fleet, confirm the publishers you care about are actually
 refreshing — compare `created_at` on two reads a few minutes apart:
 
 ```bash
-# expect created_at to advance by ~240s between reads
 websocat wss://relay-ws.devnet.toonprotocol.dev <<< '["REQ","a",{"kinds":[10032]}]'
 ```
 
@@ -121,10 +117,8 @@ In order of preference:
    costs clients one failed dial. Weigh that against a relay operator taking
    deletion powers.
 2. **Fix it at the source.** A publisher that emits an `expiration` tag makes
-   its own litter self-clearing. The permanent announces on devnet come from
-   publishers that pass no TTL (`swap/packages/swap/src/swap-node.ts`,
-   `relay/packages/bls/src/entrypoint.ts`) — those are the real bug, and
-   fixing them is worth more than any relay-side sweep.
+   its own litter self-clearing. A publisher that passes no TTL is the real
+   bug, and fixing it is worth more than any relay-side sweep.
 3. **Block the specific event id**, as a last resort.
 
 ```bash

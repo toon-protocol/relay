@@ -1,0 +1,42 @@
+# =============================================================================
+# Auto-redeploy overlay — Watchtower, scoped to this node's two images.
+# =============================================================================
+#   docker compose -f docker-compose.yml -f docker-compose.watchtower.yml up -d
+#
+# `--label-enable` makes Watchtower ignore every container UNLESS it carries
+# `com.centurylinklabs.watchtower.enable=true`. In docker-compose.yml that
+# label is on `connector` and `relay` and nowhere else, so:
+#
+#   * a green merge to this repo's main publishes both images and moves their
+#     `:release` tags, and this container recreates whichever one moved,
+#     within about a minute;
+#   * Caddy is NEVER touched. It holds the certificates and the ACME account,
+#     and it is the one component whose job is surviving the others being
+#     replaced — recreating it on an upstream `caddy:2-alpine` push would be
+#     an unreviewed change to the TLS edge.
+#
+# Rollback is by immutable tag: every build keeps its `sha-<short>` tag in
+# GHCR, so pinning RELAY_IMAGE or RELAY_CONNECTOR_IMAGE to one and running
+# `up -d` puts a specific build back.
+#
+# `--interval 60` is one manifest check per minute against two public
+# repositories, so no registry credentials are mounted. `--cleanup` removes
+# the image a recreate just superseded, so a box following a moving tag does
+# not accumulate one dangling image per merge.
+#
+# The docker socket is unavoidable for a container-recreating tool. Nothing is
+# published: there is nothing here for Caddy to front and nothing that should
+# ever be reachable off-box.
+# =============================================================================
+
+services:
+  watchtower:
+    image: containrrr/watchtower:1.7.1
+    environment:
+      # Watchtower's bundled client defaults to Docker API 1.25 and refuses to
+      # talk to a newer daemon without this set explicitly.
+      DOCKER_API_VERSION: '1.44'
+    command: ['--label-enable', '--interval', '60', '--cleanup']
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped

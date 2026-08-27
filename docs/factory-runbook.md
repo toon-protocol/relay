@@ -1,4 +1,4 @@
-# Sandcastle factory — first-run runbook (relay)
+# Sandcastle factory — runbook (relay)
 
 This is the maintainer runbook for **triggering** relay's sandcastle software
 factory. Authoring the runners is done (workflows + labels + entry scripts);
@@ -6,13 +6,18 @@ pulling the trigger is a deliberate human action. Nothing in this repo starts an
 agent run on its own.
 
 Related:
+
 - Trigger-label + engine spec: `FACTORY.md` (in `toon-meta`).
 - Engine reference + verified-on-first-run corrections:
   `scratchpad-sandcastle-engine.md` (in `toon-meta`).
 - The runners: `.github/workflows/agent-implement.yml`,
-  `.github/workflows/agent-review.yml`.
+  `.github/workflows/agent-review.yml`, `.github/workflows/agent-fix.yml`.
 - The entry scripts: `.sandcastle/agent-implement-issue.ts`,
-  `.sandcastle/agent-review-pr.ts`.
+  `.sandcastle/agent-review-pr.ts`, `.sandcastle/agent-fix-pr.ts`.
+- The forwarding shims into toon-meta's shared workflows:
+  `.github/workflows/auto-merge-shim.yml`,
+  `.github/workflows/pr-housekeeping-shim.yml`,
+  `.github/workflows/unblock-dispatcher-shim.yml`.
 
 ---
 
@@ -58,7 +63,7 @@ Related:
      3. **run** `pnpm sandcastle:implement`, which inside the sandbox:
         - **implements** the issue (opus, up to 100 iterations, RED→GREEN→
           REFACTOR, running relay's gate `eslint . / pnpm run typecheck /
-          vitest run / pnpm -r run build`),
+vitest run / pnpm -r run build`),
         - **reviews** the branch (opus, 1 iteration),
         - **opens a PR** against `main` (`Part of #<issue>`, NOT `Closes`).
 
@@ -119,7 +124,7 @@ is the safe default and there is no merge code in the default path.
   runner"** step's `env:`, set:
 
   ```yaml
-  SANDCASTLE_AUTO_MERGE: "true"
+  SANDCASTLE_AUTO_MERGE: 'true'
   ```
 
   With that set, `agent-implement-issue.ts` runs the stock merge phase
