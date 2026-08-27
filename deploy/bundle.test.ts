@@ -75,6 +75,23 @@ const EXPECTED_CONTRACT_ADDRESS = '0x8263BdD4eB4862395Cb4ef5dA5d637F4b047Eea1';
 const EXPECTED_TOKEN_ADDRESS = '0x49beE1Bca5d15Fb0963117923403F9498119a9Ce';
 const EXPECTED_DECIMALS = 6;
 
+// The Solana half of the same statement, and pinned for the same reason: a
+// claim resolves against ONE deployment, so a node naming a different program
+// or mint cannot settle the channels buyers opened against the fleet.
+//
+// This pin is late. The EVM leg above has been asserted since this file was
+// written; the Solana leg was not, and it drifted to a mint that had become
+// unusable -- the mock USDC deployed 2026-07-18 whose MINT AUTHORITY was a key
+// held outside any repository and since lost. Nobody could issue that token or
+// refill a treasury holding it, so the devnet faucet's Solana leg served 503s
+// for weeks while this bundle went on claiming to settle in it. The
+// replacement's authority is the faucet box's own treasury, so the faucet
+// mints per drip and there is no irreplaceable key left in the arrangement.
+// See connector's packages/solana-program/deployments/devnet-public.md.
+const EXPECTED_SOLANA_PROGRAM_ID = '2aEVJ8koKD8LTZrLRSGtAtU7LBt4e7QjjCgf1kzQ7Rip';
+const EXPECTED_SOLANA_TOKEN_ADDRESS =
+  '34eSxY7qxQ4GzyhDJ8GpUcTz1WWzruGbJbR8q6TtxfQU';
+
 // `g.toon.relay` is 1 micro-USDC per write (owner decision, 2026-08-04).
 // `g.toon.relay.ephemeral` is deliberately, explicitly 0 — the free lane.
 const EXPECTED_ROUTE_PRICES: Record<string, number> = {
@@ -143,6 +160,11 @@ interface ConnectorToml {
       token_address: string;
       decimals: number;
     };
+    solana: {
+      program_id: string;
+      token_address: string;
+      decimals: number;
+    };
   };
 }
 
@@ -171,6 +193,23 @@ describe('deploy bundle', () => {
     expect(
       evm.decimals,
       `settlement.evm.decimals: expected ${EXPECTED_DECIMALS}, found ${evm.decimals}`
+    ).toBe(EXPECTED_DECIMALS);
+  });
+
+  it('settles against the live fleet Solana program, mint, and decimals', () => {
+    const { solana } = readConnectorToml().settlement;
+
+    expect(
+      solana.program_id,
+      `settlement.solana.program_id: expected ${EXPECTED_SOLANA_PROGRAM_ID}, found ${solana.program_id}`
+    ).toBe(EXPECTED_SOLANA_PROGRAM_ID);
+    expect(
+      solana.token_address,
+      `settlement.solana.token_address: expected ${EXPECTED_SOLANA_TOKEN_ADDRESS}, found ${solana.token_address}`
+    ).toBe(EXPECTED_SOLANA_TOKEN_ADDRESS);
+    expect(
+      solana.decimals,
+      `settlement.solana.decimals: expected ${EXPECTED_DECIMALS}, found ${solana.decimals}`
     ).toBe(EXPECTED_DECIMALS);
   });
 
