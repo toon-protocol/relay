@@ -56,7 +56,7 @@ Everything below runs on one box with Docker. The whole deployment is
 Caddy gets certificates for both on first boot, so DNS must resolve before you
 start. Open ports 22, 80 and 443 and nothing else.
 
-### 2. Generate three keys
+### 2. Generate three keys, and the operator surface's two files
 
 ```bash
 git clone https://github.com/toon-protocol/relay.git
@@ -74,6 +74,17 @@ printf '%s' "<64 hex chars>" > settlement-solana.key   # or drop Solana, see bel
 
 chmod 600 *.key
 sudo chown 10001:10001 *.key    # the connector image runs as uid 10001
+
+# The operator surface: a bearer token for reads, and the allowlist of keys
+# that may sign a WRITE -- establishing a peering, funding a channel,
+# originating a packet. The private half (operator-write.key) stays wherever
+# you sign from; only its public half goes in the allowlist.
+openssl rand -hex 32 > operator-bearer.token
+openssl rand -hex 32 > operator-write.key
+docker run --rm -v "$PWD:/w" ghcr.io/toon-protocol/relay-connector:release \
+  send --operator-key /w/operator-write.key --print-keyid > operator-write.keys
+chmod 600 operator-bearer.token operator-write.key
+sudo chown 10001:10001 operator-bearer.token operator-write.keys
 ```
 
 > **Verify the settlement address before you start**, not after. Deriving at
@@ -244,6 +255,22 @@ It only ever touches `connector` and `relay` — never Caddy, which holds the
 certificates. Every build also keeps an immutable `:sha-<short>` tag, so a
 rollback is pinning `RELAY_IMAGE` or `RELAY_CONNECTOR_IMAGE` to one and
 running `up -d`.
+
+**To peer with another node**, sign a `POST /peers` naming its URL with
+`operator-write.key` — the connector repo's `docs/operators/sign-write.sh`
+does the RFC 9421 signing:
+
+```bash
+sign-write.sh -k operator-write.key -X POST -p /peers -u https://proxy.relay.<domain> \
+  -b '{"id":"store","url":"https://proxy.ario.<domain>/ilp","fee":1,"max_packet_amount":100000,"chain":"solana"}'
+sign-write.sh -k operator-write.key -X POST -p /routes/peers -u https://proxy.relay.<domain> \
+  -b '{"prefix":"g.toon.relay.store","peer_id":"store","price":1010}'
+```
+
+The first reads the counterparty's self-description, derives the payment
+channel from the two settlement addresses and opens it if absent (connector
+ADR 0058); the second puts a route through it in the table. Both survive a
+restart — they live in `connector_state`, not in `connector.toml`.
 
 **To adopt a newer connector**, bump `ARG CONNECTOR_TAG` in
 [`deploy/Dockerfile`](deploy/Dockerfile) and merge. That ARG is the only place
