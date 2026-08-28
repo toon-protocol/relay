@@ -58,6 +58,15 @@ The relay app still auto-deploys.
 | `auto-apply.sh`                                    | On the box: fast-forwards `main`, re-renders if applicable, `compose up -d`, and requires the connector to come back healthy.              |
 | `toon-auto-apply.service` / `.timer`               | The systemd pair that runs it every five minutes. Install once — see the root README's "Operate it".                                       |
 
+`auto-apply.sh` lives in the repository it applies, which has one consequence
+worth knowing: a box sitting on a commit from **before** the script existed
+cannot pull itself forward — `systemd` would be pointing `ExecStart` at a file
+that is not there yet. Fast-forward that box by hand once and it takes over
+from there. The same applies if a future commit ever moves or renames the
+script: the box it is running on needs one manual `git pull` to pick up its own
+replacement. Neither is reachable by going forwards, only by rewinding a box
+behind the change.
+
 The split is deliberate: the workflow decides **what** to run and proves it
 accepts this node's committed config first (connector ADR 0041 Decision 1);
 the box decides **when** to apply, by pulling. Nothing outside the box can
