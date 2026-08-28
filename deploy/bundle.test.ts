@@ -340,8 +340,8 @@ describe('deploy bundle', () => {
     // which is what a `rust-sha-` pin exists to avoid.
     expect(
       pinned,
-      `${PIN_OF_RECORD_PATH}: pin an immutable rust-sha- build, never a moving tag`
-    ).toMatch(/:rust-sha-[0-9a-f]{7}$/);
+      `${PIN_OF_RECORD_PATH}: pin an immutable build — a rust-sha- build or a rust-<release handle> — never a moving tag`
+    ).toMatch(/:(rust-sha-[0-9a-f]{7,40}|rust-\d{4}\.\d{2}\.\d{2}\.\d+)$/);
 
     // The image must be the STOCK connector — the same one the store and
     // gas-station bundles run. A derived image would put the config somewhere
