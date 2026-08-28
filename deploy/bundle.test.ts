@@ -108,10 +108,12 @@ const EXPECTED_ROUTE_HANDLER_URLS: Record<string, string> = {
   'g.toon.relay.ephemeral': 'http://relay:3100/write-ephemeral',
 };
 
-// The pin of record. `rust-sha-6ea6009` is the first build this bundle has
-// shipped that speaks `[node]` (connector ADR 0050) and states a verified
-// payment to the app on delivery (connector ADR 0040).
-const EXPECTED_CONNECTOR_TAG = 'rust-sha-6ea6009';
+// The pin of record. `rust-sha-c714551` is the first build this bundle has
+// shipped on which a peering established over the operator surface can pay
+// for what it forwards (connector#1230); its predecessor `rust-sha-6ea6009`
+// was the first to speak `[node]` (ADR 0050) and state a verified payment to
+// the app on delivery (ADR 0040).
+const EXPECTED_CONNECTOR_TAG = 'rust-sha-c714551';
 
 const PUBLISH_WORKFLOW_PATH =
   '.github/workflows/publish-relay-connector-image.yml';
@@ -145,6 +147,7 @@ const HEALTHCHECK_WGET_SITES: { file: string; pattern: RegExp }[] = [
 ];
 
 interface ConnectorToml {
+  operator: { bearer_token_file: string; write_keys_file: string };
   client_edge_addr: string;
   state_dir: string;
   signer: { key_file: string };
@@ -284,6 +287,28 @@ describe('deploy bundle', () => {
     // A key is a LOCATION here, never a value — nothing secret is ever baked
     // into the published image.
     expect(config.signer.key_file).toMatch(/^\/app\/data\/.+\.key$/);
+  });
+
+  it('enables the operator surface by file, and mounts both files', () => {
+    // Every write on this surface -- establishing a peering above all -- is
+    // RFC 9421-signed against this allowlist, and every read carries the
+    // bearer token. This config is baked into a published image, so the two
+    // values may only ever be named by PATH here; the files themselves are
+    // mounted beside the keys and gitignored.
+    const { operator } = readConnectorToml();
+    expect(operator.bearer_token_file).toBe('/app/data/operator-bearer.token');
+    expect(operator.write_keys_file).toBe('/app/data/operator-write.keys');
+    expect(readFile('deploy/connector.toml')).not.toMatch(/^\s*bearer_token\s*=/m);
+    expect(readFile('deploy/connector.toml')).not.toMatch(/^\s*write_keys\s*=/m);
+
+    const volumes = readDockerCompose().services['connector']?.volumes ?? [];
+    for (const file of ['operator-bearer.token', 'operator-write.keys']) {
+      expect(
+        volumes,
+        `docker-compose.yml connector: ${file} must be mounted read-only at /app/data`
+      ).toContain(`./${file}:/app/data/${file}:ro`);
+      expect(readFile('deploy/.gitignore')).toContain(file);
+    }
   });
 
   it('names the connector build in exactly one place', () => {

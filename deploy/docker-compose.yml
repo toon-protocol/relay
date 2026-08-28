@@ -83,6 +83,12 @@ services:
       - ./settlement.key:/app/data/settlement.key:ro
       # Drop this line (and connector.toml's [settlement.solana]) for EVM-only.
       - ./settlement-solana.key:/app/data/settlement-solana.key:ro
+      # The operator surface's two credentials -- see connector.toml's
+      # [operator]. The bearer token gates reads; the allowlist holds the
+      # PUBLIC halves of the keys allowed to sign a write. The private half
+      # never lives on this box.
+      - ./operator-bearer.token:/app/data/operator-bearer.token:ro
+      - ./operator-write.keys:/app/data/operator-write.keys:ro
       # The claim journal. NAMED, not a host bind: the image ships /app/state
       # owned by uid 10001, which is what a fresh named volume inherits on
       # first mount and what a bind mount does not. Replaying it is what stops

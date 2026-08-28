@@ -142,11 +142,29 @@ decimals = 6
 # same mnemonic at m/44'/501'/0'/0'.
 key_file = "/app/data/settlement-solana.key"
 
-# ── (Optional) The operator surface ──────────────────────────────────────────
-# Omitted here: it is off unless configured, and every read (peers, routes,
-# channels, claims, /metrics) needs a bearer token while every write needs an
-# RFC 9421 signature. Both are credentials, and this file is BAKED into a
-# published image — so enable it by mounting the two file-valued forms
-# (`bearer_token_file` / `write_keys_file`) and bind-mounting over this config
-# rather than baking the values. A section with an empty token is a
-# refuse-to-start, never a silently open surface.
+# ── The operator surface ─────────────────────────────────────────────────────
+# Every read (peers, routes, channels, claims, /metrics) needs the bearer
+# token; every write -- `POST /peers` to establish a peering (connector ADR
+# 0058), `POST /routes/peers`, `POST /channels/:id/fund`, `POST /packets` --
+# needs an RFC 9421 signature from a key on the allowlist. Both are
+# credentials, and this file is BAKED into a published image, so only the
+# two file-valued forms are used here: the values live in files the compose
+# file mounts beside the keys, never in this config. A section naming a file
+# that is missing or empty is a refuse-to-start, never a silently open
+# surface.
+#
+#   openssl rand -hex 32 > operator-bearer.token
+#   openssl rand -hex 32 > operator-write.key        # the PRIVATE half, kept
+#                                                    # wherever you sign from
+#   connector send --operator-key operator-write.key --print-keyid \
+#     > operator-write.keys                          # the PUBLIC half: the
+#                                                    # allowlist, one per line
+#   chmod 600 operator-bearer.token operator-write.key
+#   sudo chown 10001:10001 operator-bearer.token operator-write.keys
+#
+# To sign a write from a shell, use the connector repo's
+# docs/operators/sign-write.sh with operator-write.key. Revoke a key by
+# deleting its line from operator-write.keys and restarting.
+[operator]
+bearer_token_file = "/app/data/operator-bearer.token"
+write_keys_file   = "/app/data/operator-write.keys"

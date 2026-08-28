@@ -7,6 +7,12 @@ data/
 # being named slightly differently.
 *.key
 
+# The operator surface's credentials (connector.toml [operator]). The bearer
+# token is a secret outright; the allowlist is public halves but per box, so
+# neither belongs in a repository every operator clones.
+operator-bearer.token
+operator-write.keys
+
 # A peering's shared secret, if you add the optional store leg as a BTP forward
 # (`credential.secret_file` in connector.toml). Same rule: the config that
 # points at it is committed, so the file itself must never be.

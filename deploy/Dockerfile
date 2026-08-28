@@ -22,11 +22,13 @@
 # rather than a degraded run — which is the behaviour you want, but it means
 # an accidental bump is an outage.
 #
-# `rust-sha-6ea6009` is the first pin this bundle has shipped that speaks the
-# `[node]` self-description (connector ADR 0050) and states a verified payment
-# to the app on delivery (connector ADR 0040) — see connector.toml's `[node]`
-# section and the relay's own write handler.
-ARG CONNECTOR_TAG=rust-sha-6ea6009
+# `rust-sha-c714551` is the first pin this bundle has shipped on which a
+# peering established over the operator surface (`POST /peers`, connector ADR
+# 0058) can PAY for the packets it forwards (connector#1230) — the previous
+# pin could accept such a peering's claims but never sign one. It also speaks
+# the `[node]` self-description (ADR 0050) and states a verified payment to
+# the app on delivery (ADR 0040), as its predecessor did.
+ARG CONNECTOR_TAG=rust-sha-c714551
 FROM ghcr.io/toon-protocol/connector:${CONNECTOR_TAG}
 
 # The image's own CMD already names this path (`CMD ["/app/config/connector.toml"]`),

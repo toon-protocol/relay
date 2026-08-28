@@ -41,6 +41,7 @@ baking the config rather than mounting it.
 
 ## Secrets
 
-`.env`, `*.key` and `*.secret` in this directory are gitignored. Nothing
-secret is ever baked into the published image: `connector.toml` names key
-_paths_, and the files themselves are mounted read-only at runtime.
+`.env`, `*.key`, `*.secret`, `operator-bearer.token` and `operator-write.keys`
+in this directory are gitignored. Nothing secret is ever baked into the
+published image: `connector.toml` names key _paths_, and the files themselves
+are mounted read-only at runtime.
