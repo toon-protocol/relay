@@ -91,7 +91,7 @@ services:
   # needs `git pull && docker compose up -d` on the box. The label below stays
   # for shape-parity with the other two bundles, and is inert here.
   connector:
-    image: ghcr.io/toon-protocol/connector:rust-sha-c714551
+    image: ghcr.io/toon-protocol/connector:rust-2026.08.28.1
     # No `environment:` block, deliberately: the connector has no
     # environment-variable layer at all. Every value comes from the mounted
     # ./connector.toml, so there is exactly one place any value comes from.

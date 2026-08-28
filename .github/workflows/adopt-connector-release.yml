@@ -178,7 +178,10 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           git checkout -B "$BRANCH"
-          git commit -q \
+          # -a: the sed edits above are unstaged, and `git commit` without it
+          # commits nothing and exits 1. That is exactly how this step failed
+          # the first time it ran for real (release 2026.08.28.1).
+          git commit -qa \
             -m "deploy: adopt connector release $HANDLE" \
             -m "The connector cut release $HANDLE, and this node follows its releases (deploy/README.md). The candidate was booted against this repo's own committed deploy/connector.toml before this commit was made: it accepted the file, which is connector ADR 0041 Decision 1's question, asked at the one moment the candidate image and this node's committed config are both in front of the same machine." \
             -m "The box applies this on its own timer once merged (deploy/auto-apply.sh)."

@@ -127,7 +127,7 @@ const EXPECTED_ROUTE_HANDLER_URLS: Record<string, string> = {
 // for what it forwards (connector#1230); its predecessor `rust-sha-6ea6009`
 // was the first to speak `[node]` (ADR 0050) and state a verified payment to
 // the app on delivery (ADR 0040).
-const EXPECTED_CONNECTOR_TAG = 'rust-sha-c714551';
+const EXPECTED_CONNECTOR_TAG = 'rust-2026.08.28.1';
 
 // The one file that may name a connector build. It used to be
 // deploy/Dockerfile's `ARG CONNECTOR_TAG`, back when this bundle published a
