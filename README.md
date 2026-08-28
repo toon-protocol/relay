@@ -81,7 +81,8 @@ sudo chown 10001:10001 *.key    # the connector image runs as uid 10001
 # you sign from; only its public half goes in the allowlist.
 openssl rand -hex 32 > operator-bearer.token
 openssl rand -hex 32 > operator-write.key
-docker run --rm -v "$PWD:/w" ghcr.io/toon-protocol/relay-connector:release \
+docker run --rm -v "$PWD:/w" \
+  "$(grep -oP 'ghcr\.io/toon-protocol/connector:\S+' docker-compose.yml)" \
   send --operator-key /w/operator-write.key --print-keyid > operator-write.keys
 chmod 600 operator-bearer.token operator-write.key
 sudo chown 10001:10001 operator-bearer.token operator-write.keys
@@ -153,8 +154,9 @@ That is the client side of this protocol, and it is not in this repo.
 docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
 ```
 
-Caddy drops out, the connector's edge appears on `127.0.0.1:3000` and free
-reads on `127.0.0.1:7100`. The relay's write port stays unpublished even here.
+Caddy drops out and free reads appear on `127.0.0.1:7100`; the connector's
+edge is already on `127.0.0.1:3000`, published there in the base file. The
+relay's write port stays unpublished even here.
 
 ---
 
@@ -163,15 +165,15 @@ reads on `127.0.0.1:7100`. The relay's write port stays unpublished even here.
 | Service     | Image                                   | Job                                                                                                    |
 | ----------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `caddy`     | `caddy:2-alpine`                        | TLS for both hostnames, certificates and renewal. The only service that publishes a port.              |
-| `connector` | `ghcr.io/toon-protocol/relay-connector` | Terminates payment, delivers the paid request to the relay, answers `GET /ilp` with what this node is. |
+| `connector` | `ghcr.io/toon-protocol/connector` (pinned) | Terminates payment, delivers the paid request to the relay, answers `GET /ilp` with what this node is. |
 | `relay`     | `ghcr.io/toon-protocol/relay`           | Verifies the event signature, stores it, serves NIP-01 reads.                                          |
 
 ### The connector's config
 
-[`deploy/connector.toml`](deploy/connector.toml) is baked into the
-`relay-connector` image, so one artifact carries both the connector build and
-the config it was validated against. It is about twenty lines of actual
-settings:
+[`deploy/connector.toml`](deploy/connector.toml) is mounted read-only into the
+stock connector image, whose immutable pin sits in the same compose file — so
+the build and the config it was validated against are one commit, and the box
+takes both with one `git pull`. It is about twenty lines of actual settings:
 
 | Section            | What it says                                                                                                                                 |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -225,12 +227,14 @@ the announce could go stale in ways the node itself never could.
 
 ### The privacy invariant
 
-- **Caddy is the only service that publishes a port.** The relay's write port
-  and the connector's edge are `expose`d on the compose network and nowhere
-  else.
-- **A docker `ports:` publish is internet-reachable even with ufw locked to
-  22/80/443** — Docker's iptables chain runs ahead of ufw. Never convert an
-  `expose:` in `docker-compose.yml` into a `ports:`.
+- **Caddy is the only service reachable from off the box.** The relay's write
+  and read ports are `expose`d on the compose network and nowhere else. The
+  connector's edge is published to `127.0.0.1` only — enough for an on-box
+  operator call, not reachable from the internet.
+- **A docker `ports:` publish with no host IP is internet-reachable even with
+  ufw locked to 22/80/443** — Docker's iptables chain runs ahead of ufw. Never
+  convert an `expose:` in `docker-compose.yml` into a bare `ports:`, and never
+  drop the `127.0.0.1:` from the connector's.
 - **This is a security precondition, not just privacy.** The relay skips
   signature verification for _paid_ ephemeral kinds because that port is
   reachable only through the payment gate. If you front it any other way, set
@@ -243,18 +247,28 @@ that stops being true.
 
 ## Operate it
 
-**Updates arrive on their own.** A green merge to `main` publishes both images
-and moves their `:release` tags; the Watchtower overlay recreates whichever
-container's tag moved, usually within a minute:
+**Relay app updates arrive on their own; connector updates do not.** A green
+merge to `main` publishes the relay app image and moves its `:release` tag;
+the Watchtower overlay recreates that container, usually within a minute:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.watchtower.yml up -d
 ```
 
-It only ever touches `connector` and `relay` — never Caddy, which holds the
-certificates. Every build also keeps an immutable `:sha-<short>` tag, so a
-rollback is pinning `RELAY_IMAGE` or `RELAY_CONNECTOR_IMAGE` to one and
-running `up -d`.
+It never touches Caddy, which holds the certificates. Every relay build also
+keeps an immutable `:sha-<short>` tag, so a rollback is pinning `RELAY_IMAGE`
+to one and running `up -d`.
+
+The **connector** is pinned to an immutable tag in `docker-compose.yml`, which
+by definition never moves, so Watchtower has nothing to follow for it. Its
+enable label is kept only so the service block matches the other TOON node
+bundles, and is inert. Adopting a new connector pin or changing
+`connector.toml` therefore takes a deliberate step on the box:
+
+```bash
+cd /path/to/relay && git pull && cd deploy
+docker compose -f docker-compose.yml -f docker-compose.watchtower.yml up -d connector
+```
 
 **To peer with another node**, sign a `POST /peers` naming its URL with
 `operator-write.key` — the connector repo's `docs/operators/sign-write.sh`
@@ -272,11 +286,15 @@ channel from the two settlement addresses and opens it if absent (connector
 ADR 0058); the second puts a route through it in the table. Both survive a
 restart — they live in `connector_state`, not in `connector.toml`.
 
-**To adopt a newer connector**, bump `ARG CONNECTOR_TAG` in
-[`deploy/Dockerfile`](deploy/Dockerfile) and merge. That ARG is the only place
-a connector build is named — the config and the build it was validated against
-move in the same reviewed commit, so a new connector can never reach a box
-ahead of the config it needs.
+**To adopt a newer connector**, bump the `connector` service's `image:` in
+[`deploy/docker-compose.yml`](deploy/docker-compose.yml) and merge, then pull
+and recreate on the box. That line is the only place a connector build is
+named — the config and the build it was validated against move in the same
+reviewed commit and reach the box in the same `git pull`, so a new connector
+can never reach a box ahead of the config it needs. Pin an exact `rust-sha-`
+build, never a moving tag: the config parser is `deny_unknown_fields` and
+startup is fail-closed, so an accidental bump is an outage rather than a
+degraded run.
 
 **Retention.** What the relay stops serving — NIP-40 expiry, NIP-09 deletion,
 and the operator blocklist for events whose author key is gone — is

@@ -9,17 +9,20 @@
 # The connector monetizes WRITES. READS are free and never touch it.
 #
 # ── The privacy invariant, enforced by construction ──────────────────────────
-# Caddy is the ONLY service that publishes a port. The connector's edge (3000)
-# and the relay's write (3100) and read (7100) ports are `expose`d on the
-# compose network and nothing else, so the only way to a write is a payment
-# through the connector.
+# Caddy is the only service reachable from the internet. It is the only one
+# with an unqualified publish; the connector's edge (3000) is published to
+# 127.0.0.1 ONLY, and the relay's write (3100) and read (7100) ports are
+# `expose`d on the compose network and nothing else. So the only way in to a
+# write is a payment through the connector.
 #
 # This is a security precondition, not just tidiness: the relay skips schnorr
 # verification for PAID ephemeral kinds on the assumption that 3100 is
 # reachable exclusively through the payment-gating connector. If you change
 # that, set RELAY_VERIFY_EPHEMERAL=true. And remember a docker `ports:`
-# publish is internet-reachable even with ufw locked to 22/80/443 — never
-# convert an `expose:` here into a `ports:`.
+# publish WITHOUT a host-IP prefix is internet-reachable even with ufw locked
+# to 22/80/443 — Docker's iptables chain runs ahead of ufw. Never convert an
+# `expose:` here into a bare `ports:`, and never drop the `127.0.0.1:` from
+# the connector's.
 #
 #   Production:  docker compose up -d
 #   Local, no TLS:
@@ -58,22 +61,51 @@ services:
     restart: unless-stopped
 
   # ── The payment proxy ──────────────────────────────────────────────────────
+  #
+  # The STOCK connector image on an immutable pin, with this directory's
+  # connector.toml mounted in. Same image and same shape as the store and
+  # gas-station bundles — one connector deployment model across the fleet.
+  #
+  # ── Bumping the pin ────────────────────────────────────────────────────────
+  # This `image:` line is the pin of record; deploy/bundle.test.ts fails the
+  # build if a second copy of a connector build appears anywhere else.
+  #
+  # Pin an exact `rust-sha-` build, never the floating `rust-main` or the
+  # fleet's `rust-release` pointer. The config parser is `deny_unknown_fields`
+  # and startup is fail-closed, so a schema drift under you is a
+  # refuse-to-start rather than a degraded run — which is the behaviour you
+  # want, but it means an accidental bump is an outage. The pin and the
+  # connector.toml it was validated against live at the same commit here, and
+  # the box takes both with one `git pull`, so a build can never reach a box
+  # ahead of the config it needs.
+  #
+  # `rust-sha-c714551` is the first pin this bundle has shipped on which a
+  # peering established over the operator surface (`POST /peers`, connector
+  # ADR 0058) can PAY for the packets it forwards (connector#1230) — the
+  # previous pin could accept such a peering's claims but never sign one. It
+  # also speaks the `[node]` self-description (ADR 0050) and states a verified
+  # payment to the app on delivery (ADR 0040), as its predecessor did.
+  #
+  # Because the pin is IMMUTABLE, this container does not auto-deploy: there
+  # is no moving tag for Watchtower to follow, so a connector or config change
+  # needs `git pull && docker compose up -d` on the box. The label below stays
+  # for shape-parity with the other two bundles, and is inert here.
   connector:
-    image: ${RELAY_CONNECTOR_IMAGE:-ghcr.io/toon-protocol/relay-connector:release}
-    # Only used by `docker compose up --build`. The published image is built by
-    # CI from ./Dockerfile's own ARG default with no build-arg override, so
-    # that ARG is the single pin of record.
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/toon-protocol/connector:rust-sha-c714551
     # No `environment:` block, deliberately: the connector has no
-    # environment-variable layer at all. Every value comes from the baked
+    # environment-variable layer at all. Every value comes from the mounted
     # ./connector.toml, so there is exactly one place any value comes from.
     labels:
       # Watchtower only ever touches a container carrying this label, and only
-      # when docker-compose.watchtower.yml is in the file set.
+      # when docker-compose.watchtower.yml is in the file set. Inert for this
+      # service while the image above is pinned to an immutable tag.
       com.centurylinklabs.watchtower.enable: 'true'
     volumes:
+      # The whole connector configuration — routes, prices, settlement, and
+      # what this node says about itself. Mounted, not baked: the pin above
+      # and this file are the same reviewed commit, and the box takes both
+      # with one `git pull`. It names key PATHS only and holds nothing secret.
+      - ./connector.toml:/app/config/connector.toml:ro
       # Two identities, provisioned two different ways — see connector.toml.
       # In short: the signer holds no money and is fresh random material per
       # box; the settlement key is what clients open channels against, so it
@@ -94,8 +126,12 @@ services:
       # first mount and what a bind mount does not. Replaying it is what stops
       # a restart from re-accepting a claim the payer already spent.
       - connector_state:/app/state
-    expose:
-      - '3000'
+    ports:
+      # LOOPBACK ONLY. Public traffic reaches the edge through Caddy; this
+      # publish is for on-box operator calls (`/peers`, `/channels`) and
+      # nothing else. Dropping the `127.0.0.1:` would put the edge on the
+      # internet — see the privacy invariant above.
+      - '127.0.0.1:3000:3000'
     healthcheck:
       # The connector has no /health route. GET /ilp/identity answers 200 only
       # once the process is serving AND has read its signer key file.
