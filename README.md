@@ -162,11 +162,11 @@ relay's write port stays unpublished even here.
 
 ## How it fits together
 
-| Service     | Image                                   | Job                                                                                                    |
-| ----------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `caddy`     | `caddy:2-alpine`                        | TLS for both hostnames, certificates and renewal. The only service that publishes a port.              |
+| Service     | Image                                      | Job                                                                                                    |
+| ----------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `caddy`     | `caddy:2-alpine`                           | TLS for both hostnames, certificates and renewal. The only service that publishes a port.              |
 | `connector` | `ghcr.io/toon-protocol/connector` (pinned) | Terminates payment, delivers the paid request to the relay, answers `GET /ilp` with what this node is. |
-| `relay`     | `ghcr.io/toon-protocol/relay`           | Verifies the event signature, stores it, serves NIP-01 reads.                                          |
+| `relay`     | `ghcr.io/toon-protocol/relay`              | Verifies the event signature, stores it, serves NIP-01 reads.                                          |
 
 ### The connector's config
 
@@ -262,10 +262,11 @@ to one and running `up -d`.
 The **connector** is pinned to an immutable tag in `docker-compose.yml`, which
 by definition never moves, so Watchtower has nothing to follow for it. Its
 enable label is kept only so the service block matches the other TOON node
-bundles, and is inert. Adopting a new connector pin or changing
-`connector.toml` therefore takes a deliberate step on the box:
+bundles, and is inert. What moves the connector instead is a release, and the
+box applies it itself — see below.
 
 ```bash
+# The manual form, still there when you want it:
 cd /path/to/relay && git pull && cd deploy
 docker compose -f docker-compose.yml -f docker-compose.watchtower.yml up -d connector
 ```
@@ -286,15 +287,39 @@ channel from the two settlement addresses and opens it if absent (connector
 ADR 0058); the second puts a route through it in the table. Both survive a
 restart — they live in `connector_state`, not in `connector.toml`.
 
-**To adopt a newer connector**, bump the `connector` service's `image:` in
-[`deploy/docker-compose.yml`](deploy/docker-compose.yml) and merge, then pull
-and recreate on the box. That line is the only place a connector build is
-named — the config and the build it was validated against move in the same
-reviewed commit and reach the box in the same `git pull`, so a new connector
-can never reach a box ahead of the config it needs. Pin an exact `rust-sha-`
-build, never a moving tag: the config parser is `deny_unknown_fields` and
-startup is fail-closed, so an accidental bump is an outage rather than a
-degraded run.
+**Adopting a newer connector happens on its own, from a release.** When the
+connector repo cuts a release — one human dispatch, stamping an immutable
+`connector:rust-<handle>` that nothing ever moves — this repo notices within
+half an hour and opens the pin bump itself
+([`.github/workflows/adopt-connector-release.yml`](.github/workflows/adopt-connector-release.yml)).
+Before it opens anything it **boots that candidate image against this repo's
+own committed `deploy/connector.toml`** and requires the build to accept it;
+a build that refused a key by name, renamed a field or newly required one
+fails there and no pull request appears. That is connector ADR 0041's
+Decision 1 — an image a box follows unattended may only move to a build that
+still accepts the committed config — asked at the one moment the candidate
+and this node's config are in front of the same machine.
+
+Once that PR merges, the box applies it within five minutes:
+[`deploy/auto-apply.sh`](deploy/auto-apply.sh) on a systemd timer
+fast-forwards `main`, runs `compose up -d`, and requires the connector to come
+back **healthy**. It is pull-based deliberately — no CI job anywhere holds SSH
+into a node, which is the posture connector ADR 0068 settled — and it refuses
+to touch a box whose working tree is dirty, so a human mid-operation is never
+overwritten. Install it once per box:
+
+```bash
+sudo cp /root/relay/deploy/toon-auto-apply.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now toon-auto-apply.timer
+systemctl list-timers toon-auto-apply.timer     # when it next fires
+journalctl -u toon-auto-apply.service -n 50     # what it last did
+```
+
+The pin is still the only place a connector build is named here, and it is
+still immutable — a `rust-sha-` build or a `rust-<handle>` release, never a
+moving tag. The config parser is `deny_unknown_fields` and startup is
+fail-closed, which is exactly why the gate above runs before the pin moves
+rather than after.
 
 **Retention.** What the relay stops serving — NIP-40 expiry, NIP-09 deletion,
 and the operator blocklist for events whose author key is gone — is
