@@ -24,17 +24,21 @@ pnpm -r test
 ## Deployment
 
 `deploy/` is **the deployment of record** — the live devnet relay box runs it
-from this repo (Caddy → connector → relay). Two images are published to GHCR
-on every green merge to `main`, each with a moving `:release` tag the box's
-Watchtower follows and an immutable `:sha-*` tag for rollback:
+from this repo (Caddy → connector → relay). One image is published to GHCR on
+every green merge to `main`, with a moving `:release` tag the box's Watchtower
+follows and an immutable `:sha-*` tag for rollback:
 
 - `ghcr.io/toon-protocol/relay` — the app (`packages/relay/Dockerfile`)
-- `ghcr.io/toon-protocol/relay-connector` — the pinned connector with
-  `deploy/connector.toml` baked in (`deploy/Dockerfile`)
 
-The connector build is pinned in exactly one place: `deploy/Dockerfile`'s
-`ARG CONNECTOR_TAG`. `deploy/bundle.test.ts` fails the build if a second copy
-appears, if the privacy invariant breaks, or if prices/settlement drift.
+The connector is the **stock** `ghcr.io/toon-protocol/connector` image on an
+immutable pin, with `deploy/connector.toml` mounted read-only — the same shape
+the store and gas-station bundles use. This repo publishes no connector image.
+The pin lives in exactly one place: `deploy/docker-compose.yml`'s `connector`
+service `image:`. Because it is immutable, the connector does **not**
+auto-deploy: changing it or `connector.toml` needs `git pull && docker compose
+up -d` on the box. `deploy/bundle.test.ts` fails the build if a second copy of
+the pin appears, if the privacy invariant breaks, or if prices/settlement
+drift.
 
 ## Cross-repo dependencies
 

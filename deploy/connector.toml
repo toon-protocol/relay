@@ -1,9 +1,10 @@
 # =============================================================================
 # The connector in front of this relay — the payment proxy.
 # =============================================================================
-# Baked into the relay-connector image at /app/config/connector.toml (see
-# ./Dockerfile), so the image is a self-contained deployable: one artifact
-# carries both the connector build and the config it was validated against.
+# Mounted read-only into the stock connector image at
+# /app/config/connector.toml (see ./docker-compose.yml), which is also where
+# that image's connector build is pinned — so the build and the config it was
+# validated against live at one commit and reach a box in one `git pull`.
 #
 # This is the config the live TOON devnet relay runs. To run your own node,
 # change [node] to your hostnames and the prices to yours; everything else
@@ -22,7 +23,8 @@
 # The one listener. POST /ilp, GET /ilp (self-description), GET /ilp/btp,
 # GET /ilp/identity and the operator surface all share it — there is no
 # separate admin or health port. 0.0.0.0 so the compose network reaches it;
-# the port is never published to the host (see docker-compose.yml).
+# the port is published to 127.0.0.1 only, never to the internet (see
+# docker-compose.yml's privacy invariant).
 client_edge_addr = "0.0.0.0:3000"
 
 # Durable claim state, on a named volume.

@@ -1,6 +1,6 @@
 /**
- * Guards the deploy bundle — the artifacts this repo publishes as
- * `ghcr.io/toon-protocol/relay-connector` and hands an operator to run a node.
+ * Guards the deploy bundle — the files this repo hands an operator to run a
+ * node, and the one image it publishes to carry the app.
  *
  * It reads the REAL files, not fixtures: a fixture would keep passing while
  * the shipped artifact regressed. Expected values are literals declared here
@@ -14,8 +14,8 @@
  *   difference between a free lane and a free ride;
  * - `[node]`, because a node that cannot say where it is cannot be paid;
  * - the connector pin, in exactly one place, because two copies drift;
- * - the privacy invariant: Caddy is the only service that publishes a port,
- *   and the relay's write port is never one of them;
+ * - the privacy invariant: nothing is reachable from the internet except the
+ *   TLS front, and the relay's write port is not published at all;
  * - healthchecks dialling 127.0.0.1, because "localhost" in a container can
  *   resolve to ::1 where an IPv4-bound listener never answers.
  */
@@ -31,21 +31,34 @@ const CONNECTOR_TOML_PATH = resolve(REPO_ROOT, 'deploy/connector.toml');
 const DOCKER_COMPOSE_PATH = resolve(REPO_ROOT, 'deploy/docker-compose.yml');
 const CADDYFILE_PATH = resolve(REPO_ROOT, 'deploy/Caddyfile');
 
-// The relay's own write ports. Neither may ever be host-published: they are
-// the payment-oblivious surface, reachable only through the connector.
+// The relay's own write ports. Neither may ever be host-published in any
+// form: they are the payment-oblivious surface, and the relay skips schnorr
+// verification for paid ephemeral kinds precisely because the only route to
+// them is through the payment-gating connector.
 const PRIVATE_RELAY_PORTS = ['3100'];
 // The connector's client edge. Public traffic reaches it through Caddy, which
-// can see, log and terminate TLS for it — never by a direct publish.
+// can see, log and terminate TLS for it. It is published to LOOPBACK for
+// on-box operator calls, which is what the store and gas-station bundles do
+// too — and a loopback bind is not reachable from the internet.
 const CONNECTOR_EDGE_PORT = '3000';
 
-// The one service allowed to publish, because it is the TLS front.
+// The one service allowed an UNQUALIFIED publish, because it is the TLS front
+// and being reachable is its whole job.
 const PUBLISHING_SERVICE = 'caddy';
 const EXPECTED_PUBLISHED_PORTS = ['80:80', '443:443'];
+
+// The prefix that makes a publish local-only. A `ports:` entry without a host
+// IP — or with 0.0.0.0 — binds every interface, and Docker's iptables chain
+// runs ahead of ufw, so such a publish is internet-reachable even with ufw
+// locked to 22/80/443. That is the thing the invariant forbids.
+const LOOPBACK_PUBLISH_PREFIX = '127.0.0.1:';
 
 interface DockerCompose {
   services: Record<
     string,
     {
+      image?: string;
+      build?: unknown;
       ports?: string[];
       expose?: (string | number)[];
       labels?: Record<string, string>;
@@ -116,17 +129,20 @@ const EXPECTED_ROUTE_HANDLER_URLS: Record<string, string> = {
 // the app on delivery (ADR 0040).
 const EXPECTED_CONNECTOR_TAG = 'rust-sha-c714551';
 
-const PUBLISH_WORKFLOW_PATH =
-  '.github/workflows/publish-relay-connector-image.yml';
+// The one file that may name a connector build. It used to be
+// deploy/Dockerfile's `ARG CONNECTOR_TAG`, back when this bundle published a
+// derived `relay-connector` image with connector.toml baked in; the bundle now
+// runs the STOCK connector image with connector.toml mounted, exactly as the
+// store and gas-station bundles do, so the pin of record is the compose file's
+// `image:`.
+const PIN_OF_RECORD_PATH = 'deploy/docker-compose.yml';
 
 // Every file that could name a connector build. Exactly one of them may.
 const FILES_THAT_COULD_NAME_A_CONNECTOR_BUILD = [
-  'deploy/Dockerfile',
-  'deploy/docker-compose.yml',
+  PIN_OF_RECORD_PATH,
   'deploy/.env.example',
   'deploy/README.md',
   'README.md',
-  PUBLISH_WORKFLOW_PATH,
 ];
 
 // Every wget-based healthcheck this repo ships, and how to pull the target
@@ -285,17 +301,17 @@ describe('deploy bundle', () => {
       'docker-compose.yml connector: /app/state must be a named volume'
     ).toBe('connector_state:/app/state');
 
-    // A key is a LOCATION here, never a value — nothing secret is ever baked
-    // into the published image.
+    // A key is a LOCATION here, never a value — nothing secret is ever
+    // committed or baked into an image.
     expect(config.signer.key_file).toMatch(/^\/app\/data\/.+\.key$/);
   });
 
   it('enables the operator surface by file, and mounts both files', () => {
     // Every write on this surface -- establishing a peering above all -- is
     // RFC 9421-signed against this allowlist, and every read carries the
-    // bearer token. This config is baked into a published image, so the two
-    // values may only ever be named by PATH here; the files themselves are
-    // mounted beside the keys and gitignored.
+    // bearer token. This config is committed to a public repository, so the
+    // two values may only ever be named by PATH here; the files themselves
+    // are mounted beside the keys and gitignored.
     const { operator } = readConnectorToml();
     expect(operator.bearer_token_file).toBe('/app/data/operator-bearer.token');
     expect(operator.write_keys_file).toBe('/app/data/operator-write.keys');
@@ -313,77 +329,127 @@ describe('deploy bundle', () => {
   });
 
   it('names the connector build in exactly one place', () => {
-    const dockerfile = readFile('deploy/Dockerfile');
-    const arg = dockerfile.match(/^ARG CONNECTOR_TAG=(\S+)$/m);
+    const pinned = readDockerCompose().services['connector']?.image;
 
     expect(
-      arg,
-      'deploy/Dockerfile: no `ARG CONNECTOR_TAG=` found — it is the pin of record'
-    ).not.toBeNull();
+      pinned,
+      `${PIN_OF_RECORD_PATH}: the connector service has no \`image:\` — it is the pin of record`
+    ).toBe(`ghcr.io/toon-protocol/connector:${EXPECTED_CONNECTOR_TAG}`);
+
+    // A moving tag here would make the pin a pointer someone else controls,
+    // which is what a `rust-sha-` pin exists to avoid.
     expect(
-      arg?.[1],
-      `deploy/Dockerfile: expected ARG CONNECTOR_TAG=${EXPECTED_CONNECTOR_TAG}, found ${arg?.[1]}`
-    ).toBe(EXPECTED_CONNECTOR_TAG);
+      pinned,
+      `${PIN_OF_RECORD_PATH}: pin an immutable rust-sha- build, never a moving tag`
+    ).toMatch(/:rust-sha-[0-9a-f]{7}$/);
+
+    // The image must be the STOCK connector — the same one the store and
+    // gas-station bundles run. A derived image would put the config somewhere
+    // this repo's tests cannot see.
+    expect(pinned).toMatch(/^ghcr\.io\/toon-protocol\/connector:/);
 
     // Every other site is checked for a `rust-sha-`/`rust-main`/`rust-release`
     // literal, in prose or in config. A second copy is how an operator ends
-    // up deploying one connector while reading about another, and a build-arg
-    // in the workflow would silently outrank the ARG above and decide what
-    // actually ships.
+    // up deploying one connector while reading about another.
     for (const file of FILES_THAT_COULD_NAME_A_CONNECTOR_BUILD) {
-      if (file === 'deploy/Dockerfile') continue;
+      if (file === PIN_OF_RECORD_PATH) continue;
       const content = readFile(file);
       const literal = content.match(/rust-(?:sha-[0-9a-f]{7}|main|release)/);
       expect(
         literal,
-        `${file}: names connector build "${literal?.[0]}" — deploy/Dockerfile's ARG default is the only place a build may be pinned`
+        `${file}: names connector build "${literal?.[0]}" — ${PIN_OF_RECORD_PATH}'s connector \`image:\` is the only place a build may be pinned`
       ).toBeNull();
     }
   });
 
-  it('publishes ports from the TLS front and nowhere else', () => {
+  it('mounts connector.toml rather than baking it into a derived image', () => {
+    const connector = readDockerCompose().services['connector'];
+
+    // The bundle used to publish `relay-connector`: the stock connector with
+    // this connector.toml COPYed in. The property that bought — a build can
+    // never reach a box ahead of the config it needs — is now supplied by the
+    // immutable pin itself, since the pin and the config are one commit here
+    // and the box takes both with one `git pull`. What baking cost was an
+    // extra image, an extra publish workflow, and a deploy model unlike the
+    // other two node bundles.
+    expect(
+      connector?.volumes ?? [],
+      'docker-compose.yml connector: connector.toml must be mounted read-only'
+    ).toContain('./connector.toml:/app/config/connector.toml:ro');
+
+    // A `build:` key would reintroduce a second, unreviewable source for what
+    // this service runs.
+    expect(
+      connector?.build,
+      'docker-compose.yml connector: must run the published image, never a local build'
+    ).toBeUndefined();
+  });
+
+  it('exposes nothing to the internet but the TLS front', () => {
     const { services } = readDockerCompose();
 
+    // The substance of this invariant is "nothing is reachable from the
+    // internet except the TLS front" — so what it forbids is an UNQUALIFIED
+    // publish, on any service, not a publish as such. A `ports:` entry with
+    // no host IP (or 0.0.0.0) binds every interface, and Docker's iptables
+    // chain runs ahead of ufw, so it is internet-reachable even with ufw
+    // locked to 22/80/443. A `127.0.0.1:`-prefixed entry is not reachable
+    // off-box at all, and is how an operator reaches the connector's operator
+    // surface — the same shape the store and gas-station bundles ship. This
+    // test used to forbid a connector publish outright; it now forbids the
+    // thing that was actually dangerous about one.
     for (const [serviceName, service] of Object.entries(services)) {
-      const published = service.ports ?? [];
+      const published = (service.ports ?? []).map(resolveComposeDefaults);
       if (serviceName === PUBLISHING_SERVICE) {
         expect(
-          published.map(resolveComposeDefaults),
+          published,
           `docker-compose.yml ${PUBLISHING_SERVICE}: expected ${JSON.stringify(EXPECTED_PUBLISHED_PORTS)}`
         ).toEqual(EXPECTED_PUBLISHED_PORTS);
         continue;
       }
-      expect(
-        published,
-        `docker-compose.yml service "${serviceName}": publishes ${JSON.stringify(published)} — only ${PUBLISHING_SERVICE} may publish, and a docker publish is internet-reachable even with ufw locked to 22/80/443`
-      ).toEqual([]);
+      for (const entry of published) {
+        expect(
+          entry.startsWith(LOOPBACK_PUBLISH_PREFIX),
+          `docker-compose.yml service "${serviceName}": publishes "${entry}" with no host IP — only ${PUBLISHING_SERVICE} may be reachable off-box, and a bare docker publish beats ufw. Prefix it "${LOOPBACK_PUBLISH_PREFIX}" or use \`expose:\`.`
+        ).toBe(true);
+      }
     }
   });
 
-  it('keeps the relay write port and the connector edge behind the network', () => {
+  it('never publishes the relay write port, and binds the connector edge to loopback', () => {
     const { services } = readDockerCompose();
     const everyPublishedField = Object.values(services)
       .flatMap((service) => service.ports ?? [])
       .map(resolveComposeDefaults);
 
-    for (const port of [...PRIVATE_RELAY_PORTS, CONNECTOR_EDGE_PORT]) {
+    // The write port is different from the edge: it has no authentication of
+    // its own, so not even a loopback publish is acceptable. It must stay
+    // `expose:`-only, reachable from the connector and nothing else.
+    for (const port of PRIVATE_RELAY_PORTS) {
       const leaking = everyPublishedField.find((entry) =>
         entry.split(':').includes(port)
       );
       expect(
         leaking,
-        `docker-compose.yml: port :${port} is published ("${leaking}") — it must stay \`expose:\`-only`
+        `docker-compose.yml: the relay's write port :${port} is published ("${leaking}") — it must stay \`expose:\`-only`
       ).toBeUndefined();
     }
+
+    const edgePublishes = everyPublishedField.filter((entry) =>
+      entry.split(':').includes(CONNECTOR_EDGE_PORT)
+    );
+    expect(
+      edgePublishes,
+      `docker-compose.yml: the connector edge must be published on loopback exactly once, found ${JSON.stringify(edgePublishes)}`
+    ).toEqual([
+      `${LOOPBACK_PUBLISH_PREFIX}${CONNECTOR_EDGE_PORT}:${CONNECTOR_EDGE_PORT}`,
+    ]);
 
     const exposedByRelay = (services['relay']?.expose ?? []).map(String);
     expect(
       exposedByRelay,
       `docker-compose.yml relay: expected the write port under \`expose:\`, found ${JSON.stringify(exposedByRelay)}`
     ).toContain(PRIVATE_RELAY_PORTS[0]);
-    expect((services['connector']?.expose ?? []).map(String)).toContain(
-      CONNECTOR_EDGE_PORT
-    );
   });
 
   it('routes TLS to the two public surfaces and never to the write port', () => {

@@ -6,8 +6,9 @@
 # Two changes from the production file:
 #   * Caddy is dropped. There is no public hostname to get a certificate for,
 #     so EDGE_HOST / READ_HOST / ACME_EMAIL are not needed either.
-#   * The connector edge and the relay's read port are published on loopback,
-#     because with Caddy gone nothing else would reach them.
+#   * The relay's read port is published on loopback, because with Caddy gone
+#     nothing else would reach it. The connector's edge needs nothing here:
+#     the base file already publishes it on 127.0.0.1:3000.
 #
 # The relay's WRITE port (3100) stays unpublished even here. Publishing it
 # would put a free, unauthenticated write door on your machine and break the
@@ -20,13 +21,6 @@ services:
     # no profile is ever activated here. Cleaner than a second copy of the
     # file with the service deleted.
     profiles: ['never']
-
-  connector:
-    ports:
-      - '127.0.0.1:3000:3000' # POST /ilp, GET /ilp, GET /ilp/btp
-    depends_on:
-      relay:
-        condition: service_healthy
 
   relay:
     ports:
