@@ -57,7 +57,7 @@ Cross-cutting agent skills, docs, and the canonical project context live in
 /plugin install toon-skills@toon-meta
 ```
 
-Canonical rules/decisions: `toon-meta` → `_bmad-output/project-context.md`.
+Canonical rules/decisions: `toon-meta` → `context/context.md`.
 
 ## Publishing
 
