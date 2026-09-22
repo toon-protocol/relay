@@ -21,7 +21,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse } from 'smol-toml';
 import { parse as parseYaml } from 'yaml';
@@ -105,6 +105,29 @@ const EXPECTED_DECIMALS = 6;
 const EXPECTED_SOLANA_PROGRAM_ID = '2aEVJ8koKD8LTZrLRSGtAtU7LBt4e7QjjCgf1kzQ7Rip';
 const EXPECTED_SOLANA_TOKEN_ADDRESS =
   '34eSxY7qxQ4GzyhDJ8GpUcTz1WWzruGbJbR8q6TtxfQU';
+
+// The mint the leg above used to name, held here so the bundle can be checked
+// for it by name. The pin above already fails a straight revert of
+// connector.toml; this value exists because the retired mint is not merely an
+// OLD address but a KNOWN-BAD one — its mint authority is lost, so a node that
+// settles in it can never be funded — and a known-bad address is worth
+// forbidding everywhere an operator could copy it from, not only in the one
+// key the positive pin reads. The compose files, the Caddyfile, .env.example
+// and the README are all things a second box gets set up from, and none of
+// them is covered by a pin on `settlement.solana.token_address`.
+const RETIRED_SOLANA_TOKEN_ADDRESS =
+  'xyc5J8MgKFiEN13PnfftdXxUzYH34FEvw1LCrFwN7in';
+
+// The bundle directory, scanned rather than listed: a file added here later is
+// part of what an operator is handed, and enumerating the guard's inputs by
+// hand is how the Solana leg went unasserted in the first place.
+const BUNDLE_DIR = resolve(REPO_ROOT, 'deploy');
+
+// This suite is the one bundle file that MUST name the retired mint — the
+// constant above is how the check knows what to look for — so it is the one
+// file the scan skips, the same exemption the connector-pin scan makes for the
+// file that holds the pin.
+const RETIRED_MINT_SCAN_EXEMPT = ['bundle.test.ts'];
 
 // `g.toon.relay` is 1 micro-USDC per write (owner decision, 2026-08-04).
 // `g.toon.relay.ephemeral` is deliberately, explicitly 0 — the free lane.
@@ -231,6 +254,27 @@ describe('deploy bundle', () => {
       solana.decimals,
       `settlement.solana.decimals: expected ${EXPECTED_DECIMALS}, found ${solana.decimals}`
     ).toBe(EXPECTED_DECIMALS);
+  });
+
+  it('names the retired Solana mint nowhere in the bundle', () => {
+    // Asserting the live mint present and asserting the dead one absent are
+    // not the same guard. The first covers exactly one key in one file; this
+    // covers every file an operator reads, copies or runs — because the
+    // failure being prevented is a box brought up on a settlement asset that
+    // nobody, including its own operator, can ever obtain.
+    const offenders = readdirSync(BUNDLE_DIR)
+      .filter((entry) => !RETIRED_MINT_SCAN_EXEMPT.includes(entry))
+      .filter((entry) => statSync(resolve(BUNDLE_DIR, entry)).isFile())
+      .filter((entry) =>
+        readFileSync(resolve(BUNDLE_DIR, entry), 'utf8').includes(
+          RETIRED_SOLANA_TOKEN_ADDRESS
+        )
+      );
+
+    expect(
+      offenders,
+      `deploy/${offenders.join(', deploy/')}: names the retired Solana mint ${RETIRED_SOLANA_TOKEN_ADDRESS}. Its mint authority is lost, so a node settling in it can never be funded — use ${EXPECTED_SOLANA_TOKEN_ADDRESS}`
+    ).toEqual([]);
   });
 
   it('charges the documented price on every route', () => {
