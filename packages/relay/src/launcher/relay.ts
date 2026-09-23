@@ -24,7 +24,14 @@
  *     limit and a body-size cap (see `ephemeralRateLimit` /
  *     `ephemeralMaxBodyBytes`). Terminated at the connector by its own
  *     zero-priced route (`deploy/connector.toml`'s `g.toon.relay.ephemeral`).
- *   - Free NIP-01 WebSocket reads (TOON_RELAY_PORT, default 7100).
+ *   - Free NIP-01 WebSocket reads (TOON_RELAY_PORT, default 7100), and on the
+ *     same port the NIP-11 relay information document, answered to a `GET`
+ *     carrying `Accept: application/nostr+json`. It names where a write to
+ *     this relay is paid for — the ILP address, the connector URL, the
+ *     sealing key and the carriage — read from the relay's own connector's
+ *     `GET /ilp` rather than written down here (TOON_Network#121; see
+ *     `connector-edge.ts` and `nips/relay-information.ts`). Every other plain
+ *     HTTP request to that port still answers `426 Upgrade Required`.
  *
  * `startRelay()` returns a `RelayInstance` with an explicit `.stop()` for
  * lifecycle control (the CLI wraps this with process-signal handling).
@@ -51,6 +58,13 @@ import type { EventStore } from '../storage/index.js';
 import { NostrRelayServer } from '../websocket/index.js';
 import { DEFAULT_RELAY_CONFIG } from '../types.js';
 import { RelaySubscriber } from '../subscriber/index.js';
+import { createConnectorEdgeWatcher } from './connector-edge.js';
+import type { ConnectorEdgeWatcher } from './connector-edge.js';
+import type {
+  Carriage,
+  RelayDescription,
+  RelayInformationDocument,
+} from '../nips/relay-information.js';
 import { createWriteHandler } from './handlers/write-handler.js';
 import {
   createEphemeralWriteHandler,
@@ -169,6 +183,55 @@ export interface RelayConfig {
    */
   blockedEventIds?: string[];
 
+  // --- The paid write edge (NIP-11, TOON_Network#121) ---
+
+  /**
+   * The relay's own connector's self-description URL, e.g.
+   * `http://connector:3000/ilp` (env: TOON_CONNECTOR_URL).
+   *
+   * Where the relay LEARNS where its writes are paid for, rather than being
+   * told. The relay speaks no ILP and holds no price, so restating the
+   * connector's address, key, price and carriage in relay config would be a
+   * second copy of the enforcer's facts — see `connector-edge.ts` for the
+   * whole argument. Set it together with `writeIlpAddress`; setting one
+   * without the other is a startup error.
+   *
+   * Unset, the relay publishes no edge: its NIP-11 document carries no `toon`
+   * object and a refused write says so. That is the correct behaviour for a
+   * relay with no payment gate in front of it, and it is what every existing
+   * deployment of this package keeps doing.
+   */
+  connectorUrl?: string;
+  /**
+   * The ILP address whose route terminates at THIS relay's `POST /write`
+   * (env: TOON_WRITE_ILP_ADDRESS), e.g. `g.toon.relay`.
+   *
+   * The one fact the relay cannot read: a connector publishes its routes'
+   * prefixes and prices but never their `handler_url`, so from its
+   * self-description alone there is no telling which of its prefixes reaches
+   * this relay. An address the connector does not terminate is refused at
+   * read time and advertised never.
+   */
+  writeIlpAddress?: string;
+  /**
+   * The carriage the paid route pins (env: TOON_WRITE_CARRIAGE), `http` or
+   * `btp`.
+   *
+   * A STOPGAP for TOON_Network#111, under which a connector publishes the pin
+   * it enforces. It is used only where the connector's self-description
+   * states no carriage; a connector that states one always wins, so this can
+   * never contradict the thing doing the enforcing. Leave it unset once #111
+   * has landed on the connector this relay runs behind.
+   */
+  writeCarriage?: Carriage;
+  /**
+   * The operator's free-text NIP-11 fields — `name`, `description` and
+   * `contact` (env: TOON_RELAY_NAME / TOON_RELAY_DESCRIPTION /
+   * TOON_RELAY_CONTACT). All optional; each is omitted from the document
+   * when unset.
+   */
+  description?: RelayDescription;
+
   // --- Development ---
 
   /** Skip event-signature verification on `POST /write` (default: false). */
@@ -241,6 +304,14 @@ export interface ResolvedRelayConfig {
   expirationReapGraceSeconds: number;
   expirationReapIntervalSeconds: number;
   blockedEventIds: string[];
+  /** The connector asked where writes are paid for, or undefined. */
+  connectorUrl?: string;
+  /** The ILP address that terminates at this relay's `POST /write`. */
+  writeIlpAddress?: string;
+  /** The operator's carriage stopgap, where one was set. */
+  writeCarriage?: Carriage;
+  /** The operator's NIP-11 free text. */
+  description: RelayDescription;
 }
 
 /**
@@ -263,6 +334,13 @@ export interface RelayInstance {
    * @throws If the relay is not running.
    */
   subscribe(relayUrl: string, filter: Filter): RelaySubscription;
+
+  /**
+   * The NIP-11 relay information document this node is serving right now,
+   * including its paid write edge as last read from its connector. Built
+   * fresh on every call; the same value the read port answers with.
+   */
+  relayInformation(): RelayInformationDocument;
 
   /** The node's Nostr x-only public key (64-char hex). */
   pubkey: string;
@@ -480,6 +558,26 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
   const expirationReapIntervalSeconds =
     config.expirationReapIntervalSeconds ?? 3600;
   const blockedEventIds = config.blockedEventIds ?? [];
+  const connectorUrl = config.connectorUrl;
+  const writeIlpAddress = config.writeIlpAddress;
+  const writeCarriage = config.writeCarriage;
+  const description = config.description ?? {};
+
+  // Both or neither. Half-configured, the relay would either have a connector
+  // to ask and no idea which of its routes to ask about, or an address it had
+  // never checked against anything — and the second is the dangerous one: a
+  // relay publishing an ILP address nobody verified is a relay sending
+  // clients' money at a route that may refuse it. A startup refusal is the
+  // only honest answer, and it is cheap: this is deployment config, read once.
+  if ((connectorUrl === undefined) !== (writeIlpAddress === undefined)) {
+    throw new Error(
+      'RelayConfig: connectorUrl and writeIlpAddress go together — ' +
+        'the relay reads its write edge from its connector, and needs the ' +
+        'connector to ask (TOON_CONNECTOR_URL) and the one address whose ' +
+        'route reaches this relay (TOON_WRITE_ILP_ADDRESS). Set both, or ' +
+        'neither to publish no paid write edge at all.'
+    );
+  }
 
   const resolvedConfig: ResolvedRelayConfig = {
     relayPort,
@@ -498,6 +596,10 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
     expirationReapGraceSeconds,
     expirationReapIntervalSeconds,
     blockedEventIds,
+    ...(connectorUrl !== undefined && { connectorUrl }),
+    ...(writeIlpAddress !== undefined && { writeIlpAddress }),
+    ...(writeCarriage !== undefined && { writeCarriage }),
+    description,
   };
 
   // --- 3. Event store ---
@@ -539,9 +641,48 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
     }
   }
 
-  // --- 4. WebSocket read server (created first so /write can broadcast) ---
+  // --- 4. The paid write edge (TOON_Network#121) ---
+  //
+  // Started BEFORE the servers and awaited by neither: the canonical compose
+  // bundle brings the connector up only once this relay reports healthy, so a
+  // relay that waited for its connector's self-description would deadlock its
+  // own deployment. Until the first successful read the NIP-11 document
+  // carries no `toon` object and a refused write says the relay does not
+  // publish an edge, which is the truth.
+  let edgeWatcher: ConnectorEdgeWatcher | undefined;
+  if (connectorUrl !== undefined && writeIlpAddress !== undefined) {
+    edgeWatcher = createConnectorEdgeWatcher({
+      connectorUrl,
+      ilpAddress: writeIlpAddress,
+      ...(writeCarriage !== undefined && { carriage: writeCarriage }),
+    });
+    console.log(
+      `[relay] paid write edge: asking ${connectorUrl} about ${writeIlpAddress}` +
+        (writeCarriage === undefined
+          ? ''
+          : ` (carriage ${writeCarriage} unless its connector names one)`)
+    );
+  } else {
+    console.log(
+      '[relay] paid write edge: none published — set TOON_CONNECTOR_URL and ' +
+        'TOON_WRITE_ILP_ADDRESS for a client to be able to pay this relay ' +
+        'from its URL alone (TOON_Network#121)'
+    );
+  }
+  const writeEdge = (): ReturnType<ConnectorEdgeWatcher['current']> =>
+    edgeWatcher?.current() ?? null;
+
+  // --- 5. WebSocket read server (created first so /write can broadcast) ---
   const wsRelay = new NostrRelayServer(
-    { port: relayPort, host, maxConnections, enforceExpiration },
+    {
+      port: relayPort,
+      host,
+      maxConnections,
+      enforceExpiration,
+      pubkey: identity.pubkey,
+      writeEdge,
+      description,
+    },
     eventStore
   );
 
@@ -578,7 +719,7 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
     reapTimer.unref();
   }
 
-  // --- 5. HTTP write/health server ---
+  // --- 6. HTTP write/health server ---
   const app = new Hono();
 
   app.get('/health', (c: Context) =>
@@ -684,10 +825,10 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
     );
   });
 
-  // --- 6. Start the WS read server ---
+  // --- 7. Start the WS read server ---
   await wsRelay.start();
 
-  // --- 7. Lifecycle ---
+  // --- 8. Lifecycle ---
   let running = true;
   const activeSubscriptions = new Set<RelaySubscription>();
 
@@ -718,6 +859,7 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
       activeSubscriptions.clear();
 
       if (reapTimer) clearInterval(reapTimer);
+      edgeWatcher?.stop();
 
       await wsRelay.stop();
       blsServer.close();
@@ -729,6 +871,10 @@ export async function startRelay(config: RelayConfig): Promise<RelayInstance> {
         eventStore.close?.();
       }
     },
+
+    // The document the read port answers with, built by the same call: a
+    // caller reading this and a client reading NIP-11 cannot disagree.
+    relayInformation: () => wsRelay.relayInformation(),
 
     pubkey: identity.pubkey,
     config: resolvedConfig,

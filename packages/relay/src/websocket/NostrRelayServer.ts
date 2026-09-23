@@ -1,10 +1,18 @@
 import { readFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { WebSocket } from 'ws';
 import { WebSocketServer } from 'ws';
 import type { NostrEvent } from 'nostr-tools/pure';
 import type { EventStore } from '../storage/index.js';
 import type { RelayServerConfig } from '../types.js';
 import { DEFAULT_RELAY_CONFIG } from '../types.js';
+import {
+  acceptsRelayInformation,
+  buildRelayInformationDocument,
+  NOSTR_JSON_CONTENT_TYPE,
+} from '../nips/relay-information.js';
+import type { RelayInformationDocument } from '../nips/relay-information.js';
 import { ConnectionHandler } from './ConnectionHandler.js';
 
 /**
@@ -42,6 +50,7 @@ export function readOpenFilesSoftLimit(
  */
 export class NostrRelayServer {
   private wss: WebSocketServer | null = null;
+  private http: Server | null = null;
   private handlers = new Map<WebSocket, ConnectionHandler>();
   private config: Required<RelayServerConfig>;
 
@@ -53,15 +62,86 @@ export class NostrRelayServer {
   }
 
   /**
+   * The NIP-11 relay information document as it stands right now.
+   *
+   * Built on every read rather than cached, because both halves of it move:
+   * the paid write edge is re-read from the connector in the background, and
+   * the limits come from the config object the connection handlers enforce.
+   * A cached copy is exactly the drift this document exists to remove.
+   */
+  relayInformation(): RelayInformationDocument {
+    return buildRelayInformationDocument({
+      pubkey: this.config.pubkey,
+      limits: this.config,
+      edge: this.config.writeEdge(),
+      description: this.config.description,
+    });
+  }
+
+  /**
+   * Answer a plain HTTP request on the read port.
+   *
+   * Before this the `ws` library owned the port outright and answered every
+   * non-upgrade request `426 Upgrade Required` — which is what the live devnet
+   * relay still does, and why it serves no NIP-11 document. The server is now
+   * this repo's own, so that answer has to be written down; it is kept byte
+   * for byte so that the ONLY request whose answer changes is the one that
+   * asks for the document by name.
+   */
+  private handleHttpRequest(
+    request: IncomingMessage,
+    response: ServerResponse
+  ): void {
+    const method = request.method ?? 'GET';
+
+    // NIP-11 is read by browser clients, which need the document to be
+    // cross-origin readable. It is free, public and identical for everyone,
+    // so there is nothing for an origin check to protect.
+    const cors = {
+      'access-control-allow-origin': '*',
+      'access-control-allow-headers': 'accept, content-type',
+      'access-control-allow-methods': 'GET, HEAD, OPTIONS',
+    };
+
+    if (method === 'OPTIONS') {
+      response.writeHead(204, cors);
+      response.end();
+      return;
+    }
+
+    if (
+      (method === 'GET' || method === 'HEAD') &&
+      acceptsRelayInformation(request.headers.accept)
+    ) {
+      const body = JSON.stringify(this.relayInformation());
+      response.writeHead(200, {
+        ...cors,
+        'content-type': NOSTR_JSON_CONTENT_TYPE,
+        'content-length': Buffer.byteLength(body),
+      });
+      response.end(method === 'HEAD' ? undefined : body);
+      return;
+    }
+
+    response.writeHead(426, { 'content-type': 'text/plain' });
+    response.end('Upgrade Required');
+  }
+
+  /**
    * Start the WebSocket server.
    */
   async start(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
-        this.wss = new WebSocketServer({
-          port: this.config.port,
-          host: this.config.host,
+        // Our own HTTP server, so the read port can answer NIP-11 as well as
+        // upgrade. `ws` attaches its `upgrade` listener to it and handles
+        // every WebSocket handshake exactly as before; only the requests it
+        // never wanted reach `handleHttpRequest`.
+        this.http = createServer((request, response) => {
+          this.handleHttpRequest(request, response);
         });
+
+        this.wss = new WebSocketServer({ server: this.http });
 
         this.wss.on('connection', (ws: WebSocket) => {
           this.handleConnection(ws);
@@ -71,8 +151,13 @@ export class NostrRelayServer {
           console.error('[NostrRelayServer] Server error:', error.message);
         });
 
-        this.wss.on('listening', () => {
-          const address = this.wss?.address();
+        this.http.on('error', (error: Error) => {
+          console.error('[NostrRelayServer] Server error:', error.message);
+          reject(error);
+        });
+
+        this.http.listen(this.config.port, this.config.host, () => {
+          const address = this.http?.address();
           if (address && typeof address === 'object') {
             console.log(`[NostrRelayServer] Listening on port ${address.port}`);
           }
@@ -119,7 +204,20 @@ export class NostrRelayServer {
 
       this.wss.close(() => {
         this.wss = null;
-        resolve();
+        // The HTTP server is ours now, so closing the WebSocketServer no
+        // longer releases the port -- `ws` only closes a server it created
+        // itself. Forgetting this leaves the listener bound and the next
+        // `start()` on the same port fails EADDRINUSE.
+        const http = this.http;
+        this.http = null;
+        if (!http) {
+          resolve();
+          return;
+        }
+        http.close(() => resolve());
+        // Any keep-alive connection left over from a NIP-11 read would hold
+        // `close()` open until it timed out.
+        http.closeAllConnections?.();
       });
     });
   }
@@ -129,8 +227,7 @@ export class NostrRelayServer {
    * Returns 0 if the server is not started.
    */
   getPort(): number {
-    if (!this.wss) return 0;
-    const address = this.wss.address();
+    const address = this.http?.address();
     if (address && typeof address === 'object') {
       return address.port;
     }

@@ -1,3 +1,8 @@
+import type {
+  RelayDescription,
+  RelayWriteEdge,
+} from './nips/relay-information.js';
+
 /**
  * Configuration options for the Nostr relay.
  */
@@ -33,6 +38,29 @@ export interface RelayServerConfig {
    * cannot serve an expired event on one path while hiding it on the other.
    */
   enforceExpiration?: boolean;
+
+  // --- The relay information document (NIP-11, TOON_Network#121) ---
+
+  /**
+   * The relay's own Nostr public key, served as NIP-11 `pubkey`.
+   *
+   * Empty on a server built without one, which is what the low-level
+   * constructor's own tests do; `startRelay()` always passes the identity it
+   * derived, so the document and `GET /health` name one key.
+   */
+  pubkey?: string;
+  /**
+   * Where a write to this relay is paid for, read fresh on every use.
+   *
+   * A GETTER, not a value, because the edge is the terminating connector's
+   * own self-description and the relay re-reads it in the background (see
+   * `launcher/connector-edge.ts`). Both the NIP-11 document and the
+   * WebSocket write refusal are rendered from this one call, so the
+   * advertisement and the refusal can never name different places.
+   */
+  writeEdge?: () => RelayWriteEdge | null;
+  /** The operator's free-text NIP-11 fields. */
+  description?: RelayDescription;
 }
 
 /**
@@ -46,4 +74,8 @@ export const DEFAULT_RELAY_CONFIG: Required<RelayServerConfig> = {
   maxFiltersPerSubscription: 10,
   databasePath: ':memory:',
   enforceExpiration: true,
+  pubkey: '',
+  // A relay that was told nothing publishes no edge, rather than guessing one.
+  writeEdge: () => null,
+  description: {},
 };

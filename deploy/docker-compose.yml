@@ -186,6 +186,42 @@ services:
       TOON_EPHEMERAL_RATE_LIMIT: ${RELAY_EPHEMERAL_RATE_LIMIT:-200}
       TOON_EPHEMERAL_RATE_WINDOW_MS: ${RELAY_EPHEMERAL_RATE_WINDOW_MS:-10000}
       TOON_EPHEMERAL_MAX_BODY_BYTES: ${RELAY_EPHEMERAL_MAX_BODY_BYTES:-8192}
+      # ── Where a write to this relay is paid for (TOON_Network#121) ────────
+      # The relay serves a NIP-11 relay information document on its READ port
+      # naming its paid write edge, so a client holding only this relay's URL
+      # can buy a write to it. It does not HOLD those facts: it asks the
+      # connector beside it and republishes what that connector says about
+      # itself. A second copy of the enforcer's price, key and carriage is a
+      # copy that drifts.
+      #
+      # The connector's own free GET /ilp (connector ADR 0050), at the
+      # container-internal address because that is what this container can
+      # reach. Nothing internal reaches the document: a client is sent to
+      # connector.toml's `[node] http_endpoint`, which is the public name.
+      TOON_CONNECTOR_URL: http://connector:3000/ilp
+      # WHICH of this connector's routes arrives at this relay's POST /write.
+      # The one thing the connector cannot say: a self-description publishes
+      # route prefixes and prices but never their handler_url. It must equal
+      # the ./connector.toml `[[routes]]` prefix whose handler_url is
+      # http://relay:3100/write — bundle.test.ts holds the two equal, and at
+      # runtime the relay refuses to advertise an address its connector does
+      # not terminate.
+      TOON_WRITE_ILP_ADDRESS: g.toon.relay
+      # The carriage that route pins, and a STOPGAP. connector.toml pins
+      # `transport = "btp"` on g.toon.relay, but a connector does not yet
+      # publish the pin it enforces — that is TOON_Network#111, and until it
+      # lands a client can only learn the pin by being refused
+      # TRANSPORT_REQUIRED. This states it so the document can carry it, and
+      # it fills SILENCE only: a connector that names a carriage always wins,
+      # so it can never contradict the enforcer. bundle.test.ts holds it equal
+      # to the route's own `transport`. Drop it once #111 has landed on the
+      # connector build pinned above.
+      TOON_WRITE_CARRIAGE: ${RELAY_WRITE_CARRIAGE:-btp}
+      # NIP-11 free text. Optional; an empty value is left out of the
+      # document rather than served empty.
+      TOON_RELAY_NAME: ${RELAY_NAME:-}
+      TOON_RELAY_DESCRIPTION: ${RELAY_DESCRIPTION:-}
+      TOON_RELAY_CONTACT: ${RELAY_CONTACT:-}
     volumes:
       # events.db. Named so it has a name an operator can find and a stray
       # `docker volume prune` — which reaps unused ANONYMOUS volumes — cannot

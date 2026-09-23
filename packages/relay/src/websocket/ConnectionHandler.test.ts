@@ -189,19 +189,73 @@ describe('ConnectionHandler', () => {
   });
 
   describe('EVENT message handling (ILP-gated)', () => {
+    /** The refusal message out of the single `OK` frame the handler sent. */
+    const refusal = (socket: WebSocket): string => {
+      const calls = (socket.send as ReturnType<typeof vi.fn>).mock.calls;
+      const [type, , ok, message] = JSON.parse(calls[0]?.[0] as string) as [
+        string,
+        string,
+        boolean,
+        string,
+      ];
+      expect([type, ok]).toEqual(['OK', false]);
+      return message;
+    };
+
     it('should reject external WebSocket EVENT writes', () => {
       const event = createMockEvent();
       handler.handleMessage(JSON.stringify(['EVENT', event]));
 
-      expect(ws.send).toHaveBeenCalledWith(
-        JSON.stringify([
-          'OK',
-          event.id,
-          false,
-          'restricted: writes require ILP payment',
-        ])
-      );
+      // NIP-01's machine-readable prefix and the words that followed it are
+      // unchanged by TOON_Network#121, so anything already matching on them
+      // keeps matching; what is new is everything after.
+      expect(
+        refusal(ws).startsWith('restricted: writes require ILP payment')
+      ).toBe(true);
       expect(store.store).not.toHaveBeenCalled();
+    });
+
+    it('names the edge, so a client can recover from the refusal alone', () => {
+      const paying = new ConnectionHandler(ws, store, {
+        writeEdge: () => ({
+          ilp_address: 'g.toon.relay',
+          connector_url: 'https://proxy.relay.example/ilp',
+          connector_seal_key: '0x04abcdef',
+          carriage: 'btp',
+          price: 1,
+          settlement: [],
+        }),
+      });
+      paying.handleMessage(JSON.stringify(['EVENT', createMockEvent()]));
+
+      const message = refusal(ws);
+      expect(message).toContain('g.toon.relay');
+      expect(message).toContain('https://proxy.relay.example/ilp');
+      expect(message).toContain('btp');
+      expect(message).toContain('1 uusdc');
+      expect(store.store).not.toHaveBeenCalled();
+    });
+
+    it('does not claim payment is required on a relay that charges nothing', () => {
+      const free = new ConnectionHandler(ws, store, {
+        writeEdge: () => ({
+          ilp_address: 'g.toon.relay',
+          connector_url: 'https://proxy.relay.example/ilp',
+          connector_seal_key: '0x04abcdef',
+          price: 0,
+          settlement: [],
+        }),
+      });
+      free.handleMessage(JSON.stringify(['EVENT', createMockEvent()]));
+
+      // A free relay still refuses the WebSocket write -- the lane is the
+      // restriction, not the price -- but it must not send a client looking
+      // for a payment channel it does not need.
+      const message = refusal(ws);
+      expect(message.startsWith('restricted:')).toBe(true);
+      expect(message).not.toContain('require ILP payment');
+      expect(message).toContain('free');
+      expect(message).toContain('g.toon.relay');
     });
   });
 

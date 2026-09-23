@@ -5,7 +5,12 @@
 #   EDGE_HOST → the connector's client edge (paid writes, the x402 greeting,
 #               and the free GET /ilp self-description)
 #   READ_HOST → the relay's Nostr WebSocket (free reads; Caddy proxies the
-#               upgrade with no extra configuration)
+#               upgrade with no extra configuration), and on the same port the
+#               relay's NIP-11 information document, answered to a GET
+#               carrying `Accept: application/nostr+json` and naming where a
+#               write to this relay is paid for (TOON_Network#121). It is a
+#               plain GET, so it needs no configuration here either; every
+#               other plain request to that port still answers 426.
 #
 # The relay's write port (3100) is deliberately absent from this file and from
 # every route in it. It must never be publicly reachable: it is the

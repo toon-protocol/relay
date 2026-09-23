@@ -35,6 +35,7 @@ connector.
 | Free reads        | `wss://relay-ws.devnet.toonprotocol.dev`               |
 | Paid writes       | `https://proxy.relay.devnet.toonprotocol.dev/ilp`      |
 | What that node is | `curl https://proxy.relay.devnet.toonprotocol.dev/ilp` |
+| Where a write is paid for | `curl -H 'Accept: application/nostr+json' https://relay-ws.devnet.toonprotocol.dev/` |
 
 To _use_ the network rather than run a node, start with the
 [toon-client rig](https://github.com/toon-protocol/toon-client/blob/main/packages/rig/README.md).
@@ -137,6 +138,13 @@ curl -s -o /dev/null -w '%{http_code}\n' https://$EDGE_HOST/ilp/identity   # 200
 # Free reads. A plain GET answers 426 (upgrade required); with a client:
 websocat wss://$READ_HOST
 ["REQ","probe",{"kinds":[1],"limit":1}]
+
+# Where a write to THIS relay is paid for, in the relay's own words: the
+# NIP-11 relay information document, on the read host, answered only to a
+# request that asks for it by media type. Its `toon` object is the ILP
+# address, the connector URL, the sealing key and the carriage — everything a
+# client holding nothing but this URL needs in order to buy a write.
+curl -s -H 'Accept: application/nostr+json' https://$READ_HOST/ | jq
 ```
 
 `POST /ilp` speaks binary ILP packets, so curl is not the tool for it — an
@@ -214,7 +222,13 @@ they hoped for. Only an unreachable app is a rejection.
 By its URL. This node publishes **no announce** and registers with nothing:
 the two hostnames in step 1 are the whole of its public identity.
 
-- Hand someone `READ_HOST` and they can read from it with any Nostr client.
+- Hand someone `READ_HOST` and they can read from it with any Nostr client,
+  and `GET` it with `Accept: application/nostr+json` for the NIP-11 relay
+  information document — which names where a **write** to this relay is paid
+  for: the ILP address, the connector URL, the sealing key and the carriage
+  that route pins (TOON_Network#121). The relay does not hold those facts; it
+  reads them from the connector beside it and republishes what that connector
+  says about itself, so the advertisement cannot drift from the enforcement.
 - Hand someone `EDGE_HOST` and `GET /ilp` tells them everything they need to
   pay it — its ILP addresses, both endpoints, every route and price, the key a
   packet is sealed to, and the chains and contracts it settles on. No account,
@@ -351,6 +365,10 @@ each one.
 | `TOON_EXPIRATION_REAP_GRACE_SECONDS`    | `86400`   | how long an expired event stays on disk                             |
 | `TOON_EXPIRATION_REAP_INTERVAL_SECONDS` | `3600`    | how often the reaper sweeps; `0` never                              |
 | `TOON_BLOCKED_EVENT_IDS`                | —         | comma-separated 64-hex event ids to refuse. Ids only, never pubkeys |
+| `TOON_CONNECTOR_URL`                    | —         | the connector's `GET /ilp` this relay reads its write edge from     |
+| `TOON_WRITE_ILP_ADDRESS`                | —         | which of that connector's routes reaches this relay's `POST /write` |
+| `TOON_WRITE_CARRIAGE`                   | —         | the carriage that route pins; fills silence only (TOON_Network#111) |
+| `TOON_RELAY_NAME` / `_DESCRIPTION` / `_CONTACT` | —  | NIP-11 free text; an empty value is left out of the document        |
 | `TOON_EPHEMERAL_RATE_LIMIT`             | `200`     | free-lane requests per key per window                               |
 | `TOON_EPHEMERAL_RATE_WINDOW_MS`         | `10000`   | free-lane rate-limit window                                         |
 | `TOON_EPHEMERAL_MAX_BODY_BYTES`         | `8192`    | free-lane request body cap                                          |

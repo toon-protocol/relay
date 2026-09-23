@@ -6,6 +6,7 @@ import type { RelayServerConfig } from '../types.js';
 import { DEFAULT_RELAY_CONFIG } from '../types.js';
 import { matchFilter } from '../filters/index.js';
 import { isExpired } from '../nips/expiration.js';
+import { writeRefusalMessage } from '../nips/relay-information.js';
 
 /**
  * Represents an active subscription from a client.
@@ -151,9 +152,16 @@ export class ConnectionHandler {
    * Rejects all external writes — the relay is ILP-gated (pay to write).
    * Events are only stored through the ILP packet handler which calls
    * eventStore.store() directly and then broadcastEvent() to notify subscribers.
+   *
+   * The refusal NAMES the edge (TOON_Network#121). It used to say only
+   * `restricted: writes require ILP payment` and stop, which told a client
+   * that it had to pay without telling it whom — so every writer on the
+   * network had been configured out of band and none could recover from the
+   * refusal alone. The message is rendered from the same `writeEdge` the
+   * NIP-11 document is, so the two can never point at different places.
    */
   private handleEvent(event: NostrEvent): void {
-    this.sendOk(event.id, false, 'restricted: writes require ILP payment');
+    this.sendOk(event.id, false, writeRefusalMessage(this.config.writeEdge()));
   }
 
   /**

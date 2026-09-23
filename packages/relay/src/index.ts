@@ -40,6 +40,38 @@ export {
 } from './nips/index.js';
 export type { AddressCoordinate, DeletionTargets } from './nips/index.js';
 
+// The relay information document (NIP-11) and the write refusal rendered from
+// the same paid write edge (TOON_Network#121)
+export {
+  acceptsRelayInformation,
+  buildRelayInformationDocument,
+  writeRefusalMessage,
+  NOSTR_JSON_CONTENT_TYPE,
+  RELAY_SOFTWARE_URL,
+} from './nips/index.js';
+export type {
+  Carriage,
+  RelayDescription,
+  RelayInformationDocument,
+  RelayInformationInput,
+  RelayLimitation,
+  RelaySettlement,
+  RelayWriteEdge,
+} from './nips/index.js';
+
+// Where the relay reads that edge from: its own connector's self-description
+export {
+  createConnectorEdgeWatcher,
+  edgeFromSelfDescription,
+  DEFAULT_EDGE_REFRESH_MS,
+  DEFAULT_EDGE_RETRY_MS,
+} from './launcher/connector-edge.js';
+export type {
+  ConnectorEdgeOptions,
+  ConnectorEdgeWatcher,
+  EdgeReading,
+} from './launcher/connector-edge.js';
+
 // Crypto (fast BIP-340 event verification, relay#85)
 export {
   verifyEventSignature,
