@@ -24,4 +24,11 @@ services:
 
   relay:
     ports:
-      - '127.0.0.1:7100:7100' # free NIP-01 reads
+      # Free NIP-01 reads, and the NIP-11 relay information document on the
+      # same port:
+      #   curl -H 'Accept: application/nostr+json' http://127.0.0.1:7100/
+      # The connector's advertised endpoint is what that document sends a
+      # client to, so on a local node it still names whatever connector.toml's
+      # `[node] http_endpoint` says — which is a production hostname unless
+      # you changed it.
+      - '127.0.0.1:7100:7100'

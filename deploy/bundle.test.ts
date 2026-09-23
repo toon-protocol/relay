@@ -63,6 +63,7 @@ interface DockerCompose {
       expose?: (string | number)[];
       labels?: Record<string, string>;
       volumes?: string[];
+      environment?: Record<string, string>;
     }
   >;
 }
@@ -196,7 +197,12 @@ interface ConnectorToml {
     http_endpoint: string;
     btp_endpoint: string;
   };
-  routes: { prefix: string; price: number; handler_url: string }[];
+  routes: {
+    prefix: string;
+    price: number;
+    handler_url: string;
+    transport?: string;
+  }[];
   settlement: {
     evm: {
       contract_address: string;
@@ -328,6 +334,54 @@ describe('deploy bundle', () => {
     // advertise an unreachable node to the whole network.
     expect(node.http_endpoint).toMatch(/^https:\/\/[^/]+\/ilp$/);
     expect(node.btp_endpoint).toMatch(/^wss:\/\/[^/]+\/ilp\/btp$/);
+  });
+
+  it('points the relay at the very route that reaches its own POST /write', () => {
+    // TOON_Network#121: the relay serves a NIP-11 document naming where a
+    // write to it is paid for, and it READS that from the connector rather
+    // than holding a copy. It is told exactly one thing — which prefix
+    // arrives at its `/write` — because a self-description publishes route
+    // prefixes and prices and never their handler_url (connector rule ND-08).
+    //
+    // That one pin is what this holds still. The failure it prevents is a
+    // relay advertising an address that reaches somebody else's app: at
+    // runtime the relay checks the address against its connector and refuses
+    // an unknown one, but a prefix that exists and terminates ELSEWHERE would
+    // pass that check and send every client's money down the wrong route.
+    const { routes } = readConnectorToml();
+    const relay = readDockerCompose().services['relay'];
+    const environment = relay?.environment ?? {};
+
+    const paidRoute = routes.find(
+      (route) => route.handler_url === EXPECTED_ROUTE_HANDLER_URLS['g.toon.relay']
+    );
+    expect(
+      paidRoute,
+      `connector.toml: no route terminates at ${EXPECTED_ROUTE_HANDLER_URLS['g.toon.relay']}`
+    ).toBeDefined();
+
+    expect(
+      environment['TOON_WRITE_ILP_ADDRESS'],
+      `docker-compose.yml relay: TOON_WRITE_ILP_ADDRESS must be the prefix whose handler_url is ${EXPECTED_ROUTE_HANDLER_URLS['g.toon.relay']}`
+    ).toBe(paidRoute?.prefix);
+
+    // And the connector it asks is the one in this file, on the compose
+    // network. A public URL here would make the relay's own advertisement
+    // depend on DNS and TLS it does not need, and an address off this network
+    // would be asking a different node entirely.
+    expect(environment['TOON_CONNECTOR_URL']).toBe(
+      'http://connector:3000/ilp'
+    );
+
+    // The carriage stopgap for TOON_Network#111 (see docker-compose.yml). It
+    // is a value the relay states on its connector's behalf, so it is held
+    // equal to what the connector actually pins; when #111 lands, the
+    // connector publishes the pin itself, this env goes, and so does this
+    // assertion.
+    expect(
+      resolveComposeDefaults(environment['TOON_WRITE_CARRIAGE'] ?? ''),
+      `docker-compose.yml relay: TOON_WRITE_CARRIAGE must equal connector.toml's transport on ${paidRoute?.prefix}`
+    ).toBe(paidRoute?.transport ?? '');
   });
 
   it('keeps its durable claim state and both identities on mounted paths', () => {

@@ -69,6 +69,34 @@ Options:
   --ephemeral-max-body-bytes <n>
                            Free ephemeral write lane: request body size cap
                            in bytes (default: 8192)
+  --connector-url <url>    The self-description URL of the connector in front
+                           of this relay, e.g. http://connector:3000/ilp. The
+                           relay reads where its own writes are paid for from
+                           it -- the ILP address, the sealing key, the price
+                           and the carriage -- and republishes that in its
+                           NIP-11 document, rather than holding a second copy
+                           of the enforcer's facts (TOON_Network#121). Goes
+                           with --write-ilp-address; one without the other is
+                           a startup error, and neither means this relay
+                           publishes no paid write edge
+  --write-ilp-address <addr>
+                           The ILP address whose route terminates at THIS
+                           relay's POST /write, e.g. g.toon.relay. The one
+                           fact the connector cannot tell the relay: a
+                           self-description publishes route prefixes and
+                           prices but never their handler_url. An address the
+                           connector does not terminate is refused and
+                           advertised never
+  --write-carriage <http|btp>
+                           The carriage the paid route pins. A STOPGAP for
+                           TOON_Network#111: used only where the connector's
+                           own self-description states no carriage, so a
+                           connector that names one always wins
+  --relay-name <name>      NIP-11 "name" for this relay
+  --relay-description <text>
+                           NIP-11 "description" for this relay
+  --relay-contact <contact>
+                           NIP-11 "contact": a mailto:, an npub or a URL
   --log-writes             Log one line per accepted POST /write (debug; off
                            by default -- per-event logging is write-path
                            tail jitter, relay#85)
@@ -109,6 +137,12 @@ Environment Variables:
   TOON_EPHEMERAL_RATE_LIMIT       Same as --ephemeral-rate-limit
   TOON_EPHEMERAL_RATE_WINDOW_MS   Same as --ephemeral-rate-window-ms
   TOON_EPHEMERAL_MAX_BODY_BYTES   Same as --ephemeral-max-body-bytes
+  TOON_CONNECTOR_URL       Same as --connector-url
+  TOON_WRITE_ILP_ADDRESS   Same as --write-ilp-address
+  TOON_WRITE_CARRIAGE      Same as --write-carriage
+  TOON_RELAY_NAME          Same as --relay-name
+  TOON_RELAY_DESCRIPTION   Same as --relay-description
+  TOON_RELAY_CONTACT       Same as --relay-contact
   TOON_LOG_WRITES          Same as --log-writes (set to "true")
   TOON_ENFORCE_EXPIRATION  Set to "false" for --no-enforce-expiration
   TOON_EXPIRATION_REAP_GRACE_SECONDS     Same as --expiration-reap-grace-seconds
@@ -190,6 +224,12 @@ function parseCli(): RelayConfig {
       'ephemeral-rate-limit': { type: 'string' },
       'ephemeral-rate-window-ms': { type: 'string' },
       'ephemeral-max-body-bytes': { type: 'string' },
+      'connector-url': { type: 'string' },
+      'write-ilp-address': { type: 'string' },
+      'write-carriage': { type: 'string' },
+      'relay-name': { type: 'string' },
+      'relay-description': { type: 'string' },
+      'relay-contact': { type: 'string' },
       'log-writes': { type: 'boolean' },
       'no-enforce-expiration': { type: 'boolean' },
       'expiration-reap-grace-seconds': { type: 'string' },
@@ -357,6 +397,51 @@ function parseCli(): RelayConfig {
         }
       : undefined;
 
+  // --- The paid write edge (NIP-11, TOON_Network#121) ---
+  // Two settings that go together, and a third that fills a gap the connector
+  // will close. `startRelay()` refuses a half-configured pair; this only
+  // reads them, so the one refusal lives in one place.
+  const connectorUrl =
+    values['connector-url'] ?? process.env['TOON_CONNECTOR_URL'] ?? undefined;
+  const writeIlpAddress =
+    values['write-ilp-address'] ??
+    process.env['TOON_WRITE_ILP_ADDRESS'] ??
+    undefined;
+
+  // A carriage that is not `http` or `btp` is a startup error rather than a
+  // shrug: the failure it prevents is a relay advertising a transport no
+  // client can dial, which reads to that client as the relay being broken.
+  const carriageRaw =
+    values['write-carriage'] ?? process.env['TOON_WRITE_CARRIAGE'] ?? undefined;
+  if (
+    carriageRaw !== undefined &&
+    carriageRaw !== '' &&
+    carriageRaw !== 'http' &&
+    carriageRaw !== 'btp'
+  ) {
+    console.error(
+      `Error: --write-carriage must be "http" or "btp", not "${carriageRaw}". ` +
+        'Leave it unset for a route that pins no carriage — the connector ' +
+        'names the pin itself once TOON_Network#111 has landed.'
+    );
+    process.exit(1);
+  }
+  const writeCarriage =
+    carriageRaw === 'http' || carriageRaw === 'btp' ? carriageRaw : undefined;
+
+  const relayName = values['relay-name'] ?? process.env['TOON_RELAY_NAME'];
+  const relayDescription =
+    values['relay-description'] ?? process.env['TOON_RELAY_DESCRIPTION'];
+  const relayContact =
+    values['relay-contact'] ?? process.env['TOON_RELAY_CONTACT'];
+  // An empty env var is compose's way of saying "unset" (`${VAR:-}`), and an
+  // empty NIP-11 field is worse than an absent one.
+  const description = {
+    ...(relayName && { name: relayName }),
+    ...(relayDescription && { description: relayDescription }),
+    ...(relayContact && { contact: relayContact }),
+  };
+
   const logWrites =
     values['log-writes'] ??
     (process.env['TOON_LOG_WRITES'] === 'true' ? true : undefined);
@@ -412,6 +497,10 @@ function parseCli(): RelayConfig {
     ...(maxConnections !== undefined && { maxConnections }),
     ...(ephemeralRateLimit !== undefined && { ephemeralRateLimit }),
     ...(ephemeralMaxBodyBytes !== undefined && { ephemeralMaxBodyBytes }),
+    ...(connectorUrl && { connectorUrl }),
+    ...(writeIlpAddress && { writeIlpAddress }),
+    ...(writeCarriage !== undefined && { writeCarriage }),
+    ...(Object.keys(description).length > 0 && { description }),
     ...(logWrites !== undefined && { logWrites }),
     ...(enforceExpiration !== undefined && { enforceExpiration }),
     ...(expirationReapGraceSeconds !== undefined && {
@@ -450,6 +539,10 @@ async function main(): Promise<void> {
   );
   console.log(
     `  Health:     http://localhost:${instance.config.blsPort}/health`
+  );
+  console.log(
+    `  NIP-11:     http://localhost:${instance.config.relayPort}/ ` +
+      `(Accept: application/nostr+json)`
   );
   console.log('='.repeat(50) + '\n');
 

@@ -1,8 +1,8 @@
 # relay
 
 The TOON Protocol **Nostr relay node**: `@toon-protocol/relay` — a NIP-01
-WebSocket read surface, an HTTP `POST /write` surface, and the `startRelay`
-launcher/CLI.
+WebSocket read surface, an HTTP `POST /write` surface, a NIP-11 relay
+information document on the read port, and the `startRelay` launcher/CLI.
 
 Part of the **TOON Protocol** — pay-to-write Nostr over Interledger (ILP),
 split into per-team repos. The relay is a plain HTTP/WebSocket app: it speaks
@@ -12,6 +12,14 @@ proven paid, so the relay verifies the event signature, stores it, and serves
 free reads. It records the payment the connector states on the delivery
 (`X-TOON-Payer` / `-Amount` / `-Chain`, connector ADR 0040) without
 re-validating it — that statement is the whole trust model.
+
+That rule is also why the relay does not WRITE DOWN where its writes are paid
+for. Its NIP-11 document names an ILP address, a connector URL, a sealing key,
+a carriage and a price, and every one of those is read from the connector's own
+free `GET /ilp` at runtime (`launcher/connector-edge.ts`), never held here. The
+relay is told exactly one thing it cannot read — which of that connector's
+routes reaches its own `POST /write` — and refuses to advertise an address the
+connector does not terminate. See TOON_Network#121 and its ADR 0024.
 
 ## Build & test
 
