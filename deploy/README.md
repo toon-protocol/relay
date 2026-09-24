@@ -55,7 +55,7 @@ The relay app still auto-deploys.
 | File                                               | What it is                                                                                                                                 |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `../.github/workflows/adopt-connector-release.yml` | Watches the connector repo for a cut release, boots it against this repo's own `connector.toml`, and opens (and auto-merges) the pin bump. |
-| `auto-apply.sh`                                    | On the box: fast-forwards `main`, re-renders if applicable, `compose up -d`, and requires the connector to come back healthy.              |
+| `auto-apply.sh`                                    | On the box: fast-forwards `main`, re-renders if applicable, `compose up -d`, requires the connector to come back healthy, and retries a failed render or apply on every run until it is fixed. |
 | `toon-auto-apply.service` / `.timer`               | The systemd pair that runs it every five minutes. Install once — see the root README's "Operate it".                                       |
 
 `auto-apply.sh` lives in the repository it applies, which has one consequence
@@ -71,6 +71,39 @@ The split is deliberate: the workflow decides **what** to run and proves it
 accepts this node's committed config first (connector ADR 0041 Decision 1);
 the box decides **when** to apply, by pulling. Nothing outside the box can
 make the box deploy, which is the posture connector ADR 0068 settled.
+
+### How updates arrive: a failed render or apply is retried, never sat on
+
+**A render or apply failure is retried, and reported, forever — never
+silently sat on (TOON_Network#164, porting TOON_Network#160).** Before this,
+`auto-apply.sh` fast-forwarded the checkout and only then pulled and applied
+— so a `docker compose pull`/`up -d` failure after a good fast-forward (a
+newly-required `.env` variable, since this bundle has no `render.sh` and
+interpolates `.env` straight into `docker-compose.yml`, or a pull that fails)
+left the box on the new commit with the OLD containers still running, and the
+NEXT run's `git fetch` brought back nothing new, so `LOCAL = REMOTE` alone
+read as "nothing to do" and it exited 0 silently: one red apply, then green
+forever on an unverified box.
+
+The fix is `deploy/.applied` (gitignored). Once the pull, `up -d` and the
+health wait have all succeeded, `auto-apply.sh` records the commit it just
+applied there. The *next* run compares `HEAD` to `.applied`, not to whatever
+`git fetch` just brought back — so a failure anywhere in that chain leaves
+`.applied` naming the OLD commit, and the very next timer tick treats that as
+work to do even though the fetch brings back nothing new. It fails the same
+way, by the same name, on every run — `systemctl status` and the journal keep
+showing it — until whatever failed (most often a newly-required `.env`
+variable; `.env.example` lists every one) is fixed and a run finally succeeds
+and rewrites `.applied`.
+
+On a box with no `deploy/.applied` yet — an existing box's first run under
+this check, or one where the file was lost — that absence is read as
+*needing* an apply, not as "must already be applied": the run re-applies,
+re-verifies and writes `.applied` once everything reports healthy. That run
+is a harmless no-op if the box was already caught up, which is why treating a
+missing file this way is the safer of the two: the box's first-ever apply IS
+this script's first run, and it should prove itself exactly like every later
+one does.
 
 ## Secrets
 
