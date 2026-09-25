@@ -77,9 +77,13 @@ What the overlay does:
   bundle's own default network too (`networks: {default: {}, edge-relay:
   {...}}`), so they still reach each other exactly as they do today.
 - **Adds a `mem_limit` to every service**, including the now-disabled `caddy`.
-  The numbers are **provisional** — nobody has measured the live box yet —
-  sized conservatively for a 2 GB host shared by five nodes. Replace them with
-  real `docker stats` measurements (`toon-protocol/infra#25` step 2).
+  The `connector` (`64m`) and `relay` (`192m`) numbers are **measured**, not
+  guessed: the devnet host turned out to be a 1 GB Linode nanode, not the 2 GB
+  host earlier guesses assumed, and idle `docker stats` taken against it on
+  2026-09-25 (`toon-protocol/infra#25` step 2) showed the connector at 2 MB and
+  the relay at 46 MB — each limit is set to roughly 4x its measured idle
+  footprint. `caddy`'s `64m` stays as it was: it isn't running yet to measure,
+  and it stays disabled here regardless.
 
 #### The alias:port table — what infra#24's edge config is written from
 

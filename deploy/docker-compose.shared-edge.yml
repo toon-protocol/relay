@@ -103,11 +103,10 @@ services:
     profiles: ['never']
 
   connector:
-    # Provisional — replace with docker stats measurements
-    # (toon-protocol/infra#25 step 2). Sized conservatively for a 2 GB host
-    # shared by five nodes: the connector is the stock Rust ILP build, which
-    # runs lean, but this is a guess, not a measurement.
-    mem_limit: 192m
+    # Measured, not guessed (toon-protocol/infra#25 step 2): idle docker stats
+    # on 2026-09-25 showed this service at 2 MB on the real 1 GB devnet
+    # nanode. Limit set to ≈4x idle.
+    mem_limit: 64m
     networks:
       default: {}
       edge-relay:
@@ -115,12 +114,10 @@ services:
           - relay-proxy # proxy.relay.devnet — the connector's client edge
 
   relay:
-    # Provisional — replace with docker stats measurements
-    # (toon-protocol/infra#25 step 2). Sized conservatively for a 2 GB host
-    # shared by five nodes: the relay app is a Node process holding a SQLite
-    # events database, so it gets more headroom than the connector, but this
-    # is a guess, not a measurement.
-    mem_limit: 256m
+    # Measured, not guessed (toon-protocol/infra#25 step 2): idle docker stats
+    # on 2026-09-25 showed this service at 46 MB on the real 1 GB devnet
+    # nanode. Limit set to ≈4x idle.
+    mem_limit: 192m
     networks:
       default: {}
       edge-relay:
