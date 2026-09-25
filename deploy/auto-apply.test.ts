@@ -92,10 +92,15 @@ function commitAll(dir: string, message: string): string {
 }
 
 // A repository shaped like the real one: deploy/ under the repo root, since
-// that is what auto-apply.sh's own `dirname "$0")/..` assumes. Only the base
-// compose file -- no docker-compose.watchtower.yml -- keeps the stub's `-f`
-// handling to the one pair auto-apply.sh always passes here.
-function freshOrigin(): { dir: string; sha: string } {
+// that is what auto-apply.sh's own `dirname "$0")/..` assumes. By default
+// only the base compose file is present -- no docker-compose.watchtower.yml
+// -- so a box with no COMPOSE_FILE line in .env exercises the pre-COMPOSE_FILE
+// fallback (auto-apply.sh's own `[ -f docker-compose.watchtower.yml ]`
+// check). `extraFiles` copies real deploy/ files (never fixtures -- this
+// suite's whole point is reading the shipped artifacts) alongside it, for
+// tests that need docker-compose.watchtower.yml or
+// docker-compose.shared-edge.yml actually present.
+function freshOrigin(extraFiles: string[] = []): { dir: string; sha: string } {
   const dir = tmp('relay-origin-');
   const deploy = join(dir, 'deploy');
   mkdirSync(deploy, { recursive: true });
@@ -104,6 +109,7 @@ function freshOrigin(): { dir: string; sha: string } {
     'docker-compose.yml',
     '.env.example',
     '.gitignore',
+    ...extraFiles,
   ]) {
     cpSync(join(HERE, name), join(deploy, name));
   }
@@ -150,11 +156,18 @@ function writeEnv(boxDir: string, values: Record<string, string>): void {
 // failure this suite's fixture needs (RELAY_FIXTURE_FLAG unset in .env) --
 // docker compose itself, not this script, is what would fail that way for
 // real, and the real docker is not available (or wanted) in this suite.
+//
+// `echo "$*"` (before any `-f` is consumed) is what
+// "honors COMPOSE_FILE" (TOON_Network#166) reads to prove auto-apply.sh
+// passed through every file COMPOSE_FILE named, not just its own hardcoded
+// default -- the `while` below only strips them off so the fixture-flag
+// check and the pull/up-d/ps-q dispatch below still see a bare `docker
+// compose <verb>` regardless of how many `-f` pairs came first.
 const DOCKER_STUB = `#!/usr/bin/env bash
 echo "$*" >> "$STUB_LOG"
 if [ "\${1:-}" = compose ]; then
   shift
-  if [ "\${1:-}" = -f ]; then shift 2; fi
+  while [ "\${1:-}" = -f ]; do shift 2; done
   if grep -q 'RELAY_FIXTURE_FLAG:?' docker-compose.yml 2>/dev/null; then
     flag=$(sed -n 's/^RELAY_FIXTURE_FLAG=//p' .env 2>/dev/null | tail -n1)
     if [ -z "$flag" ]; then
@@ -329,5 +342,87 @@ describe('a box with no deploy/.applied at all', () => {
       result.calls,
       'it actually ran the apply, not a silent no-op'
     ).toMatch(/ps -q connector/);
+  });
+});
+
+// The shared-edge overlay (toon-protocol/relay#166) is turned on the same
+// way every overlay is: `COMPOSE_FILE` in `.env`. That is worth nothing if
+// auto-apply.sh -- the thing that actually runs `docker compose` on the box,
+// every five minutes, unattended -- does not pass those files through. Before
+// this, it built its own `-f` list from a hardcoded default plus one
+// existence check, which never looked at `.env` at all: a box whose operator
+// had opted the overlay in there would keep silently running WITHOUT it.
+describe('COMPOSE_FILE (toon-protocol/relay#166)', () => {
+  it('passes every file COMPOSE_FILE names, in order, instead of its own hardcoded default', () => {
+    const origin = freshOrigin(['docker-compose.shared-edge.yml']);
+    const box = cloneBox(origin.dir);
+    writeEnv(box, {
+      ...ENV,
+      COMPOSE_FILE: 'docker-compose.yml:docker-compose.shared-edge.yml',
+    });
+
+    const result = autoApply(box);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(
+      result.calls,
+      'auto-apply.sh must pull with every file COMPOSE_FILE names'
+    ).toMatch(
+      /compose -f docker-compose\.yml -f docker-compose\.shared-edge\.yml pull/
+    );
+    expect(
+      result.calls,
+      'auto-apply.sh must apply with every file COMPOSE_FILE names'
+    ).toMatch(
+      /compose -f docker-compose\.yml -f docker-compose\.shared-edge\.yml up -d/
+    );
+  });
+
+  it('falls back to the base file plus docker-compose.watchtower.yml (if present) when .env has no COMPOSE_FILE line', () => {
+    const origin = freshOrigin(['docker-compose.watchtower.yml']);
+    const box = cloneBox(origin.dir);
+    writeEnv(box, ENV); // no COMPOSE_FILE key at all
+
+    const result = autoApply(box);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.calls).toMatch(
+      /compose -f docker-compose\.yml -f docker-compose\.watchtower\.yml pull/
+    );
+  });
+
+  it('ignores a commented-out COMPOSE_FILE line the same way (the shape deploy/.env.example ships)', () => {
+    const origin = freshOrigin();
+    const box = cloneBox(origin.dir);
+    const envPath = join(box, 'deploy', '.env');
+    writeEnv(box, ENV);
+    writeFileSync(
+      envPath,
+      `${readFileSync(envPath, 'utf8')}\n# COMPOSE_FILE=docker-compose.yml:docker-compose.shared-edge.yml\n`
+    );
+
+    const result = autoApply(box);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(
+      result.calls,
+      'a commented-out COMPOSE_FILE line must not turn the overlay on'
+    ).toMatch(/^compose -f docker-compose\.yml pull$/m);
+  });
+
+  it('tolerates a trailing colon in COMPOSE_FILE instead of passing docker compose an empty -f', () => {
+    const origin = freshOrigin(['docker-compose.shared-edge.yml']);
+    const box = cloneBox(origin.dir);
+    writeEnv(box, {
+      ...ENV,
+      // A trailing (or doubled) `:` is an easy typo in a hand-edited .env.
+      COMPOSE_FILE: 'docker-compose.yml:docker-compose.shared-edge.yml:',
+    });
+
+    const result = autoApply(box);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(
+      result.calls,
+      'a trailing colon must not produce an empty -f argument'
+    ).toMatch(
+      /^compose -f docker-compose\.yml -f docker-compose\.shared-edge\.yml pull$/m
+    );
   });
 });

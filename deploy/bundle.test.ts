@@ -30,6 +30,10 @@ const REPO_ROOT = resolve(import.meta.dirname, '..');
 const CONNECTOR_TOML_PATH = resolve(REPO_ROOT, 'deploy/connector.toml');
 const DOCKER_COMPOSE_PATH = resolve(REPO_ROOT, 'deploy/docker-compose.yml');
 const CADDYFILE_PATH = resolve(REPO_ROOT, 'deploy/Caddyfile');
+const SHARED_EDGE_OVERLAY_PATH = resolve(
+  REPO_ROOT,
+  'deploy/docker-compose.shared-edge.yml'
+);
 
 // The relay's own write ports. Neither may ever be host-published in any
 // form: they are the payment-oblivious surface, and the relay skips schnorr
@@ -64,12 +68,22 @@ interface DockerCompose {
       labels?: Record<string, string>;
       volumes?: string[];
       environment?: Record<string, string>;
+      profiles?: string[];
+      mem_limit?: string;
+      networks?: Record<string, { aliases?: string[] } | null>;
     }
   >;
+  networks?: Record<string, { external?: boolean } | null>;
 }
 
 function readDockerCompose(): DockerCompose {
   return parseYaml(readFileSync(DOCKER_COMPOSE_PATH, 'utf8')) as DockerCompose;
+}
+
+function readSharedEdgeOverlay(): DockerCompose {
+  return parseYaml(
+    readFileSync(SHARED_EDGE_OVERLAY_PATH, 'utf8')
+  ) as DockerCompose;
 }
 
 // Compose substitutes `${VAR:-default}` from the operator's .env; with no
@@ -596,6 +610,168 @@ describe('deploy bundle', () => {
         match?.[1],
         `${site.file}: healthcheck targets "${match?.[1]}" — inside a container "localhost" can resolve to ::1, which an IPv4-bound listener never answers on`
       ).toBe('127.0.0.1');
+    }
+  });
+});
+
+// ── The shared-edge overlay (toon-protocol/relay#166, infra ADR 0001) ───────
+//
+// The devnet is moving onto one host behind one shared Caddy edge. This
+// node's own Caddy goes away — the edge terminates TLS for it instead — but
+// everything else about the node (its connector, its keys, its hostnames)
+// stays exactly as it is. The overlay is off by default (a bare `.env` with
+// no `COMPOSE_FILE` line runs the bundle exactly as `docker-compose.yml`
+// alone always has), so it can merge and ride along on the box's auto-apply
+// timer while that box is still on its own Linode, well before the edge or
+// the `edge` network exist anywhere.
+//
+// This suite reads the overlay file directly, the same way the tests above
+// read `docker-compose.yml` directly: literals declared here, never read
+// back out of the file under test.
+describe('the shared-edge overlay (docker-compose.shared-edge.yml, toon-protocol/relay#166)', () => {
+  // The external network the host-level edge (infra#24) creates and every
+  // node's overlay joins. This repo does not own it — it only joins it.
+  const EDGE_NETWORK = 'edge';
+  // infra#24's contract: which alias serves which of this node's hostnames.
+  const EDGE_ALIASES: Record<string, string> = {
+    connector: 'relay-proxy', // proxy.relay.devnet — the connector's client edge
+    relay: 'relay-ws', // relay-ws.devnet — the relay's free WS reads
+  };
+
+  it('disables caddy, so the box never binds a host TLS port of its own once the shared edge fronts it', () => {
+    const overlay = readSharedEdgeOverlay();
+
+    expect(
+      overlay.services[PUBLISHING_SERVICE]?.profiles,
+      "docker-compose.shared-edge.yml caddy: expected `profiles: ['never']` (the sentinel docker-compose.local.yml already uses for this service) — the shared edge (infra#24) terminates TLS instead"
+    ).toEqual(['never']);
+  });
+
+  it('disables the Watchtower overlay too, when it is also in the file set', () => {
+    const overlay = readSharedEdgeOverlay();
+
+    expect(
+      overlay.services['watchtower']?.profiles,
+      "docker-compose.shared-edge.yml watchtower: expected `profiles: ['never']`, the same way it disables caddy — inert unless docker-compose.watchtower.yml is also named in COMPOSE_FILE"
+    ).toEqual(['never']);
+  });
+
+  it('declares `edge` as an external network, owned by infra#24 and never created here', () => {
+    const overlay = readSharedEdgeOverlay();
+
+    expect(
+      overlay.networks?.[EDGE_NETWORK],
+      `docker-compose.shared-edge.yml: expected a top-level \`networks.${EDGE_NETWORK}\` entry`
+    ).toBeDefined();
+    expect(
+      overlay.networks?.[EDGE_NETWORK]?.external,
+      `docker-compose.shared-edge.yml: \`networks.${EDGE_NETWORK}\` must be \`external: true\` — this bundle joins it, it does not create it`
+    ).toBe(true);
+  });
+
+  it.each(Object.entries(EDGE_ALIASES))(
+    'joins %s to the edge network under the %s alias, without dropping the default network',
+    (service, alias) => {
+      const overlay = readSharedEdgeOverlay();
+      const networks = overlay.services[service]?.networks;
+
+      expect(
+        networks?.[EDGE_NETWORK]?.aliases,
+        `docker-compose.shared-edge.yml ${service}: expected networks.${EDGE_NETWORK}.aliases to include "${alias}"`
+      ).toContain(alias);
+
+      // A service's `networks:` key, once any file sets it, REPLACES that
+      // service's network membership rather than adding to it. Without an
+      // explicit `default: {}` here, joining `edge` would silently drop this
+      // service off the project's own network — the one connector and relay
+      // use to reach each other today.
+      expect(
+        networks,
+        `docker-compose.shared-edge.yml ${service}: must keep \`default: {}\` alongside \`${EDGE_NETWORK}\`, or joining the edge network drops it off the network it reaches its peer on`
+      ).toHaveProperty('default');
+    }
+  );
+
+  it('adds a mem_limit to every service the base bundle defines', () => {
+    const base = readDockerCompose();
+    const overlay = readSharedEdgeOverlay();
+
+    for (const serviceName of Object.keys(base.services)) {
+      const limit = overlay.services[serviceName]?.mem_limit;
+      expect(
+        limit,
+        `docker-compose.shared-edge.yml ${serviceName}: expected a \`mem_limit\` — the base bundle defines this service but the overlay gives it no limit`
+      ).toBeDefined();
+      expect(
+        limit,
+        `docker-compose.shared-edge.yml ${serviceName}: mem_limit "${limit}" does not look like a Compose memory value (e.g. "192m")`
+      ).toMatch(/^\d+[bkmg]$/i);
+    }
+  });
+
+  it('leaves the base bundle carrying no mem_limit of its own — the overlay is the only source of one', () => {
+    const base = readDockerCompose();
+
+    for (const [serviceName, service] of Object.entries(base.services)) {
+      expect(
+        service.mem_limit,
+        `docker-compose.yml ${serviceName}: must not set mem_limit directly — that belongs in docker-compose.shared-edge.yml, or a bare .env (no overlay) stops being byte-for-byte unchanged`
+      ).toBeUndefined();
+    }
+  });
+
+  it('binds no host port when merged with the base bundle and no profile is activated', () => {
+    // A lightweight simulation of `docker compose config`'s own merge and
+    // profile-filtering, not a reimplementation of Compose: per-service keys
+    // an overlay sets replace the base's (the real behaviour for `profiles`,
+    // `networks` and `mem_limit`, verified against a real `docker compose
+    // config` while writing this overlay), and a service naming a non-empty
+    // `profiles` list is excluded unless one of its profiles is activated —
+    // which nothing here does, matching a bare `docker compose up -d`.
+    const base = readDockerCompose();
+    const overlay = readSharedEdgeOverlay();
+    const serviceNames = new Set([
+      ...Object.keys(base.services),
+      ...Object.keys(overlay.services),
+    ]);
+
+    const active = [...serviceNames]
+      .map((name) => ({
+        name,
+        ...base.services[name],
+        ...overlay.services[name],
+      }))
+      .filter((service) => (service.profiles ?? []).length === 0);
+
+    expect(
+      active.map((service) => service.name).sort(),
+      "expected caddy and watchtower to be filtered out by `profiles: ['never']`, leaving only connector and relay active"
+    ).toEqual(['connector', 'relay']);
+
+    for (const service of active) {
+      const published = (service.ports ?? []).map(resolveComposeDefaults);
+
+      // No active service may bind 80 or 443 — that is now the shared
+      // edge's job, off this box entirely (infra#24's "Done when").
+      for (const port of EXPECTED_PUBLISHED_PORTS.map(
+        (p) => p.split(':')[0] ?? p
+      )) {
+        const bound = published.find((entry) => entry.split(':').includes(port));
+        expect(
+          bound,
+          `docker-compose.shared-edge.yml: service "${service.name}" binds host port ${port} ("${bound}") with the overlay on — only the shared edge, off-box, may serve TLS now`
+        ).toBeUndefined();
+      }
+
+      // Any publish this service still has (the connector's on-box operator
+      // loopback, unchanged from the default bundle) must stay loopback-only
+      // — the same invariant `docker-compose.yml` holds without the overlay.
+      for (const entry of published) {
+        expect(
+          entry.startsWith(LOOPBACK_PUBLISH_PREFIX),
+          `docker-compose.shared-edge.yml: service "${service.name}" publishes "${entry}" with no host IP — with the overlay on, nothing but the shared edge may be reachable off-box`
+        ).toBe(true);
+      }
     }
   });
 });

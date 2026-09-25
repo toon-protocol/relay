@@ -87,9 +87,30 @@ if [ -x ./render.sh ]; then
   fi
 fi
 
-# The overlay set this box actually runs. Keep in step with README.md.
-COMPOSE=(-f docker-compose.yml)
-[ -f docker-compose.watchtower.yml ] && COMPOSE+=(-f docker-compose.watchtower.yml)
+# The overlay set this box actually runs. An operator states that in .env's
+# COMPOSE_FILE, colon-separated -- the same variable `docker compose` itself
+# reads there for every OTHER invocation in this directory (an operator's own
+# `docker compose ps`, and the provider bundle's docker-compose.hidden.yml
+# pattern) -- so this script must read the identical list, or an overlay
+# turned on in .env (docker-compose.shared-edge.yml, toon-protocol/relay#166;
+# docker-compose.watchtower.yml) would silently keep running without it here.
+# A commented-out line (`# COMPOSE_FILE=...`, the shape .env.example ships)
+# does not count -- only an active assignment does.
+#
+# A box with no active COMPOSE_FILE line gets the pre-COMPOSE_FILE default:
+# the base file, plus docker-compose.watchtower.yml if this checkout has one.
+# Keep that fallback in step with README.md.
+COMPOSE_FILE_VALUE=$(grep -E '^COMPOSE_FILE=' .env 2>/dev/null | tail -n1 | cut -d= -f2- || true)
+if [ -n "$COMPOSE_FILE_VALUE" ]; then
+  COMPOSE=()
+  IFS=':' read -ra COMPOSE_FILE_NAMES <<< "$COMPOSE_FILE_VALUE"
+  for name in "${COMPOSE_FILE_NAMES[@]}"; do
+    COMPOSE+=(-f "$name")
+  done
+else
+  COMPOSE=(-f docker-compose.yml)
+  [ -f docker-compose.watchtower.yml ] && COMPOSE+=(-f docker-compose.watchtower.yml)
+fi
 
 # This bundle has no render.sh: docker compose itself interpolates
 # ${VAR:?...} straight out of deploy/.env, so a newly-required variable a
