@@ -323,11 +323,17 @@ to touch a box whose working tree is dirty, so a human mid-operation is never
 overwritten. Install it once per box:
 
 ```bash
-sudo cp /root/relay/deploy/toon-auto-apply.{service,timer} /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now toon-auto-apply.timer
-systemctl list-timers toon-auto-apply.timer     # when it next fires
-journalctl -u toon-auto-apply.service -n 50     # what it last did
+sudo cp /root/relay/deploy/toon-auto-apply-relay.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now toon-auto-apply-relay.timer
+systemctl list-timers toon-auto-apply-relay.timer     # when it next fires
+journalctl -u toon-auto-apply-relay.service -n 50     # what it last did
 ```
+
+The unit names are per-node (`toon-auto-apply-relay.*`, shared contract v2)
+so several nodes can share one host once each has its own timer — see
+[`deploy/README.md`](deploy/README.md#migrating-an-existing-box-to-the-per-node-unit-names)
+for the one-time migration on a box that already runs the old
+`toon-auto-apply.*` names.
 
 The pin is still the only place a connector build is named here, and it is
 still immutable — a `rust-sha-` build or a `rust-<handle>` release, never a

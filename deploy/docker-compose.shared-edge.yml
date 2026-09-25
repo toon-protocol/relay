@@ -1,0 +1,128 @@
+# =============================================================================
+# The shared-edge overlay (toon-protocol/relay#166, infra ADR 0001)
+# =============================================================================
+# The devnet is moving onto one host behind one shared Caddy edge
+# (toon-protocol/infra#24): the relay, store, gas station, workload gateway
+# and faucet nodes all share it. Every node keeps its own connector, keys and
+# hostnames — only its own TLS front goes away.
+#
+# This overlay:
+#   caddy       DISABLED (`profiles: ['never']`, the same never-activated
+#               sentinel docker-compose.local.yml already uses for this same
+#               service). The shared edge terminates TLS for this node's two
+#               public hostnames instead, so this box's own Caddy — and the
+#               host ports it held — go away.
+#   watchtower  DISABLED THE SAME WAY, if `docker-compose.watchtower.yml` is
+#               also in the file set. Nothing about auto-redeploy changes
+#               here — this line only stops the edge overlay's own presence
+#               from being read as "and now also run Watchtower". A box
+#               running both overlays states so with its own COMPOSE_FILE
+#               order; if this box wants auto-redeploy behind the shared edge,
+#               list `docker-compose.watchtower.yml` AFTER this file. If
+#               `docker-compose.watchtower.yml` is not in the file set at all,
+#               this line is inert (docker-compose.shared-edge.yml § "why a
+#               profile is safe to name unconditionally").
+#   connector   Joins the external `edge-relay` network under the
+#               `relay-proxy` alias — infra#24's upstream for
+#               `proxy.relay.devnet`, the connector's client edge. Stays on
+#               the default network too: it still dials `relay:3100` for
+#               every write, exactly as it does today.
+#   relay       Joins `edge-relay` under the `relay-ws` alias — infra#24's
+#               upstream for `relay-ws.devnet` (WebSocket). Stays on the
+#               default network too: the connector still reaches it there,
+#               and it still reads the connector's self-description from it.
+#   every service  Gets a `mem_limit`. See the comment on each one below for
+#               why the number is what it is.
+#
+# ── One network per node, not one flat network (shared contract v2, point 1) ─
+# `edge-relay` is THIS node's own network, not a network every node on the
+# host shares. infra#24 creates one such network per node — `edge-relay`,
+# `edge-store`, `edge-gas`, `edge-gateway`, `edge-faucet` — and Caddy alone
+# joins all five; each node's own overlay joins only its own. On one flat
+# network every node's containers could reach every other node's connector
+# operator surface and the gateway's handover port; per-node networks mean
+# only the edge itself can reach a node. There is no bare `edge` network
+# anywhere any more — bundle.test.ts holds that.
+#
+# ── Why a profile is safe to name unconditionally ────────────────────────────
+# `services.watchtower.profiles` above names a service this file does not
+# otherwise define. Docker Compose validates a service's shape (an `image` or
+# `build`) only for a service that is actually ACTIVE for the invocation —
+# and a service named only by a non-default profile that nobody activated is
+# never active — so a standalone `profiles:` stanza for a service the rest of
+# the file set never defines is accepted, and simply has nothing to do. Only
+# when `docker-compose.watchtower.yml` (which gives `watchtower` its `image:`
+# and everything else) is ALSO in COMPOSE_FILE does this line have a real
+# service to disable. This is the same shape the provider bundle's
+# `docker-compose.hidden.yml` uses for `nginx`/`certbot`, except there the
+# base file always defines the service being disabled; here it may or may not,
+# and the same Compose behaviour makes both safe.
+#
+# ── Why `default: {}` appears beside `edge-relay:` on connector and relay ────
+# A service's `networks:` key, once set by ANY file in the set, REPLACES that
+# service's network membership rather than adding to it — this is not a
+# request to leave it, but does drop the default project network. Naming
+# `default: {}` explicitly is how this bundle's own `docker-compose.hidden.yml`
+# equivalent (the provider repo's) keeps a service on both; the same shape
+# here keeps the connector and the relay talking to each other exactly as
+# they do without the overlay, while joining `edge-relay` as well.
+#
+# ── Used by naming it in .env, beside COMPOSE_FILE ──────────────────────────
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.shared-edge.yml
+#
+# `docker compose` reads `COMPOSE_FILE` out of `.env` for every command run in
+# this directory, so `auto-apply.sh` and an operator's own `docker compose ps`
+# see the same stack (auto-apply.sh never parses this value itself — it
+# passes no `-f` of its own once `.env` sets it, and lets `docker compose`
+# read `.env` directly). A `.env` with no `COMPOSE_FILE` line runs
+# `docker-compose.yml` alone, exactly as it does today — this overlay changes
+# nothing until an operator opts in. `edge-relay` (the network) does not need
+# to exist yet for this file to merge cleanly; it only needs to exist by the
+# time something actually joins it with `docker compose up -d`.
+#
+# The `edge-relay` network itself is owned by toon-protocol/infra#24, not this
+# repo. This overlay only joins it, under the aliases infra#24's edge config
+# expects — see deploy/README.md for the alias:port table.
+# =============================================================================
+
+networks:
+  edge-relay:
+    external: true
+
+services:
+  caddy:
+    profiles: ['never']
+    # Provisional — replace with docker stats measurements
+    # (toon-protocol/infra#25 step 2). Inert while `profiles: ['never']`
+    # keeps this service out of every default `up`/`config`; kept anyway so
+    # every service the base bundle defines carries a limit, not just the
+    # ones this overlay leaves running.
+    mem_limit: 64m
+
+  watchtower:
+    profiles: ['never']
+
+  connector:
+    # Provisional — replace with docker stats measurements
+    # (toon-protocol/infra#25 step 2). Sized conservatively for a 2 GB host
+    # shared by five nodes: the connector is the stock Rust ILP build, which
+    # runs lean, but this is a guess, not a measurement.
+    mem_limit: 192m
+    networks:
+      default: {}
+      edge-relay:
+        aliases:
+          - relay-proxy # proxy.relay.devnet — the connector's client edge
+
+  relay:
+    # Provisional — replace with docker stats measurements
+    # (toon-protocol/infra#25 step 2). Sized conservatively for a 2 GB host
+    # shared by five nodes: the relay app is a Node process holding a SQLite
+    # events database, so it gets more headroom than the connector, but this
+    # is a guess, not a measurement.
+    mem_limit: 256m
+    networks:
+      default: {}
+      edge-relay:
+        aliases:
+          - relay-ws # relay-ws.devnet — the relay's free NIP-01 WS reads

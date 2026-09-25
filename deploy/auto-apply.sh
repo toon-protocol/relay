@@ -32,7 +32,11 @@ cd "$REPO_DIR"
 
 # One apply at a time, and never one racing a human. The path is overridable
 # only for tests (TOON_AUTOAPPLY_LOCK) -- a box always takes the real one.
-LOCK_FILE=${TOON_AUTOAPPLY_LOCK:-/var/lock/toon-auto-apply.lock}
+# Per-node (toon-protocol/infra#25 step 2): several nodes can share one host,
+# each running its own `toon-auto-apply-<node>.timer`, so the lock is scoped
+# to this node's own name -- a shared lock name would serialize this box's
+# apply against every OTHER node's, for no reason.
+LOCK_FILE=${TOON_AUTOAPPLY_LOCK:-/var/lock/toon-auto-apply-relay.lock}
 exec 9>"$LOCK_FILE"
 flock -n 9 || { echo "another apply is already running; leaving it alone"; exit 0; }
 
@@ -87,9 +91,37 @@ if [ -x ./render.sh ]; then
   fi
 fi
 
-# The overlay set this box actually runs. Keep in step with README.md.
-COMPOSE=(-f docker-compose.yml)
-[ -f docker-compose.watchtower.yml ] && COMPOSE+=(-f docker-compose.watchtower.yml)
+# The overlay set this box actually runs is named in deploy/.env, not
+# guessed here -- COMPOSE_FILE=docker-compose.yml:docker-compose.shared-edge.yml
+# turns on the shared-edge overlay (toon-protocol/relay#166, infra#24) the
+# same way an operator's own `docker compose ps` in this directory sees it:
+# `docker compose` reads COMPOSE_FILE out of .env itself. So when .env sets
+# it, this script passes NO `-f` flags at all -- an explicit `-f` on the
+# command line would override .env's COMPOSE_FILE and silently run the base
+# file alone, defeating the overlay on every apply. This script never parses
+# COMPOSE_FILE's value itself (that is `docker compose`'s job, not this
+# script's, and a second implementation is a second place to drift from what
+# `docker compose` itself does with it) -- only a `.env` with no COMPOSE_FILE
+# line at all falls back to this script's own default: the base file, plus
+# docker-compose.watchtower.yml if this checkout has one. Keep that fallback
+# in step with README.md.
+#
+# This bundle has no render.sh -- the relay's connector.toml is committed
+# whole, unlike store/gas, which render.sh guards on a missing .env before a
+# similar block runs -- so this script guards that itself before sourcing it.
+if [ ! -f .env ]; then
+  echo "FAILED: deploy/.env is missing. Copy deploy/.env.example to .env and fill it in -- it lists every required variable." >&2
+  exit 1
+fi
+set -a
+. ./.env
+set +a
+if [ -n "${COMPOSE_FILE:-}" ]; then
+  COMPOSE=()
+else
+  COMPOSE=(-f docker-compose.yml)
+  [ -f docker-compose.watchtower.yml ] && COMPOSE+=(-f docker-compose.watchtower.yml)
+fi
 
 # This bundle has no render.sh: docker compose itself interpolates
 # ${VAR:?...} straight out of deploy/.env, so a newly-required variable a
