@@ -21,7 +21,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse } from 'smol-toml';
 import { parse as parseYaml } from 'yaml';
@@ -623,15 +623,23 @@ describe('deploy bundle', () => {
 // no `COMPOSE_FILE` line runs the bundle exactly as `docker-compose.yml`
 // alone always has), so it can merge and ride along on the box's auto-apply
 // timer while that box is still on its own Linode, well before the edge or
-// the `edge` network exist anywhere.
+// the `edge-relay` network exist anywhere.
+//
+// Shared contract v2, point 1: one network PER NODE, not one flat network
+// every node's containers share — on a flat network every node could reach
+// every other node's connector operator surface and the gateway's handover
+// port, where a per-node network limits that to the edge alone. This node's
+// is `edge-relay`. The old flat `edge` name must not appear anywhere in this
+// bundle any more (see the last test in this describe block).
 //
 // This suite reads the overlay file directly, the same way the tests above
 // read `docker-compose.yml` directly: literals declared here, never read
 // back out of the file under test.
 describe('the shared-edge overlay (docker-compose.shared-edge.yml, toon-protocol/relay#166)', () => {
-  // The external network the host-level edge (infra#24) creates and every
-  // node's overlay joins. This repo does not own it — it only joins it.
-  const EDGE_NETWORK = 'edge';
+  // The external, per-node network the host-level edge (infra#24) creates
+  // and this node's overlay alone joins. This repo does not own it — it only
+  // joins it.
+  const EDGE_NETWORK = 'edge-relay';
   // infra#24's contract: which alias serves which of this node's hostnames.
   const EDGE_ALIASES: Record<string, string> = {
     connector: 'relay-proxy', // proxy.relay.devnet — the connector's client edge
@@ -656,7 +664,7 @@ describe('the shared-edge overlay (docker-compose.shared-edge.yml, toon-protocol
     ).toEqual(['never']);
   });
 
-  it('declares `edge` as an external network, owned by infra#24 and never created here', () => {
+  it('declares `edge-relay` as an external, per-node network, owned by infra#24 and never created here', () => {
     const overlay = readSharedEdgeOverlay();
 
     expect(
@@ -667,6 +675,28 @@ describe('the shared-edge overlay (docker-compose.shared-edge.yml, toon-protocol
       overlay.networks?.[EDGE_NETWORK]?.external,
       `docker-compose.shared-edge.yml: \`networks.${EDGE_NETWORK}\` must be \`external: true\` — this bundle joins it, it does not create it`
     ).toBe(true);
+  });
+
+  it('never names the old flat `edge` network (shared contract v2, point 1)', () => {
+    const overlay = readSharedEdgeOverlay();
+
+    // The flat, every-node-shares-it `edge` network let any node's containers
+    // reach any other node's connector operator surface or the gateway's
+    // handover port. Contract v2 replaces it with one network per node
+    // (`edge-relay` here) — a straight rename, not an addition, so the old
+    // key must be gone everywhere this file could carry it: the top-level
+    // declaration and every service's own `networks:` map.
+    expect(
+      Object.keys(overlay.networks ?? {}),
+      'docker-compose.shared-edge.yml: the old flat `edge` network must not be declared any more'
+    ).not.toContain('edge');
+
+    for (const [serviceName, service] of Object.entries(overlay.services)) {
+      expect(
+        Object.keys(service.networks ?? {}),
+        `docker-compose.shared-edge.yml ${serviceName}: must join \`${EDGE_NETWORK}\`, not the old flat \`edge\``
+      ).not.toContain('edge');
+    }
   });
 
   it.each(Object.entries(EDGE_ALIASES))(
@@ -682,9 +712,9 @@ describe('the shared-edge overlay (docker-compose.shared-edge.yml, toon-protocol
 
       // A service's `networks:` key, once any file sets it, REPLACES that
       // service's network membership rather than adding to it. Without an
-      // explicit `default: {}` here, joining `edge` would silently drop this
-      // service off the project's own network — the one connector and relay
-      // use to reach each other today.
+      // explicit `default: {}` here, joining `edge-relay` would silently
+      // drop this service off the project's own network — the one connector
+      // and relay use to reach each other today.
       expect(
         networks,
         `docker-compose.shared-edge.yml ${service}: must keep \`default: {}\` alongside \`${EDGE_NETWORK}\`, or joining the edge network drops it off the network it reaches its peer on`
@@ -773,5 +803,53 @@ describe('the shared-edge overlay (docker-compose.shared-edge.yml, toon-protocol
         ).toBe(true);
       }
     }
+  });
+});
+
+// ── Per-node auto-apply units (shared contract v2, point 2) ─────────────────
+//
+// Several nodes share one host once the shared edge lands, so the systemd
+// pair and the flock this box takes must be scoped to THIS node, not shared
+// across every node on the box — a shared name/lock would serialize this
+// node's apply against every other node's, or worse, have one node's timer
+// silently manage another's units.
+describe('the per-node auto-apply units (toon-protocol/relay#166, shared contract v2 point 2)', () => {
+  const SERVICE_PATH = resolve(REPO_ROOT, 'deploy/toon-auto-apply-relay.service');
+  const TIMER_PATH = resolve(REPO_ROOT, 'deploy/toon-auto-apply-relay.timer');
+
+  it('ships the unit pair under the per-node name, and not under the old shared name', () => {
+    expect(
+      existsSync(SERVICE_PATH),
+      'deploy/toon-auto-apply-relay.service: expected this file to exist'
+    ).toBe(true);
+    expect(
+      existsSync(TIMER_PATH),
+      'deploy/toon-auto-apply-relay.timer: expected this file to exist'
+    ).toBe(true);
+
+    for (const oldName of ['toon-auto-apply.service', 'toon-auto-apply.timer']) {
+      expect(
+        existsSync(resolve(REPO_ROOT, 'deploy', oldName)),
+        `deploy/${oldName}: the old shared-name unit must be RENAMED, not kept alongside the new one — an existing box's already-installed copy in /etc/systemd/system keeps working regardless (see deploy/README.md's migration section)`
+      ).toBe(false);
+    }
+  });
+
+  it('the timer points at the per-node service name', () => {
+    const timer = readFile('deploy/toon-auto-apply-relay.timer');
+    expect(
+      timer,
+      'deploy/toon-auto-apply-relay.timer: [Timer] Unit= must name the per-node service'
+    ).toMatch(/^Unit=toon-auto-apply-relay\.service$/m);
+  });
+
+  it('the lock auto-apply.sh takes by default is scoped to this node', () => {
+    const script = readFile('deploy/auto-apply.sh');
+    expect(
+      script,
+      'deploy/auto-apply.sh: the default LOCK_FILE must be per-node (/var/lock/toon-auto-apply-relay.lock), or two nodes on one host would serialize their applies against each other'
+    ).toMatch(
+      /LOCK_FILE=\$\{TOON_AUTOAPPLY_LOCK:-\/var\/lock\/toon-auto-apply-relay\.lock\}/
+    );
   });
 });

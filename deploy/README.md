@@ -48,7 +48,7 @@ COMPOSE_FILE=docker-compose.yml:docker-compose.shared-edge.yml
 A `.env` with no `COMPOSE_FILE` line runs `docker-compose.yml` alone, exactly
 as it does today — this overlay changes nothing until an operator opts in, so
 it can merge and ride the box's auto-apply timer while the box is still on its
-own Linode, before the edge or the `edge` network exist anywhere
+own Linode, before the edge or the `edge-relay` network exist anywhere
 (`bundle.test.ts` holds this: the base file carries no `mem_limit` of its own,
 and every property below is asserted against the overlay file, never the
 base). `EDGE_HOST`, `READ_HOST` and `ACME_EMAIL` stay required in `.env` even
@@ -66,9 +66,15 @@ What the overlay does:
   edge overlay's own presence from being read as "and now also run
   Watchtower". List `docker-compose.watchtower.yml` after this file in
   `COMPOSE_FILE` if a box wants both.
-- **Joins `connector` and `relay` to the external `edge` network**, under the
-  stable aliases infra#24's edge config expects — see the table below. Both
-  keep the bundle's own default network too (`networks: {default: {}, edge:
+- **Joins `connector` and `relay` to the external `edge-relay` network** —
+  ONE network per node, not a flat network every node on the host shares
+  (infra#24 creates one such network per node: `edge-relay`, `edge-store`,
+  `edge-gas`, `edge-gateway`, `edge-faucet`; only Caddy itself joins all
+  five). This limits reachability to the edge alone — on a flat network any
+  node's containers could otherwise reach any other node's connector
+  operator surface. `connector` and `relay` join under the stable aliases
+  infra#24's edge config expects — see the table below — and both keep the
+  bundle's own default network too (`networks: {default: {}, edge-relay:
   {...}}`), so they still reach each other exactly as they do today.
 - **Adds a `mem_limit` to every service**, including the now-disabled `caddy`.
   The numbers are **provisional** — nobody has measured the live box yet —
@@ -80,7 +86,7 @@ What the overlay does:
 Worked out from `deploy/Caddyfile`, which is this node's own TLS front today
 and still routes both hostnames identically once the shared edge replaces it:
 
-| Hostname | `edge` alias | Container | Port | What's there |
+| Hostname | `edge-relay` alias | Container | Port | What's there |
 | --- | --- | --- | --- | --- |
 | `proxy.relay.devnet` (`EDGE_HOST`) | `relay-proxy` | `connector` | `3000` | The connector's client edge — paid writes, the x402 greeting, and the free `GET /ilp` self-description. |
 | `relay-ws.devnet` (`READ_HOST`, WebSocket) | `relay-ws` | `relay` | `7100` | The relay's free NIP-01 WebSocket reads, and on the same port its NIP-11 information document (`GET` with `Accept: application/nostr+json`). |
@@ -104,8 +110,8 @@ and still routes both hostnames identically once the shared edge replaces it:
   does it once the overlay is on.
 
 `docker-compose.yml`'s write port (`3100`) is deliberately absent from this
-table, from `Caddyfile`, and from `edge`: it is the payment-oblivious surface,
-and it must never be reachable except from the connector beside it.
+table, from `Caddyfile`, and from `edge-relay`: it is the payment-oblivious
+surface, and it must never be reachable except from the connector beside it.
 
 ## Images
 
@@ -139,7 +145,7 @@ The relay app still auto-deploys.
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `../.github/workflows/adopt-connector-release.yml` | Watches the connector repo for a cut release, boots it against this repo's own `connector.toml`, and opens (and auto-merges) the pin bump. |
 | `auto-apply.sh`                                    | On the box: fast-forwards `main`, re-renders if applicable, `compose up -d`, requires the connector to come back healthy, and retries a failed render or apply on every run until it is fixed. |
-| `toon-auto-apply.service` / `.timer`               | The systemd pair that runs it every five minutes. Install once — see the root README's "Operate it".                                       |
+| `toon-auto-apply-relay.service` / `.timer`         | The systemd pair that runs it every five minutes, named per-node (shared contract v2) so several nodes can share one host. Install once — see the root README's "Operate it", and "Migrating an existing box to the per-node unit names" below for a box that already runs the old names. |
 
 `auto-apply.sh` lives in the repository it applies, which has one consequence
 worth knowing: a box sitting on a commit from **before** the script existed
@@ -154,6 +160,28 @@ The split is deliberate: the workflow decides **what** to run and proves it
 accepts this node's committed config first (connector ADR 0041 Decision 1);
 the box decides **when** to apply, by pulling. Nothing outside the box can
 make the box deploy, which is the posture connector ADR 0068 settled.
+
+### Migrating an existing box to the per-node unit names
+
+Shared contract v2 renames the systemd units from `toon-auto-apply.*` to
+`toon-auto-apply-relay.*` (lock `/var/lock/toon-auto-apply-relay.lock`), so
+several nodes can share one host once each has its own timer and its own
+lock, instead of one name and one lock every node on a box would collide on.
+**An existing single-node Linode does not need to do anything right away:**
+its already-installed `toon-auto-apply.service`/`.timer` still point at the
+same `deploy/auto-apply.sh` path, unaffected by this repo renaming the unit
+FILES it ships, so that box keeps applying exactly as it does today.
+
+Do the one-time swap at cutover instead (`toon-protocol/infra#25`), once this
+box is about to share the host behind the shared edge:
+
+```bash
+sudo systemctl disable --now toon-auto-apply.timer
+sudo rm -f /etc/systemd/system/toon-auto-apply.{service,timer}
+sudo cp /root/relay/deploy/toon-auto-apply-relay.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now toon-auto-apply-relay.timer
+systemctl list-timers toon-auto-apply-relay.timer     # when it next fires
+```
 
 ### How updates arrive: a failed render or apply is retried, never sat on
 

@@ -348,12 +348,17 @@ describe('a box with no deploy/.applied at all', () => {
 // The shared-edge overlay (toon-protocol/relay#166) is turned on the same
 // way every overlay is: `COMPOSE_FILE` in `.env`. That is worth nothing if
 // auto-apply.sh -- the thing that actually runs `docker compose` on the box,
-// every five minutes, unattended -- does not pass those files through. Before
-// this, it built its own `-f` list from a hardcoded default plus one
-// existence check, which never looked at `.env` at all: a box whose operator
-// had opted the overlay in there would keep silently running WITHOUT it.
-describe('COMPOSE_FILE (toon-protocol/relay#166)', () => {
-  it('passes every file COMPOSE_FILE names, in order, instead of its own hardcoded default', () => {
+// every five minutes, unattended -- does not respect it. auto-apply.sh never
+// parses COMPOSE_FILE's value itself (shared contract v2, point 3): it
+// sources `.env` (so this SHELL and every `docker compose` it spawns sees
+// whatever COMPOSE_FILE names) and passes NO `-f` flags of its own when
+// COMPOSE_FILE is set -- an explicit `-f` on the command line would override
+// it and silently defeat the overlay. Before this, the script built its own
+// `-f` list from a hardcoded default plus one existence check, which never
+// looked at `.env` at all: a box whose operator had opted the overlay in
+// there would keep silently running WITHOUT it.
+describe('COMPOSE_FILE (toon-protocol/relay#166, shared contract v2 point 3)', () => {
+  it('passes no -f flags when .env sets COMPOSE_FILE, letting docker compose read it from .env itself', () => {
     const origin = freshOrigin(['docker-compose.shared-edge.yml']);
     const box = cloneBox(origin.dir);
     writeEnv(box, {
@@ -365,16 +370,9 @@ describe('COMPOSE_FILE (toon-protocol/relay#166)', () => {
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(
       result.calls,
-      'auto-apply.sh must pull with every file COMPOSE_FILE names'
-    ).toMatch(
-      /compose -f docker-compose\.yml -f docker-compose\.shared-edge\.yml pull/
-    );
-    expect(
-      result.calls,
-      'auto-apply.sh must apply with every file COMPOSE_FILE names'
-    ).toMatch(
-      /compose -f docker-compose\.yml -f docker-compose\.shared-edge\.yml up -d/
-    );
+      'auto-apply.sh must not pass its own -f flags once COMPOSE_FILE is set -- that would override it'
+    ).toMatch(/^compose pull$/m);
+    expect(result.calls).toMatch(/^compose up -d$/m);
   });
 
   it('falls back to the base file plus docker-compose.watchtower.yml (if present) when .env has no COMPOSE_FILE line', () => {
@@ -407,22 +405,17 @@ describe('COMPOSE_FILE (toon-protocol/relay#166)', () => {
     ).toMatch(/^compose -f docker-compose\.yml pull$/m);
   });
 
-  it('tolerates a trailing colon in COMPOSE_FILE instead of passing docker compose an empty -f', () => {
-    const origin = freshOrigin(['docker-compose.shared-edge.yml']);
+  it('refuses loudly when deploy/.env is missing, instead of sourcing nothing and silently losing COMPOSE_FILE', () => {
+    const origin = freshOrigin();
     const box = cloneBox(origin.dir);
-    writeEnv(box, {
-      ...ENV,
-      // A trailing (or doubled) `:` is an easy typo in a hand-edited .env.
-      COMPOSE_FILE: 'docker-compose.yml:docker-compose.shared-edge.yml:',
-    });
+    // Deliberately no writeEnv(box, ...) -- this box has no deploy/.env at all.
 
     const result = autoApply(box);
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.status, 'a missing .env must fail the run, not succeed silently').not.toBe(0);
+    expect(result.stderr).toMatch(/deploy\/.env is missing/);
     expect(
       result.calls,
-      'a trailing colon must not produce an empty -f argument'
-    ).toMatch(
-      /^compose -f docker-compose\.yml -f docker-compose\.shared-edge\.yml pull$/m
-    );
+      'must fail before ever calling docker compose'
+    ).toBe('');
   });
 });
