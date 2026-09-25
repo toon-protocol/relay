@@ -101,7 +101,7 @@ function resolveComposeDefaults(portEntry: string): string {
 // registry cannot resolve the channels buyers actually opened against it.
 const EXPECTED_CONTRACT_ADDRESS = '0x0c41D9D424d6B075A3cEa1068a694f7847a8CCa5';
 // 6-decimal devnet USDC, the fleet-wide settlement asset.
-const EXPECTED_TOKEN_ADDRESS = '0x49beE1Bca5d15Fb0963117923403F9498119a9Ce';
+const EXPECTED_TOKEN_ADDRESS = '0x0C996d7c934c79a6255254875607Fe69df25C0E1';
 const EXPECTED_DECIMALS = 6;
 
 // The Solana half of the same statement, and pinned for the same reason: a
