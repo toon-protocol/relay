@@ -103,6 +103,12 @@ const EXPECTED_CONTRACT_ADDRESS = '0x0c41D9D424d6B075A3cEa1068a694f7847a8CCa5';
 // 6-decimal devnet USDC, the fleet-wide settlement asset.
 const EXPECTED_TOKEN_ADDRESS = '0x0C996d7c934c79a6255254875607Fe69df25C0E1';
 const EXPECTED_DECIMALS = 6;
+// The live TokenNetwork's deploy block (connector
+// packages/contracts/deployments/base-sepolia.md, the 2026-09-25 USDC
+// cutover's `createTokenNetwork` transaction), so a cold connector backfills
+// its local channel index from here instead of genesis — a public RPC that
+// prunes history refuses a request for block 0 (TOON_Network#182).
+const EXPECTED_CHANNEL_INDEX_FROM_BLOCK = 47285026;
 
 // The Solana half of the same statement, and pinned for the same reason: a
 // claim resolves against ONE deployment, so a node naming a different program
@@ -222,6 +228,7 @@ interface ConnectorToml {
       contract_address: string;
       token_address: string;
       decimals: number;
+      channel_index_from_block: number;
     };
     solana: {
       program_id: string;
@@ -257,6 +264,10 @@ describe('deploy bundle', () => {
       evm.decimals,
       `settlement.evm.decimals: expected ${EXPECTED_DECIMALS}, found ${evm.decimals}`
     ).toBe(EXPECTED_DECIMALS);
+    expect(
+      evm.channel_index_from_block,
+      `settlement.evm.channel_index_from_block: expected ${EXPECTED_CHANNEL_INDEX_FROM_BLOCK}, found ${evm.channel_index_from_block} — a cold connector backfills its channel index from genesis against a public RPC that prunes history (TOON_Network#182)`
+    ).toBe(EXPECTED_CHANNEL_INDEX_FROM_BLOCK);
   });
 
   it('settles against the live fleet Solana program, mint, and decimals', () => {

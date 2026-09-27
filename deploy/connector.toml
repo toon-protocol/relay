@@ -119,6 +119,17 @@ contract_address = "0x0c41D9D424d6B075A3cEa1068a694f7847a8CCa5"
 token_address = "0x0C996d7c934c79a6255254875607Fe69df25C0E1"
 decimals = 6
 
+# The local channel index (connector issue #661) backfills
+# ChannelOpened/ChannelNewDeposit/ChannelSettled logs from here on a cold
+# start with no checkpoint. Left at its default of 0, a cold connector would
+# ask base-sepolia-rpc.publicnode.com for block 0, which it refuses — the
+# RPC prunes history well below this block, so the index would never warm up
+# and every channel lookup would pay a direct chain read forever
+# (TOON_Network#182). 47285026 is the deploy block of the TokenNetwork above,
+# the createTokenNetwork transaction recorded in connector
+# packages/contracts/deployments/base-sepolia.md's 2026-09-25 USDC cutover.
+channel_index_from_block = 47285026
+
 # Deliberately NOT the [signer] key above. That one is per-box random material
 # with no funds; this one is the identity clients open their channels AGAINST,
 # so provision it from a seed you can reproduce, not from `openssl rand`. The
