@@ -30,6 +30,23 @@ REPO_DIR=$(cd "$(dirname "$0")/.." && pwd)
 DEPLOY_DIR="$REPO_DIR/deploy"
 cd "$REPO_DIR"
 
+# Every file docker-compose.yml bind-mounts into the connector, hashed as one:
+# a change to ANY of them only takes effect when the connector restarts --
+# connector.toml most often, but a rotated operator-write.keys that stayed
+# authorised would be the same bug on a security-relevant file. The same list
+# as store's auto-apply.sh (store#129). A missing file is tolerated and counts
+# as a change once it appears.
+fingerprint_connector_inputs() {
+  { sha256sum \
+      connector.toml \
+      operator-bearer.token \
+      operator-write.keys \
+      signer.key \
+      settlement.key \
+      settlement-solana.key \
+      2>/dev/null || true; } | sha256sum | awk '{print $1}'
+}
+
 # One apply at a time, and never one racing a human. The path is overridable
 # only for tests (TOON_AUTOAPPLY_LOCK) -- a box always takes the real one.
 # Per-node (toon-protocol/infra#25 step 2): several nodes can share one host,
@@ -123,6 +140,11 @@ else
   [ -f docker-compose.watchtower.yml ] && COMPOSE+=(-f docker-compose.watchtower.yml)
 fi
 
+# Captured before `up -d` so a recreation (an image bump, a changed service
+# definition) is distinguishable below: a recreated connector has already
+# booted on the files now on disk and must not be bounced again for them.
+CONNECTOR_BEFORE_UP=$(docker compose "${COMPOSE[@]}" ps -q connector || true)
+
 # This bundle has no render.sh: docker compose itself interpolates
 # ${VAR:?...} straight out of deploy/.env, so a newly-required variable a
 # fast-forward relies on shows up as a `pull` or `up -d` failure naming that
@@ -143,23 +165,56 @@ fi
 
 # The connector must come back healthy. Every node bundle defines a healthcheck
 # on it (GET /ilp/identity), so this is a real answer rather than "the container
-# exists".
-CONNECTOR=$(docker compose "${COMPOSE[@]}" ps -q connector)
-for _ in $(seq 1 40); do
-  STATUS=$(docker inspect "$CONNECTOR" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')
-  [ "$STATUS" = healthy ] && break
-  sleep 3
-done
-
-if [ "${STATUS:-unknown}" != healthy ]; then
-  echo "FAILED: the connector is '$STATUS' after applying ${REMOTE:0:7}."
+# exists". Docker resets Health.Status to `starting` on a restart, so calling
+# this right after one cannot read a stale `healthy`.
+wait_connector_healthy() {
+  local connector status
+  connector=$(docker compose "${COMPOSE[@]}" ps -q connector)
+  for _ in $(seq 1 40); do
+    status=$(docker inspect "$connector" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')
+    [ "$status" = healthy ] && return 0
+    sleep 3
+  done
+  echo "FAILED: the connector is '${status:-unknown}' after applying ${REMOTE:0:7}."
   docker compose "${COMPOSE[@]}" logs --tail 40 connector || true
-  exit 1
-fi
+  return 1
+}
 
-# Written only now, after the pull, `up -d` and the health wait have all
-# succeeded -- the one thing this file is allowed to claim. Gitignored
-# (deploy/.gitignore).
+wait_connector_healthy || exit 1
+
+# Activate what was merged (relay#173). `up -d` recreates a container on a
+# changed image or service definition, never on changed bytes behind a bind
+# mount, so a merge that changed only connector.toml used to be applied and
+# reported healthy while the connector went on serving the config it had last
+# started with (relay#171 and #172 both did, on the devnet, until a hand
+# restart). store renders its config and fingerprints around render.sh; here
+# the change arrives with the fast-forward itself, and a retried apply has
+# already fast-forwarded, so comparing this run's disk to itself would see
+# nothing. Instead deploy/.connector-inputs records the fingerprint of the
+# inputs the running connector was last started on and seen healthy with, and
+# this run compares the disk to THAT. A missing record reads as changed -- the
+# safer reading, as with .applied -- which costs one restart on a box's first
+# run under this check.
+#
+# Healthy after a restart is proof enough that the new config is live: the
+# connector refuses to start on a config it cannot load or a backend it cannot
+# reach, so there is no degraded run on the old file to mistake for success.
+INPUTS_FILE="$DEPLOY_DIR/.connector-inputs"
+INPUTS_NOW=$(fingerprint_connector_inputs)
+INPUTS_RUNNING=$(cat "$INPUTS_FILE" 2>/dev/null || true)
+CONNECTOR_AFTER_UP=$(docker compose "${COMPOSE[@]}" ps -q connector)
+if [ "$INPUTS_NOW" != "$INPUTS_RUNNING" ] && [ "$CONNECTOR_AFTER_UP" = "$CONNECTOR_BEFORE_UP" ]; then
+  echo "the connector's mounted inputs changed since it last started; restarting it to load them"
+  # The connector and ONLY it: nothing else changed, and the relay and the
+  # TLS front must not blip for a connector config change.
+  docker compose "${COMPOSE[@]}" restart connector
+  wait_connector_healthy || exit 1
+fi
+printf '%s\n' "$INPUTS_NOW" > "$INPUTS_FILE"
+
+# Written only now, after the pull, `up -d`, the health wait and the
+# activation above have all succeeded -- the one thing this file is allowed
+# to claim. Gitignored (deploy/.gitignore).
 printf '%s\n' "$REMOTE" > "$APPLIED_FILE"
 
-echo "applied ${REMOTE:0:7}; connector healthy."
+echo "applied ${REMOTE:0:7}; connector healthy on the merged config."
