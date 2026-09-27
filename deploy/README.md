@@ -234,15 +234,17 @@ restart.
 connector mounts, as they were when it last started and came back healthy.
 After `up -d`, `auto-apply.sh` compares the files on disk to that record and,
 when they differ, restarts the connector — and only the connector — and waits
-for it to be healthy again. It skips the restart when `up -d` has just
-recreated the container, which already booted on the new files. A missing
-record counts as a change, so a box's first run under this check restarts the
-connector once. Healthy is proof the new file is live: the connector refuses
-to start on a config it cannot load.
+for it to be healthy again. It restarts even when `up -d` has just recreated
+the container: a second start in a merge that bumps the image and changes the
+config is cheaper than trusting a container id read before `up -d`, where one
+misread would record the new config as loaded when it never was. A missing
+record counts as a change, so a box's first run under this check restarts a
+running connector once. Healthy is proof the new file is live: the connector
+refuses to start on a config it cannot load.
 
-This runs only when there is a commit to apply. A key or operator file edited
-by hand on the box still needs `docker compose restart connector`, or it is
-picked up at the next merge.
+The same comparison runs on every timer tick, not just when there is a commit
+to apply, so a key or operator file changed by hand on the box (gitignored,
+so it never arrives in a merge) is loaded on the next run too.
 
 ## Secrets
 

@@ -517,7 +517,25 @@ describe('a merge that changes only connector.toml (relay#173)', () => {
     expect(connectorInputs(box)).not.toBeNull();
   });
 
-  it('does not bounce a connector `up -d` just recreated, which booted on the new files', () => {
+  it('restarts it on the next timer run when a mounted key file is changed by hand, with nothing merged', () => {
+    const origin = freshOrigin(['connector.toml']);
+    const box = cloneBox(origin.dir);
+    writeEnv(box, ENV);
+    expect(autoApply(box).status).toBe(0);
+    const before = connectorInputs(box);
+
+    // Gitignored, so it never dirties the tree and never arrives in a merge.
+    writeFileSync(join(box, 'deploy', 'operator-write.keys'), 'rotated\n');
+    const result = autoApply(box);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(restarted(result), `no restart:\n${result.calls}`).toBe(true);
+    expect(connectorInputs(box)).not.toBe(before);
+
+    const quiet = autoApply(box);
+    expect(quiet.calls, 'once loaded, the box is quiet again').toBe('');
+  });
+
+  it('restarts it even when `up -d` recreated the container, rather than trust an id read before it', () => {
     const origin = freshOrigin(['connector.toml']);
     const box = cloneBox(origin.dir);
     writeEnv(box, ENV);
@@ -526,7 +544,7 @@ describe('a merge that changes only connector.toml (relay#173)', () => {
     const sha = changeConnectorToml(origin.dir);
     const result = autoApply(box, { STUB_RECREATE: '1' });
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    expect(restarted(result)).toBe(false);
+    expect(restarted(result)).toBe(true);
     expect(applied(box)).toBe(sha);
   });
 
