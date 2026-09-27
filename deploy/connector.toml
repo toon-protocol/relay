@@ -149,8 +149,8 @@ key_file = "/app/data/settlement.key"
 # the asset is `token_address`; the x402BatchSettlement contract is a constant
 # of the connector, never a setting.
 [settlement.evm.batch_settlement]
-# The EIP-712 domain of `token_address`, Circle's FiatToken v2.2
-# (connector#1337). Published to clients, who sign their deposit under it: a
+# The EIP-712 domain of `token_address`, the devnet's own deployment of
+# Circle's FiatToken v2.2 (connector#1337). Published to clients, who sign their deposit under it: a
 # wrong value builds a signature that never verifies.
 asset_eip712_name = "USDC"
 asset_eip712_version = "2"
@@ -160,8 +160,8 @@ min_withdraw_delay_secs = 86400
 
 # A node that accepts claims is a counterparty on whichever chain the BUYER
 # chose, so an EVM-only node refuses every Solana-paid write that reaches it.
-# The devnet relay accepts both. Drop these two tables (and the key mount in
-# docker-compose.yml) to run EVM-only.
+# The devnet relay accepts both. Drop the three [settlement.solana*] tables
+# below (and the key mount in docker-compose.yml) to run EVM-only.
 [settlement.solana]
 rpc_url = "https://api.devnet.solana.com"
 program_id = "2aEVJ8koKD8LTZrLRSGtAtU7LBt4e7QjjCgf1kzQ7Rip"

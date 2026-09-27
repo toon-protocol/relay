@@ -99,8 +99,8 @@ sudo chown 10001:10001 operator-bearer.token operator-write.keys
 > "Permission denied". The `chown` is the fix — not `chmod 644`.
 
 Both `.key` files are gitignored. To run EVM-only, delete
-`settlement-solana.key`, `[settlement.solana]` from `connector.toml`, and its
-mount from `docker-compose.yml` — but note that a node only accepts claims on
+`settlement-solana.key`, `[settlement.solana]` and its two sub-tables from
+`connector.toml`, and its mount from `docker-compose.yml` — but note that a node only accepts claims on
 chains it settles, so an EVM-only node refuses every Solana-paid write.
 
 ### 3. Fill in `.env`
