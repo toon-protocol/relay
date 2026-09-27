@@ -220,6 +220,32 @@ missing file this way is the safer of the two: the box's first-ever apply IS
 this script's first run, and it should prove itself exactly like every later
 one does.
 
+### A merged config change restarts the connector
+
+**A merge that changes only `connector.toml` restarts the connector (#173).**
+`connector.toml`, the keys and the operator files are bind-mounted, and
+`up -d` recreates a container only for a changed image or service definition,
+never for changed bytes behind a bind mount. So a config-only merge used to be
+"applied; connector healthy" while the connector went on serving the config it
+had started with — #171 and #172 both sat unloaded on the devnet until a hand
+restart.
+
+`deploy/.connector-inputs` (gitignored) holds a fingerprint of every file the
+connector mounts, as they were when it last started and came back healthy.
+After `up -d`, `auto-apply.sh` compares the files on disk to that record and,
+when they differ, restarts the connector — and only the connector — and waits
+for it to be healthy again. It restarts even when `up -d` has just recreated
+the container: a second start in a merge that bumps the image and changes the
+config is cheaper than trusting a container id read before `up -d`, where one
+misread would record the new config as loaded when it never was. A missing
+record counts as a change, so a box's first run under this check restarts a
+running connector once. Healthy is proof the new file is live: the connector
+refuses to start on a config it cannot load.
+
+The same comparison runs on every timer tick, not just when there is a commit
+to apply, so a key or operator file changed by hand on the box (gitignored,
+so it never arrives in a merge) is loaded on the next run too.
+
 ## Secrets
 
 `.env`, `*.key`, `*.secret`, `operator-bearer.token` and `operator-write.keys`

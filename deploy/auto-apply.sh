@@ -23,12 +23,32 @@
 #   * a render or apply failure is retried, and reported, on every run until
 #     it is fixed -- never silently sat on with the box left on the new
 #     commit and the old config (TOON_Network#164, porting TOON_Network#160;
-#     see `deploy/.applied`, below the fetch, for how).
+#     see `deploy/.applied`, below the fetch, for how);
+#   * a change to anything the connector mounts restarts it, merged or edited
+#     on the box, since `up -d` never notices bytes behind a bind mount
+#     (relay#173; see `deploy/.connector-inputs`).
 set -euo pipefail
 
 REPO_DIR=$(cd "$(dirname "$0")/.." && pwd)
 DEPLOY_DIR="$REPO_DIR/deploy"
 cd "$REPO_DIR"
+
+# Every file docker-compose.yml bind-mounts into the connector, hashed as one:
+# a change to ANY of them only takes effect when the connector restarts --
+# connector.toml most often, but a rotated operator-write.keys that stayed
+# authorised would be the same bug on a security-relevant file. The same list
+# as store's auto-apply.sh (store#129). A missing file is tolerated and counts
+# as a change once it appears.
+fingerprint_connector_inputs() {
+  { sha256sum \
+      connector.toml \
+      operator-bearer.token \
+      operator-write.keys \
+      signer.key \
+      settlement.key \
+      settlement-solana.key \
+      2>/dev/null || true; } | sha256sum | awk '{print $1}'
+}
 
 # One apply at a time, and never one racing a human. The path is overridable
 # only for tests (TOON_AUTOAPPLY_LOCK) -- a box always takes the real one.
@@ -68,11 +88,21 @@ REMOTE=$(git rev-parse origin/main)
 APPLIED_FILE="$DEPLOY_DIR/.applied"
 APPLIED=$(cat "$APPLIED_FILE" 2>/dev/null || true)
 
-if [ "$LOCAL" = "$REMOTE" ] && [ "$LOCAL" = "$APPLIED" ]; then
-  exit 0   # nothing merged since last time, and it is already applied
-fi
+# deploy/.connector-inputs: the fingerprint of the mounted inputs the running
+# connector last started on and came back healthy with (relay#173; see the
+# activation step below). Checked here as well as there, so a key or operator
+# file changed by hand on the box -- gitignored, so it never dirties the tree
+# and never arrives in a merge -- is loaded on the next timer run instead of
+# waiting for the next commit.
+INPUTS_FILE="$DEPLOY_DIR/.connector-inputs"
+INPUTS_RUNNING=$(cat "$INPUTS_FILE" 2>/dev/null || true)
 
-if [ "$LOCAL" != "$REMOTE" ]; then
+if [ "$LOCAL" = "$REMOTE" ] && [ "$LOCAL" = "$APPLIED" ]; then
+  if [ "$(cd "$DEPLOY_DIR" && fingerprint_connector_inputs)" = "$INPUTS_RUNNING" ]; then
+    exit 0   # nothing merged since last time, it is applied, and the connector runs on what is on disk
+  fi
+  echo "the connector's mounted inputs changed on the box; re-applying ${LOCAL:0:7} to load them"
+elif [ "$LOCAL" != "$REMOTE" ]; then
   echo "applying ${LOCAL:0:7} -> ${REMOTE:0:7}"
   git merge --ff-only origin/main
 else
@@ -143,23 +173,59 @@ fi
 
 # The connector must come back healthy. Every node bundle defines a healthcheck
 # on it (GET /ilp/identity), so this is a real answer rather than "the container
-# exists".
-CONNECTOR=$(docker compose "${COMPOSE[@]}" ps -q connector)
-for _ in $(seq 1 40); do
-  STATUS=$(docker inspect "$CONNECTOR" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')
-  [ "$STATUS" = healthy ] && break
-  sleep 3
-done
-
-if [ "${STATUS:-unknown}" != healthy ]; then
-  echo "FAILED: the connector is '$STATUS' after applying ${REMOTE:0:7}."
+# exists". Docker resets Health.Status to `starting` on a restart, so calling
+# this right after one cannot read a stale `healthy`.
+wait_connector_healthy() {
+  local connector status
+  connector=$(docker compose "${COMPOSE[@]}" ps -q connector)
+  for _ in $(seq 1 40); do
+    status=$(docker inspect "$connector" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')
+    [ "$status" = healthy ] && return 0
+    sleep 3
+  done
+  echo "FAILED: the connector is '${status:-unknown}' after applying ${REMOTE:0:7}."
   docker compose "${COMPOSE[@]}" logs --tail 40 connector || true
-  exit 1
-fi
+  return 1
+}
 
-# Written only now, after the pull, `up -d` and the health wait have all
-# succeeded -- the one thing this file is allowed to claim. Gitignored
-# (deploy/.gitignore).
+wait_connector_healthy || exit 1
+
+# Activate what was merged (relay#173). `up -d` recreates a container on a
+# changed image or service definition, never on changed bytes behind a bind
+# mount, so a merge that changed only connector.toml used to be applied and
+# reported healthy while the connector went on serving the config it had last
+# started with (relay#171 and #172 both did, on the devnet, until a hand
+# restart). store renders its config and fingerprints around render.sh; here
+# the change arrives with the fast-forward itself, and a retried apply has
+# already fast-forwarded, so comparing this run's disk to itself would see
+# nothing. Instead this compares the disk to deploy/.connector-inputs, the
+# record of what the running connector was last started on. A missing record
+# reads as changed -- the safer reading, as with .applied -- which costs one
+# restart on a box's first run under this check.
+#
+# It restarts even when `up -d` has just recreated the container, which
+# already booted on these files. Telling the two apart means trusting a
+# container id read before `up -d`, and one misread there would record the new
+# fingerprint without ever loading it -- a stale connector nothing would ever
+# correct. A second start in the rare merge that bumps the image AND changes
+# the config is the cheaper failure.
+#
+# Healthy after a restart is proof enough that the new config is live: the
+# connector refuses to start on a config it cannot load or a backend it cannot
+# reach, so there is no degraded run on the old file to mistake for success.
+INPUTS_NOW=$(fingerprint_connector_inputs)
+if [ "$INPUTS_NOW" != "$INPUTS_RUNNING" ]; then
+  echo "the connector's mounted inputs changed since it last started; restarting it to load them"
+  # The connector and ONLY it: nothing else changed, and the relay and the
+  # TLS front must not blip for a connector config change.
+  docker compose "${COMPOSE[@]}" restart connector
+  wait_connector_healthy || exit 1
+fi
+printf '%s\n' "$INPUTS_NOW" > "$INPUTS_FILE"
+
+# Written only now, after the pull, `up -d`, the health wait and the
+# activation above have all succeeded -- the one thing this file is allowed
+# to claim. Gitignored (deploy/.gitignore).
 printf '%s\n' "$REMOTE" > "$APPLIED_FILE"
 
-echo "applied ${REMOTE:0:7}; connector healthy."
+echo "applied ${REMOTE:0:7}; connector healthy on the merged config."
