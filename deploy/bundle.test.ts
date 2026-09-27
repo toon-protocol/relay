@@ -136,6 +136,24 @@ const EXPECTED_SOLANA_TOKEN_ADDRESS =
 // key the positive pin reads. The compose files, the Caddyfile, .env.example
 // and the README are all things a second box gets set up from, and none of
 // them is covered by a pin on `settlement.solana.token_address`.
+// Connector ADR 0074: this node accepts x402 batch-settlement channels on both
+// chains (infra#38). Without these tables `GET /ilp` publishes no
+// `batchSettlements` and every voucher is refused `batch_settlement_not_offered`.
+// The EIP-712 domain is that of the EVM token above, Circle's FiatToken v2.2
+// (connector#1337): a wrong one builds deposit signatures that never verify.
+// The delays are ADR 0074's one-day default, written out. The Solana minimum
+// deposit is 1 USDC: it bounds how much of this node's SOL a stranger can
+// spend on rent through the sponsor endpoint (owner decision, 2026-09-27).
+const EXPECTED_EVM_BATCH_SETTLEMENT = {
+  asset_eip712_name: 'USDC',
+  asset_eip712_version: '2',
+  min_withdraw_delay_secs: 86400,
+};
+const EXPECTED_SOLANA_BATCH_SETTLEMENT = {
+  min_sponsored_deposit: 1_000_000,
+  min_grace_period_secs: 86400,
+};
+
 const RETIRED_SOLANA_TOKEN_ADDRESS =
   'xyc5J8MgKFiEN13PnfftdXxUzYH34FEvw1LCrFwN7in';
 
@@ -229,11 +247,13 @@ interface ConnectorToml {
       token_address: string;
       decimals: number;
       channel_index_from_block: number;
+      batch_settlement?: Record<string, unknown>;
     };
     solana: {
       program_id: string;
       token_address: string;
       decimals: number;
+      batch_settlement?: Record<string, unknown>;
     };
   };
 }
@@ -285,6 +305,19 @@ describe('deploy bundle', () => {
       solana.decimals,
       `settlement.solana.decimals: expected ${EXPECTED_DECIMALS}, found ${solana.decimals}`
     ).toBe(EXPECTED_DECIMALS);
+  });
+
+  it('accepts x402 batch-settlement channels on both chains, on the terms of record (infra#38)', () => {
+    const { evm, solana } = readConnectorToml().settlement;
+
+    expect(
+      evm.batch_settlement,
+      '[settlement.evm.batch_settlement]: GET /ilp publishes no Base batchSettlements without it'
+    ).toEqual(EXPECTED_EVM_BATCH_SETTLEMENT);
+    expect(
+      solana.batch_settlement,
+      '[settlement.solana.batch_settlement]: GET /ilp publishes no Solana batchSettlements without it'
+    ).toEqual(EXPECTED_SOLANA_BATCH_SETTLEMENT);
   });
 
   it('names the retired Solana mint nowhere in the bundle', () => {

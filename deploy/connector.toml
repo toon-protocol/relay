@@ -140,6 +140,24 @@ channel_index_from_block = 47285026
 [settlement.evm.key]
 key_file = "/app/data/settlement.key"
 
+# Accept x402 batch-settlement channels on Base too (connector ADR 0074,
+# infra#38): a client whose wallet holds USDC and no ETH deposits through the
+# devnet's Onboarder at onboard.devnet.toonprotocol.dev and pays this node with
+# vouchers. Off unless this table is written — without it `GET /ilp` publishes
+# no `batchSettlements` and every voucher is refused
+# `batch_settlement_not_offered`. The receiver is the settlement key above and
+# the asset is `token_address`; the x402BatchSettlement contract is a constant
+# of the connector, never a setting.
+[settlement.evm.batch_settlement]
+# The EIP-712 domain of `token_address`, Circle's FiatToken v2.2
+# (connector#1337). Published to clients, who sign their deposit under it: a
+# wrong value builds a signature that never verifies.
+asset_eip712_name = "USDC"
+asset_eip712_version = "2"
+# The shortest `withdrawDelay` this node admits: the window a claim still has
+# to land in after the payer starts a withdrawal. ADR 0074's default, a day.
+min_withdraw_delay_secs = 86400
+
 # A node that accepts claims is a counterparty on whichever chain the BUYER
 # chose, so an EVM-only node refuses every Solana-paid write that reaches it.
 # The devnet relay accepts both. Drop these two tables (and the key mount in
@@ -154,6 +172,20 @@ decimals = 6
 # A 32-byte ed25519 seed as 64 hex characters; the fleet derives it from the
 # same mnemonic at m/44'/501'/0'/0'.
 key_file = "/app/data/settlement-solana.key"
+
+# Accept x402 batch-settlement channels on Solana (connector ADR 0074,
+# infra#38), in solana-foundation's `payment-channels` program — unrelated to
+# `program_id` above, and a constant of the connector. There is no Onboarder
+# here: this node sponsors the open itself through the `sponsorEndpoint` its
+# `GET /ilp` publishes, paying the fees and rent from the settlement key above,
+# so that key must keep some devnet SOL.
+[settlement.solana.batch_settlement]
+# The smallest deposit this node spends its own rent on, in the mint's base
+# units: 1 USDC. Required, and published as `extra.minDeposit`; it bounds how
+# much SOL a stranger can make this node spend (owner decision, 2026-09-27).
+min_sponsored_deposit = 1000000
+# The shortest `grace_period` this node admits. ADR 0074's default, a day.
+min_grace_period_secs = 86400
 
 # ── The operator surface ─────────────────────────────────────────────────────
 # Every read (peers, routes, channels, claims, /metrics) needs the bearer
