@@ -95,24 +95,22 @@ function resolveComposeDefaults(portEntry: string): string {
   );
 }
 
-// The shared TOON devnet's TokenNetworkRegistry (the 2026-08-28 ADR 0059 cutover's;
-// connector docs/evm-deployment.md) — the same registry, token
-// and decimals the fleet settles through. A node pointed at a different
-// registry cannot resolve the channels buyers actually opened against it.
-const EXPECTED_CONTRACT_ADDRESS = '0x0c41D9D424d6B075A3cEa1068a694f7847a8CCa5';
+// The shared TOON devnet's settlement asset (connector ADR 0075 retired the
+// TokenNetworkRegistry/TokenNetwork this used to be asserted against — the
+// x402BatchSettlement contract is a fixed binary constant now, not config) —
+// the same token and decimals the fleet settles through. A node pointed at a
+// different token cannot resolve the channels buyers actually opened against
+// it.
 // 6-decimal devnet USDC, the fleet-wide settlement asset.
 const EXPECTED_TOKEN_ADDRESS = '0x0C996d7c934c79a6255254875607Fe69df25C0E1';
 const EXPECTED_DECIMALS = 6;
-// The live TokenNetwork's deploy block (connector
-// packages/contracts/deployments/base-sepolia.md, the 2026-09-25 USDC
-// cutover's `createTokenNetwork` transaction), so a cold connector backfills
-// its local channel index from here instead of genesis — a public RPC that
-// prunes history refuses a request for block 0 (TOON_Network#182).
-const EXPECTED_CHANNEL_INDEX_FROM_BLOCK = 47285026;
 
 // The Solana half of the same statement, and pinned for the same reason: a
-// claim resolves against ONE deployment, so a node naming a different program
-// or mint cannot settle the channels buyers opened against the fleet.
+// claim resolves against ONE deployment, so a node naming a different mint
+// cannot settle the channels buyers opened against the fleet. `program_id`
+// used to be asserted here too; connector ADR 0075 made `payment-channels` a
+// fixed binary constant, the same id on devnet and mainnet-beta, so there is
+// no longer a program id in config to pin.
 //
 // This pin is late. The EVM leg above has been asserted since this file was
 // written; the Solana leg was not, and it drifted to a mint that had become
@@ -123,7 +121,6 @@ const EXPECTED_CHANNEL_INDEX_FROM_BLOCK = 47285026;
 // replacement's authority is the faucet box's own treasury, so the faucet
 // mints per drip and there is no irreplaceable key left in the arrangement.
 // See connector's packages/solana-program/deployments/devnet-public.md.
-const EXPECTED_SOLANA_PROGRAM_ID = '2aEVJ8koKD8LTZrLRSGtAtU7LBt4e7QjjCgf1kzQ7Rip';
 const EXPECTED_SOLANA_TOKEN_ADDRESS =
   '34eSxY7qxQ4GzyhDJ8GpUcTz1WWzruGbJbR8q6TtxfQU';
 
@@ -139,15 +136,16 @@ const EXPECTED_SOLANA_TOKEN_ADDRESS =
 const RETIRED_SOLANA_TOKEN_ADDRESS =
   'xyc5J8MgKFiEN13PnfftdXxUzYH34FEvw1LCrFwN7in';
 
-// Connector ADR 0074: this node accepts x402 batch-settlement channels on both
-// chains (infra#38). Without these tables `GET /ilp` publishes no
-// `batchSettlements` and every voucher is refused `batch_settlement_not_offered`.
-// The EIP-712 domain is that of the EVM token above, the devnet's own
-// deployment of Circle's FiatToken v2.2 (connector#1337): a wrong one builds
-// deposit signatures that never verify. The delays are ADR 0074's one-day
-// default, written out. The Solana minimum deposit is 1 USDC: it bounds how
-// much of this node's SOL a stranger can spend on rent through the sponsor
-// endpoint (owner decision, 2026-09-27).
+// Connector ADR 0075: every channel is an x402 batch-settlement channel now,
+// on both chains — no longer opt-in (ADR 0074's `[settlement.<chain>.batch_settlement]`
+// sub-table is gone; these keys live directly under `[settlement.<chain>]`).
+// Without them `GET /ilp` publishes no `batchSettlements` and every voucher is
+// refused `batch_settlement_not_offered`. The EIP-712 domain is that of the
+// EVM token above, the devnet's own deployment of Circle's FiatToken v2.2
+// (connector#1337): a wrong one builds deposit signatures that never verify.
+// The delays are ADR 0074's one-day default, written out. The Solana minimum
+// deposit is 1 USDC: it bounds how much of this node's SOL a stranger can
+// spend on rent through the sponsor endpoint (owner decision, 2026-09-27).
 const EXPECTED_EVM_BATCH_SETTLEMENT = {
   asset_eip712_name: 'USDC',
   asset_eip712_version: '2',
@@ -190,7 +188,7 @@ const EXPECTED_ROUTE_HANDLER_URLS: Record<string, string> = {
 // for what it forwards (connector#1230); its predecessor `rust-sha-6ea6009`
 // was the first to speak `[node]` (ADR 0050) and state a verified payment to
 // the app on delivery (ADR 0040).
-const EXPECTED_CONNECTOR_TAG = 'rust-2026.09.27.2';
+const EXPECTED_CONNECTOR_TAG = 'rust-2026.09.28.1';
 
 // The one file that may name a connector build. It used to be
 // deploy/Dockerfile's `ARG CONNECTOR_TAG`, back when this bundle published a
@@ -244,17 +242,17 @@ interface ConnectorToml {
   }[];
   settlement: {
     evm: {
-      contract_address: string;
       token_address: string;
       decimals: number;
-      channel_index_from_block: number;
-      batch_settlement?: Record<string, unknown>;
+      asset_eip712_name: string;
+      asset_eip712_version: string;
+      min_withdraw_delay_secs?: number;
     };
     solana: {
-      program_id: string;
       token_address: string;
       decimals: number;
-      batch_settlement?: Record<string, unknown>;
+      min_sponsored_deposit: number;
+      min_grace_period_secs?: number;
     };
   };
 }
@@ -270,13 +268,9 @@ function readFile(relativePath: string): string {
 }
 
 describe('deploy bundle', () => {
-  it('settles against the live fleet registry, token, and decimals', () => {
+  it('settles against the live fleet token and decimals', () => {
     const { evm } = readConnectorToml().settlement;
 
-    expect(
-      evm.contract_address,
-      `settlement.evm.contract_address: expected ${EXPECTED_CONTRACT_ADDRESS}, found ${evm.contract_address}`
-    ).toBe(EXPECTED_CONTRACT_ADDRESS);
     expect(
       evm.token_address,
       `settlement.evm.token_address: expected ${EXPECTED_TOKEN_ADDRESS}, found ${evm.token_address}`
@@ -285,19 +279,11 @@ describe('deploy bundle', () => {
       evm.decimals,
       `settlement.evm.decimals: expected ${EXPECTED_DECIMALS}, found ${evm.decimals}`
     ).toBe(EXPECTED_DECIMALS);
-    expect(
-      evm.channel_index_from_block,
-      `settlement.evm.channel_index_from_block: expected ${EXPECTED_CHANNEL_INDEX_FROM_BLOCK}, found ${evm.channel_index_from_block} — a cold connector backfills its channel index from genesis against a public RPC that prunes history (TOON_Network#182)`
-    ).toBe(EXPECTED_CHANNEL_INDEX_FROM_BLOCK);
   });
 
-  it('settles against the live fleet Solana program, mint, and decimals', () => {
+  it('settles against the live fleet Solana mint and decimals', () => {
     const { solana } = readConnectorToml().settlement;
 
-    expect(
-      solana.program_id,
-      `settlement.solana.program_id: expected ${EXPECTED_SOLANA_PROGRAM_ID}, found ${solana.program_id}`
-    ).toBe(EXPECTED_SOLANA_PROGRAM_ID);
     expect(
       solana.token_address,
       `settlement.solana.token_address: expected ${EXPECTED_SOLANA_TOKEN_ADDRESS}, found ${solana.token_address}`
@@ -308,16 +294,23 @@ describe('deploy bundle', () => {
     ).toBe(EXPECTED_DECIMALS);
   });
 
-  it('accepts x402 batch-settlement channels on both chains, on the terms of record (infra#38)', () => {
+  it('accepts x402 batch-settlement channels on both chains, on the terms of record (infra#38, connector ADR 0075)', () => {
     const { evm, solana } = readConnectorToml().settlement;
 
     expect(
-      evm.batch_settlement,
-      '[settlement.evm.batch_settlement]: GET /ilp publishes no Base batchSettlements without it'
+      {
+        asset_eip712_name: evm.asset_eip712_name,
+        asset_eip712_version: evm.asset_eip712_version,
+        min_withdraw_delay_secs: evm.min_withdraw_delay_secs,
+      },
+      '[settlement.evm]: GET /ilp publishes no Base batchSettlements without asset_eip712_name/asset_eip712_version'
     ).toEqual(EXPECTED_EVM_BATCH_SETTLEMENT);
     expect(
-      solana.batch_settlement,
-      '[settlement.solana.batch_settlement]: GET /ilp publishes no Solana batchSettlements without it'
+      {
+        min_sponsored_deposit: solana.min_sponsored_deposit,
+        min_grace_period_secs: solana.min_grace_period_secs,
+      },
+      '[settlement.solana]: GET /ilp publishes no Solana batchSettlements without min_sponsored_deposit'
     ).toEqual(EXPECTED_SOLANA_BATCH_SETTLEMENT);
   });
 

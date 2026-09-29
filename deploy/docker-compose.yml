@@ -86,12 +86,19 @@ services:
   # also speaks the `[node]` self-description (ADR 0050) and states a verified
   # payment to the app on delivery (ADR 0040), as its predecessor did.
   #
+  # `rust-2026.09.28.1` (connector ADR 0075) is the first x402-only build:
+  # TOON's own `TokenNetwork`/`TokenNetworkRegistry` (EVM) and payment-channel
+  # program (Solana) are gone from the binary, every channel is an x402
+  # batch-settlement channel on both chains, and this build refuses to boot on
+  # a state_dir journal that still holds a `toon-channel` entry. See this
+  # PR's description before merging.
+  #
   # Because the pin is IMMUTABLE, this container does not auto-deploy: there
   # is no moving tag for Watchtower to follow, so a connector or config change
   # needs `git pull && docker compose up -d` on the box. The label below stays
   # for shape-parity with the other two bundles, and is inert here.
   connector:
-    image: ghcr.io/toon-protocol/connector:rust-2026.09.27.2
+    image: ghcr.io/toon-protocol/connector:rust-2026.09.28.1
     # No `environment:` block, deliberately: the connector has no
     # environment-variable layer at all. Every value comes from the mounted
     # ./connector.toml, so there is exactly one place any value comes from.

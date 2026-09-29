@@ -100,35 +100,36 @@ handler_url = "http://relay:3100/write-ephemeral"
 price = 0
 
 # ── Getting paid ─────────────────────────────────────────────────────────────
-# With this section, anyone who opens a channel on chain can pay this node
-# with no config edit, and the accepted claim's watermark is journaled under
-# state_dir. Without it, this node has a record of no channel and refuses
-# every claim at its edge as unknown.
+# Every channel is an x402 batch-settlement channel now (connector ADR 0075):
+# a client whose wallet holds USDC and no ETH deposits through the devnet's
+# Onboarder at onboard.devnet.toonprotocol.dev, or a Solana wallet deposits
+# through the sponsor endpoint below, and pays this node with vouchers. This
+# is no longer opt-in — the connector accepts these terms wherever a
+# [settlement.<chain>] table exists at all — and the accepted claim's
+# watermark is journaled under state_dir.
 #
-# Fail-closed at STARTUP: the connector resolves token_address through the
-# registry at contract_address and reads the token's own decimals(). A wrong
-# RPC, a registry that does not answer, or a decimals mismatch is exit 1
-# before it serves anything. Every chain below is one more endpoint this node
-# must reach before it will boot.
+# Fail-closed at STARTUP: the connector resolves token_address and reads the
+# token's own decimals(). A wrong RPC or a decimals mismatch is exit 1 before
+# it serves anything. Every chain below is one more endpoint this node must
+# reach before it will boot. The x402BatchSettlement contract (EVM) and
+# payment-channels program (Solana) are fixed constants of the connector
+# binary, never a setting.
 #
 # These values are the shared TOON devnet's deployment. Point them elsewhere
 # only if you are running your own fleet end to end.
 [settlement.evm]
 rpc_url = "https://base-sepolia-rpc.publicnode.com"
-contract_address = "0x0c41D9D424d6B075A3cEa1068a694f7847a8CCa5"
 token_address = "0x0C996d7c934c79a6255254875607Fe69df25C0E1"
 decimals = 6
-
-# The local channel index (connector issue #661) backfills
-# ChannelOpened/ChannelNewDeposit/ChannelSettled logs from here on a cold
-# start with no checkpoint. Left at its default of 0, a cold connector would
-# ask base-sepolia-rpc.publicnode.com for block 0, which it refuses — the
-# RPC prunes history well below this block, so the index would never warm up
-# and every channel lookup would pay a direct chain read forever
-# (TOON_Network#182). 47285026 is the deploy block of the TokenNetwork above,
-# the createTokenNetwork transaction recorded in connector
-# packages/contracts/deployments/base-sepolia.md's 2026-09-25 USDC cutover.
-channel_index_from_block = 47285026
+# The EIP-712 domain of `token_address`, the devnet's own deployment of
+# Circle's FiatToken v2.2 (connector#1337). Published to clients, who sign
+# their deposit under it: a wrong value builds a signature that never
+# verifies. Required now (connector ADR 0075) — there is no safe default.
+asset_eip712_name = "USDC"
+asset_eip712_version = "2"
+# The shortest `withdrawDelay` this node admits: the window a claim still has
+# to land in after the payer starts a withdrawal. ADR 0074's default, a day.
+min_withdraw_delay_secs = 86400
 
 # Deliberately NOT the [signer] key above. That one is per-box random material
 # with no funds; this one is the identity clients open their channels AGAINST,
@@ -136,56 +137,36 @@ channel_index_from_block = 47285026
 # TOON fleet derives it at NIP-06 m/44'/1237'/0'/0/0 — the NOSTR coin type,
 # not the standard m/44'/60'. Deriving at m/44'/60' yields a valid address no
 # channel was ever opened against; verify the derived address BEFORE the first
-# `up -d`.
+# `up -d`. This key now signs THIS chain's vouchers too, not only settlement
+# transactions (connector ADR 0075) — `[signer]` above is identity only:
+# gift-wrap and the self-description, never a value-moving signature.
 [settlement.evm.key]
 key_file = "/app/data/settlement.key"
 
-# Accept x402 batch-settlement channels on Base too (connector ADR 0074,
-# infra#38): a client whose wallet holds USDC and no ETH deposits through the
-# devnet's Onboarder at onboard.devnet.toonprotocol.dev and pays this node with
-# vouchers. Off unless this table is written — without it `GET /ilp` publishes
-# no `batchSettlements` and every voucher is refused
-# `batch_settlement_not_offered`. The receiver is the settlement key above and
-# the asset is `token_address`; the x402BatchSettlement contract is a constant
-# of the connector, never a setting.
-[settlement.evm.batch_settlement]
-# The EIP-712 domain of `token_address`, the devnet's own deployment of
-# Circle's FiatToken v2.2 (connector#1337). Published to clients, who sign their deposit under it: a
-# wrong value builds a signature that never verifies.
-asset_eip712_name = "USDC"
-asset_eip712_version = "2"
-# The shortest `withdrawDelay` this node admits: the window a claim still has
-# to land in after the payer starts a withdrawal. ADR 0074's default, a day.
-min_withdraw_delay_secs = 86400
-
 # A node that accepts claims is a counterparty on whichever chain the BUYER
 # chose, so an EVM-only node refuses every Solana-paid write that reaches it.
-# The devnet relay accepts both. Drop the three [settlement.solana*] tables
+# The devnet relay accepts both. Drop the two [settlement.solana*] tables
 # below (and the key mount in docker-compose.yml) to run EVM-only.
 [settlement.solana]
 rpc_url = "https://api.devnet.solana.com"
-program_id = "2aEVJ8koKD8LTZrLRSGtAtU7LBt4e7QjjCgf1kzQ7Rip"
 token_address = "34eSxY7qxQ4GzyhDJ8GpUcTz1WWzruGbJbR8q6TtxfQU"
 decimals = 6
-
-[settlement.solana.key]
-# A 32-byte ed25519 seed as 64 hex characters; the fleet derives it from the
-# same mnemonic at m/44'/501'/0'/0'.
-key_file = "/app/data/settlement-solana.key"
-
-# Accept x402 batch-settlement channels on Solana (connector ADR 0074,
-# infra#38), in solana-foundation's `payment-channels` program — unrelated to
-# `program_id` above, and a constant of the connector. There is no Onboarder
-# here: this node sponsors the open itself through the `sponsorEndpoint` its
-# `GET /ilp` publishes, paying the fees and rent from the settlement key above,
-# so that key must keep some devnet SOL.
-[settlement.solana.batch_settlement]
 # The smallest deposit this node spends its own rent on, in the mint's base
-# units: 1 USDC. Required, and published as `extra.minDeposit`; it bounds how
-# much SOL a stranger can make this node spend (owner decision, 2026-09-27).
+# units: 1 USDC. Required now (connector ADR 0075), and published as
+# `extra.minDeposit`; it bounds how much SOL a stranger can make this node
+# spend (owner decision, 2026-09-27) through the sponsor endpoint below.
 min_sponsored_deposit = 1000000
 # The shortest `grace_period` this node admits. ADR 0074's default, a day.
 min_grace_period_secs = 86400
+
+[settlement.solana.key]
+# A 32-byte ed25519 seed as 64 hex characters; the fleet derives it from the
+# same mnemonic at m/44'/501'/0'/0'. There is no Onboarder here: this node
+# sponsors the open itself through the `sponsorEndpoint` its `GET /ilp`
+# publishes, paying the fees and rent from this key, so it must keep some
+# devnet SOL. This key now signs THIS chain's vouchers too (connector ADR
+# 0075), not only settlement transactions.
+key_file = "/app/data/settlement-solana.key"
 
 # ── The operator surface ─────────────────────────────────────────────────────
 # Every read (peers, routes, channels, claims, /metrics) needs the bearer
