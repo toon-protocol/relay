@@ -249,6 +249,8 @@ interface ConnectorToml {
       asset_eip712_name: string;
       asset_eip712_version: string;
       min_withdraw_delay_secs?: number;
+      asset_transfer_method?: string;
+      facilitator_url?: string;
     };
     solana: {
       token_address: string;
