@@ -130,6 +130,17 @@ asset_eip712_version = "2"
 # The shortest `withdrawDelay` this node admits: the window a claim still has
 # to land in after the payer starts a withdrawal. ADR 0074's default, a day.
 min_withdraw_delay_secs = 86400
+# How a deposit moves the token, published as `assetTransferMethod`
+# (connector #1419). The devnet USDC is Circle's FiatToken, which has
+# ERC-3009, so a payer signs one transferWithAuthorization and sends nothing.
+# The connector checks this against the token at boot (connector #1425).
+asset_transfer_method = "eip3009"
+# The x402 facilitator this node names for deposits into its channels,
+# published as `facilitator`. The operator pays its gas as a cost of the sale
+# (connector ADR 0076): the devnet's Onboarder, which also sponsors the
+# Permit2 approval for tokens without ERC-3009 (infra#40). A payer holding its
+# own ETH can still deposit directly (toon-client#695).
+facilitator_url = "https://onboard.devnet.toonprotocol.dev"
 
 # Deliberately NOT the [signer] key above. That one is per-box random material
 # with no funds; this one is the identity clients open their channels AGAINST,

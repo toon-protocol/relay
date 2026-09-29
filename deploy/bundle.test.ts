@@ -150,6 +150,8 @@ const EXPECTED_EVM_BATCH_SETTLEMENT = {
   asset_eip712_name: 'USDC',
   asset_eip712_version: '2',
   min_withdraw_delay_secs: 86400,
+  asset_transfer_method: 'eip3009',
+  facilitator_url: 'https://onboard.devnet.toonprotocol.dev',
 };
 const EXPECTED_SOLANA_BATCH_SETTLEMENT = {
   min_sponsored_deposit: 1_000_000,
@@ -188,7 +190,7 @@ const EXPECTED_ROUTE_HANDLER_URLS: Record<string, string> = {
 // for what it forwards (connector#1230); its predecessor `rust-sha-6ea6009`
 // was the first to speak `[node]` (ADR 0050) and state a verified payment to
 // the app on delivery (ADR 0040).
-const EXPECTED_CONNECTOR_TAG = 'rust-2026.09.28.1';
+const EXPECTED_CONNECTOR_TAG = 'rust-2026.09.29.1';
 
 // The one file that may name a connector build. It used to be
 // deploy/Dockerfile's `ARG CONNECTOR_TAG`, back when this bundle published a
@@ -302,6 +304,8 @@ describe('deploy bundle', () => {
         asset_eip712_name: evm.asset_eip712_name,
         asset_eip712_version: evm.asset_eip712_version,
         min_withdraw_delay_secs: evm.min_withdraw_delay_secs,
+        asset_transfer_method: evm.asset_transfer_method,
+        facilitator_url: evm.facilitator_url,
       },
       '[settlement.evm]: GET /ilp publishes no Base batchSettlements without asset_eip712_name/asset_eip712_version'
     ).toEqual(EXPECTED_EVM_BATCH_SETTLEMENT);
