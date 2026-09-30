@@ -208,7 +208,14 @@ async function main() {
       maxIterations: 1,
       agent: sandcastle.claudeCode('claude-opus-5-5'),
       promptFile: './.sandcastle/review-prompt.md',
-      promptArgs: { ISSUE_URL: issue.url, ISSUE_NUMBER: issueNumber, BRANCH: branch },
+      // Not TARGET_BRANCH: sandcastle sets that built-in to this sandbox's own branch,
+      // which would review the branch against itself, and rejects it in promptArgs.
+      promptArgs: {
+        ISSUE_URL: issue.url,
+        ISSUE_NUMBER: issueNumber,
+        BRANCH: branch,
+        BASE_BRANCH: BASE,
+      },
     });
     const summary = reviewSummary(review.stdout);
 
