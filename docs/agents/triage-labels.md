@@ -47,7 +47,10 @@ directly, even with `ready-for-agent` on it. Its tickets are.
 
 Actions secrets `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) and `APP_ID` +
 `APP_PRIVATE_KEY` (the GitHub App whose token opens the PR, so that `ci.yml` runs on it; the runner
-mints a fresh installation token before each push). The sandbox image is prebuilt and pulled from
-`ghcr.io/toon-protocol/relay:sandcastle-agent`; when `.sandcastle/Dockerfile` changes, rebuild and
-push it with the commands in the comment above the pull step in `agent-implement.yml`. `agent-image.yml`
-builds the image on a PR that touches `.sandcastle/` and checks the skills plugin is installed.
+mints a fresh installation token before each push).
+
+The sandbox is the one image every factory repo shares, `ghcr.io/toon-protocol/sandcastle-agent:latest`,
+built from connector's `.sandcastle/Dockerfile` (Node 22, pnpm through corepack, gh, Claude Code with
+the `mattpocock-skills` plugin, Rust, Foundry, the Solana CLI and envsubst). This repo has no Dockerfile
+of its own: `agent-implement.yml` pulls that image, checks the plugin is installed, and otherwise builds
+it from connector's repository.
