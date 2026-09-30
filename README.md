@@ -396,8 +396,8 @@ pins both to the versions CI uses — `devbox shell`, then `devbox run build`,
 
 Every user-visible change needs a changeset (`pnpm changeset`); CI refuses a PR
 without one, and merging publishes the package and moves the `:release` tags.
-The agent factory that opens many of the PRs here is
-[`docs/factory-runbook.md`](docs/factory-runbook.md).
+The agent factory that opens many of the PRs here is described in
+[`docs/agents/triage-labels.md`](docs/agents/triage-labels.md).
 
 ## Where to go next
 

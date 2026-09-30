@@ -1,5 +1,5 @@
 {
-  "_schemaNote": "No formal JSON Schema for this file (informal shape \u2014 see method below); deliberately not using the \"$schema\" key so editors don't try to fetch it as a real schema URL. The flat top-level `correctness`/`speed`/`performance`/`regressionTolerancePercent` keys are the machine-read contract that the CI guards in .github/workflows/ci.yml and agent-image.yml consume \u2014 keep them stable. The `gateShape`/`gateCorrectness`/`gateSpeed`/`gatePerformance`/`reproducibilityNotes`/`environment` sections are the richer human-readable capture (relay#74) layered on top; they add detail and do not change the machine contract.",
+  "_schemaNote": "No formal JSON Schema for this file (informal shape \u2014 see method below); deliberately not using the \"$schema\" key so editors don't try to fetch it as a real schema URL. The flat top-level `correctness`/`speed`/`performance`/`regressionTolerancePercent` keys are the machine-read contract that the CI guard in .github/workflows/ci.yml consumes \u2014 keep them stable. The `gateShape`/`gateCorrectness`/`gateSpeed`/`gatePerformance`/`reproducibilityNotes`/`environment` sections are the richer human-readable capture (relay#74) layered on top; they add detail and do not change the machine contract.",
   "schemaVersion": 1,
   "repo": "relay",
   "capturedAt": "2026-07-23",
@@ -129,7 +129,7 @@
     },
     "dockerImageSize": {
       "status": "not yet measured",
-      "note": "The .sandcastle/Dockerfile agent image (sandcastle:relay) had no prior run that recorded its size. The 'Gate performance no-regression guard (image size)' step in .github/workflows/agent-image.yml (landed by relay#75) reports and records the size on its next run; the machine-read `performance.dockerImageSizeBytes` stays null until a human folds that number into a follow-up baseline-update commit (the guard treats null as record-only)."
+      "note": "Historical. This repo no longer builds its own agent image (it pulls the shared ghcr.io/toon-protocol/sandcastle-agent), so the image-size guard that used to read `performance.dockerImageSizeBytes` is gone and the key stays null."
     }
   },
   "gateCorrectness": {
