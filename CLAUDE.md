@@ -55,17 +55,12 @@ The ILP payment engine is the separate
 (GHCR image + config reference). **All payment-claim validation lives ONLY in
 the connector — never re-implement it here.**
 
-## Shared skills, docs & project context → toon-protocol/toon-meta
+## Shared skills, docs & project context
 
-Cross-cutting agent skills, docs, and the canonical project context live in
-**[toon-protocol/toon-meta](https://github.com/toon-protocol/toon-meta)**:
-
-```
-/plugin marketplace add toon-protocol/toon-meta
-/plugin install toon-skills@toon-meta
-```
-
-Canonical rules/decisions: `toon-meta` → `context/context.md`.
+Cross-cutting agent skills, docs and project context once lived in
+toon-protocol/toon-meta, which is being retired. Nothing this repo needs to
+build, test or ship depends on it; CI, including the no-op merge guard
+(`.github/scripts/no-op-merge-guard.sh`), is self-contained.
 
 ## Publishing
 

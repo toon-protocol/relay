@@ -138,24 +138,38 @@ jobs:
       - name: Smoke build
         run: devbox run -- bash -c "pnpm install --frozen-lockfile && pnpm build"
 
-  # Fleet no-op merge guard (toon-meta#405), wired INTO this repo's aggregate
-  # required check so that it blocks a HUMAN merge and not just the fleet
-  # auto-merge pass (toon-meta#408). connector#1008 merged green, closed its
-  # ticket and changed zero files -- and it was a human who merged it, because
-  # a red NON-required check is only a warning on the merge button. This
-  # replaces the stand-alone empty-pr-guard-shim.yml, deleted in the same
-  # commit; running both would put two identical "No-op merge guard" check
-  # runs on every PR. Canonical caller snippet and full rationale:
-  # toon-meta scripts/factory/empty-pr-guard-gate-job.yml.
+  # No-op merge guard: a PR whose merge result changes zero files must not
+  # merge green. connector#1008 merged green, closed its ticket and changed
+  # zero files -- and a human merged it, because a red NON-required check is
+  # only a warning on the merge button. So this job feeds `ci-ok` below, the
+  # one required check, which asserts on its result. (It used to be a call to
+  # toon-meta's reusable empty-pr-guard.yml; it lives here now, and the logic
+  # is .github/scripts/no-op-merge-guard.sh, exercised by
+  # deploy/no-op-merge-guard.test.ts.)
   #
-  # No `secrets: inherit` -- the guard makes no API call and no write of any
-  # kind, so handing it FACTORY_OPS_TOKEN would widen a monitored credential
-  # for nothing. No `if:` either: this workflow also runs on push, where the
-  # guard passes with a plain "no merge result to evaluate"; a job-level `if:`
-  # would make it `skipped` there, and a skipped gating job must never read as
-  # a pass (toon-meta#279).
+  # No `if:`: this workflow also runs on push, where the guard passes with a
+  # plain "no merge result to evaluate"; a job-level `if:` would make it
+  # `skipped` there, and a skipped gating job must never read as a pass. The
+  # job id must not be one of the fleet's plumbing names (`guard`, `review`,
+  # ...), which are stripped from the factory's check verdict.
   no-op-merge:
-    uses: toon-protocol/toon-meta/.github/workflows/empty-pr-guard.yml@main
+    name: No-op merge guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Depth 3 covers the merge commit and both parents; nothing walks history.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 3
+
+      - name: A merge that changes nothing must not merge green
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
+        run: .github/scripts/no-op-merge-guard.sh
 
   # The relay image, built the way publish-relay-image.yml builds it.
   #
