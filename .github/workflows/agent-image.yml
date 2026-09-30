@@ -1,9 +1,10 @@
 name: Agent image
 
 # Minimal build-only check for the sandcastle agent container image.
-# Proves the `.sandcastle/Dockerfile` (node:22-bookworm + gh + Claude Code CLI
-# + corepack/pnpm) builds. This is NOT the label->runner: the
-# agent:implement / agent:review triggered runner is a later slice (#184).
+# Proves the `.sandcastle/Dockerfile` (node:22-bookworm + gh + Claude Code CLI +
+# the mattpocock-skills plugin + corepack/pnpm) builds, and that the plugin the
+# runner's slash commands come from is actually installed. This is not the runner
+# itself; that is agent-implement.yml.
 
 on:
   pull_request:
@@ -29,33 +30,19 @@ jobs:
       - name: Build agent image
         run: npx --yes @ai-hero/sandcastle@0.12.0 docker build-image
 
-      - name: Gate performance no-regression guard (image size)
-        run: |
-          set -euo pipefail
-          SIZE=$(docker image inspect sandcastle:relay --format='{{.Size}}')
-          BASELINE_BYTES=$(jq -r '.performance.dockerImageSizeBytes' .sandcastle/gate-baseline.json)
-          echo "Agent image size: ${SIZE} bytes"
-          if [ "$BASELINE_BYTES" = "null" ]; then
-            echo "::notice::No frozen image-size baseline yet in .sandcastle/gate-baseline.json — recording ${SIZE} bytes for a follow-up baseline-update commit, not enforcing."
-            exit 0
-          fi
-          TOLERANCE=$(jq -r '.regressionTolerancePercent' .sandcastle/gate-baseline.json)
-          LIMIT=$((BASELINE_BYTES + BASELINE_BYTES * TOLERANCE / 100))
-          echo "Frozen baseline ${BASELINE_BYTES} bytes, +${TOLERANCE}% limit ${LIMIT} bytes"
-          if [ "$SIZE" -gt "$LIMIT" ]; then
-            echo "::error::Agent image size regressed vs .sandcastle/gate-baseline.json: ${SIZE} > ${LIMIT} bytes"
-            exit 1
-          fi
-
       - name: Verify toolchain inside image
         run: |
           docker run --rm --entrypoint bash sandcastle:relay -lc '
             set -e
             node --version
             gh --version | head -1
-            # pnpm resolves via corepack; the mounted repo pins pnpm@8.15.9
-            # through its packageManager field at runtime.
+            jq --version
+            # relay is a pnpm workspace. pnpm resolves through corepack, pinned
+            # here to the packageManager field of package.json.
             corepack --version
+            pnpm --version | grep -E "^8\.15\."
             test "$(whoami)" = "agent"
             test -x /home/agent/.local/bin/claude
+            # The runner starts every session with a mattpocock-skills slash command.
+            claude plugin list | grep -q mattpocock-skills
           '

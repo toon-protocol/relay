@@ -71,3 +71,20 @@ Canonical rules/decisions: `toon-meta` → `context/context.md`.
 
 CI publishes via **changesets + `pnpm`** using the org `NPM_TOKEN` secret.
 **Never run `npm publish`** (it ships unresolved `workspace:*`).
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in this repo's GitHub Issues (`toon-protocol/relay`, via the `gh` CLI).
+See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage labels, names unchanged. `ready-for-agent` is the AFK factory's queue.
+See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: this file and `README.md`, with decisions in the connector repo's `docs/adr/`.
+See `docs/agents/domain.md`.
