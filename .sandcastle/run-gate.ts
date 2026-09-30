@@ -89,7 +89,7 @@ export async function runGate(sandbox: Sandbox, steps: readonly GateStep[]): Pro
     }
   }
 
-  console.log(`  [gate] PASSED (${ran.length} step(s): ${ran.join(', ') || 'none applicable'}).`);
+  console.log(`  [gate] PASSED (${ran.length} step(s): ${ran.join(', ')}).`);
   return { passed: true, ran, failure: null };
 }
 
