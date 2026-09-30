@@ -36,7 +36,7 @@ function commitFile(
 }
 
 function runGuard(headSha: string, changedFiles: number) {
-  const summary = join(dir, '..', `${Date.now()}-summary.md`);
+  const summary = join(dir, '.git', 'step-summary.md');
   const r = spawnSync('bash', [SCRIPT], {
     cwd: dir,
     encoding: 'utf8',
@@ -116,12 +116,24 @@ describe('ci.yml wiring', () => {
   const ci = parseYaml(
     readFileSync(resolve(REPO_ROOT, '.github/workflows/ci.yml'), 'utf8')
   ) as {
+    on: { pull_request?: { types?: string[] } };
     jobs: Record<string, { name?: string; needs?: string[]; uses?: string }>;
   };
 
   it('runs the guard in-house, under its check name, with no `uses:` call', () => {
     expect(ci.jobs['no-op-merge']?.name).toBe('No-op merge guard');
     expect(ci.jobs['no-op-merge']?.uses).toBeUndefined();
+  });
+
+  it('runs on every PR event that can change the merge result', () => {
+    expect(ci.on.pull_request?.types).toEqual(
+      expect.arrayContaining([
+        'opened',
+        'synchronize',
+        'reopened',
+        'ready_for_review',
+      ])
+    );
   });
 
   it('feeds the CI OK aggregate', () => {

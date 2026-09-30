@@ -1,7 +1,10 @@
 name: CI
 
 on:
+  # The no-op merge guard's triggers (#180): the defaults plus
+  # `ready_for_review`. `synchronize` catches a PR that BECOMES a no-op.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
 
@@ -158,7 +161,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      # Depth 3 covers the merge commit and both parents; nothing walks history.
+      # The guard reads only the merge commit and its two parents (depth 2);
+      # nothing walks history.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 3

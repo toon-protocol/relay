@@ -24,7 +24,7 @@ set -uo pipefail
 # `push`. There is no PR to evaluate there. Pass plainly — NOT with a
 # `::warning::`, which would annotate every push to main, and NOT
 # with a job-level `if:`, because a skipped job is a non-success
-# result to the aggregate that now asserts on this job.
+# result to the aggregate that asserts on this job.
 if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
   echo "event is '${GITHUB_EVENT_NAME}', not 'pull_request' — no merge result to evaluate"
   exit 0
