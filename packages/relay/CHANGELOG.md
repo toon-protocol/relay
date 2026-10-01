@@ -1,5 +1,12 @@
 # @toon-protocol/relay
 
+## 2.3.1
+
+### Patch Changes
+
+- dfb395e: An unknown or malformed command-line flag now exits non-zero with a one-line
+  `Error:` message, like every other bad setting, instead of a `[Fatal]` stack.
+
 ## 2.3.0
 
 ### Minor Changes
