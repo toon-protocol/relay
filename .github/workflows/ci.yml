@@ -345,6 +345,67 @@ jobs:
           CONFORMANCE_COMMAND: ${{ matrix.command }}
         run: pnpm --filter @toon-protocol/relay-conformance conformance
 
+  # Cutover and rollback are both an image swap over the same /data volume
+  # (#201): each image is built and the volume case writes through one and
+  # reads through the other, both ways. Needs both images, so it is its own job.
+  image-swap:
+    name: Either image opens the other's database
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the TypeScript image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/relay/Dockerfile
+          push: false
+          load: true
+          tags: relay:swap-typescript
+          cache-from: type=gha,scope=buildkit
+
+      - name: Build the Rust image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: crates/relay/Dockerfile
+          push: false
+          load: true
+          tags: relay:swap-rust
+          cache-from: type=gha,scope=relay-rust
+
+      - name: Both images run as the same user id
+        run: |
+          set -euo pipefail
+          TS_UID=$(docker run --rm --entrypoint id relay:swap-typescript -u)
+          RUST_UID=$(docker run --rm --entrypoint id relay:swap-rust -u)
+          echo "typescript=$TS_UID rust=$RUST_UID"
+          [ "$TS_UID" = "$RUST_UID" ] || {
+            echo "::error::the images run as different users ($TS_UID, $RUST_UID)"
+            exit 1
+          }
+
+      - name: Swap images over one volume, both ways
+        env:
+          CONFORMANCE_TYPESCRIPT_IMAGE: relay:swap-typescript
+          CONFORMANCE_RUST_IMAGE: relay:swap-rust
+        run: pnpm --filter @toon-protocol/relay-conformance conformance volume
+
   ci-ok:
     name: CI OK
     runs-on: ubuntu-latest
@@ -357,6 +418,7 @@ jobs:
         changeset,
         image-build,
         conformance,
+        image-swap,
       ]
     if: always()
     steps:

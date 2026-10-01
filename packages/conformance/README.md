@@ -63,6 +63,11 @@ is what makes the Rust run take minutes.
 - `document.test.ts`: the Relay Information Document in each edge state
   (known, no connector, unreachable, address not terminated), carriage
   precedence, `limitation`, `fees`, `supported_nips`, CORS and `OPTIONS`.
+- `volume.test.ts`: the image swap (#201). Writes through one image, restarts
+  on the other over the same named `/data` volume, and reads back regular,
+  replaceable, addressable, deleted and expiring events, in both directions.
+  Needs both images (`CONFORMANCE_TYPESCRIPT_IMAGE`, `CONFORMANCE_RUST_IMAGE`)
+  and is skipped without them; CI runs it in the `image-swap` job.
 - `endpoints.test.ts`: `GET /health` and `GET /metrics`.
 - `startup.test.ts`: a connector that is down at start, settings the relay
   must refuse (exit non-zero with an `Error:` line), every documented env
