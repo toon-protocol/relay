@@ -22,8 +22,8 @@ pub enum RelayError {
     InvalidPort { name: &'static str, value: String },
 
     /// `name` is set to something that is not a positive whole number.
-    #[error("{name} must be a positive integer")]
-    InvalidPositiveInteger { name: &'static str },
+    #[error("{name} must be a positive integer, got {value:?}")]
+    InvalidPositiveInteger { name: &'static str, value: String },
 
     /// A listener could not bind: the host did not resolve, or the address is
     /// taken or not ours to bind.

@@ -50,7 +50,7 @@ impl Lane {
 }
 
 /// Whether `kind` is ephemeral (NIP-16).
-pub(super) fn is_ephemeral(kind: u64) -> bool {
+fn is_ephemeral(kind: u64) -> bool {
     (20_000..30_000).contains(&kind)
 }
 

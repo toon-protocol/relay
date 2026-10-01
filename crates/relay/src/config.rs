@@ -93,7 +93,7 @@ impl Config {
             None => Ok(default),
             Some(value) => match value.parse::<u64>() {
                 Ok(number) if number != 0 => Ok(number),
-                _ => Err(RelayError::InvalidPositiveInteger { name }),
+                _ => Err(RelayError::InvalidPositiveInteger { name, value }),
             },
         };
         let host = |name: &str| non_empty(name).unwrap_or_else(|| DEFAULT_HOST.to_string());
@@ -321,7 +321,7 @@ mod tests {
                     config(&[("TOON_SECRET_KEY", &ones()), (name, bad)]).expect_err("not positive");
                 assert!(matches!(
                     error,
-                    RelayError::InvalidPositiveInteger { name: refused } if refused == name
+                    RelayError::InvalidPositiveInteger { name: refused, ref value } if refused == name && value == bad
                 ));
             }
         }

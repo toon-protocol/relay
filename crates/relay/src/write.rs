@@ -91,7 +91,7 @@ pub(crate) async fn write(State(relay): State<Relay>, headers: HeaderMap, body: 
     };
 
     // An ephemeral event is paid for like any other, and delivered, never kept.
-    if ephemeral::is_ephemeral(u64::from(event.event().kind.as_u16())) {
+    if event.event().kind.is_ephemeral() {
         relay.read_side.deliver(&event);
     } else {
         match relay.store.save(&event).await {
@@ -167,14 +167,15 @@ fn verified_event(event: Value) -> Result<VerifiedEvent, Refusal> {
 fn log_line(event: &Value, handler: &str, payment: Option<&PaymentStatement>) -> String {
     let id = event.get("id").and_then(Value::as_str).unwrap_or("");
     let attribution = payment.map_or_else(String::new, |payment| {
-        format!(
-            " payer={} amount={} chain={}",
-            payment.payer(),
-            payment.amount(),
-            payment.chain()
-        )
+        attribution(payment.payer(), payment.amount(), payment.chain())
     });
     format!("[write] event={id} handler={handler}{attribution}")
+}
+
+/// The payment's part of a logged write. It takes the statement's parts, not
+/// the statement, because only the paid-write handler may build one.
+fn attribution(payer: &str, amount: &str, chain: Chain) -> String {
+    format!(" payer={payer} amount={amount} chain={chain}")
 }
 
 /// Whether JavaScript's `!value` is true of a JSON value.
@@ -196,23 +197,14 @@ mod tests {
 
     const PAYER: &str = "evm:0xabababababababababababababababababababababababababababababababab";
 
-    fn statement() -> PaymentStatement {
-        let mut headers = HeaderMap::new();
-        headers.insert("x-toon-payer", PAYER.parse().unwrap());
-        headers.insert("x-toon-amount", "10".parse().unwrap());
-        headers.insert("x-toon-chain", "evm".parse().unwrap());
-        PaymentStatement::stated_on(&headers).expect("a complete statement")
-    }
-
     #[test]
     fn a_logged_write_names_the_payer_amount_and_chain_when_stated() {
-        let event = json!({ "id": "abc" });
         assert_eq!(
-            log_line(&event, "write", Some(&statement())),
-            format!("[write] event=abc handler=write payer={PAYER} amount=10 chain=evm")
+            attribution(PAYER, "10", Chain::Evm),
+            format!(" payer={PAYER} amount=10 chain=evm")
         );
         assert_eq!(
-            log_line(&event, "write-ephemeral", None),
+            log_line(&json!({ "id": "abc" }), "write-ephemeral", None),
             "[write] event=abc handler=write-ephemeral"
         );
     }
