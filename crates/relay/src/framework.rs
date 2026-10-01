@@ -14,13 +14,19 @@
 //! - It reads the store and cannot write it. The database it is given refuses
 //!   every write, so the only way into the store stays [`Store::save`], which
 //!   takes a verified event.
-//! - `EVENT` over WebSocket is refused by its write policy: writes are paid,
-//!   and arrive on the write port.
+//! - It never hears an `EVENT` from a client: the gate (`gate.rs`) refuses
+//!   each one, in words that name the Write Edge once the relay knows it,
+//!   because writes are paid and arrive on the write port. Its write policy
+//!   refuses anyway, should one ever reach it.
+//! - It speaks to a connection through the gate, which also holds the limits
+//!   the framework would answer differently and the connection cap.
+//! - `AUTH` is neither required nor advertised: NIP-42 is left off.
 
 use std::collections::BTreeSet;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use nostr::event::{Event, EventId};
 use nostr::filter::Filter;
@@ -29,12 +35,12 @@ use nostr_database::error::Error as DatabaseError;
 use nostr_database::{
     DatabaseEventStatus, Features, NostrDatabase, RejectedReason, SaveEventStatus,
 };
-use nostr_sdk::local_relay::{LocalRelay, RateLimit, WritePolicy, WritePolicyResult};
+use nostr_sdk::local_relay::{LocalRelay, WritePolicy, WritePolicyResult};
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::sync::Semaphore;
 
 use crate::connector::EdgeSlot;
-use crate::document::write_refusal;
-use crate::{Carriage, RelayError, Store, VerifiedEvent};
+use crate::{Carriage, RelayError, Store, VerifiedEvent, gate};
 
 type Answer<'a, T> = Pin<Box<dyn Future<Output = Result<T, DatabaseError>> + Send + 'a>>;
 
@@ -42,40 +48,57 @@ type Answer<'a, T> = Pin<Box<dyn Future<Output = Result<T, DatabaseError>> + Sen
 #[derive(Debug, Clone)]
 pub(crate) struct ReadSide {
     framework: LocalRelay,
+    edge: EdgeSlot,
+    write_carriage: Option<Carriage>,
+    connections: Arc<Semaphore>,
 }
 
 impl ReadSide {
-    /// A read side that answers `REQ` from `store`, and refuses `EVENT`
-    /// towards the Write Edge in `edge` as it stands at the time.
-    pub(crate) fn new(store: Store, edge: EdgeSlot, write_carriage: Option<Carriage>) -> Self {
+    /// A read side that answers `REQ` from `store`, refuses `EVENT` towards
+    /// the Write Edge in `edge` as it stands at the time, and holds at most
+    /// `max_connections` connections at once.
+    pub(crate) fn new(
+        store: Store,
+        edge: EdgeSlot,
+        write_carriage: Option<Carriage>,
+        max_connections: usize,
+    ) -> Self {
         let framework = LocalRelay::builder()
             .database(StoredEvents(store))
-            .write_policy(RefuseWrites {
-                edge,
-                write_carriage,
-            })
-            // The framework counts `EVENT`s before it asks the write policy,
-            // and past its allowance answers `rate-limited` instead. Every
-            // `EVENT` is refused anyway, so the count is lifted and the
-            // refusal is always the one that says why.
-            .rate_limit(RateLimit {
-                notes_per_minute: u32::MAX,
-                ..RateLimit::default()
-            })
+            .write_policy(RefuseWrites)
             .build();
-        Self { framework }
+        Self {
+            framework,
+            edge,
+            write_carriage,
+            // More permits than a semaphore can hold is no cap at all.
+            connections: Arc::new(Semaphore::new(max_connections.min(Semaphore::MAX_PERMITS))),
+        }
     }
 
     /// Speak NIP-01 with `peer` on `stream`, a connection already upgraded to
-    /// WebSocket, until either side closes it.
+    /// WebSocket, until either side closes it. A connection past the cap is
+    /// closed with 1013 instead.
     pub(crate) async fn serve<S>(&self, stream: S, peer: SocketAddr) -> Result<(), RelayError>
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
-        self.framework
-            .take_connection(stream, peer)
-            .await
-            .map_err(|error| RelayError::ReadSide(error.to_string()))
+        let Ok(_held) = Arc::clone(&self.connections).try_acquire_owned() else {
+            eprintln!("read: connection from {peer} refused: the connection cap is reached");
+            return gate::refuse_full(stream).await;
+        };
+        let framework = self.framework.clone();
+        let refusal = gate::Refusal {
+            edge: self.edge.clone(),
+            write_carriage: self.write_carriage,
+        };
+        gate::through(stream, refusal, move |pipe| async move {
+            framework
+                .take_connection(pipe, peer)
+                .await
+                .map_err(|error| RelayError::ReadSide(error.to_string()))
+        })
+        .await
     }
 
     /// Deliver `event` to every open subscription it matches. Nothing is
@@ -86,13 +109,11 @@ impl ReadSide {
     }
 }
 
-/// The write policy: every `EVENT` a client sends is refused, with where
-/// to send it instead.
+/// The write policy: every `EVENT` that reaches the framework is refused. The
+/// gate answers each one first, so this is the backstop, not the words a
+/// client reads.
 #[derive(Debug)]
-struct RefuseWrites {
-    edge: EdgeSlot,
-    write_carriage: Option<Carriage>,
-}
+struct RefuseWrites;
 
 impl WritePolicy for RefuseWrites {
     fn admit_event<'a>(
@@ -100,8 +121,12 @@ impl WritePolicy for RefuseWrites {
         _event: &'a Event,
         _peer: &'a SocketAddr,
     ) -> Pin<Box<dyn Future<Output = WritePolicyResult> + Send + 'a>> {
-        let refusal = write_refusal(self.edge.current().as_deref(), self.write_carriage);
-        Box::pin(async { WritePolicyResult::reject(MachineReadablePrefix::Restricted, refusal) })
+        Box::pin(async {
+            WritePolicyResult::reject(
+                MachineReadablePrefix::Restricted,
+                "writes arrive on the write port",
+            )
+        })
     }
 }
 

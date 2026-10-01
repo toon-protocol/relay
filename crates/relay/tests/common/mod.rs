@@ -176,6 +176,17 @@ impl Client {
             .expect("the connection is open");
     }
 
+    /// The next frame from the relay, whatever it is, or `None` once the
+    /// connection is closed or after two seconds of silence.
+    pub async fn next_message(&mut self) -> Option<tokio_tungstenite::tungstenite::Message> {
+        use futures_util::StreamExt;
+        let wait = std::time::Duration::from_secs(2);
+        tokio::time::timeout(wait, self.socket.next())
+            .await
+            .ok()??
+            .ok()
+    }
+
     /// The next frame from the relay, parsed, or `None` after two seconds
     /// of silence.
     pub async fn next(&mut self) -> Option<serde_json::Value> {

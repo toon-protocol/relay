@@ -251,7 +251,7 @@ describe('read side: filters', () => {
         ).toEqual([]);
       });
     },
-    { expectedFailureFor: ['typescript', 'rust'] }
+    { expectedFailureFor: ['typescript'] }
   );
 
   conformanceTest(
@@ -269,7 +269,7 @@ describe('read side: filters', () => {
         ).toEqual([]);
       });
     },
-    { expectedFailureFor: ['typescript', 'rust'] }
+    { expectedFailureFor: ['typescript'] }
   );
 
   conformanceTest('event frames are plain NIP-01 JSON objects', async () => {
@@ -380,16 +380,11 @@ describe('read side: EVENT over WebSocket', () => {
 });
 
 describe('read side: malformed input', () => {
-  // The Rust relay's framework accepts an empty subscription id (#197).
   const notices: [string, unknown, ConformanceTestOptions?][] = [
     ['bad JSON', '{not json'],
     ['a non-array message', '{"a":1}'],
     ['an unknown message type', ['BOGUS', 'x']],
-    [
-      'an invalid subscription id',
-      ['REQ', '', {}],
-      { expectedFailureFor: ['rust'] },
-    ],
+    ['an invalid subscription id', ['REQ', '', {}]],
     ['a non-string subscription id', ['REQ', 7, {}]],
   ];
   for (const [name, message, expectation] of notices) {
@@ -408,46 +403,36 @@ describe('read side: malformed input', () => {
 });
 
 describe('read side: limits', () => {
-  conformanceTest(
-    'the subscription limit is enforced',
-    async () => {
-      const limit = (await limitation()).max_subscriptions;
-      await withClient(async (client) => {
-        for (let i = 0; i < limit; i++)
-          await client.req(`s${i}`, { ids: [NO_SUCH_ID] });
-        client.send(['REQ', 'one-too-many', { ids: [NO_SUCH_ID] }]);
-        await client.next((f) => f[0] === 'NOTICE');
-        // Give a relay that NOTICEs and serves anyway time to send its EOSE.
-        await client.quiet();
-        expect(
-          client.frames.some((f) => f[0] === 'EOSE' && f[1] === 'one-too-many')
-        ).toBe(false);
-        // Replacing an existing subscription is not a new one.
-        expect(await client.req('s0', { ids: [NO_SUCH_ID] })).toEqual([]);
-      });
-    },
-    { expectedFailureFor: ['rust'] }
-  );
+  conformanceTest('the subscription limit is enforced', async () => {
+    const limit = (await limitation()).max_subscriptions;
+    await withClient(async (client) => {
+      for (let i = 0; i < limit; i++)
+        await client.req(`s${i}`, { ids: [NO_SUCH_ID] });
+      client.send(['REQ', 'one-too-many', { ids: [NO_SUCH_ID] }]);
+      await client.next((f) => f[0] === 'NOTICE');
+      // Give a relay that NOTICEs and serves anyway time to send its EOSE.
+      await client.quiet();
+      expect(
+        client.frames.some((f) => f[0] === 'EOSE' && f[1] === 'one-too-many')
+      ).toBe(false);
+      // Replacing an existing subscription is not a new one.
+      expect(await client.req('s0', { ids: [NO_SUCH_ID] })).toEqual([]);
+    });
+  });
 
-  conformanceTest(
-    'the filter limit is enforced',
-    async () => {
-      const limit = (await limitation()).max_filters;
-      await withClient(async (client) => {
-        const filter = { ids: [NO_SUCH_ID] };
-        expect(await client.req('ok', ...Array(limit).fill(filter))).toEqual(
-          []
-        );
-        client.send(['REQ', 'many', ...Array(limit + 1).fill(filter)]);
-        await client.next((f) => f[0] === 'NOTICE');
-        await client.quiet();
-        expect(
-          client.frames.some((f) => f[0] === 'EOSE' && f[1] === 'many')
-        ).toBe(false);
-      });
-    },
-    { expectedFailureFor: ['rust'] }
-  );
+  conformanceTest('the filter limit is enforced', async () => {
+    const limit = (await limitation()).max_filters;
+    await withClient(async (client) => {
+      const filter = { ids: [NO_SUCH_ID] };
+      expect(await client.req('ok', ...Array(limit).fill(filter))).toEqual([]);
+      client.send(['REQ', 'many', ...Array(limit + 1).fill(filter)]);
+      await client.next((f) => f[0] === 'NOTICE');
+      await client.quiet();
+      expect(
+        client.frames.some((f) => f[0] === 'EOSE' && f[1] === 'many')
+      ).toBe(false);
+    });
+  });
 
   conformanceTest(
     'the connection cap closes the excess connection with 1013',
@@ -466,8 +451,7 @@ describe('read side: limits', () => {
       } finally {
         for (const client of held) client.close();
       }
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 });
 
