@@ -119,6 +119,14 @@ signatures in full — it has no payment gate to lean on, so verification is its
 only defence against forged-signature spam. It is bounded by a per-key sliding
 window and a body-size cap, both surfaced on `GET /metrics`.
 
+## `toon.settlement` in the relay information document
+
+`toon.settlement` lists the settlement terms the connector accepts, read from
+its `batchSettlements` on `GET /ilp` and copied verbatim as `{network, asset}`
+entries (EVM and Solana alike, `network` in the connector's CAIP-2 spelling). An absent `batchSettlements` yields `[]`. This
+shape is knowingly ahead of TOON Network spec §13.1, which still specifies
+`{chain, token, decimals}`.
+
 ## Programmatic use
 
 ```ts
@@ -155,11 +163,3 @@ await relay.stop();
 ## License
 
 MIT
-
-## `toon.settlement` in the relay information document
-
-`toon.settlement` lists the settlement terms the connector accepts, read from
-its `batchSettlements` on `GET /ilp` and copied verbatim as `{network, asset}`
-entries (EVM and Solana alike). An absent `batchSettlements` yields `[]`. This
-shape is knowingly ahead of TOON Network spec §13.1, which still specifies
-`{chain, token, decimals}`.

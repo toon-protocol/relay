@@ -113,7 +113,10 @@ export interface RelayWriteEdge {
    * means this relay charges nothing, which is not the same as not saying.
    */
   price: number;
-  /** The settlement terms the connector accepts, copied from its `batchSettlements`. */
+  /**
+   * The settlement terms the connector accepts, copied from its
+   * `batchSettlements`.
+   */
   settlement: RelaySettlement[];
 }
 
@@ -123,7 +126,7 @@ export interface RelayWriteEdge {
  * Network spec §13.1, which still specifies `{chain, token, decimals}`.
  */
 export interface RelaySettlement {
-  /** The connector's network, e.g. `solana` or `evm:<chainId>`. */
+  /** The connector's CAIP-2 network, e.g. `eip155:84532`. */
   network: string;
   /** The connector's asset on that network, copied verbatim. */
   asset: string;

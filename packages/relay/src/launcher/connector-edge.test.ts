@@ -2,8 +2,9 @@
  * Reading the write edge off a connector's own self-description.
  *
  * The fixture below is the LIVE devnet relay connector's `GET /ilp` response,
- * copied verbatim on 2026-09-23 (keys shortened where the value's length is
- * not the point). Testing against a hand-written shape would have let this
+ * copied verbatim on 2026-09-23, its settlement terms (`batchSettlements`,
+ * `voucherSigners`) re-copied on 2026-10-01 (keys shortened where the value's
+ * length is not the point). Testing against a hand-written shape would have let this
  * module agree with itself while disagreeing with the thing it reads.
  */
 
@@ -13,7 +14,7 @@ import {
   edgeFromSelfDescription,
 } from './connector-edge.js';
 
-/** The devnet relay connector's answer, as served today. */
+/** The devnet relay connector's answer, as served on 2026-10-01. */
 const DEVNET_SELF_DESCRIPTION = {
   ilpAddresses: ['g.toon.relay', 'g.toon.relay.ephemeral'],
   httpEndpoint: 'https://proxy.relay.devnet.toonprotocol.dev/ilp',
@@ -25,12 +26,35 @@ const DEVNET_SELF_DESCRIPTION = {
   },
   batchSettlements: [
     {
-      network: 'evm:84532',
-      asset: '0x49bee1bca5d15fb0963117923403f9498119a9ce',
+      network: 'eip155:84532',
+      asset: '0x0c996d7c934c79a6255254875607fe69df25c0e1',
+      payTo: '0x3f43d923a611bcb2d0bfb5d6ee2c3ac3efeaf308',
+      receiverAuthorizer: '0x3f43d923a611bcb2d0bfb5d6ee2c3ac3efeaf308',
+      withdrawDelay: 86400,
+      name: 'USDC',
+      version: '2',
+      assetTransferMethod: 'eip3009',
+      facilitator: 'https://onboard.devnet.toonprotocol.dev',
     },
     {
-      network: 'solana',
+      network: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
       asset: '34eSxY7qxQ4GzyhDJ8GpUcTz1WWzruGbJbR8q6TtxfQU',
+      payTo: 'GzvGVjq3dnNM79MpWRvYCvVcAgPWzDdYisMwGxHF4u9F',
+      feePayer: 'GzvGVjq3dnNM79MpWRvYCvVcAgPWzDdYisMwGxHF4u9F',
+      withdrawDelay: 86400,
+      tokenProgram: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+      minDeposit: '1000000',
+      sponsorEndpoint: '/ilp/batch-settlement/solana/open',
+    },
+  ],
+  voucherSigners: [
+    {
+      network: 'eip155:84532',
+      signer: '0x3f43d923a611bcb2d0bfb5d6ee2c3ac3efeaf308',
+    },
+    {
+      network: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
+      signer: 'GzvGVjq3dnNM79MpWRvYCvVcAgPWzDdYisMwGxHF4u9F',
     },
   ],
   routes: [
@@ -60,11 +84,11 @@ describe('edgeFromSelfDescription', () => {
       price: 1,
       settlement: [
         {
-          network: 'evm:84532',
-          asset: '0x49bee1bca5d15fb0963117923403f9498119a9ce',
+          network: 'eip155:84532',
+          asset: '0x0c996d7c934c79a6255254875607fe69df25c0e1',
         },
         {
-          network: 'solana',
+          network: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
           asset: '34eSxY7qxQ4GzyhDJ8GpUcTz1WWzruGbJbR8q6TtxfQU',
         },
       ],
