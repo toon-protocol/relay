@@ -41,6 +41,8 @@ pub use store::{Saved, Store};
 pub use verified::VerifiedEvent;
 pub use write::{Chain, PaymentStatement};
 
+use std::sync::Arc;
+
 use axum::Router;
 use axum::routing::{any, get, post};
 use nostr::key::PublicKey;
@@ -57,6 +59,8 @@ pub struct Relay {
     store: Store,
     read_side: ReadSide,
     metrics: Metrics,
+    ephemeral: Arc<write::Lane>,
+    log_writes: bool,
 }
 
 impl Relay {
@@ -72,6 +76,8 @@ impl Relay {
             identity: config.identity,
             read_side: ReadSide::new(store.clone()),
             metrics: Metrics::new(config),
+            ephemeral: Arc::new(write::Lane::new(config)),
+            log_writes: config.log_writes,
             store,
         })
     }
@@ -80,11 +86,15 @@ impl Relay {
     ///
     /// The caller binds: a router that does not own its port can be driven
     /// in a test with no listener.
+    ///
+    /// Serve it with connection info, as the read router is, so the ephemeral
+    /// lane's rate limit knows its callers apart.
     pub fn write_router(&self) -> Router {
         Router::new()
             .route("/health", get(health::health))
             .route("/metrics", get(metrics::metrics))
             .route("/write", post(write::write))
+            .route("/write-ephemeral", post(write::write_ephemeral))
             .with_state(self.clone())
     }
 
