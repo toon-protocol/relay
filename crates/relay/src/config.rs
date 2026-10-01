@@ -20,11 +20,13 @@ const WRITE_HOST: &str = "TOON_WRITE_HOST";
 const READ_PORT: &str = "TOON_RELAY_PORT";
 const READ_HOST: &str = "TOON_HOST";
 const DATA_DIR: &str = "TOON_DATA_DIR";
+const MAX_CONNECTIONS: &str = "TOON_MAX_CONNECTIONS";
 
 const DEFAULT_WRITE_PORT: u16 = 3100;
 const DEFAULT_READ_PORT: u16 = 7100;
 const DEFAULT_HOST: &str = "0.0.0.0";
 const DEFAULT_DATA_DIR: &str = "./data";
+const DEFAULT_MAX_CONNECTIONS: usize = 4096;
 
 /// The database file inside the data directory: the TypeScript relay's name.
 const DATABASE_FILE: &str = "events.db";
@@ -45,6 +47,9 @@ pub struct Config {
     pub read_port: u16,
     /// The directory that holds the database, created if it is missing.
     pub data_dir: PathBuf,
+    /// The most WebSocket connections held at once: `TOON_MAX_CONNECTIONS`,
+    /// 4096 unless set. A connection past it is closed with 1013.
+    pub max_connections: usize,
 }
 
 impl Config {
@@ -72,6 +77,15 @@ impl Config {
                 _ => Err(RelayError::InvalidPort { name, value }),
             },
         };
+        let max_connections = match non_empty(MAX_CONNECTIONS) {
+            None => DEFAULT_MAX_CONNECTIONS,
+            Some(value) => match value.parse::<usize>() {
+                Ok(cap) if cap != 0 => cap,
+                _ => {
+                    return Err(RelayError::InvalidMaxConnections { value });
+                }
+            },
+        };
         let host = |name: &str| non_empty(name).unwrap_or_else(|| DEFAULT_HOST.to_string());
 
         Ok(Self {
@@ -83,6 +97,7 @@ impl Config {
             data_dir: non_empty(DATA_DIR)
                 .unwrap_or_else(|| DEFAULT_DATA_DIR.to_string())
                 .into(),
+            max_connections,
         })
     }
 
@@ -249,5 +264,29 @@ mod tests {
         let empty = config(&[("TOON_SECRET_KEY", &ones()), ("TOON_DATA_DIR", "")])
             .expect("an empty data directory is the default");
         assert_eq!(empty.database_path(), Path::new("./data/events.db"));
+    }
+
+    #[test]
+    fn the_connection_cap_defaults_to_4096_and_follows_toon_max_connections() {
+        let default = config(&[("TOON_SECRET_KEY", &ones())]).expect("a secret key is enough");
+        assert_eq!(default.max_connections, 4096);
+        let set = config(&[("TOON_SECRET_KEY", &ones()), ("TOON_MAX_CONNECTIONS", "3")])
+            .expect("a positive cap");
+        assert_eq!(set.max_connections, 3);
+        let empty = config(&[("TOON_SECRET_KEY", &ones()), ("TOON_MAX_CONNECTIONS", "")])
+            .expect("an empty cap is the default");
+        assert_eq!(empty.max_connections, 4096);
+    }
+
+    #[test]
+    fn a_connection_cap_that_is_not_a_positive_integer_is_refused() {
+        for bad in ["x", "0", "-1", "3abc"] {
+            let error = config(&[("TOON_SECRET_KEY", &ones()), ("TOON_MAX_CONNECTIONS", bad)])
+                .expect_err("not a cap");
+            assert!(
+                matches!(error, RelayError::InvalidMaxConnections { .. }),
+                "{bad}"
+            );
+        }
     }
 }

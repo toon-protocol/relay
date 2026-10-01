@@ -15,12 +15,17 @@
 //!   every write, so the only way into the store stays [`Store::save`], which
 //!   takes a verified event.
 //! - `EVENT` over WebSocket is refused by its write policy: writes are paid,
-//!   and arrive on the write port.
+//!   and arrive on the write port. The refusal names the Write Edge once the
+//!   relay knows it.
+//! - It speaks to a connection through the gate (`gate.rs`), which holds the
+//!   limits the framework would answer differently and the connection cap.
+//! - `AUTH` is neither required nor advertised: NIP-42 is left off.
 
 use std::collections::BTreeSet;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::{Arc, PoisonError, RwLock};
 
 use nostr::event::{Event, EventId};
 use nostr::filter::Filter;
@@ -31,16 +36,50 @@ use nostr_database::{
 };
 use nostr_sdk::local_relay::{LocalRelay, RateLimit, WritePolicy, WritePolicyResult};
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::sync::Semaphore;
 
-use crate::{RelayError, Store, VerifiedEvent};
+use crate::{RelayError, Store, VerifiedEvent, WriteEdge, gate};
+
+/// Where a client that sends `EVENT` over WebSocket is pointed for the rest.
+const NIP11_HINT: &str = "this relay's NIP-11 document (GET its URL with \
+     Accept: application/nostr+json)";
 
 /// What a client that sends `EVENT` over WebSocket is told, after the
-/// `restricted: ` prefix the framework writes. It is the TypeScript relay's
-/// text for a relay that does not know its write edge; naming the edge
-/// arrives with the connector edge (#199).
-const WRITE_REFUSAL: &str = "writes require ILP payment, and this relay does not publish where \
-     — ask its operator, then see this relay's NIP-11 document (GET its URL with \
-     Accept: application/nostr+json)";
+/// `restricted: ` prefix the framework writes: the TypeScript relay's words,
+/// for a relay that does and does not know its Write Edge.
+///
+/// The sealing key is left to the document: it is too long for an `OK`
+/// message a client may be logging a line at a time. A free route still
+/// refuses the WebSocket write (the lane is the restriction, not the price),
+/// so it must not claim payment is required.
+pub(crate) fn write_refusal(edge: Option<&WriteEdge>) -> String {
+    let Some(edge) = edge else {
+        return format!(
+            "writes require ILP payment, and this relay does not publish where \
+             — ask its operator, then see {NIP11_HINT}"
+        );
+    };
+    let carriage = edge.carriage().map_or(String::new(), |carriage| {
+        format!(" over {}", carriage.as_str())
+    });
+    let address = edge.ilp_address();
+    let url = edge.connector_url();
+    let lead = match edge.price() {
+        0 => format!(
+            "writes arrive as TOON packets and this one is free \
+             — send this event to {address} through {url}{carriage}"
+        ),
+        price => format!(
+            "writes require ILP payment — send this event to {address} \
+             through {url}{carriage}, {price} uusdc per write"
+        ),
+    };
+    format!("{lead}; the sealing key is in {NIP11_HINT}")
+}
+
+/// What the relay knows of its Write Edge, shared with the write policy and
+/// the document. Empty until the connector has been read.
+type KnownEdge = Arc<RwLock<Option<WriteEdge>>>;
 
 type Answer<'a, T> = Pin<Box<dyn Future<Output = Result<T, DatabaseError>> + Send + 'a>>;
 
@@ -48,14 +87,18 @@ type Answer<'a, T> = Pin<Box<dyn Future<Output = Result<T, DatabaseError>> + Sen
 #[derive(Debug, Clone)]
 pub(crate) struct ReadSide {
     framework: LocalRelay,
+    edge: KnownEdge,
+    connections: Arc<Semaphore>,
 }
 
 impl ReadSide {
-    /// A read side that answers `REQ` from `store`.
-    pub(crate) fn new(store: Store) -> Self {
+    /// A read side that answers `REQ` from `store` and holds at most
+    /// `max_connections` connections at once.
+    pub(crate) fn new(store: Store, max_connections: usize) -> Self {
+        let edge = KnownEdge::default();
         let framework = LocalRelay::builder()
             .database(StoredEvents(store))
-            .write_policy(RefuseWrites)
+            .write_policy(RefuseWrites(Arc::clone(&edge)))
             // The framework counts `EVENT`s before it asks the write policy,
             // and past its allowance answers `rate-limited` instead. Every
             // `EVENT` is refused anyway, so the count is lifted and the
@@ -65,19 +108,47 @@ impl ReadSide {
                 ..RateLimit::default()
             })
             .build();
-        Self { framework }
+        Self {
+            framework,
+            edge,
+            // More permits than a semaphore can hold is no cap at all.
+            connections: Arc::new(Semaphore::new(max_connections.min(Semaphore::MAX_PERMITS))),
+        }
+    }
+
+    /// Record the Write Edge the connector states, or `None` when it states
+    /// none: the refusal and the document name it from here on.
+    pub(crate) fn know_edge(&self, edge: Option<WriteEdge>) {
+        *self.edge.write().unwrap_or_else(PoisonError::into_inner) = edge;
+    }
+
+    /// The Write Edge the relay knows, if it knows one.
+    pub(crate) fn edge(&self) -> Option<WriteEdge> {
+        self.edge
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Speak NIP-01 with `peer` on `stream`, a connection already upgraded to
-    /// WebSocket, until either side closes it.
+    /// WebSocket, until either side closes it. A connection past the cap is
+    /// closed with 1013 instead.
     pub(crate) async fn serve<S>(&self, stream: S, peer: SocketAddr) -> Result<(), RelayError>
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
-        self.framework
-            .take_connection(stream, peer)
-            .await
-            .map_err(|error| RelayError::ReadSide(error.to_string()))
+        let Ok(_held) = Arc::clone(&self.connections).try_acquire_owned() else {
+            eprintln!("read: connection from {peer} refused: the connection cap is reached");
+            return gate::refuse_full(stream).await;
+        };
+        let framework = self.framework.clone();
+        gate::through(stream, move |pipe| async move {
+            framework
+                .take_connection(pipe, peer)
+                .await
+                .map_err(|error| RelayError::ReadSide(error.to_string()))
+        })
+        .await
     }
 
     /// Deliver `event` to every open subscription it matches. Nothing is
@@ -88,9 +159,10 @@ impl ReadSide {
     }
 }
 
-/// The write policy: every `EVENT` a client sends is refused.
+/// The write policy: every `EVENT` a client sends is refused, with the words
+/// that name the Write Edge if the relay knows it.
 #[derive(Debug)]
-struct RefuseWrites;
+struct RefuseWrites(KnownEdge);
 
 impl WritePolicy for RefuseWrites {
     fn admit_event<'a>(
@@ -99,7 +171,13 @@ impl WritePolicy for RefuseWrites {
         _peer: &'a SocketAddr,
     ) -> Pin<Box<dyn Future<Output = WritePolicyResult> + Send + 'a>> {
         Box::pin(async {
-            WritePolicyResult::reject(MachineReadablePrefix::Restricted, WRITE_REFUSAL)
+            let message = write_refusal(
+                self.0
+                    .read()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .as_ref(),
+            );
+            WritePolicyResult::reject(MachineReadablePrefix::Restricted, message)
         })
     }
 }

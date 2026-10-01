@@ -19,9 +19,11 @@
 
 mod clock;
 mod config;
+mod document;
 mod edge;
 mod error;
 mod framework;
+mod gate;
 mod health;
 mod read;
 mod route;
@@ -64,9 +66,17 @@ impl Relay {
         let store = Store::open(&config.database_path())?;
         Ok(Self {
             identity: config.identity,
-            read_side: ReadSide::new(store.clone()),
+            read_side: ReadSide::new(store.clone(), config.max_connections),
             store,
         })
+    }
+
+    /// Name `edge` in the refusal a WebSocket `EVENT` gets and in the
+    /// document, or `None` to say the relay does not know where its writes
+    /// are paid. The connector edge (#199) calls this as it reads the
+    /// connector.
+    pub fn set_write_edge(&self, edge: Option<WriteEdge>) {
+        self.read_side.know_edge(edge);
     }
 
     /// Everything served on the write port.
@@ -80,8 +90,9 @@ impl Relay {
             .with_state(self.clone())
     }
 
-    /// Everything served on the read port: the NIP-01 WebSocket, and `426`
-    /// for a request that is not an upgrade.
+    /// Everything served on the read port: the NIP-01 WebSocket, the Relay
+    /// Information Document for a request that asks for it, and `426` for any
+    /// other request that is not an upgrade.
     ///
     /// Serve it with upgrades enabled (`axum::serve` does) and with connection
     /// info, so the read side knows its peers.

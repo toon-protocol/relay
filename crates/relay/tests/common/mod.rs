@@ -69,13 +69,21 @@ pub struct Running {
 }
 
 pub async fn running() -> Running {
+    running_with(&[]).await
+}
+
+/// `running`, with `env` set as well.
+pub async fn running_with(env: &[(&str, &str)]) -> Running {
     let data = tempfile::tempdir().expect("a temp dir");
     typescript_database(data.path());
     let data_dir = data.path().to_string_lossy().into_owned();
     let config = relay::Config::from_env(|name| match name {
         "TOON_SECRET_KEY" => Some("1".repeat(64)),
         "TOON_DATA_DIR" => Some(data_dir.clone()),
-        _ => None,
+        _ => env
+            .iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| (*value).to_string()),
     })
     .expect("a secret key and a data directory are a complete configuration");
     let relay = relay::Relay::open(&config).expect("the TypeScript database opens");
@@ -165,6 +173,17 @@ impl Client {
             ))
             .await
             .expect("the connection is open");
+    }
+
+    /// The next frame from the relay, whatever it is, or `None` once the
+    /// connection is closed or after two seconds of silence.
+    pub async fn next_message(&mut self) -> Option<tokio_tungstenite::tungstenite::Message> {
+        use futures_util::StreamExt;
+        let wait = std::time::Duration::from_secs(2);
+        tokio::time::timeout(wait, self.socket.next())
+            .await
+            .ok()??
+            .ok()
     }
 
     /// The next frame from the relay, parsed, or `None` after two seconds

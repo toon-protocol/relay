@@ -21,6 +21,11 @@ pub enum RelayError {
     #[error("{name} must be an integer between 1 and 65535, got {value:?}")]
     InvalidPort { name: &'static str, value: String },
 
+    /// `TOON_MAX_CONNECTIONS` is set to something that is not a positive
+    /// whole number.
+    #[error("TOON_MAX_CONNECTIONS must be an integer greater than 0, got {value:?}")]
+    InvalidMaxConnections { value: String },
+
     /// A listener could not bind: the host did not resolve, or the address is
     /// taken or not ours to bind.
     #[error("could not listen on {host}:{port}: {source}")]

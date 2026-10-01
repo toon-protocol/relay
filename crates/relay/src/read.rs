@@ -4,15 +4,17 @@
 //!
 //! Any request that is not a WebSocket upgrade is answered `426 Upgrade
 //! Required`, as the TypeScript relay answers it and as fleet health checks
-//! expect (story 28). The Relay Information Document, which shares this port,
-//! arrives with the connector edge (#199).
+//! expect (story 28). The exception is a request that asks for the Relay
+//! Information Document by name (`Accept: application/nostr+json`), which
+//! shares this port, and the CORS preflight in front of it.
 
 use std::net::{Ipv4Addr, SocketAddr};
 
 use axum::extract::{ConnectInfo, Request, State};
 use axum::http::header::{
-    CONNECTION, CONTENT_TYPE, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_VERSION,
-    UPGRADE,
+    ACCEPT, ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS,
+    ACCESS_CONTROL_ALLOW_ORIGIN, CONNECTION, CONTENT_TYPE, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY,
+    SEC_WEBSOCKET_VERSION, UPGRADE,
 };
 use axum::http::{HeaderMap, HeaderName, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -22,7 +24,7 @@ use hyper::upgrade::OnUpgrade;
 use hyper_util::rt::TokioIo;
 use sha1::{Digest, Sha1};
 
-use crate::Relay;
+use crate::{Relay, document};
 
 /// RFC 6455 §1.3: appended to the client's key before hashing.
 const WEBSOCKET_GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -31,7 +33,7 @@ const WEBSOCKET_GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 /// for a WebSocket handshake, `426` for anything else.
 pub(crate) async fn read(State(relay): State<Relay>, mut request: Request) -> Response {
     let Some(accept) = websocket_accept(request.method(), request.headers()) else {
-        return upgrade_required();
+        return plain(&relay, request.method(), request.headers());
     };
     // Present whenever the server driving this router supports upgrades;
     // absent when the router is called with no connection behind it.
@@ -66,6 +68,39 @@ pub(crate) async fn read(State(relay): State<Relay>, mut request: Request) -> Re
         ],
     )
         .into_response()
+}
+
+/// What a request that is not a WebSocket handshake is answered with: the
+/// document for a `GET` or `HEAD` that asks for it, the preflight's answer for
+/// `OPTIONS`, and `426` for everything else.
+fn plain(relay: &Relay, method: &Method, headers: &HeaderMap) -> Response {
+    // NIP-11 is read by browsers, so the document must be readable
+    // cross-origin. It is free, public and the same for everyone.
+    let cors = [
+        (ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+        (ACCESS_CONTROL_ALLOW_HEADERS, "accept, content-type"),
+        (ACCESS_CONTROL_ALLOW_METHODS, "GET, HEAD, OPTIONS"),
+    ];
+    if method == Method::OPTIONS {
+        return (StatusCode::NO_CONTENT, cors).into_response();
+    }
+    let accept = headers.get(ACCEPT).and_then(|value| value.to_str().ok());
+    if (method == Method::GET || method == Method::HEAD) && document::is_asked_for(accept) {
+        let body = document::build(relay).to_string();
+        let body = if method == Method::HEAD {
+            String::new()
+        } else {
+            body
+        };
+        return (
+            StatusCode::OK,
+            cors,
+            [(CONTENT_TYPE, document::CONTENT_TYPE)],
+            body,
+        )
+            .into_response();
+    }
+    upgrade_required()
 }
 
 fn upgrade_required() -> Response {
