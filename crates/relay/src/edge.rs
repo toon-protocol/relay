@@ -477,10 +477,10 @@ mod tests {
     #[test]
     fn a_refusal_names_the_edge_a_paying_client_needs() {
         let edge = WriteEdge::read("g.toon.relay", &connector(json!({}))).expect("an edge");
-        let refusal = crate::framework::write_refusal(Some(&edge));
+        let refusal = crate::gate::write_refusal(Some(&edge));
         assert_eq!(
             refusal,
-            "writes require ILP payment — send this event to g.toon.relay \
+            "restricted: writes require ILP payment — send this event to g.toon.relay \
              through https://relay.example/ilp over btp, 1000 uusdc per write; \
              the sealing key is in this relay's NIP-11 document (GET its URL with \
              Accept: application/nostr+json)"
@@ -491,9 +491,9 @@ mod tests {
     fn a_refusal_on_a_free_route_does_not_claim_payment_is_required() {
         let connector = connector_with_route(json!({ "price": "0" }), json!({}));
         let edge = WriteEdge::read("g.toon.relay", &connector).expect("a free edge");
-        let refusal = crate::framework::write_refusal(Some(&edge));
+        let refusal = crate::gate::write_refusal(Some(&edge));
         assert!(
-            refusal.starts_with("writes arrive as TOON packets and this one is free — send this event to g.toon.relay"),
+            refusal.starts_with("restricted: writes arrive as TOON packets and this one is free — send this event to g.toon.relay"),
             "{refusal}"
         );
         assert!(!refusal.contains("uusdc"), "{refusal}");
@@ -502,8 +502,8 @@ mod tests {
     #[test]
     fn a_refusal_without_an_edge_says_the_relay_does_not_publish_where() {
         assert_eq!(
-            crate::framework::write_refusal(None),
-            "writes require ILP payment, and this relay does not publish where \
+            crate::gate::write_refusal(None),
+            "restricted: writes require ILP payment, and this relay does not publish where \
              — ask its operator, then see this relay's NIP-11 document (GET its URL with \
              Accept: application/nostr+json)"
         );

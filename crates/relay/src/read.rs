@@ -30,7 +30,8 @@ use crate::{Relay, document};
 const WEBSOCKET_GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 /// Answer one request on the read port: `101` and a hand-off to the read side
-/// for a WebSocket handshake, `426` for anything else.
+/// for a WebSocket handshake, the Relay Information Document for a request
+/// that asks for it, and `426` for anything else.
 pub(crate) async fn read(State(relay): State<Relay>, mut request: Request) -> Response {
     let Some(accept) = websocket_accept(request.method(), request.headers()) else {
         return plain(&relay, request.method(), request.headers());

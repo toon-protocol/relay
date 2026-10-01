@@ -87,6 +87,28 @@ async fn event_over_websocket_is_refused_and_not_stored() {
 }
 
 #[tokio::test]
+async fn a_protected_or_expired_event_gets_the_same_refusal_and_no_auth() {
+    let running = running().await;
+    let mut client = Client::connect(&running.read_url).await;
+
+    for event in [
+        signed(1, 1_700_000_000, &[&["-"]]),
+        signed(1, 1_700_000_000, &[&["expiration", "1"]]),
+    ] {
+        client.send(json!(["EVENT", event])).await;
+        let frame = client.next().await.expect("an OK arrives");
+        assert_eq!(frame[0], "OK", "no AUTH challenge comes first: {frame}");
+        assert_eq!(frame[1], event.id.to_hex());
+        assert_eq!(frame[2], false);
+        let message = frame[3].as_str().expect("the refusal is text");
+        assert!(
+            message.starts_with("restricted: writes require ILP payment"),
+            "{message}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_plain_get_on_the_read_port_is_426() {
     let running = running().await;
     let response = running

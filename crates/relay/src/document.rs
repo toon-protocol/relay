@@ -36,21 +36,21 @@ pub(crate) fn is_asked_for(accept: Option<&str>) -> bool {
 }
 
 pub(crate) fn build(relay: &Relay) -> Value {
-    let paid = relay.read_side.edge().is_some_and(|edge| edge.price() > 0);
+    let paid = relay.read_side.edge().filter(|edge| edge.price() > 0);
     let mut document = json!({
         "pubkey": relay.identity.to_hex(),
         "supported_nips": SUPPORTED_NIPS,
         "software": SOFTWARE,
         "version": env!("CARGO_PKG_VERSION"),
         "limitation": {
-            "payment_required": paid,
+            "payment_required": paid.is_some(),
             "restricted_writes": true,
             "max_subscriptions": MAX_SUBSCRIPTIONS,
             "max_filters": MAX_FILTERS,
             "auth_required": false,
         },
     });
-    if let Some(edge) = relay.read_side.edge().filter(|edge| edge.price() > 0) {
+    if let Some(edge) = paid {
         document["fees"] = json!({ "publication": [{ "amount": edge.price(), "unit": "uusdc" }] });
     }
     document

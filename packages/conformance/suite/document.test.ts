@@ -66,8 +66,7 @@ describe('relay image conformance: the information document edge', () => {
       const document = await settledDocument(relay.readUrl);
       expect(document['pubkey']).toMatch(/^[0-9a-f]{64}$/);
       expect(document).not.toHaveProperty('toon');
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 
   conformanceTest(
@@ -77,8 +76,7 @@ describe('relay image conformance: the information document edge', () => {
       const document = await settledDocument(relay.readUrl);
       expect(document['pubkey']).toMatch(/^[0-9a-f]{64}$/);
       expect(document).not.toHaveProperty('toon');
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 
   conformanceTest(
@@ -92,8 +90,7 @@ describe('relay image conformance: the information document edge', () => {
       );
       expect(document['pubkey']).toMatch(/^[0-9a-f]{64}$/);
       expect(document).not.toHaveProperty('toon');
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 
   conformanceTest(
