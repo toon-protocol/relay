@@ -39,3 +39,15 @@ export function conformanceTest(
     it(name, fn);
   }
 }
+
+/** `conformanceTest` once per case, named by `name(case)`. */
+export function conformanceTestEach<T>(
+  cases: readonly T[],
+  name: (testCase: T) => string,
+  fn: (testCase: T) => Promise<void> | void,
+  options: ConformanceTestOptions = {}
+): void {
+  for (const testCase of cases) {
+    conformanceTest(name(testCase), () => fn(testCase), options);
+  }
+}

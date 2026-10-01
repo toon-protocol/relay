@@ -23,3 +23,12 @@ A test that one implementation is known to fail is declared with
 runs as `it.fails` (it must still fail, and goes red when it starts passing, so
 the marker cannot go stale); under every other implementation it is an
 ordinary test.
+
+## Coverage
+
+`suite/tracer.test.ts` proves the harness; `suite/store.test.ts` covers what
+the store keeps, replaces, deletes and expires (replaceable and addressable
+kinds, tag filters, kind 5, NIP-40 with enforcement on and off, the operator
+blocklist, duplicates), observed only through writes and reads on the wire.
+Known differences between the TypeScript relay and the spec are marked
+`expectedFailureFor: ['typescript']`.

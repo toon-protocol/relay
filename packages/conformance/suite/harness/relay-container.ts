@@ -13,6 +13,11 @@ const WRITE_PORT = 3100;
 const READ_PORT = 7100;
 const ALIAS = 'host.docker.internal';
 
+export interface RelayOptions {
+  /** Extra environment for the container, e.g. `TOON_ENFORCE_EXPIRATION`. */
+  env?: Record<string, string>;
+}
+
 export interface RunningRelay {
   /** `http://127.0.0.1:<port>` of POST /write and GET /health. */
   writeUrl: string;
@@ -59,7 +64,10 @@ async function waitHealthy(url: string, container: string): Promise<void> {
  * Start `image` plus a stub connector, and wait for the relay's /health.
  * Only the image's two documented ports are touched, from outside.
  */
-export async function startRelay(image: string): Promise<RunningRelay> {
+export async function startRelay(
+  image: string,
+  options: RelayOptions = {}
+): Promise<RunningRelay> {
   const connector = await startStubConnector(ALIAS);
   const secretKey = '1'.repeat(64);
   let container: string | undefined;
@@ -80,6 +88,10 @@ export async function startRelay(image: string): Promise<RunningRelay> {
       `TOON_CONNECTOR_URL=${connector.ilpUrl}`,
       '-e',
       `TOON_WRITE_ILP_ADDRESS=${STUB_ILP_ADDRESS}`,
+      ...Object.entries(options.env ?? {}).flatMap(([key, value]) => [
+        '-e',
+        `${key}=${value}`,
+      ]),
       image
     );
     const writeUrl = `http://127.0.0.1:${await hostPort(container, WRITE_PORT)}`;
