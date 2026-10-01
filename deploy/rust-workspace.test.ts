@@ -14,7 +14,9 @@
  *   invariant types' fields private to their modules (#194);
  * - the Rust image's contract with a stack matching the TypeScript image's:
  *   ports, volume, environment defaults, healthcheck and user id;
- * - the TypeScript image staying the only one any workflow publishes.
+ * - the TypeScript image owning `:release` and `:latest`, and the Rust image
+ *   published (#202) only as a `rust-*` candidate with its release handle
+ *   built in.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -26,6 +28,7 @@ import { parse as parseYaml } from 'yaml';
 const REPO_ROOT = resolve(import.meta.dirname, '..');
 const TYPESCRIPT_DOCKERFILE = 'packages/relay/Dockerfile';
 const RUST_DOCKERFILE = 'crates/relay/Dockerfile';
+const CANDIDATE_WORKFLOW = 'publish-rust-candidate.yml';
 
 function readFile(path: string): string {
   return readFileSync(resolve(REPO_ROOT, path), 'utf8');
@@ -351,7 +354,7 @@ describe('the Rust image is a drop-in for the TypeScript image', () => {
   });
 });
 
-describe('the TypeScript image is the only one published', () => {
+describe('the TypeScript image owns :release; Rust publishes only a candidate', () => {
   interface Workflow {
     jobs: Record<
       string,
@@ -372,12 +375,74 @@ describe('the TypeScript image is the only one published', () => {
     }
   );
 
-  it('pushes only builds of the TypeScript Dockerfile', () => {
+  it('pushes the TypeScript image, and the Rust image only from the candidate workflow', () => {
     const pushed = builds.filter((build) => build.with['push'] !== false);
     expect(pushed.length).toBeGreaterThan(0);
     for (const build of pushed) {
-      expect(build.with['file'], build.workflow).toBe(TYPESCRIPT_DOCKERFILE);
+      if (build.workflow === CANDIDATE_WORKFLOW) {
+        expect(build.with['file'], build.workflow).toBe(RUST_DOCKERFILE);
+      } else {
+        expect(build.with['file'], build.workflow).toBe(TYPESCRIPT_DOCKERFILE);
+      }
     }
+    expect(
+      pushed.filter((build) => build.workflow === CANDIDATE_WORKFLOW)
+    ).toHaveLength(1);
+  });
+
+  it('tags the candidate rust-candidate, rust-<handle> and rust-sha-*, never :release or :latest', () => {
+    const text = readFile(`${workflowDir}/${CANDIDATE_WORKFLOW}`);
+    const tagRules = [
+      ...text.matchAll(/^\s*type=(?:raw|sha|semver|ref|schedule)[^\n]*$/gm),
+    ].map((m) => m[0].trim());
+    expect(tagRules).toEqual([
+      'type=raw,value=rust-candidate',
+      'type=raw,value=rust-${{ steps.handle.outputs.handle }}',
+      'type=sha,prefix=rust-sha-',
+    ]);
+    expect(text).toMatch(/flavor:\s*latest=false/);
+    expect(text).not.toMatch(/value=(release|latest)\b/);
+    // The handle that names the tag is the one built into the binary.
+    expect(text).toContain(
+      'TOON_RELEASE_HANDLE=${{ steps.handle.outputs.handle }}'
+    );
+  });
+
+  it('publishes the candidate only after the suite passed against the Rust image with nothing expected to fail', () => {
+    const workflow = parseYaml(
+      readFile(`${workflowDir}/${CANDIDATE_WORKFLOW}`)
+    ) as {
+      jobs: Record<
+        string,
+        { needs?: string; steps?: { env?: Record<string, string> }[] }
+      >;
+    };
+    expect(workflow.jobs['publish']?.needs).toBe('conformance');
+    const env = Object.assign(
+      {},
+      ...(workflow.jobs['conformance']?.steps ?? []).map((s) => s.env ?? {})
+    );
+    expect(env['CONFORMANCE_IMPL']).toBe('rust');
+  });
+
+  it('declares no case expected to fail for the Rust image', () => {
+    const suite = resolve(REPO_ROOT, 'packages/conformance/suite');
+    const marked = readdirSync(suite)
+      .filter((name) => name.endsWith('.test.ts'))
+      .filter((name) =>
+        /expectedFailureFor:\s*\[[^\]]*'rust'/.test(
+          readFileSync(resolve(suite, name), 'utf8')
+        )
+      );
+    expect(marked).toEqual([]);
+  });
+
+  it('reports the release handle as the Rust version, with the crate unpublished at 0.1.0', () => {
+    const dockerfile = readFile(RUST_DOCKERFILE);
+    expect(dockerfile).toMatch(/^ARG TOON_RELEASE_HANDLE=$/m);
+    const manifest = readFile('crates/relay/Cargo.toml');
+    expect(manifest).toMatch(/^publish\s*=\s*false/m);
+    expect(manifest).toMatch(/^version\s*=\s*"0\.1\.0"/m);
   });
 
   it('builds the Rust Dockerfile in CI without pushing it', () => {
@@ -402,6 +467,7 @@ describe('the TypeScript image is the only one published', () => {
     const elsewhere = readdirSync(resolve(REPO_ROOT, workflowDir)).filter(
       (name) =>
         name !== 'ci.yml' &&
+        name !== CANDIDATE_WORKFLOW &&
         readFile(`${workflowDir}/${name}`).includes(RUST_DOCKERFILE)
     );
     expect(elsewhere).toEqual([]);

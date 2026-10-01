@@ -25,7 +25,7 @@ pub(crate) async fn health(State(relay): State<Relay>) -> Json<Health> {
         status: "healthy",
         pubkey: relay.identity.to_hex(),
         capabilities: ["relay"],
-        version: env!("CARGO_PKG_VERSION"),
+        version: crate::version::VERSION,
         timestamp: unix_millis(),
     })
 }

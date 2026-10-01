@@ -275,10 +275,10 @@ jobs:
   # until the TypeScript source is removed (#185).
   #
   # `typescript` is the image `image-build` builds and the only one published.
-  # `rust` (#192) is built here and nowhere else. It is built one surface at a
-  # time (#185), and every case it does not pass yet is declared
-  # `expectedFailureFor: ['rust']`, so the job is green on exactly what is
-  # built and goes red the day a marked case starts passing.
+  # `rust` (#192) is built here too and must pass every case: nothing is
+  # declared `expectedFailureFor: ['rust']` (#202), and this job is part of
+  # `CI OK`. It is published only as a candidate, by
+  # publish-rust-candidate.yml, after the same suite passes there.
   conformance:
     name: Conformance suite against the ${{ matrix.implementation }} relay image
     runs-on: ubuntu-latest

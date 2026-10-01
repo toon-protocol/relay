@@ -48,6 +48,8 @@ type Answer<'a, T> = Pin<Box<dyn Future<Output = Result<T, DatabaseError>> + Sen
 #[derive(Debug, Clone)]
 pub(crate) struct ReadSide {
     framework: LocalRelay,
+    /// For the stored answers the gate gives itself (see `gate`).
+    store: Store,
     edge: EdgeSlot,
     write_carriage: Option<Carriage>,
     connections: Arc<Semaphore>,
@@ -64,11 +66,12 @@ impl ReadSide {
         max_connections: usize,
     ) -> Self {
         let framework = LocalRelay::builder()
-            .database(StoredEvents(store))
+            .database(StoredEvents(store.clone()))
             .write_policy(RefuseWrites)
             .build();
         Self {
             framework,
+            store,
             edge,
             write_carriage,
             // More permits than a semaphore can hold is no cap at all.
@@ -88,11 +91,12 @@ impl ReadSide {
             return gate::refuse_full(stream).await;
         };
         let framework = self.framework.clone();
+        let store = self.store.clone();
         let refusal = gate::Refusal {
             edge: self.edge.clone(),
             write_carriage: self.write_carriage,
         };
-        gate::through(stream, refusal, move |pipe| async move {
+        gate::through(stream, refusal, store, move |pipe| async move {
             framework
                 .take_connection(pipe, peer)
                 .await
