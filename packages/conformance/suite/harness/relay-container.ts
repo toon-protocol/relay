@@ -58,8 +58,12 @@ async function waitHealthy(url: string, container: string): Promise<void> {
 /**
  * Start `image` plus a stub connector, and wait for the relay's /health.
  * Only the image's two documented ports are touched, from outside.
+ * `extraEnv` adds documented environment variables (e.g. `TOON_MAX_CONNECTIONS`).
  */
-export async function startRelay(image: string): Promise<RunningRelay> {
+export async function startRelay(
+  image: string,
+  extraEnv: Record<string, string> = {}
+): Promise<RunningRelay> {
   const connector = await startStubConnector(ALIAS);
   const secretKey = '1'.repeat(64);
   let container: string | undefined;
@@ -80,6 +84,7 @@ export async function startRelay(image: string): Promise<RunningRelay> {
       `TOON_CONNECTOR_URL=${connector.ilpUrl}`,
       '-e',
       `TOON_WRITE_ILP_ADDRESS=${STUB_ILP_ADDRESS}`,
+      ...Object.entries(extraEnv).flatMap(([k, v]) => ['-e', `${k}=${v}`]),
       image
     );
     const writeUrl = `http://127.0.0.1:${await hostPort(container, WRITE_PORT)}`;

@@ -4,6 +4,8 @@ import type { AddressInfo } from 'node:net';
 export const STUB_ILP_ADDRESS = 'g.toon.relay';
 export const STUB_SEAL_KEY = 'ab'.repeat(32);
 export const STUB_PRICE = '1000';
+/** The carriage the stub pins on the relay's route. */
+export const STUB_CARRIAGE = 'btp';
 /**
  * The Write Edge the stub advertises as its `httpEndpoint`. Deliberately not
  * the URL the relay reads `GET /ilp` from, so a relay that echoes its own
@@ -41,7 +43,11 @@ export async function startStubConnector(
             },
           ],
           routes: [
-            { prefix: STUB_ILP_ADDRESS, price: STUB_PRICE },
+            {
+              prefix: STUB_ILP_ADDRESS,
+              price: STUB_PRICE,
+              requiredTransport: STUB_CARRIAGE,
+            },
             // A longer prefix at another price, which is not the relay's edge.
             { prefix: `${STUB_ILP_ADDRESS}.store`, price: '2000' },
           ],
