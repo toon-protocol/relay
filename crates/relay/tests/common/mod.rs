@@ -100,11 +100,25 @@ pub async fn running() -> Running {
 
 /// `POST /write` with `body`, as the connector delivers a paid write.
 pub async fn write(relay: &relay::Relay, body: impl Into<String>) -> (u16, serde_json::Value) {
+    write_stating(relay, body, &[]).await
+}
+
+/// `POST /write` with `body` and `headers`: a delivery on which the connector
+/// states the payment it verified.
+pub async fn write_stating(
+    relay: &relay::Relay,
+    body: impl Into<String>,
+    headers: &[(&str, &str)],
+) -> (u16, serde_json::Value) {
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
-    let request = axum::http::Request::post("/write")
-        .header("content-type", "application/json")
+    let mut request =
+        axum::http::Request::post("/write").header("content-type", "application/json");
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    let request = request
         .body(axum::body::Body::from(body.into()))
         .expect("a POST with a string body is a valid request");
     let response = relay

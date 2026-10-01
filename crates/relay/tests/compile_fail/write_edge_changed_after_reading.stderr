@@ -1,0 +1,11 @@
+error[E0616]: field `carriage` of struct `WriteEdge` is private
+ --> tests/compile_fail/write_edge_changed_after_reading.rs:7:10
+  |
+7 |     edge.carriage = Some(Carriage::Btp);
+  |          ^^^^^^^^ private field
+
+error[E0616]: field `price` of struct `WriteEdge` is private
+ --> tests/compile_fail/write_edge_changed_after_reading.rs:8:10
+  |
+8 |     edge.price = 0;
+  |          ^^^^^ private field

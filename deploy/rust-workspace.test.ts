@@ -9,6 +9,9 @@
  *   same version (a Dockerfile `FROM` cannot read rust-toolchain.toml);
  * - unsafe code forbidden in the workspace, and every crate inheriting that;
  * - the framework on exact pins and imported by one adapter module (#193);
+ * - the connector's crate on one commit, named only for its self-description
+ *   types, the attribution header names defined in one module, and the
+ *   invariant types' fields private to their modules (#194);
  * - the Rust image's contract with a stack matching the TypeScript image's:
  *   ports, volume, environment defaults, healthcheck and user id;
  * - the TypeScript image staying the only one any workflow publishes.
@@ -37,7 +40,10 @@ interface WorkspaceManifest {
     members: string[];
     package: { edition: string };
     lints: { rust: Record<string, string> };
-    dependencies: Record<string, string | { version: string }>;
+    dependencies: Record<
+      string,
+      string | { version?: string; git?: string; rev?: string }
+    >;
   };
 }
 
@@ -76,6 +82,17 @@ function finalStage(path: string): string[] {
 
 function instructionsOf(lines: string[], instruction: string): string[] {
   return lines.filter((line) => line.startsWith(`${instruction} `)).sort();
+}
+
+/** Every `.rs` file under `dir`, as a repo-relative path. */
+function rustFiles(dir: string): string[] {
+  return readdirSync(resolve(REPO_ROOT, dir), {
+    withFileTypes: true,
+  }).flatMap((entry) => {
+    const path = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) return rustFiles(path);
+    return entry.name.endsWith('.rs') ? [path] : [];
+  });
 }
 
 describe('the Rust toolchain is pinned once', () => {
@@ -126,17 +143,6 @@ describe('the framework stays behind one adapter module', () => {
   const FRAMEWORK = ['nostr-sdk', 'nostr-database'];
   const ADAPTER = 'crates/relay/src/framework.rs';
 
-  /** Every `.rs` file under `dir`, as a repo-relative path. */
-  function rustFiles(dir: string): string[] {
-    return readdirSync(resolve(REPO_ROOT, dir), {
-      withFileTypes: true,
-    }).flatMap((entry) => {
-      const path = `${dir}/${entry.name}`;
-      if (entry.isDirectory()) return rustFiles(path);
-      return entry.name.endsWith('.rs') ? [path] : [];
-    });
-  }
-
   it('pins each framework crate to one exact version', () => {
     for (const name of FRAMEWORK) {
       const dependency = workspace.workspace.dependencies[name];
@@ -155,6 +161,152 @@ describe('the framework stays behind one adapter module', () => {
         return names.some((name) => new RegExp(`\\b${name}\\b`).test(source));
       });
     expect(importers).toEqual([ADAPTER]);
+  });
+});
+
+describe("the connector's crate is read for its self-description only", () => {
+  // `connector-domain` also holds claim and pricing types. All payment-claim
+  // validation lives in the connector (CLAUDE.md), so the relay names that
+  // crate for the shape of `GET /ilp` and for nothing else (#185).
+  const CRATE = 'connector-domain';
+  const SELF_DESCRIPTION = [
+    // The document and what it is made of.
+    'connector_domain::node::',
+    // The entries of the document's `batchSettlements`.
+    'connector_domain::x402::X402BatchSettlementTerms',
+  ];
+
+  it('is a git dependency on one full commit', () => {
+    const dependency = workspace.workspace.dependencies[CRATE];
+    expect(typeof dependency).toBe('object');
+    const { git, rev } = dependency as { git?: string; rev?: string };
+    expect(git).toBe('https://github.com/toon-protocol/connector');
+    // A full hash: a branch, a tag or a short hash can come to mean another
+    // commit.
+    expect(rev).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it('is the only thing any manifest takes from outside the registry', () => {
+    // Another crate of the connector's, or this one under another name,
+    // would not be seen by the scan of Rust files below.
+    type Dependency = string | Record<string, unknown>;
+    const tables = (manifest: Record<string, unknown>) =>
+      ['dependencies', 'dev-dependencies', 'build-dependencies'].flatMap(
+        (table) =>
+          Object.entries((manifest[table] ?? {}) as Record<string, Dependency>)
+      );
+    const sourced = (dependency: Dependency) =>
+      typeof dependency === 'object' &&
+      ['git', 'path', 'package', 'registry'].some((key) => key in dependency);
+
+    const fromElsewhere = tables(
+      workspace.workspace as unknown as Record<string, unknown>
+    )
+      .filter(([, dependency]) => sourced(dependency))
+      .map(([name]) => name);
+    expect(fromElsewhere).toEqual([CRATE]);
+
+    for (const dir of crateDirs()) {
+      const manifest = parse(readFile(`${dir}/Cargo.toml`));
+      const notInherited = tables(manifest)
+        .filter(
+          ([, dependency]) =>
+            typeof dependency !== 'object' || dependency['workspace'] !== true
+        )
+        .map(([name]) => name);
+      expect(
+        notInherited,
+        `${dir}: every dependency is the workspace's`
+      ).toEqual([]);
+    }
+  });
+
+  it('is named by Rust files only for its self-description types', () => {
+    const others = crateDirs()
+      .flatMap((dir) => rustFiles(dir))
+      .flatMap((path) =>
+        readFile(path)
+          .split('\n')
+          .filter((line) => /\bconnector_domain\b/.test(line))
+          .filter(
+            (line) =>
+              // Every mention on the line must be one of the allowed paths,
+              // spelled out: a grouped or renamed import hides what it takes.
+              line.split('connector_domain').length - 1 !==
+              SELF_DESCRIPTION.reduce(
+                (count, allowed) => count + line.split(allowed).length - 1,
+                0
+              )
+          )
+          .map((line) => `${path}: ${line.trim()}`)
+      );
+    expect(others).toEqual([]);
+  });
+});
+
+describe('the payment attribution headers are named in one module', () => {
+  // The connector states a payment in three `X-TOON-*` headers (ADR 0040).
+  // Two definitions of their names are two that drift, and a second reader
+  // of them is a second place a payment could be claimed (#194).
+  const ATTRIBUTION = 'crates/relay/src/write/payment.rs';
+
+  const sources = () => crateDirs().flatMap((dir) => rustFiles(`${dir}/src`));
+
+  it('has no other source file spell an X-TOON header', () => {
+    const spelledIn = sources().filter((path) =>
+      /x-toon/i.test(readFile(path))
+    );
+    expect(spelledIn).toEqual([ATTRIBUTION]);
+  });
+
+  it('has one reader of a payment statement, in the paid-write handler', () => {
+    // The compile-fail tests see the crate from outside. Inside it, what
+    // keeps a second handler from claiming a payment is the constructor's
+    // visibility and its one call site.
+    expect(readFile(ATTRIBUTION)).toContain('pub(super) fn stated_on(');
+    const callers = sources().flatMap((path) =>
+      readFile(path)
+        .split('\n')
+        .filter(
+          (line) => /\bstated_on\(/.test(line) && !/\bfn stated_on\(/.test(line)
+        )
+        .map(() => path)
+    );
+    expect(callers).toEqual(['crates/relay/src/write.rs']);
+  });
+});
+
+describe('an invariant type keeps its fields to its own module', () => {
+  // trybuild shows a forbidden construction failing from outside the crate.
+  // A field widened to `pub(crate)` would leave every one of those reasons
+  // unchanged and let any module in the relay build the type by hand (#194).
+  const INVARIANT_MODULES = [
+    'crates/relay/src/verified.rs',
+    'crates/relay/src/write/payment.rs',
+    'crates/relay/src/edge.rs',
+    'crates/relay/src/route.rs',
+  ];
+
+  it('declares no field with a visibility', () => {
+    for (const path of INVARIANT_MODULES) {
+      const source = readFile(path);
+      const widened = source
+        .split('\n')
+        .filter((line) => /^\s+pub(\([^)]*\))?\s+\w+\s*:/.test(line));
+      expect(widened, path).toEqual([]);
+      // A tuple struct's field: `struct Name(pub …`.
+      expect(source, path).not.toMatch(/struct\s+\w+\s*\(\s*pub\b/);
+    }
+  });
+
+  it('derives no way in: not Default, not Deserialize', () => {
+    for (const path of INVARIANT_MODULES) {
+      const derives = readFile(path).match(/#\[derive\([^)]*\)\]/g) ?? [];
+      expect(derives.length, path).toBeGreaterThan(0);
+      for (const derive of derives) {
+        expect(derive, path).not.toMatch(/\b(Default|Deserialize)\b/);
+      }
+    }
   });
 });
 

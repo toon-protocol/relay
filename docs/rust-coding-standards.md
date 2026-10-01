@@ -4,7 +4,7 @@ The Rust relay (`crates/`, spec #185) follows the **connector's** coding
 standards, so nobody switches conventions at the repo boundary:
 [`toon-protocol/connector` → `docs/architecture/coding-standards.md`](https://github.com/toon-protocol/connector/blob/main/docs/architecture/coding-standards.md).
 That page is the source. This one states which of its rules bind here, and
-the two rules this repo adds.
+the rules this repo adds.
 
 ## The gate
 
@@ -59,8 +59,9 @@ unit tests are for logic worth testing in isolation.
 
 - **A rule that can be a type is a type, with a test that the wrong
   construction does not compile.** Each invariant in #185 is a type with one
-  constructor (`VerifiedEvent::verify` is the first). Its forbidden
-  constructions live in `crates/relay/tests/compile_fail/`, one file each,
+  constructor: `VerifiedEvent::verify`, `PaymentStatement::stated_on` (visible
+  to the paid-write handler alone), `WriteEdge::read` and
+  `TerminatedRoute::confirm`. Its forbidden constructions live in `crates/relay/tests/compile_fail/`, one file each,
   beside the compiler's reason for refusing it, and `trybuild` fails the test
   if one of them builds or fails for a different reason. A `compile_fail`
   doctest would pass on any error, including a renamed import. Regenerate the
@@ -70,9 +71,22 @@ unit tests are for logic worth testing in isolation.
   declared alpha, so `nostr-sdk` and `nostr-database` are on exact pins and
   only `crates/relay/src/framework.rs` names them. The `nostr` protocol crate
   is used everywhere.
+- **The connector's crate is read for its self-description only.**
+  `connector-domain` is a git dependency on one full commit, the one the
+  connector image in `deploy/docker-compose.yml` was built from. It also holds
+  claim and pricing types, and payment-claim validation lives only in the
+  connector, so Rust files name `connector_domain::node` and the settlement
+  terms that document lists, each path spelled out, and nothing else.
+- **The attribution header names are defined in one module.** Only
+  `crates/relay/src/write/payment.rs` spells an `X-TOON-*` header, and only
+  the paid-write handler reads a payment statement. Tests state the names
+  literally, as the wire does.
+- **An invariant type's fields are private to its module.** Not `pub(crate)`:
+  the compile-fail tests see the crate from outside, and would not notice.
 
 `deploy/rust-workspace.test.ts` fails the build if the unsafe rule, the
-toolchain pin or the framework rule is undone.
+toolchain pin, the framework rule, the connector-crate rule, the header rule
+or the private-fields rule is undone.
 
 ## Not adopted
 

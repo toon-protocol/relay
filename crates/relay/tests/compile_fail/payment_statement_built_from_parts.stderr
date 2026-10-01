@@ -1,0 +1,11 @@
+error[E0451]: fields `payer`, `amount` and `chain` of struct `PaymentStatement` are private
+  --> tests/compile_fail/payment_statement_built_from_parts.rs:9:9
+   |
+ 8 |     PaymentStatement {
+   |     ---------------- in this type
+ 9 |         payer,
+   |         ^^^^^ private field
+10 |         amount,
+   |         ^^^^^^ private field
+11 |         chain: Chain::Evm,
+   |         ^^^^^ private field

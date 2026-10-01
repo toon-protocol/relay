@@ -1,0 +1,7 @@
+error[E0277]: the trait bound `TerminatedRoute: From<String>` is not satisfied
+ --> tests/compile_fail/terminated_route_made_from_an_address.rs:7:16
+  |
+7 |     configured.into()
+  |                ^^^^ the trait `From<String>` is not implemented for `TerminatedRoute`
+  |
+  = note: required for `String` to implement `Into<TerminatedRoute>`

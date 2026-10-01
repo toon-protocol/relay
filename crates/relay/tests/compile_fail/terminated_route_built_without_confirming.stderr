@@ -1,0 +1,5 @@
+error[E0451]: field `published` of struct `TerminatedRoute` is private
+ --> tests/compile_fail/terminated_route_built_without_confirming.rs:9:23
+  |
+9 |     TerminatedRoute { published }
+  |                       ^^^^^^^^^ private field
