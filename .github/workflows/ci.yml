@@ -158,6 +158,8 @@ jobs:
   rust-gate:
     name: Rust workspace gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -280,6 +282,8 @@ jobs:
   conformance:
     name: Conformance suite against the ${{ matrix.implementation }} relay image
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:

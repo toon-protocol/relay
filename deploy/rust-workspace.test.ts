@@ -89,11 +89,7 @@ describe('the Rust toolchain is pinned once', () => {
       .filter((line) => line.startsWith('FROM rust:'))
       .map((line) => line.split(' ')[1]);
     expect(builders).toHaveLength(1);
-    expect(builders[0]).toMatch(
-      new RegExp(
-        `^rust:${toolchain.toolchain.channel.replace(/\./g, '\\.')}-alpine`
-      )
-    );
+    expect(builders[0]).toContain(`rust:${toolchain.toolchain.channel}-alpine`);
   });
 });
 
