@@ -360,10 +360,7 @@ describe('relay image conformance: deletion (kind 5)', () => {
       expect(
         await storedIds(relay, { authors: [pubkey], kinds: [30023] })
       ).toEqual(ids(other));
-    },
-    // Deletion is built (#196); this case also publishes addressable kinds,
-    // which wait for replacement (#195).
-    { expectedFailureFor: ['rust'] }
+    }
   );
 
   conformanceTest(
@@ -405,10 +402,7 @@ describe('relay image conformance: deletion (kind 5)', () => {
       expect(
         await storedIds(relay, { authors: [victim.pubkey], kinds: [30023] })
       ).toEqual(ids(later));
-    },
-    // Deletion is built (#196); this case also publishes addressable kinds,
-    // which wait for replacement (#195).
-    { expectedFailureFor: ['rust'] }
+    }
   );
 });
 
