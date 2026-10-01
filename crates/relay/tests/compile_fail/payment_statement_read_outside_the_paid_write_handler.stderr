@@ -1,0 +1,10 @@
+error[E0624]: associated function `stated_on` is private
+ --> tests/compile_fail/payment_statement_read_outside_the_paid_write_handler.rs:8:23
+  |
+8 |     PaymentStatement::stated_on(headers)
+  |                       ^^^^^^^^^ private associated function
+  |
+ ::: src/write/payment.rs
+  |
+  |     pub(super) fn stated_on(headers: &HeaderMap) -> Option<Self> {
+  |     ------------------------------------------------------------ private associated function defined here

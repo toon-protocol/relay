@@ -1,0 +1,17 @@
+error[E0451]: fields `route`, `connector_url`, `seal_key`, `carriage`, `price` and `settlement` of struct `WriteEdge` are private
+  --> tests/compile_fail/write_edge_built_from_parts.rs:9:9
+   |
+ 8 |     WriteEdge {
+   |     --------- in this type
+ 9 |         route,
+   |         ^^^^^ private field
+10 |         connector_url,
+   |         ^^^^^^^^^^^^^ private field
+11 |         seal_key,
+   |         ^^^^^^^^ private field
+12 |         carriage: None,
+   |         ^^^^^^^^ private field
+13 |         price: 1000,
+   |         ^^^^^ private field
+14 |         settlement: Vec::new(),
+   |         ^^^^^^^^^^ private field

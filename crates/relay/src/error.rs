@@ -81,4 +81,45 @@ pub enum RelayError {
     /// #198). It was not stored.
     #[error("events of kind {kind} are not stored by this build yet")]
     KindNotStoredYet { kind: u16 },
+
+    /// The address this relay was told its writes are paid at is not the
+    /// prefix of any route its connector publishes. Nothing is advertised.
+    #[error(
+        "the connector does not terminate `{address}` — it terminates {}. Point \
+         TOON_WRITE_ILP_ADDRESS at the prefix whose route reaches this relay's POST /write",
+        listed(terminated)
+    )]
+    RouteNotTerminated {
+        address: String,
+        /// Every prefix the connector does terminate, in its order.
+        terminated: Vec<String>,
+    },
+
+    /// The connector's self-description has no `httpEndpoint`.
+    #[error(
+        "the connector publishes no `httpEndpoint`, so it has no URL to send clients to \
+         (its [node] section is unset)"
+    )]
+    ConnectorPublishesNoUrl,
+
+    /// The connector's self-description has no `edgeIdentity.publicKey`.
+    #[error(
+        "the connector publishes no `edgeIdentity.publicKey`, so there is no key for a \
+         client to seal a write to"
+    )]
+    ConnectorPublishesNoSealKey,
+
+    /// The connector prices the relay's route at something that is not a
+    /// whole number of base units a JSON number carries exactly.
+    #[error("the connector prices `{address}` at {price:?}, which is not a whole number of uusdc")]
+    RoutePriceNotWhole { address: String, price: String },
+}
+
+/// `a, b, c`, or `nothing` for an empty list.
+fn listed(prefixes: &[String]) -> String {
+    if prefixes.is_empty() {
+        "nothing".to_string()
+    } else {
+        prefixes.join(", ")
+    }
 }

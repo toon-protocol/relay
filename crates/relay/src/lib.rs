@@ -4,10 +4,13 @@
 //! What is built so far is the path the design rests on (#193): an event
 //! posted to `POST /write` is verified, saved to the SQLite file the
 //! TypeScript relay already writes, and served to a client that sends `REQ`
-//! over WebSocket, stored or live. Beside it, `GET /health`. Every other
-//! surface in #185's compatibility contract is a later slice, and until it
-//! lands the conformance suite lists it as an expected failure for this
-//! implementation.
+//! over WebSocket, stored or live. Beside it, `GET /health`, and the types
+//! that hold the relay's rules (#194): a verified event, a payment statement,
+//! a Write Edge and a terminated route, each with one constructor. The edge
+//! and the route are read by nothing yet; the connector edge (#199) is built
+//! on them. Every other surface in #185's compatibility contract is a later
+//! slice, and until it lands the conformance suite lists it as an expected
+//! failure for this implementation.
 //!
 //! It is a library only so that the routers can be driven in a test without
 //! the binary, and so the invariant types can be shown not to compile when
@@ -16,18 +19,23 @@
 
 mod clock;
 mod config;
+mod edge;
 mod error;
 mod framework;
 mod health;
 mod read;
+mod route;
 mod store;
 mod verified;
 mod write;
 
 pub use config::Config;
+pub use edge::{Carriage, Settlement, WriteEdge};
 pub use error::RelayError;
+pub use route::TerminatedRoute;
 pub use store::{Saved, Store};
 pub use verified::VerifiedEvent;
+pub use write::{Chain, PaymentStatement};
 
 use axum::Router;
 use axum::routing::{any, get, post};

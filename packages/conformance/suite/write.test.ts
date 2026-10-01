@@ -80,28 +80,23 @@ describe('relay image conformance: payment attribution', () => {
       expect(await response.json()).toMatchObject({
         payment: { payer: EVM_PAYER, amount: '1000', chain: 'evm' },
       });
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 
-  conformanceTest(
-    'a Solana triple is echoed',
-    async () => {
-      const response = await write(
-        { event: signedEvent(1) },
-        {
-          'X-TOON-Payer': SOLANA_PAYER,
-          'X-TOON-Amount': '5',
-          'X-TOON-Chain': 'solana',
-        }
-      );
-      expect(response.status).toBe(200);
-      expect(await response.json()).toMatchObject({
-        payment: { payer: SOLANA_PAYER, amount: '5', chain: 'solana' },
-      });
-    },
-    { expectedFailureFor: ['rust'] }
-  );
+  conformanceTest('a Solana triple is echoed', async () => {
+    const response = await write(
+      { event: signedEvent(1) },
+      {
+        'X-TOON-Payer': SOLANA_PAYER,
+        'X-TOON-Amount': '5',
+        'X-TOON-Chain': 'solana',
+      }
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      payment: { payer: SOLANA_PAYER, amount: '5', chain: 'solana' },
+    });
+  });
 
   const discarded: [string, Record<string, string>][] = [
     ['absent', {}],

@@ -5,18 +5,23 @@
 //!
 //! The statuses are the connector's contract (#185, stories 29 to 31): `200`
 //! with the event id and the stored-at time, `400` for a body that is not a
-//! delivery, `422` for an event that does not verify. Payment attribution
-//! (#194) and the ephemeral lane (#198) are not built yet.
+//! delivery, `422` for an event that does not verify. A `200` also echoes the
+//! payment the connector stated on the delivery, when it stated one (stories
+//! 32 and 33); it is not persisted. The ephemeral lane (#198) is not built
+//! yet, and is not built in this module: see [`payment`].
+
+mod payment;
 
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use nostr::event::Event;
 use serde::Serialize;
 use serde_json::Value;
 
+pub use self::payment::{Chain, PaymentStatement};
 use crate::clock::unix_seconds;
 use crate::{Relay, RelayError, Saved, VerifiedEvent};
 
@@ -27,6 +32,9 @@ struct Stored {
     event_id: String,
     /// Seconds since the Unix epoch.
     stored_at: u64,
+    /// What the connector stated about the payment, when it stated it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payment: Option<PaymentStatement>,
 }
 
 #[derive(Serialize)]
@@ -41,7 +49,7 @@ fn refused(status: StatusCode, error: impl Into<String>) -> Response {
 
 /// The body is read as bytes, not through a JSON extractor: the TypeScript
 /// relay parses whatever arrives, whatever its `Content-Type`.
-pub(crate) async fn write(State(relay): State<Relay>, body: Bytes) -> Response {
+pub(crate) async fn write(State(relay): State<Relay>, headers: HeaderMap, body: Bytes) -> Response {
     let Ok(body) = serde_json::from_slice::<Value>(&body) else {
         return refused(StatusCode::BAD_REQUEST, "Invalid request body");
     };
@@ -96,6 +104,7 @@ pub(crate) async fn write(State(relay): State<Relay>, body: Bytes) -> Response {
     Json(Stored {
         event_id: event.event().id.to_hex(),
         stored_at: unix_seconds(),
+        payment: PaymentStatement::stated_on(&headers),
     })
     .into_response()
 }

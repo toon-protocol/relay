@@ -17,6 +17,15 @@ unsafe_code = "forbid"
 [workspace.dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
 base64 = "0.22"
+# The connector's domain crate, for the types of its `GET /ilp`
+# self-description and nothing else: it also holds claim and pricing types,
+# and payment-claim validation lives only in the connector (CLAUDE.md), so
+# deploy/rust-workspace.test.ts fails the build if a Rust file names anything
+# but `connector_domain::node` and the settlement terms that document lists.
+# The commit is the one the connector image that deploy/docker-compose.yml
+# pins was built from. Nothing checks that yet: the rule relating the two is
+# stated in the deploy bundle test with the connector edge (#199).
+connector-domain = { git = "https://github.com/toon-protocol/connector", rev = "c5f0bc359228beb760429971650290b606f472c7" }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 http-body-util = "0.1"
 hyper = "1"
