@@ -47,8 +47,13 @@ async fn run() -> Result<(), RelayError> {
         // The sender is dropped, never sent on: `changed` ends when it is.
         let _ = stopped.changed().await;
     };
-    let write = axum::serve(write, relay.write_router())
-        .with_graceful_shutdown(until_stopped(stopped.clone()));
+    let write = axum::serve(
+        write,
+        relay
+            .write_router()
+            .into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(until_stopped(stopped.clone()));
     let read = axum::serve(
         read,
         relay

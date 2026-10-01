@@ -21,6 +21,10 @@ pub enum RelayError {
     #[error("{name} must be an integer between 1 and 65535, got {value:?}")]
     InvalidPort { name: &'static str, value: String },
 
+    /// `name` is set to something that is not a positive whole number.
+    #[error("{name} must be a positive integer")]
+    InvalidPositiveInteger { name: &'static str },
+
     /// A listener could not bind: the host did not resolve, or the address is
     /// taken or not ours to bind.
     #[error("could not listen on {host}:{port}: {source}")]
