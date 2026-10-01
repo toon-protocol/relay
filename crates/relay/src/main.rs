@@ -26,6 +26,18 @@ async fn main() -> ExitCode {
 async fn run() -> Result<(), RelayError> {
     let config = Config::from_env(|name| std::env::var(name).ok())?;
     let relay = Relay::open(&config)?;
+    match &config.connector {
+        Some(connector) => println!(
+            "[relay] paid write edge: asking {} about {}",
+            connector.url, connector.ilp_address
+        ),
+        None => println!(
+            "[relay] paid write edge: none published — set TOON_CONNECTOR_URL and \
+             TOON_WRITE_ILP_ADDRESS for a client to be able to pay this relay from its URL alone"
+        ),
+    }
+    // Asked in the background and never awaited: see `connector`.
+    let _watch = relay.watch_connector(&config);
     let write = listen(&config.write_host, config.write_port).await?;
     let read = listen(&config.read_host, config.read_port).await?;
     println!(

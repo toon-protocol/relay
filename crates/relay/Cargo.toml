@@ -15,6 +15,7 @@ base64.workspace = true
 connector-domain.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
+http-body-util.workspace = true
 nostr.workspace = true
 nostr-database.workspace = true
 nostr-sdk.workspace = true
@@ -27,7 +28,6 @@ tokio.workspace = true
 
 [dev-dependencies]
 futures-util.workspace = true
-http-body-util.workspace = true
 tempfile.workspace = true
 tokio-tungstenite.workspace = true
 tower.workspace = true

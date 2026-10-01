@@ -7,8 +7,8 @@
 //! over WebSocket, stored or live. Beside it, `GET /health`, and the types
 //! that hold the relay's rules (#194): a verified event, a payment statement,
 //! a Write Edge and a terminated route, each with one constructor. The edge
-//! and the route are read by nothing yet; the connector edge (#199) is built
-//! on them. Every other surface in #185's compatibility contract is a later
+//! is read from the connector's `GET /ilp` in the background (#199) and
+//! rendered into the Relay Information Document on the read port. Every other surface in #185's compatibility contract is a later
 //! slice, and until it lands the conformance suite lists it as an expected
 //! failure for this implementation.
 //!
@@ -19,6 +19,8 @@
 
 mod clock;
 mod config;
+mod connector;
+mod document;
 mod edge;
 mod error;
 mod framework;
@@ -29,7 +31,7 @@ mod store;
 mod verified;
 mod write;
 
-pub use config::Config;
+pub use config::{Config, ConnectorConfig, Description};
 pub use edge::{Carriage, Settlement, WriteEdge};
 pub use error::RelayError;
 pub use route::TerminatedRoute;
@@ -41,6 +43,8 @@ use axum::Router;
 use axum::routing::{any, get, post};
 use nostr::key::PublicKey;
 
+use crate::connector::{EdgeSlot, Intervals};
+use crate::document::Settings;
 use crate::framework::ReadSide;
 
 /// A relay: its identity, its store, and the read side that serves the store
@@ -51,6 +55,8 @@ pub struct Relay {
     identity: PublicKey,
     store: Store,
     read_side: ReadSide,
+    edge: EdgeSlot,
+    document: Settings,
 }
 
 impl Relay {
@@ -64,9 +70,37 @@ impl Relay {
         let store = Store::open(&config.database_path())?;
         Ok(Self {
             identity: config.identity,
+            edge: EdgeSlot::default(),
+            document: Settings {
+                pubkey: config.identity.to_hex(),
+                description: config.description.clone(),
+                write_carriage: config.write_carriage,
+                enforce_expiration: config.enforce_expiration,
+            },
             read_side: ReadSide::new(store.clone()),
             store,
         })
+    }
+
+    /// Start reading the Write Edge from the connector, if one is configured,
+    /// until the returned task is aborted. It returns at once: the connector
+    /// is asked in the background, quickly while the edge is unknown and
+    /// slowly once it is known, and no answer, or none, stops the relay.
+    pub fn watch_connector(&self, config: &Config) -> Option<tokio::task::JoinHandle<()>> {
+        self.watch_connector_at(config, Intervals::default())
+    }
+
+    fn watch_connector_at(
+        &self,
+        config: &Config,
+        intervals: Intervals,
+    ) -> Option<tokio::task::JoinHandle<()>> {
+        let connector = config.connector.clone()?;
+        Some(tokio::spawn(connector::watch(
+            connector,
+            intervals,
+            self.edge.clone(),
+        )))
     }
 
     /// Everything served on the write port.

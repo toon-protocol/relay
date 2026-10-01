@@ -37,15 +37,15 @@ describe('relay image conformance: a connector that is down at start', () => {
         ilp_address: STUB_ILP_ADDRESS,
         price: Number(STUB_PRICE),
       });
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 });
 
 describe('relay image conformance: settings the relay refuses to start with', () => {
   const key = DEFAULT_SECRET_KEY;
-  // The Rust relay reads only its identity, its two listeners and its data
-  // directory so far (#193), so it starts on every other setting.
+  // The Rust relay reads only its identity, its two listeners, its data
+  // directory and its connector settings so far (#193, #199), so it starts on
+  // every other setting.
   const notYetInRust: ConformanceTestOptions = {
     expectedFailureFor: ['rust'],
   };
@@ -61,7 +61,6 @@ describe('relay image conformance: settings the relay refuses to start with', ()
     [
       'an invalid carriage',
       { env: { TOON_SECRET_KEY: key, TOON_WRITE_CARRIAGE: 'both' } },
-      notYetInRust,
     ],
     ['an invalid secret key', { env: { TOON_SECRET_KEY: 'not-hex' } }],
     ['a missing identity', { env: {} }],
@@ -73,7 +72,6 @@ describe('relay image conformance: settings the relay refuses to start with', ()
           TOON_CONNECTOR_URL: 'http://connector.invalid/ilp',
         },
       },
-      notYetInRust,
     ],
     [
       'a malformed blocklist id',

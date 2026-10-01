@@ -4,15 +4,17 @@
 //!
 //! Any request that is not a WebSocket upgrade is answered `426 Upgrade
 //! Required`, as the TypeScript relay answers it and as fleet health checks
-//! expect (story 28). The Relay Information Document, which shares this port,
-//! arrives with the connector edge (#199).
+//! expect (story 28). The Relay Information Document shares this port: a `GET`
+//! or `HEAD` that asks for `application/nostr+json` gets it, and `OPTIONS`
+//! gets the CORS preflight a browser client sends first (#199).
 
 use std::net::{Ipv4Addr, SocketAddr};
 
 use axum::extract::{ConnectInfo, Request, State};
 use axum::http::header::{
-    CONNECTION, CONTENT_TYPE, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_VERSION,
-    UPGRADE,
+    ACCEPT, ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS,
+    ACCESS_CONTROL_ALLOW_ORIGIN, CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, SEC_WEBSOCKET_ACCEPT,
+    SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_VERSION, UPGRADE,
 };
 use axum::http::{HeaderMap, HeaderName, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -23,6 +25,7 @@ use hyper_util::rt::TokioIo;
 use sha1::{Digest, Sha1};
 
 use crate::Relay;
+use crate::document::{CONTENT_TYPE as CONTENT_TYPE_NOSTR, Document};
 
 /// RFC 6455 §1.3: appended to the client's key before hashing.
 const WEBSOCKET_GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -31,7 +34,7 @@ const WEBSOCKET_GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 /// for a WebSocket handshake, `426` for anything else.
 pub(crate) async fn read(State(relay): State<Relay>, mut request: Request) -> Response {
     let Some(accept) = websocket_accept(request.method(), request.headers()) else {
-        return upgrade_required();
+        return http_request(&relay, request.method(), request.headers());
     };
     // Present whenever the server driving this router supports upgrades;
     // absent when the router is called with no connection behind it.
@@ -66,6 +69,57 @@ pub(crate) async fn read(State(relay): State<Relay>, mut request: Request) -> Re
         ],
     )
         .into_response()
+}
+
+/// Answer a request that is not a WebSocket handshake. The only one whose
+/// answer is not `426` is the one that asks for the document by name.
+fn http_request(relay: &Relay, method: &Method, headers: &HeaderMap) -> Response {
+    // The document is free, public and the same for everyone, and browser
+    // clients read it, so there is nothing for an origin check to protect.
+    let cors = [
+        (ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+        (ACCESS_CONTROL_ALLOW_HEADERS, "accept, content-type"),
+        (ACCESS_CONTROL_ALLOW_METHODS, "GET, HEAD, OPTIONS"),
+    ];
+    if method == Method::OPTIONS {
+        return (StatusCode::NO_CONTENT, cors).into_response();
+    }
+    if (method == Method::GET || method == Method::HEAD) && asks_for_document(headers) {
+        let edge = relay.edge.current();
+        let body = serde_json::to_vec(&Document::render(&relay.document, edge.as_deref()))
+            .unwrap_or_default();
+        let length = body.len().to_string();
+        let body = if method == Method::HEAD {
+            Vec::new()
+        } else {
+            body
+        };
+        return (
+            StatusCode::OK,
+            cors,
+            [
+                (CONTENT_TYPE, CONTENT_TYPE_NOSTR.to_string()),
+                (CONTENT_LENGTH, length),
+            ],
+            body,
+        )
+            .into_response();
+    }
+    upgrade_required()
+}
+
+/// Whether `Accept` names the NIP-11 media type, among others, in any case.
+fn asks_for_document(headers: &HeaderMap) -> bool {
+    headers
+        .get_all(ACCEPT)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|part| {
+            part.split(';')
+                .next()
+                .is_some_and(|media| media.trim().eq_ignore_ascii_case(CONTENT_TYPE_NOSTR))
+        })
 }
 
 fn upgrade_required() -> Response {

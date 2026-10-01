@@ -82,6 +82,26 @@ pub enum RelayError {
     #[error("events of kind {kind} are not stored by this build yet")]
     KindNotStoredYet { kind: u16 },
 
+    /// Only one of `TOON_CONNECTOR_URL` and `TOON_WRITE_ILP_ADDRESS` is set.
+    #[error(
+        "TOON_CONNECTOR_URL and TOON_WRITE_ILP_ADDRESS go together: the relay reads its write \
+         edge from its connector, and needs the connector to ask and the one address whose \
+         route reaches this relay. Set both, or neither to publish no paid write edge at all"
+    )]
+    ConnectorSettingsApart,
+
+    /// `TOON_WRITE_CARRIAGE` is set to something that is not a carriage.
+    #[error(
+        "TOON_WRITE_CARRIAGE must be \"http\" or \"btp\", not {value:?}. Leave it unset \
+         for a route that pins no carriage"
+    )]
+    InvalidCarriage { value: String },
+
+    /// The connector could not be asked, or did not answer with a
+    /// self-description. The relay serves without an edge and asks again.
+    #[error("{url} could not be read: {reason}")]
+    ConnectorUnreadable { url: String, reason: String },
+
     /// The address this relay was told its writes are paid at is not the
     /// prefix of any route its connector publishes. Nothing is advertised.
     #[error(
