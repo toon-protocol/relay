@@ -45,12 +45,9 @@ async fn run() -> Result<(), RelayError> {
     };
     if let Some(workers) = config.verify_workers {
         println!(
-            "TOON_VERIFY_WORKERS={workers} has no effect: signatures are verified natively, \
+            "verify workers ({workers}, TOON_VERIFY_WORKERS or --verify-workers) has no effect: signatures are verified natively, \
              without a worker pool"
         );
-    }
-    for id in &config.blocked_event_ids {
-        println!("blocked event id: {id}");
     }
     let relay = Relay::open(&config)?;
     let write = listen(&config.write_host, config.write_port).await?;

@@ -301,7 +301,7 @@ impl Flags {
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
             let Some(rest) = arg.strip_prefix("--") else {
-                return Err(RelayError::UnexpectedArgument { argument: arg });
+                return Err(RelayError::UnexpectedArgument);
             };
             let (name, inline) = match rest.split_once('=') {
                 Some((name, value)) => (name, Some(value.to_string())),
@@ -825,8 +825,16 @@ mod tests {
         ));
         assert!(matches!(
             run(&["stray"], &env),
-            Err(RelayError::UnexpectedArgument { .. })
+            Err(RelayError::UnexpectedArgument)
         ));
+        // An unquoted mnemonic spills its words into bare arguments; none is echoed.
+        let spilled = run(&["--mnemonic", "abandon", "ability"], &env)
+            .err()
+            .map(|error| error.to_string());
+        assert!(
+            spilled.as_deref().is_some_and(|m| !m.contains("ability")),
+            "{spilled:?}"
+        );
         assert!(matches!(
             run(&["--host"], &env),
             Err(RelayError::FlagNeedsValue { .. })

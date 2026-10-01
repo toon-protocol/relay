@@ -83,8 +83,8 @@ describe('relay image conformance: documented environment variables', () => {
   const blocked = ['aa'.repeat(32), 'bb'.repeat(32)].join(',');
 
   // The Rust relay accepts every variable but does not serve the NIP-11
-  // document these assertions read (#199), and refuses TOON_DEV_MODE=true,
-  // which it has no mode for (#200).
+  // document these assertions read (#199). TOON_DEV_MODE is set to false:
+  // the Rust relay refuses true, which it has no mode for (#200).
   conformanceTest(
     'every documented variable is accepted, and takes effect where it is visible',
     async () => {
@@ -97,7 +97,7 @@ describe('relay image conformance: documented environment variables', () => {
           TOON_HOST: '0.0.0.0',
           TOON_WRITE_HOST: '0.0.0.0',
           TOON_DATA_DIR: '/tmp/conformance-data',
-          TOON_DEV_MODE: 'true',
+          TOON_DEV_MODE: 'false',
           TOON_VERIFY_EPHEMERAL: 'true',
           TOON_VERIFY_WORKERS: '0',
           TOON_MAX_CONNECTIONS: '64',

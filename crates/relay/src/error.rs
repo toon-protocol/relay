@@ -75,9 +75,10 @@ pub enum RelayError {
     #[error("option {flag} takes no value")]
     FlagTakesNoValue { flag: &'static str },
 
-    /// An argument that is not a flag.
-    #[error("unexpected argument {argument:?}")]
-    UnexpectedArgument { argument: String },
+    /// An argument that is not a flag. It is deliberately not echoed: an
+    /// unquoted `--mnemonic` leaves the rest of its words here.
+    #[error("unexpected argument: every argument is a --flag or a flag's value")]
+    UnexpectedArgument,
 
     /// A listener could not bind: the host did not resolve, or the address is
     /// taken or not ours to bind.
