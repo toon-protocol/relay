@@ -482,24 +482,33 @@ describe('relay image conformance: expiration not enforced', () => {
     await lax?.stop();
   });
 
-  conformanceTest('an expired event is returned and delivered', async () => {
-    const { secretKey, pubkey } = author();
-    const subscription = await subscribe(lax, { authors: [pubkey] });
-    try {
-      const t = now();
-      const expired = sign(secretKey, {
-        kind: 1,
-        created_at: t - 200,
-        tags: [['expiration', String(t - 100)]],
-      });
-      await publishOk(lax, expired);
-      await until(() => subscription.delivered.length > 0);
-      expect(await storedIds(lax, { authors: [pubkey] })).toEqual(ids(expired));
-      expect(subscription.delivered.map((e) => e.id)).toEqual([expired.id]);
-    } finally {
-      subscription.close();
-    }
-  });
+  // The Rust relay stores the event and delivers it live, but its framework
+  // leaves an expired event out of every REQ answer whatever the store
+  // returns, with no setting to turn that off (#196).
+  conformanceTest(
+    'an expired event is returned and delivered',
+    async () => {
+      const { secretKey, pubkey } = author();
+      const subscription = await subscribe(lax, { authors: [pubkey] });
+      try {
+        const t = now();
+        const expired = sign(secretKey, {
+          kind: 1,
+          created_at: t - 200,
+          tags: [['expiration', String(t - 100)]],
+        });
+        await publishOk(lax, expired);
+        await until(() => subscription.delivered.length > 0);
+        expect(await storedIds(lax, { authors: [pubkey] })).toEqual(
+          ids(expired)
+        );
+        expect(subscription.delivered.map((e) => e.id)).toEqual([expired.id]);
+      } finally {
+        subscription.close();
+      }
+    },
+    { expectedFailureFor: ['rust'] }
+  );
 });
 
 describe('relay image conformance: operator blocklist', () => {
