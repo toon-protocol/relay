@@ -32,7 +32,6 @@ describe('relay image conformance: ephemeral rate limit', () => {
       }
       expect(statuses.has(400)).toBe(true);
       expect(statuses.has(429)).toBe(true);
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 });

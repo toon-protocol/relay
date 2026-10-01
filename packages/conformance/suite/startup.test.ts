@@ -7,11 +7,7 @@ import {
   type RunningRelay,
 } from './harness/relay-container.js';
 import { getDocument, waitForEdge } from './harness/nip11.js';
-import {
-  conformanceTest,
-  imageUnderTest,
-  type ConformanceTestOptions,
-} from './implementation.js';
+import { conformanceTest, imageUnderTest } from './implementation.js';
 import { getPublicKey } from 'nostr-tools/pure';
 import { STUB_ILP_ADDRESS, STUB_PRICE } from './harness/stub-connector.js';
 
@@ -37,23 +33,13 @@ describe('relay image conformance: a connector that is down at start', () => {
         ilp_address: STUB_ILP_ADDRESS,
         price: Number(STUB_PRICE),
       });
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 });
 
 describe('relay image conformance: settings the relay refuses to start with', () => {
   const key = DEFAULT_SECRET_KEY;
-  // The Rust relay reads only its identity, its two listeners and its data
-  // directory so far (#193), so it starts on every other setting.
-  const notYetInRust: ConformanceTestOptions = {
-    expectedFailureFor: ['rust'],
-  };
-  const refused: [
-    string,
-    { env?: Env; args?: string[] },
-    ConformanceTestOptions?,
-  ][] = [
+  const refused: [string, { env?: Env; args?: string[] }][] = [
     [
       'an invalid port',
       { env: { TOON_SECRET_KEY: key, TOON_RELAY_PORT: 'x' } },
@@ -61,7 +47,6 @@ describe('relay image conformance: settings the relay refuses to start with', ()
     [
       'an invalid carriage',
       { env: { TOON_SECRET_KEY: key, TOON_WRITE_CARRIAGE: 'both' } },
-      notYetInRust,
     ],
     ['an invalid secret key', { env: { TOON_SECRET_KEY: 'not-hex' } }],
     ['a missing identity', { env: {} }],
@@ -73,36 +58,32 @@ describe('relay image conformance: settings the relay refuses to start with', ()
           TOON_CONNECTOR_URL: 'http://connector.invalid/ilp',
         },
       },
-      notYetInRust,
     ],
     [
       'a malformed blocklist id',
       { env: { TOON_SECRET_KEY: key, TOON_BLOCKED_EVENT_IDS: 'zz' } },
-      notYetInRust,
     ],
     [
       'an unknown flag',
       { env: { TOON_SECRET_KEY: key }, args: ['--no-such-flag'] },
-      notYetInRust,
     ],
   ];
 
-  for (const [name, options, expectation] of refused) {
-    conformanceTest(
-      `${name} exits non-zero with an Error: line`,
-      async () => {
-        const exited = await runRelayToExit(imageUnderTest(), options);
-        expect(exited.code).not.toBe(0);
-        expect(exited.output).toMatch(/Error: /);
-      },
-      expectation
-    );
+  for (const [name, options] of refused) {
+    conformanceTest(`${name} exits non-zero with an Error: line`, async () => {
+      const exited = await runRelayToExit(imageUnderTest(), options);
+      expect(exited.code).not.toBe(0);
+      expect(exited.output).toMatch(/Error: /);
+    });
   }
 });
 
 describe('relay image conformance: documented environment variables', () => {
   const blocked = ['aa'.repeat(32), 'bb'.repeat(32)].join(',');
 
+  // The Rust relay accepts every variable but does not serve the NIP-11
+  // document these assertions read (#199). TOON_DEV_MODE is set to false:
+  // the Rust relay refuses true, which it has no mode for (#200).
   conformanceTest(
     'every documented variable is accepted, and takes effect where it is visible',
     async () => {
@@ -115,7 +96,7 @@ describe('relay image conformance: documented environment variables', () => {
           TOON_HOST: '0.0.0.0',
           TOON_WRITE_HOST: '0.0.0.0',
           TOON_DATA_DIR: '/tmp/conformance-data',
-          TOON_DEV_MODE: 'true',
+          TOON_DEV_MODE: 'false',
           TOON_VERIFY_EPHEMERAL: 'true',
           TOON_VERIFY_WORKERS: '0',
           TOON_MAX_CONNECTIONS: '64',
@@ -177,24 +158,18 @@ describe('relay image conformance: documented environment variables', () => {
     );
   });
 
-  conformanceTest(
-    'TOON_MNEMONIC alone sets the identity',
-    async () => {
-      const relay = await startRelay(imageUnderTest(), {
-        env: {
-          TOON_SECRET_KEY: undefined,
-          TOON_MNEMONIC:
-            'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
-        },
-      });
-      running.push(relay);
-      const health = (await (
-        await fetch(`${relay.writeUrl}/health`)
-      ).json()) as {
-        pubkey: string;
-      };
-      expect(health.pubkey).toMatch(/^[0-9a-f]{64}$/);
-    },
-    { expectedFailureFor: ['rust'] }
-  );
+  conformanceTest('TOON_MNEMONIC alone sets the identity', async () => {
+    const relay = await startRelay(imageUnderTest(), {
+      env: {
+        TOON_SECRET_KEY: undefined,
+        TOON_MNEMONIC:
+          'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
+      },
+    });
+    running.push(relay);
+    const health = (await (await fetch(`${relay.writeUrl}/health`)).json()) as {
+      pubkey: string;
+    };
+    expect(health.pubkey).toMatch(/^[0-9a-f]{64}$/);
+  });
 });

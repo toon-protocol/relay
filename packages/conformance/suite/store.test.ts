@@ -324,8 +324,7 @@ describe('relay image conformance: deletion (kind 5)', () => {
       expect(await storedIds(relay, { authors: [pubkey], kinds: [1] })).toEqual(
         ids(keeper)
       );
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 
   conformanceTest(
@@ -362,6 +361,8 @@ describe('relay image conformance: deletion (kind 5)', () => {
         await storedIds(relay, { authors: [pubkey], kinds: [30023] })
       ).toEqual(ids(other));
     },
+    // Deletion is built (#196); this case also publishes addressable kinds,
+    // which wait for replacement (#195).
     { expectedFailureFor: ['rust'] }
   );
 
@@ -405,6 +406,8 @@ describe('relay image conformance: deletion (kind 5)', () => {
         await storedIds(relay, { authors: [victim.pubkey], kinds: [30023] })
       ).toEqual(ids(later));
     },
+    // Deletion is built (#196); this case also publishes addressable kinds,
+    // which wait for replacement (#195).
     { expectedFailureFor: ['rust'] }
   );
 });
@@ -454,8 +457,7 @@ describe('relay image conformance: expiration enforced', () => {
       } finally {
         subscription.close();
       }
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 });
 
@@ -472,30 +474,24 @@ describe('relay image conformance: expiration not enforced', () => {
     await lax?.stop();
   });
 
-  conformanceTest(
-    'an expired event is returned and delivered',
-    async () => {
-      const { secretKey, pubkey } = author();
-      const subscription = await subscribe(lax, { authors: [pubkey] });
-      try {
-        const t = now();
-        const expired = sign(secretKey, {
-          kind: 1,
-          created_at: t - 200,
-          tags: [['expiration', String(t - 100)]],
-        });
-        await publishOk(lax, expired);
-        await until(() => subscription.delivered.length > 0);
-        expect(await storedIds(lax, { authors: [pubkey] })).toEqual(
-          ids(expired)
-        );
-        expect(subscription.delivered.map((e) => e.id)).toEqual([expired.id]);
-      } finally {
-        subscription.close();
-      }
-    },
-    { expectedFailureFor: ['rust'] }
-  );
+  conformanceTest('an expired event is returned and delivered', async () => {
+    const { secretKey, pubkey } = author();
+    const subscription = await subscribe(lax, { authors: [pubkey] });
+    try {
+      const t = now();
+      const expired = sign(secretKey, {
+        kind: 1,
+        created_at: t - 200,
+        tags: [['expiration', String(t - 100)]],
+      });
+      await publishOk(lax, expired);
+      await until(() => subscription.delivered.length > 0);
+      expect(await storedIds(lax, { authors: [pubkey] })).toEqual(ids(expired));
+      expect(subscription.delivered.map((e) => e.id)).toEqual([expired.id]);
+    } finally {
+      subscription.close();
+    }
+  });
 });
 
 describe('relay image conformance: operator blocklist', () => {
@@ -526,7 +522,6 @@ describe('relay image conformance: operator blocklist', () => {
       expect(await storedIds(blocking, { authors: [pubkey] })).toEqual(
         ids(other)
       );
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 });

@@ -80,7 +80,6 @@ describe('relay image conformance: tracer', () => {
         connector_seal_key: STUB_SEAL_KEY,
         price: Number(STUB_PRICE),
       });
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 });

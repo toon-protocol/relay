@@ -54,6 +54,15 @@ pub enum Chain {
     Solana,
 }
 
+impl std::fmt::Display for Chain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Evm => "evm",
+            Self::Solana => "solana",
+        })
+    }
+}
+
 impl PaymentStatement {
     /// Read the connector's statement off the headers of a paid write.
     ///
