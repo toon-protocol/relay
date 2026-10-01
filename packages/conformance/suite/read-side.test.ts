@@ -5,7 +5,7 @@ import {
   generateSecretKey,
   publish,
   signed,
-  type Frame,
+  sleep,
 } from './harness/client.js';
 import { startRelay, type RunningRelay } from './harness/relay-container.js';
 import {
@@ -20,6 +20,8 @@ let relay: RunningRelay;
 let capped: RunningRelay;
 
 const MAX_CONNECTIONS = 3;
+/** An id no test ever stores, for REQs that only need an EOSE. */
+const NO_SUCH_ID = '0'.repeat(64);
 
 beforeAll(async () => {
   relay = await startRelay(imageUnderTest());
@@ -35,6 +37,20 @@ afterAll(async () => {
 
 const ids = (events: { id: string }[]): string[] =>
   events.map((e) => e.id).sort();
+
+/** The `limitation` the relay states in its NIP-11 document. */
+async function limitation(): Promise<{
+  max_subscriptions: number;
+  max_filters: number;
+}> {
+  const response = await fetch(relay.readUrl, {
+    headers: { accept: 'application/nostr+json' },
+  });
+  const document = (await response.json()) as {
+    limitation: { max_subscriptions: number; max_filters: number };
+  };
+  return document.limitation;
+}
 
 /** Run `body` with a fresh connection that is always closed afterwards. */
 async function withClient(body: (c: Client) => Promise<void>): Promise<void> {
@@ -100,26 +116,25 @@ describe('read side: filters', () => {
     'ids select events by id, and tag filters by tag value',
     async () => {
       const key = generateSecretKey();
-      const tagged = signed(key, {
+      const alpha = signed(key, {
         tags: [['t', 'alpha']],
         created_at: 1_700_000_001,
       });
-      const tagged2 = signed(key, {
+      const beta = signed(key, {
         tags: [['t', 'beta']],
         created_at: 1_700_000_002,
       });
-      const plain = signed(key, {
+      const gamma = signed(key, {
         tags: [['t', 'gamma']],
         created_at: 1_700_000_003,
       });
-      for (const e of [tagged, tagged2, plain])
-        await publish(relay.writeUrl, e);
+      for (const e of [alpha, beta, gamma]) await publish(relay.writeUrl, e);
       const author = getPublicKey(key);
 
       await withClient(async (client) => {
         expect(
-          ids(await client.req('i', { ids: [tagged.id, plain.id] }))
-        ).toEqual(ids([tagged, plain]));
+          ids(await client.req('i', { ids: [alpha.id, gamma.id] }))
+        ).toEqual(ids([alpha, gamma]));
         expect(
           ids(
             await client.req('t', {
@@ -127,10 +142,10 @@ describe('read side: filters', () => {
               '#t': ['alpha', 'beta'],
             })
           )
-        ).toEqual(ids([tagged, tagged2]));
-        // Conditions AND: the id is `tagged`'s but the tag value is not.
+        ).toEqual(ids([alpha, beta]));
+        // Conditions AND: the id is `alpha`'s but the tag value is not.
         expect(
-          await client.req('and', { ids: [tagged.id], '#t': ['gamma'] })
+          await client.req('and', { ids: [alpha.id], '#t': ['gamma'] })
         ).toEqual([]);
       });
     }
@@ -143,12 +158,12 @@ describe('read side: filters', () => {
       const author = getPublicKey(key);
       const note = signed(key, { kind: 1, created_at: 1_700_001_001 });
       const reaction = signed(key, { kind: 7, created_at: 1_700_001_002 });
-      const profile = signed(key, {
+      const article = signed(key, {
         kind: 30023,
         tags: [['d', 'x']],
         created_at: 1_700_001_003,
       });
-      for (const e of [note, reaction, profile])
+      for (const e of [note, reaction, article])
         await publish(relay.writeUrl, e);
 
       await withClient(async (client) => {
@@ -161,7 +176,8 @@ describe('read side: filters', () => {
             )
           )
         ).toEqual(ids([note, reaction]));
-        // AND within a filter: kind 1 by this author, not kind 7's event.
+        // AND within a filter: `note` is kind 1 but too old, `reaction` is
+        // recent enough but kind 7, so only `article` meets every condition.
         expect(
           ids(
             await client.req('and', {
@@ -170,7 +186,7 @@ describe('read side: filters', () => {
               since: 1_700_001_002,
             })
           )
-        ).toEqual(ids([profile]));
+        ).toEqual(ids([article]));
       });
     }
   );
@@ -197,11 +213,7 @@ describe('read side: filters', () => {
         );
         // The newest note, and the two newest reactions.
         expect(ids(found)).toEqual(
-          ids(
-            [notes[2], reactions[2], reactions[1]].filter(
-              (e) => e !== undefined
-            )
-          )
+          ids([...notes.slice(-1), ...reactions.slice(-2)])
         );
       });
     },
@@ -209,22 +221,36 @@ describe('read side: filters', () => {
   );
 
   conformanceTest(
-    'ids and authors are matched exactly, not as prefixes',
+    'ids are matched exactly, not as prefixes',
     async () => {
-      const key = generateSecretKey();
-      const event = signed(key, { created_at: 1_700_003_000 });
+      const event = signed(generateSecretKey(), { created_at: 1_700_003_000 });
+      await publish(relay.writeUrl, event);
+
+      await withClient(async (client) => {
+        expect(ids(await client.req('full', { ids: [event.id] }))).toEqual([
+          event.id,
+        ]);
+        expect(
+          await client.req('idp', { ids: [event.id.slice(0, 16)] })
+        ).toEqual([]);
+      });
+    },
+    { expectedFailureFor: ['typescript'] }
+  );
+
+  conformanceTest(
+    'authors are matched exactly, not as prefixes',
+    async () => {
+      const event = signed(generateSecretKey(), { created_at: 1_700_003_001 });
       await publish(relay.writeUrl, event);
 
       await withClient(async (client) => {
         expect(
-          await client.req('idp', { ids: [event.id.slice(0, 16)] })
-        ).toEqual([]);
+          ids(await client.req('full', { authors: [event.pubkey] }))
+        ).toEqual([event.id]);
         expect(
           await client.req('aup', { authors: [event.pubkey.slice(0, 16)] })
         ).toEqual([]);
-        expect(ids(await client.req('full', { ids: [event.id] }))).toEqual([
-          event.id,
-        ]);
       });
     },
     { expectedFailureFor: ['typescript'] }
@@ -276,6 +302,8 @@ describe('read side: subscriptions', () => {
       // A second subscription proves CLOSE was processed before the write.
       await client.req('barrier', { authors: [author] });
       await publish(relay.writeUrl, signed(key));
+      // The write was fanned out, so `gone` would have had it by now.
+      await client.next((f) => f[0] === 'EVENT' && f[1] === 'barrier');
       const rest = await client.quiet();
       expect(rest.filter((f) => f[1] === 'gone')).toEqual([]);
     });
@@ -319,13 +347,13 @@ describe('read side: EVENT over WebSocket', () => {
           expect(frame.slice(0, 3)).toEqual(['OK', event.id, false]);
           message = String(frame[3]);
           if (message.includes(STUB_ILP_ADDRESS)) break;
-          await new Promise((r) => setTimeout(r, 250));
+          await sleep(250);
         } while (Date.now() < deadline);
       });
       expect(message).toContain(STUB_ILP_ADDRESS);
       expect(message).toContain(STUB_WRITE_EDGE);
-      expect(message).toContain(STUB_CARRIAGE);
-      expect(message).toContain(STUB_PRICE);
+      expect(message).toMatch(new RegExp(`\\b${STUB_CARRIAGE}\\b`));
+      expect(message).toMatch(new RegExp(`\\b${STUB_PRICE}\\b`));
 
       // And it was never stored.
       await withClient(async (client) => {
@@ -347,7 +375,7 @@ describe('read side: malformed input', () => {
     conformanceTest(`${name} gets a NOTICE`, async () => {
       await withClient(async (client) => {
         client.send(message);
-        const frame: Frame = await client.next((f) => f[0] === 'NOTICE');
+        const frame = await client.next((f) => f[0] === 'NOTICE');
         expect(typeof frame[1]).toBe('string');
       });
     });
@@ -356,27 +384,30 @@ describe('read side: malformed input', () => {
 
 describe('read side: limits', () => {
   conformanceTest('the subscription limit is enforced', async () => {
-    const limit = 20;
+    const limit = (await limitation()).max_subscriptions;
     await withClient(async (client) => {
       for (let i = 0; i < limit; i++)
-        await client.req(`s${i}`, { ids: ['0'.repeat(64)] });
-      client.send(['REQ', 'one-too-many', { ids: ['0'.repeat(64)] }]);
+        await client.req(`s${i}`, { ids: [NO_SUCH_ID] });
+      client.send(['REQ', 'one-too-many', { ids: [NO_SUCH_ID] }]);
       await client.next((f) => f[0] === 'NOTICE');
+      // Give a relay that NOTICEs and serves anyway time to send its EOSE.
+      await client.quiet();
       expect(
         client.frames.some((f) => f[0] === 'EOSE' && f[1] === 'one-too-many')
       ).toBe(false);
       // Replacing an existing subscription is not a new one.
-      expect(await client.req('s0', { ids: ['0'.repeat(64)] })).toEqual([]);
+      expect(await client.req('s0', { ids: [NO_SUCH_ID] })).toEqual([]);
     });
   });
 
   conformanceTest('the filter limit is enforced', async () => {
-    const limit = 10;
+    const limit = (await limitation()).max_filters;
     await withClient(async (client) => {
-      const filter = { ids: ['0'.repeat(64)] };
+      const filter = { ids: [NO_SUCH_ID] };
       expect(await client.req('ok', ...Array(limit).fill(filter))).toEqual([]);
       client.send(['REQ', 'many', ...Array(limit + 1).fill(filter)]);
       await client.next((f) => f[0] === 'NOTICE');
+      await client.quiet();
       expect(
         client.frames.some((f) => f[0] === 'EOSE' && f[1] === 'many')
       ).toBe(false);
@@ -390,11 +421,12 @@ describe('read side: limits', () => {
       try {
         for (let i = 0; i < MAX_CONNECTIONS; i++) {
           const client = await Client.connect(capped.readWsUrl);
-          // A REQ round trip proves the connection was admitted.
-          await client.req('hold', { ids: ['0'.repeat(64)] });
           held.push(client);
+          // A REQ round trip proves the connection was admitted.
+          await client.req('hold', { ids: [NO_SUCH_ID] });
         }
         const excess = await Client.connect(capped.readWsUrl);
+        held.push(excess);
         expect((await excess.untilClosed()).code).toBe(1013);
       } finally {
         for (const client of held) client.close();

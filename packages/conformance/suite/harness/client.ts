@@ -17,9 +17,16 @@ export class Client {
 
   private constructor(socket: WebSocket) {
     this.socket = socket;
-    socket.on('message', (data) =>
-      this.frames.push(JSON.parse(String(data)) as Frame)
-    );
+    socket.on('message', (data) => {
+      const text = String(data);
+      try {
+        this.frames.push(JSON.parse(text) as Frame);
+      } catch {
+        // Keep a frame that is not JSON visible to `next`, rather than
+        // throwing out of the socket's event handler.
+        this.frames.push(['<unparsable>', text]);
+      }
+    });
     socket.on('close', (code, reason) => {
       this.closed = { code, reason: String(reason) };
     });
@@ -32,7 +39,8 @@ export class Client {
       const client = new Client(socket);
       socket.once('open', () => resolve(client));
       socket.once('error', reject);
-      // A relay at its cap may accept the upgrade and then close; both resolve.
+      // A relay at its cap may accept the upgrade and then close it, so this
+      // resolves; `untilClosed` observes the close.
     });
   }
 
