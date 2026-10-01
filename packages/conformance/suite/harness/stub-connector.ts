@@ -10,10 +10,41 @@ export const STUB_PRICE = '1000';
  * configuration instead of the connector's self-description is caught.
  */
 export const STUB_WRITE_EDGE = 'http://write-edge.stub.invalid:8080';
-/** The settlement terms the stub accepts, as `batchSettlements` entries. */
+/**
+ * The settlements the stub accepts, as the information document states them:
+ * the network and asset of each of {@link STUB_BATCH_SETTLEMENTS}.
+ */
 export const STUB_SETTLEMENTS = [
   { network: 'eip155:31337', asset: '0x' + '11'.repeat(20) },
   { network: 'solana:devnet', asset: 'So' + '1'.repeat(40) },
+];
+
+/**
+ * The stub's `batchSettlements`, in the shape a real connector publishes. A
+ * reader that takes the connector's own types needs every required field of
+ * the terms, so a stub that publishes only `{network, asset}` is a document
+ * no such reader can use.
+ */
+export const STUB_BATCH_SETTLEMENTS = [
+  {
+    ...STUB_SETTLEMENTS[0],
+    payTo: '0x' + '22'.repeat(20),
+    receiverAuthorizer: '0x' + '22'.repeat(20),
+    withdrawDelay: 86400,
+    name: 'USDC',
+    version: '2',
+    assetTransferMethod: 'eip3009',
+    facilitator: 'http://facilitator.stub.invalid',
+  },
+  {
+    ...STUB_SETTLEMENTS[1],
+    payTo: 'So' + '2'.repeat(40),
+    feePayer: 'So' + '2'.repeat(40),
+    withdrawDelay: 86400,
+    tokenProgram: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+    minDeposit: '1000',
+    sponsorEndpoint: 'http://sponsor.stub.invalid',
+  },
 ];
 
 /** A connector `GET /ilp` self-description, as JSON. */
@@ -28,11 +59,13 @@ export function ilpDocument(overrides: IlpDocument = {}): IlpDocument {
   return {
     httpEndpoint: STUB_WRITE_EDGE,
     edgeIdentity: { keyId: 'stub', publicKey: STUB_SEAL_KEY },
-    batchSettlements: STUB_SETTLEMENTS,
+    batchSettlements: STUB_BATCH_SETTLEMENTS,
     routes: [
       { prefix: STUB_ILP_ADDRESS, price: STUB_PRICE },
       { prefix: `${STUB_ILP_ADDRESS}.store`, price: '2000' },
     ],
+    supportedVersions: [1],
+    defaultVersion: 1,
     ...overrides,
   };
 }

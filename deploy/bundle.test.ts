@@ -412,7 +412,8 @@ describe('deploy bundle', () => {
     const environment = relay?.environment ?? {};
 
     const paidRoute = routes.find(
-      (route) => route.handler_url === EXPECTED_ROUTE_HANDLER_URLS['g.toon.relay']
+      (route) =>
+        route.handler_url === EXPECTED_ROUTE_HANDLER_URLS['g.toon.relay']
     );
     expect(
       paidRoute,
@@ -428,9 +429,7 @@ describe('deploy bundle', () => {
     // network. A public URL here would make the relay's own advertisement
     // depend on DNS and TLS it does not need, and an address off this network
     // would be asking a different node entirely.
-    expect(environment['TOON_CONNECTOR_URL']).toBe(
-      'http://connector:3000/ilp'
-    );
+    expect(environment['TOON_CONNECTOR_URL']).toBe('http://connector:3000/ilp');
 
     // The carriage stopgap for TOON_Network#111 (see docker-compose.yml). It
     // is a value the relay states on its connector's behalf, so it is held
@@ -472,8 +471,12 @@ describe('deploy bundle', () => {
     const { operator } = readConnectorToml();
     expect(operator.bearer_token_file).toBe('/app/data/operator-bearer.token');
     expect(operator.write_keys_file).toBe('/app/data/operator-write.keys');
-    expect(readFile('deploy/connector.toml')).not.toMatch(/^\s*bearer_token\s*=/m);
-    expect(readFile('deploy/connector.toml')).not.toMatch(/^\s*write_keys\s*=/m);
+    expect(readFile('deploy/connector.toml')).not.toMatch(
+      /^\s*bearer_token\s*=/m
+    );
+    expect(readFile('deploy/connector.toml')).not.toMatch(
+      /^\s*write_keys\s*=/m
+    );
 
     const volumes = readDockerCompose().services['connector']?.volumes ?? [];
     for (const file of ['operator-bearer.token', 'operator-write.keys']) {
@@ -517,6 +520,46 @@ describe('deploy bundle', () => {
         `${file}: names connector build "${literal?.[0]}" — ${PIN_OF_RECORD_PATH}'s connector \`image:\` is the only place a build may be pinned`
       ).toBeNull();
     }
+  });
+
+  it("builds the Rust relay's connector types from the commit the pinned connector image was built from (#199)", () => {
+    // The relay reads the connector's `GET /ilp` with the connector's own
+    // types (crates/relay), taken as a git dependency at one commit. Types
+    // from a different build than the one deployed would read a document the
+    // deployed connector does not publish, so the two are held together here.
+    // The rule: the `rev` in Cargo.toml is the commit the image's release is
+    // tagged at, and Cargo.toml says which release that is
+    // (`# connector-release: <handle>`), which must be the pinned image's.
+    // A `rust-sha-` pin is the commit itself, so `rev` must start with it.
+    // The pin of record stays docker-compose.yml's `image:`; Cargo.toml
+    // carries the release it follows, never a second image reference.
+    const tag = readDockerCompose().services['connector']?.image?.split(':')[1];
+    const cargo = readFile('Cargo.toml');
+    const rev = cargo.match(
+      /connector-domain = \{[^}]*\brev = "([0-9a-f]{40})"/
+    )?.[1];
+    expect(
+      rev,
+      'Cargo.toml: connector-domain has no 40-hex `rev`'
+    ).toBeDefined();
+
+    const sha = tag?.match(/^rust-sha-([0-9a-f]{7,40})$/)?.[1];
+    if (sha !== undefined) {
+      expect(
+        rev,
+        `Cargo.toml: connector-domain's rev must be the commit ${sha} the pinned image was built from`
+      ).toMatch(new RegExp(`^${sha}`));
+      return;
+    }
+    const release = tag?.match(/^rust-(\d{4}\.\d{2}\.\d{2}\.\d+)$/)?.[1];
+    expect(
+      release,
+      `docker-compose.yml: ${tag} is not a pin this rule reads`
+    ).toBeDefined();
+    expect(
+      cargo.match(/^# connector-release: (\S+)$/m)?.[1],
+      `Cargo.toml: move connector-domain's rev and its \`# connector-release:\` line together with docker-compose.yml's connector \`image:\` (${tag})`
+    ).toBe(release);
   });
 
   it('mounts connector.toml rather than baking it into a derived image', () => {
@@ -831,7 +874,9 @@ describe('the shared-edge overlay (docker-compose.shared-edge.yml, toon-protocol
       for (const port of EXPECTED_PUBLISHED_PORTS.map(
         (p) => p.split(':')[0] ?? p
       )) {
-        const bound = published.find((entry) => entry.split(':').includes(port));
+        const bound = published.find((entry) =>
+          entry.split(':').includes(port)
+        );
         expect(
           bound,
           `docker-compose.shared-edge.yml: service "${service.name}" binds host port ${port} ("${bound}") with the overlay on — only the shared edge, off-box, may serve TLS now`
@@ -859,7 +904,10 @@ describe('the shared-edge overlay (docker-compose.shared-edge.yml, toon-protocol
 // node's apply against every other node's, or worse, have one node's timer
 // silently manage another's units.
 describe('the per-node auto-apply units (toon-protocol/relay#166, shared contract v2 point 2)', () => {
-  const SERVICE_PATH = resolve(REPO_ROOT, 'deploy/toon-auto-apply-relay.service');
+  const SERVICE_PATH = resolve(
+    REPO_ROOT,
+    'deploy/toon-auto-apply-relay.service'
+  );
   const TIMER_PATH = resolve(REPO_ROOT, 'deploy/toon-auto-apply-relay.timer');
 
   it('ships the unit pair under the per-node name, and not under the old shared name', () => {
@@ -872,7 +920,10 @@ describe('the per-node auto-apply units (toon-protocol/relay#166, shared contrac
       'deploy/toon-auto-apply-relay.timer: expected this file to exist'
     ).toBe(true);
 
-    for (const oldName of ['toon-auto-apply.service', 'toon-auto-apply.timer']) {
+    for (const oldName of [
+      'toon-auto-apply.service',
+      'toon-auto-apply.timer',
+    ]) {
       expect(
         existsSync(resolve(REPO_ROOT, 'deploy', oldName)),
         `deploy/${oldName}: the old shared-name unit must be RENAMED, not kept alongside the new one — an existing box's already-installed copy in /etc/systemd/system keeps working regardless (see deploy/README.md's migration section)`
