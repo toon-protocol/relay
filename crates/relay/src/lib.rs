@@ -28,6 +28,7 @@ mod document;
 mod edge;
 mod error;
 mod framework;
+mod gate;
 mod health;
 mod metrics;
 mod read;
@@ -106,7 +107,12 @@ impl Relay {
                 write_carriage: config.write_carriage,
                 enforce_expiration: config.enforce_expiration,
             },
-            read_side: ReadSide::new(store.clone(), edge.clone(), config.write_carriage),
+            read_side: ReadSide::new(
+                store.clone(),
+                edge.clone(),
+                config.write_carriage,
+                usize::try_from(config.max_connections).unwrap_or(usize::MAX),
+            ),
             metrics: Metrics::new(config),
             ephemeral: Arc::new(write::Lane::new(config)),
             log_writes: config.log_writes,
@@ -191,8 +197,9 @@ impl Relay {
             .with_state(self.clone())
     }
 
-    /// Everything served on the read port: the NIP-01 WebSocket, and `426`
-    /// for a request that is not an upgrade.
+    /// Everything served on the read port: the NIP-01 WebSocket, the Relay
+    /// Information Document for a request that asks for it, and `426` for any
+    /// other request that is not an upgrade.
     ///
     /// Serve it with upgrades enabled (`axum::serve` does) and with connection
     /// info, so the read side knows its peers.

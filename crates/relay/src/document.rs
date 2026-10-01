@@ -12,6 +12,7 @@
 
 use serde::Serialize;
 
+use crate::gate::{MAX_FILTERS, MAX_SUBSCRIPTIONS};
 use crate::{Carriage, WriteEdge};
 
 /// The media type NIP-11 gives the document.
@@ -29,11 +30,6 @@ const EXPIRATION_NIP: u16 = 40;
 
 /// The unit a price is in: the connector's base units of its asset.
 const FEE_UNIT: &str = "uusdc";
-
-/// The read side's caps on one connection, as the TypeScript relay states
-/// them.
-const MAX_SUBSCRIPTIONS: u32 = 20;
-const MAX_FILTERS: u32 = 10;
 
 /// What the document needs of the relay besides the edge.
 #[derive(Debug, Clone)]
@@ -69,8 +65,8 @@ pub(crate) struct Document {
 struct Limitation {
     payment_required: bool,
     restricted_writes: bool,
-    max_subscriptions: u32,
-    max_filters: u32,
+    max_subscriptions: usize,
+    max_filters: usize,
     auth_required: bool,
 }
 
