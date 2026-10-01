@@ -3,7 +3,7 @@
 A black-box suite for a relay **container image**. It starts the image, starts
 a stub HTTP server standing in for the connector's `GET /ilp`, and talks only
 to the relay's read port (WebSocket + NIP-11) and write port (`POST /write`,
-`GET /health`). It imports nothing from the relay's source, so the same suite
+`POST /write-ephemeral`, `GET /health`, and the retired paths that must `404`). It imports nothing from the relay's source, so the same suite
 can gate any implementation of the relay's wire contract.
 
 ```
@@ -26,9 +26,13 @@ ordinary test.
 
 ## Coverage
 
-`suite/tracer.test.ts` proves the harness; `suite/store.test.ts` covers what
-the store keeps, replaces, deletes and expires (replaceable and addressable
-kinds, tag filters, kind 5, NIP-40 with enforcement on and off, the operator
-blocklist, duplicates), observed only through writes and reads on the wire.
-Known differences between the TypeScript relay and the spec are marked
-`expectedFailureFor: ['typescript']`.
+- `tracer.test.ts`: health, one paid write and read, the NIP-11 document.
+- `write.test.ts`: `POST /write` statuses, `X-TOON-*` payment attribution,
+  live delivery of stored writes, `POST /write-ephemeral`, retired paths.
+- `ephemeral-rate-limit.test.ts`: the ephemeral `429`, in its own relay so
+  exhausting the limiter cannot starve the other cases.
+- `store.test.ts`: what the store keeps, replaces, deletes and expires
+  (replaceable and addressable kinds, tag filters, kind 5, NIP-40 with
+  enforcement on and off, the operator blocklist, duplicates), observed only
+  through writes and reads on the wire. Known differences between the
+  TypeScript relay and the spec are marked `expectedFailureFor: ['typescript']`.
