@@ -33,7 +33,7 @@ pub use config::Config;
 pub use edge::{Carriage, Settlement, WriteEdge};
 pub use error::RelayError;
 pub use route::TerminatedRoute;
-pub use store::{Saved, Store};
+pub use store::{Retention, Saved, Store};
 pub use verified::VerifiedEvent;
 pub use write::{Chain, PaymentStatement};
 
@@ -51,6 +51,14 @@ pub struct Relay {
     identity: PublicKey,
     store: Store,
     read_side: ReadSide,
+    reaper: Reaper,
+}
+
+/// When the reaper runs and how long it lets an expired event stay.
+#[derive(Debug, Clone, Copy)]
+struct Reaper {
+    grace_seconds: u64,
+    interval_seconds: u64,
 }
 
 impl Relay {
@@ -61,12 +69,54 @@ impl Relay {
             path: config.data_dir.clone(),
             source,
         })?;
-        let store = Store::open(&config.database_path())?;
+        let store = Store::open_with(
+            &config.database_path(),
+            Retention {
+                enforce_expiration: config.enforce_expiration,
+                blocked_event_ids: config.blocked_event_ids.clone(),
+            },
+        )?;
         Ok(Self {
             identity: config.identity,
             read_side: ReadSide::new(store.clone()),
             store,
+            reaper: Reaper {
+                grace_seconds: config.reap_grace_seconds,
+                interval_seconds: config.reap_interval_seconds,
+            },
         })
+    }
+
+    /// Start the NIP-40 reaper: one sweep now, then one every configured
+    /// interval, each deleting what expired longer ago than the grace
+    /// period. An interval of zero disables it, and nothing is started.
+    ///
+    /// Must be called inside a Tokio runtime. Drop the handle's task by
+    /// aborting it; the relay does not need to.
+    pub fn spawn_reaper(&self) -> Option<tokio::task::JoinHandle<()>> {
+        let Reaper {
+            grace_seconds,
+            interval_seconds,
+        } = self.reaper;
+        if interval_seconds == 0 {
+            return None;
+        }
+        let store = self.store.clone();
+        Some(tokio::spawn(async move {
+            // The first tick is immediate: the boot sweep. A sweep that
+            // overruns delays the next rather than bunching them.
+            let mut sweeps =
+                tokio::time::interval(std::time::Duration::from_secs(interval_seconds));
+            sweeps.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                sweeps.tick().await;
+                match store.reap_expired(grace_seconds).await {
+                    Ok(0) => {}
+                    Ok(removed) => println!("reaper removed {removed} expired event(s)"),
+                    Err(error) => eprintln!("reaper failed: {error}"),
+                }
+            }
+        }))
     }
 
     /// Everything served on the write port.

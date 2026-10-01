@@ -26,6 +26,8 @@ async fn main() -> ExitCode {
 async fn run() -> Result<(), RelayError> {
     let config = Config::from_env(|name| std::env::var(name).ok())?;
     let relay = Relay::open(&config)?;
+    // Held for the life of the process: the reaper sweeps until it stops.
+    let _reaper = relay.spawn_reaper();
     let write = listen(&config.write_host, config.write_port).await?;
     let read = listen(&config.read_host, config.read_port).await?;
     println!(

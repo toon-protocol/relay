@@ -6,6 +6,7 @@
 //! TypeScript relay's environment and its flags arrive with the surfaces they
 //! configure (#200).
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use nostr::key::{Keys, PublicKey, SecretKey};
@@ -20,11 +21,19 @@ const WRITE_HOST: &str = "TOON_WRITE_HOST";
 const READ_PORT: &str = "TOON_RELAY_PORT";
 const READ_HOST: &str = "TOON_HOST";
 const DATA_DIR: &str = "TOON_DATA_DIR";
+const ENFORCE_EXPIRATION: &str = "TOON_ENFORCE_EXPIRATION";
+const REAP_GRACE: &str = "TOON_EXPIRATION_REAP_GRACE_SECONDS";
+const REAP_INTERVAL: &str = "TOON_EXPIRATION_REAP_INTERVAL_SECONDS";
+const BLOCKED_EVENT_IDS: &str = "TOON_BLOCKED_EVENT_IDS";
 
 const DEFAULT_WRITE_PORT: u16 = 3100;
 const DEFAULT_READ_PORT: u16 = 7100;
 const DEFAULT_HOST: &str = "0.0.0.0";
 const DEFAULT_DATA_DIR: &str = "./data";
+/// How long an expired event stays on disk: a day.
+const DEFAULT_REAP_GRACE_SECONDS: u64 = 86_400;
+/// How often the reaper sweeps: hourly.
+const DEFAULT_REAP_INTERVAL_SECONDS: u64 = 3_600;
 
 /// The database file inside the data directory: the TypeScript relay's name.
 const DATABASE_FILE: &str = "events.db";
@@ -45,6 +54,16 @@ pub struct Config {
     pub read_port: u16,
     /// The directory that holds the database, created if it is missing.
     pub data_dir: PathBuf,
+    /// Whether expired events are left out of queries and live delivery.
+    /// On unless `TOON_ENFORCE_EXPIRATION` is exactly `false`: a typo fails
+    /// towards enforcing.
+    pub enforce_expiration: bool,
+    /// Seconds an expired event is kept before the reaper deletes it.
+    pub reap_grace_seconds: u64,
+    /// Seconds between reaper sweeps; 0 means the reaper never runs.
+    pub reap_interval_seconds: u64,
+    /// Event ids that are never stored.
+    pub blocked_event_ids: BTreeSet<String>,
 }
 
 impl Config {
@@ -72,6 +91,12 @@ impl Config {
                 _ => Err(RelayError::InvalidPort { name, value }),
             },
         };
+        let seconds = |name: &'static str, default: u64| match non_empty(name) {
+            None => Ok(default),
+            Some(value) => value
+                .parse::<u64>()
+                .map_err(|_| RelayError::InvalidSeconds { name, value }),
+        };
         let host = |name: &str| non_empty(name).unwrap_or_else(|| DEFAULT_HOST.to_string());
 
         Ok(Self {
@@ -83,12 +108,39 @@ impl Config {
             data_dir: non_empty(DATA_DIR)
                 .unwrap_or_else(|| DEFAULT_DATA_DIR.to_string())
                 .into(),
+            enforce_expiration: lookup(ENFORCE_EXPIRATION).as_deref() != Some("false"),
+            reap_grace_seconds: seconds(REAP_GRACE, DEFAULT_REAP_GRACE_SECONDS)?,
+            reap_interval_seconds: seconds(REAP_INTERVAL, DEFAULT_REAP_INTERVAL_SECONDS)?,
+            blocked_event_ids: blocked_event_ids(&lookup(BLOCKED_EVENT_IDS).unwrap_or_default())?,
         })
     }
 
     /// Where the database is: `events.db` in the data directory.
     pub fn database_path(&self) -> PathBuf {
         self.data_dir.join(DATABASE_FILE)
+    }
+}
+
+/// The ids in a comma- or whitespace-separated list, lowercased. Any entry
+/// that is not 64 hex characters refuses the whole list.
+fn blocked_event_ids(list: &str) -> Result<BTreeSet<String>, RelayError> {
+    let mut ids = BTreeSet::new();
+    let mut rejected = Vec::new();
+    for entry in list
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|entry| !entry.is_empty())
+    {
+        let id = entry.to_ascii_lowercase();
+        if id.len() == 64 && id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            ids.insert(id);
+        } else {
+            rejected.push(entry.to_string());
+        }
+    }
+    if rejected.is_empty() {
+        Ok(ids)
+    } else {
+        Err(RelayError::InvalidBlockedEventIds { rejected })
     }
 }
 
@@ -235,6 +287,81 @@ mod tests {
         .expect("a valid port and host");
         assert_eq!(config.read_host, "127.0.0.1");
         assert_eq!(config.read_port, 7200);
+    }
+
+    #[test]
+    fn retention_defaults_enforce_expiration_and_reap_daily_grace_hourly() {
+        let config = config(&[("TOON_SECRET_KEY", &ones())]).expect("defaults");
+        assert!(config.enforce_expiration);
+        assert_eq!(config.reap_grace_seconds, 86_400);
+        assert_eq!(config.reap_interval_seconds, 3_600);
+        assert!(config.blocked_event_ids.is_empty());
+    }
+
+    #[test]
+    fn only_the_exact_string_false_turns_enforcement_off() {
+        for (value, enforced) in [("false", false), ("False", true), ("0", true), ("", true)] {
+            let config = config(&[
+                ("TOON_SECRET_KEY", &ones()),
+                ("TOON_ENFORCE_EXPIRATION", value),
+            ])
+            .expect("any value is accepted");
+            assert_eq!(config.enforce_expiration, enforced, "{value:?}");
+        }
+    }
+
+    #[test]
+    fn zero_is_a_valid_grace_and_interval_and_a_bad_number_is_refused_by_name() {
+        let zero = config(&[
+            ("TOON_SECRET_KEY", &ones()),
+            ("TOON_EXPIRATION_REAP_GRACE_SECONDS", "0"),
+            ("TOON_EXPIRATION_REAP_INTERVAL_SECONDS", "0"),
+        ])
+        .expect("zero is a deliberate choice");
+        assert_eq!(zero.reap_grace_seconds, 0);
+        assert_eq!(zero.reap_interval_seconds, 0);
+
+        for name in [
+            "TOON_EXPIRATION_REAP_GRACE_SECONDS",
+            "TOON_EXPIRATION_REAP_INTERVAL_SECONDS",
+        ] {
+            for bad in ["-1", "x", "1.5"] {
+                let error = config(&[("TOON_SECRET_KEY", &ones()), (name, bad)]).expect_err("bad");
+                assert!(
+                    matches!(error, RelayError::InvalidSeconds { name: refused, .. } if refused == name)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn blocked_event_ids_are_split_lowercased_and_any_bad_entry_refuses_the_list() {
+        let upper = "AB".repeat(32);
+        let lower = "cd".repeat(32);
+        let list = format!("{upper}, {lower}\n{upper}");
+        let config = config(&[
+            ("TOON_SECRET_KEY", &ones()),
+            ("TOON_BLOCKED_EVENT_IDS", &list),
+        ])
+        .expect("two ids");
+        assert_eq!(
+            config.blocked_event_ids.into_iter().collect::<Vec<_>>(),
+            vec!["ab".repeat(32), lower.clone()]
+        );
+
+        let bad = format!("{lower},nope");
+        let error = config_error(&bad);
+        assert!(
+            matches!(error, RelayError::InvalidBlockedEventIds { rejected } if rejected == ["nope"])
+        );
+    }
+
+    fn config_error(blocked: &str) -> RelayError {
+        config(&[
+            ("TOON_SECRET_KEY", &ones()),
+            ("TOON_BLOCKED_EVENT_IDS", blocked),
+        ])
+        .expect_err("a bad entry")
     }
 
     #[test]

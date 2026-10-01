@@ -77,10 +77,19 @@ pub enum RelayError {
     TagsNotJson(serde_json::Error),
 
     /// The event is of a kind whose storage rule this build does not have
-    /// yet: replaceable, addressable, deletion or ephemeral (#195, #196,
-    /// #198). It was not stored.
+    /// yet: replaceable, addressable or ephemeral (#195, #198). It was not stored.
     #[error("events of kind {kind} are not stored by this build yet")]
     KindNotStoredYet { kind: u16 },
+
+    /// A retention setting that is not a whole number of seconds.
+    #[error("{name} must be an integer >= 0, got {value:?}")]
+    InvalidSeconds { name: &'static str, value: String },
+
+    /// `TOON_BLOCKED_EVENT_IDS` names something that is not an event id. A
+    /// blocklist that quietly skipped an entry would leave an operator
+    /// believing an event is blocked while the relay keeps serving it.
+    #[error("TOON_BLOCKED_EVENT_IDS entries must be 64-character hex event ids; rejected: {}", rejected.join(", "))]
+    InvalidBlockedEventIds { rejected: Vec<String> },
 
     /// The address this relay was told its writes are paid at is not the
     /// prefix of any route its connector publishes. Nothing is advertised.

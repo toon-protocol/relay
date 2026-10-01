@@ -65,17 +65,25 @@ pub struct Running {
     pub relay: relay::Relay,
     /// `ws://127.0.0.1:<port>` of the read side.
     pub read_url: String,
+    /// The database file the relay runs over.
+    pub database: PathBuf,
     _data: tempfile::TempDir,
 }
 
 pub async fn running() -> Running {
+    running_with(|_| None).await
+}
+
+/// [`running`] with more of the environment: `extra` answers for any setting
+/// beyond the secret key and the data directory.
+pub async fn running_with(extra: impl Fn(&str) -> Option<String>) -> Running {
     let data = tempfile::tempdir().expect("a temp dir");
     typescript_database(data.path());
     let data_dir = data.path().to_string_lossy().into_owned();
     let config = relay::Config::from_env(|name| match name {
         "TOON_SECRET_KEY" => Some("1".repeat(64)),
         "TOON_DATA_DIR" => Some(data_dir.clone()),
-        _ => None,
+        other => extra(other),
     })
     .expect("a secret key and a data directory are a complete configuration");
     let relay = relay::Relay::open(&config).expect("the TypeScript database opens");
@@ -94,6 +102,7 @@ pub async fn running() -> Running {
     Running {
         relay,
         read_url: format!("ws://{address}"),
+        database: config.database_path(),
         _data: data,
     }
 }

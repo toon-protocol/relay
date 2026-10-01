@@ -86,9 +86,16 @@ pub(crate) async fn write(State(relay): State<Relay>, headers: HeaderMap, body: 
     };
 
     match relay.store.save(&event).await {
-        Ok(Saved::New) => relay.read_side.deliver(&event),
-        // Already held, so already delivered: the connector retried.
-        Ok(Saved::Duplicate) => {}
+        Ok(Saved::New) => {
+            // Stored either way, as the row is; served only while live.
+            if relay.store.serves(event.event()) {
+                relay.read_side.deliver(&event);
+            }
+        }
+        // Already held, so already delivered: the connector retried. Or
+        // blocked, or retracted: dropped without a word to the writer, who
+        // paid and is answered as for any stored event.
+        Ok(Saved::Duplicate | Saved::Dropped) => {}
         Err(error @ RelayError::KindNotStoredYet { .. }) => {
             return refused(StatusCode::NOT_IMPLEMENTED, error.to_string());
         }
