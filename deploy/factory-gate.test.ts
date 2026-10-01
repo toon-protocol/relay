@@ -3,8 +3,9 @@
  *
  * The runner (`.sandcastle/agent-implement-issue.ts`) runs a gate itself and
  * refuses to open a PR while it is red. That only means something if the gate
- * IS `ci.yml`'s `build` job, so this reads the real workflow and fails when the
- * two stop agreeing, in either direction. It also holds the factory to the five
+ * IS `ci.yml`'s `build` job followed by its `rust-gate` job, so this reads the
+ * real workflow and fails when the two stop agreeing, in either direction. It
+ * also holds the factory to the five
  * canonical triage labels: the retired `agent:*` family, `needs:human` and
  * `tracking` are not applied by anything under `.github/` or `.sandcastle/`.
  */
@@ -17,11 +18,15 @@ import { GATE_STEPS } from '../.sandcastle/run-gate';
 
 const REPO_ROOT = resolve(import.meta.dirname, '..');
 
-function buildJobCommands(): string[] {
+function jobCommands(job: 'build' | 'rust-gate'): string[] {
   const ci = parseYaml(
     readFileSync(resolve(REPO_ROOT, '.github/workflows/ci.yml'), 'utf8')
-  ) as { jobs: { build: { steps: { run?: string }[] } } };
-  return ci.jobs.build.steps.flatMap((s) => (s.run ? [s.run] : []));
+  ) as { jobs: Record<string, { steps: { run?: string }[] }> };
+  return (ci.jobs[job]?.steps ?? []).flatMap((s) => (s.run ? [s.run] : []));
+}
+
+function buildJobCommands(): string[] {
+  return jobCommands('build');
 }
 
 function filesUnder(dir: string): string[] {
@@ -66,6 +71,34 @@ describe("the factory's gate is ci.yml's build job", () => {
           c.includes('--max-warnings')
       )
     ).toBe(true);
+  });
+});
+
+describe("the factory's gate ends with ci.yml's rust-gate job", () => {
+  it('runs the toolchain install, format check, build, test and lint CI runs', () => {
+    expect(jobCommands('rust-gate')).toEqual([
+      'rustup toolchain install',
+      'cargo fmt --all -- --check',
+      'cargo build --workspace',
+      'cargo test --workspace',
+      'cargo clippy --workspace --all-targets -- -D warnings',
+    ]);
+  });
+
+  it('runs exactly those commands, in that order, after the pnpm gate', () => {
+    const gate = GATE_STEPS.map((s) => s.command);
+    const rust = jobCommands('rust-gate');
+    expect(gate.slice(-rust.length)).toEqual(rust);
+    expect(
+      gate.slice(0, -rust.length).filter((c) => /\b(cargo|rustup)\b/.test(c))
+    ).toEqual([]);
+  });
+
+  it('gates the merge: ci-ok needs the rust-gate job', () => {
+    const ci = parseYaml(
+      readFileSync(resolve(REPO_ROOT, '.github/workflows/ci.yml'), 'utf8')
+    ) as { jobs: { 'ci-ok': { needs: string[] } } };
+    expect(ci.jobs['ci-ok'].needs).toContain('rust-gate');
   });
 });
 

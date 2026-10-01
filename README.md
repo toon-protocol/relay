@@ -394,6 +394,22 @@ Node 22 and pnpm 8.15.9. [Devbox](https://www.jetify.com/devbox/docs/installing_
 pins both to the versions CI uses — `devbox shell`, then `devbox run build`,
 `devbox run test`, `devbox run lint`.
 
+The relay is being rebuilt in Rust as a drop-in replacement for the image
+(#185). That work is the Cargo workspace beside the package (`Cargo.toml`,
+`crates/relay`), on the toolchain `rust-toolchain.toml` pins — rustup installs
+it on the first `cargo` call, and devbox provides rustup. It follows
+[`docs/rust-coding-standards.md`](docs/rust-coding-standards.md) and is gated
+by the [conformance suite](packages/conformance/README.md), which CI runs
+against both images. The Rust image is built in CI and not published; the
+TypeScript image is the one every stack runs.
+
+```bash
+cargo fmt --all -- --check
+cargo build --workspace
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
 Every user-visible change needs a changeset (`pnpm changeset`); CI refuses a PR
 without one, and merging publishes the package and moves the `:release` tags.
 The agent factory that opens many of the PRs here is described in

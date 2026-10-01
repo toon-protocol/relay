@@ -55,7 +55,8 @@ describe('relay image conformance: tracer', () => {
 
       const found = await query(relay.readWsUrl, { ids: [event.id] });
       expect(found.map((e) => e.id)).toEqual([event.id]);
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
   conformanceTest(
@@ -80,6 +81,7 @@ describe('relay image conformance: tracer', () => {
         connector_seal_key: STUB_SEAL_KEY,
         price: Number(STUB_PRICE),
       });
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 });

@@ -134,12 +134,61 @@ jobs:
           set -euo pipefail
           node --version | grep -E '^v22\.'
           pnpm --version | grep -E '^8\.15\.'
+          # rustup is the devbox package; the toolchain it resolves is
+          # rust-toolchain.toml's pin, never a version named here.
+          PINNED=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          [ -n "$PINNED" ]
+          cargo --version | grep -F "cargo $PINNED "
+          rustc --version | grep -F "rustc $PINNED "
           ASSERT
           devbox run -- bash "${RUNNER_TEMP:-/tmp}/assert-versions.sh"
           echo "✅ All devbox tools resolved at expected versions"
 
       - name: Smoke build
         run: devbox run -- bash -c "pnpm install --frozen-lockfile && pnpm build"
+
+  # The gate for the Cargo workspace (#192): the Rust relay being built beside
+  # the TypeScript package (#185). The four cargo commands are the connector's
+  # own gate, in its order (docs/rust-coding-standards.md), and they are also
+  # what the factory runs before it opens a PR (.sandcastle/run-gate.ts);
+  # deploy/factory-gate.test.ts fails the build if the two drift.
+  #
+  # Deliberately NOT part of the `build` job, whose wall clock is measured
+  # against a frozen baseline that knows nothing of a cargo build.
+  rust-gate:
+    name: Rust workspace gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache the cargo registry and the workspace target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-gate-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: |
+            rust-gate-${{ runner.os }}-
+
+      # No version here: rustup reads rust-toolchain.toml, the one pin.
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Run tests
+        run: cargo test --workspace
+
+      - name: Clippy (warnings denied)
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
   # No-op merge guard: a PR whose merge result changes zero files must not
   # merge green. connector#1008 merged green, closed its ticket and changed
@@ -220,14 +269,35 @@ jobs:
             exit 1
           }
 
-  # The black-box conformance suite (#187): the relay image is started as a
+  # The black-box conformance suite (#187): a relay image is started as a
   # container with a stub connector beside it, and only its read and write
-  # ports are spoken to. Same build as `image-build`; this job then points the
-  # suite at the result. Any image reference works, which is how a later
-  # implementation gets gated by the same suite.
+  # ports are spoken to. The same suite runs against both implementations
+  # until the TypeScript source is removed (#185).
+  #
+  # `typescript` is the image `image-build` builds and the only one published.
+  # `rust` (#192) is built here and nowhere else: it answers `GET /health` and
+  # refuses a bad identity, and every case it does not pass yet is declared
+  # `expectedFailureFor: ['rust']`, so the job is green on exactly what is
+  # built and goes red the day a marked case starts passing.
   conformance:
-    name: Conformance suite against the relay image
+    name: Conformance suite against the ${{ matrix.implementation }} relay image
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - implementation: typescript
+            dockerfile: packages/relay/Dockerfile
+            command: node dist/cli.js
+            # buildx's default scope: the layers `image-build` already caches.
+            cache-scope: buildkit
+          - implementation: rust
+            dockerfile: crates/relay/Dockerfile
+            command: relay
+            # Its own scope, or the two images evict each other's layers.
+            cache-scope: relay-rust
     steps:
       - uses: actions/checkout@v4
 
@@ -248,24 +318,46 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: packages/relay/Dockerfile
+          file: ${{ matrix.dockerfile }}
           push: false
           load: true
           tags: relay:conformance
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.cache-scope }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.cache-scope }}
+
+      # What a stack relies on without asking: the files already in a /data
+      # volume belong to uid 1000, and compose healthchecks call `wget`.
+      - name: It runs as uid 1000 and carries wget
+        run: |
+          set -euo pipefail
+          IMAGE_UID=$(docker run --rm --entrypoint id relay:conformance -u)
+          echo "uid=$IMAGE_UID"
+          [ "$IMAGE_UID" = "1000" ] || {
+            echo "::error::the image runs as uid $IMAGE_UID, not 1000"
+            exit 1
+          }
+          docker run --rm --entrypoint sh relay:conformance -c 'command -v wget'
 
       - name: Run the suite against the image
         env:
           CONFORMANCE_IMAGE: relay:conformance
-          CONFORMANCE_IMPL: typescript
+          CONFORMANCE_IMPL: ${{ matrix.implementation }}
+          CONFORMANCE_COMMAND: ${{ matrix.command }}
         run: pnpm --filter @toon-protocol/relay-conformance conformance
 
   ci-ok:
     name: CI OK
     runs-on: ubuntu-latest
     needs:
-      [build, devbox-validate, no-op-merge, changeset, image-build, conformance]
+      [
+        build,
+        rust-gate,
+        devbox-validate,
+        no-op-merge,
+        changeset,
+        image-build,
+        conformance,
+      ]
     if: always()
     steps:
       # Fleet-wide aggregate required check (toon-meta#279): this job is the

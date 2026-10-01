@@ -7,7 +7,11 @@ import {
   type RunningRelay,
 } from './harness/relay-container.js';
 import { getDocument, waitForEdge } from './harness/nip11.js';
-import { conformanceTest, imageUnderTest } from './implementation.js';
+import {
+  conformanceTest,
+  imageUnderTest,
+  type ConformanceTestOptions,
+} from './implementation.js';
 import { getPublicKey } from 'nostr-tools/pure';
 import { STUB_ILP_ADDRESS, STUB_PRICE } from './harness/stub-connector.js';
 
@@ -33,20 +37,32 @@ describe('relay image conformance: a connector that is down at start', () => {
         ilp_address: STUB_ILP_ADDRESS,
         price: Number(STUB_PRICE),
       });
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 });
 
 describe('relay image conformance: settings the relay refuses to start with', () => {
   const key = DEFAULT_SECRET_KEY;
-  const refused: [string, { env?: Env; args?: string[] }][] = [
+  // The Rust relay reads only its identity and its write listener so far
+  // (#192), so it refuses a bad identity and starts on everything else.
+  const notYetInRust: ConformanceTestOptions = {
+    expectedFailureFor: ['rust'],
+  };
+  const refused: [
+    string,
+    { env?: Env; args?: string[] },
+    ConformanceTestOptions?,
+  ][] = [
     [
       'an invalid port',
       { env: { TOON_SECRET_KEY: key, TOON_RELAY_PORT: 'x' } },
+      notYetInRust,
     ],
     [
       'an invalid carriage',
       { env: { TOON_SECRET_KEY: key, TOON_WRITE_CARRIAGE: 'both' } },
+      notYetInRust,
     ],
     ['an invalid secret key', { env: { TOON_SECRET_KEY: 'not-hex' } }],
     ['a missing identity', { env: {} }],
@@ -58,23 +74,30 @@ describe('relay image conformance: settings the relay refuses to start with', ()
           TOON_CONNECTOR_URL: 'http://connector.invalid/ilp',
         },
       },
+      notYetInRust,
     ],
     [
       'a malformed blocklist id',
       { env: { TOON_SECRET_KEY: key, TOON_BLOCKED_EVENT_IDS: 'zz' } },
+      notYetInRust,
     ],
     [
       'an unknown flag',
       { env: { TOON_SECRET_KEY: key }, args: ['--no-such-flag'] },
+      notYetInRust,
     ],
   ];
 
-  for (const [name, options] of refused) {
-    conformanceTest(`${name} exits non-zero with an Error: line`, async () => {
-      const exited = await runRelayToExit(imageUnderTest(), options);
-      expect(exited.code).not.toBe(0);
-      expect(exited.output).toMatch(/Error: /);
-    });
+  for (const [name, options, expectation] of refused) {
+    conformanceTest(
+      `${name} exits non-zero with an Error: line`,
+      async () => {
+        const exited = await runRelayToExit(imageUnderTest(), options);
+        expect(exited.code).not.toBe(0);
+        expect(exited.output).toMatch(/Error: /);
+      },
+      expectation
+    );
   }
 });
 
@@ -138,7 +161,8 @@ describe('relay image conformance: documented environment variables', () => {
         rateLimit: { maxRequests: 5, windowMs: 2000 },
         maxBodyBytes: 4096,
       });
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
   conformanceTest('NOSTR_SECRET_KEY alone sets the identity', async () => {
@@ -154,18 +178,24 @@ describe('relay image conformance: documented environment variables', () => {
     );
   });
 
-  conformanceTest('TOON_MNEMONIC alone sets the identity', async () => {
-    const relay = await startRelay(imageUnderTest(), {
-      env: {
-        TOON_SECRET_KEY: undefined,
-        TOON_MNEMONIC:
-          'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
-      },
-    });
-    running.push(relay);
-    const health = (await (await fetch(`${relay.writeUrl}/health`)).json()) as {
-      pubkey: string;
-    };
-    expect(health.pubkey).toMatch(/^[0-9a-f]{64}$/);
-  });
+  conformanceTest(
+    'TOON_MNEMONIC alone sets the identity',
+    async () => {
+      const relay = await startRelay(imageUnderTest(), {
+        env: {
+          TOON_SECRET_KEY: undefined,
+          TOON_MNEMONIC:
+            'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
+        },
+      });
+      running.push(relay);
+      const health = (await (
+        await fetch(`${relay.writeUrl}/health`)
+      ).json()) as {
+        pubkey: string;
+      };
+      expect(health.pubkey).toMatch(/^[0-9a-f]{64}$/);
+    },
+    { expectedFailureFor: ['rust'] }
+  );
 });

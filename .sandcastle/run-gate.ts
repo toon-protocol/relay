@@ -4,12 +4,12 @@
 // after a PR is open costs a human a round trip. So the runner runs the gate itself
 // and will not open a PR while it is red.
 //
-// The steps are the commands of ci.yml's `build` job, in the same order, so passing
-// here means what passing there means. relay's CI has no path filter, so neither does
-// this: every run pays for the whole gate. What CI does that is not a command (the
-// ESLint cache, the wall-clock guard) is left out; the lint step reads the same frozen
-// warning baseline CI reads. deploy/factory-gate.test.ts fails the build if the two
-// drift apart.
+// The steps are the commands of ci.yml's `build` job and then of its `rust-gate` job,
+// each in CI's order, so passing here means what passing there means. relay's CI has no
+// path filter, so neither does this: every run pays for the whole gate. What CI does
+// that is not a command (the caches, the wall-clock guard) is left out; the lint step
+// reads the same frozen warning baseline CI reads. deploy/factory-gate.test.ts fails
+// the build if the two drift apart.
 
 import type * as sandcastle from '@ai-hero/sandcastle';
 
@@ -37,7 +37,7 @@ export interface GateResult {
 /** Keep fed-back output useful but bounded. A full build log is megabytes. */
 const MAX_OUTPUT_CHARS = 12_000;
 
-/** ci.yml's `build` job, step for step. */
+/** ci.yml's `build` job, step for step, then its `rust-gate` job. */
 export const GATE_STEPS: readonly GateStep[] = [
   { name: 'pnpm install', command: 'pnpm install --frozen-lockfile' },
   {
@@ -49,6 +49,16 @@ export const GATE_STEPS: readonly GateStep[] = [
   { name: 'pnpm build', command: 'pnpm -r build' },
   { name: 'typecheck', command: 'pnpm typecheck' },
   { name: 'pnpm test', command: 'pnpm -r test --if-present' },
+  // The Cargo workspace (#192). The sandbox image carries rustup, not a fixed
+  // toolchain: the first step installs whatever rust-toolchain.toml pins.
+  { name: 'rust toolchain', command: 'rustup toolchain install' },
+  { name: 'cargo fmt', command: 'cargo fmt --all -- --check' },
+  { name: 'cargo build', command: 'cargo build --workspace' },
+  { name: 'cargo test', command: 'cargo test --workspace' },
+  {
+    name: 'cargo clippy',
+    command: 'cargo clippy --workspace --all-targets -- -D warnings',
+  },
 ];
 
 /**

@@ -1,0 +1,9 @@
+# The one statement of which Rust this repo builds with. rustup reads it, so
+# devbox, the factory sandbox and CI all get this toolchain without naming a
+# version of their own. The image builder cannot read it (a Dockerfile `FROM`
+# is a literal), so crates/relay/Dockerfile repeats the version and
+# deploy/rust-workspace.test.ts fails the build if the two drift.
+[toolchain]
+channel = "1.98.0"
+profile = "minimal"
+components = ["clippy", "rustfmt"]

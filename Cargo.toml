@@ -1,0 +1,26 @@
+# The Rust relay (#185), built beside the TypeScript package until the cutover.
+# Standards: docs/rust-coding-standards.md.
+[workspace]
+resolver = "3"
+members = ["crates/relay"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+
+# Inherited by every member (`[lints] workspace = true`), which
+# deploy/rust-workspace.test.ts checks. `forbid`, not `deny`: a crate cannot
+# `#[allow]` its way back out.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+http-body-util = "0.1"
+# The protocol crate of the framework #185 names, on that framework's exact pin.
+nostr = { version = "=0.45.4", default-features = false, features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tower = { version = "0.5", features = ["util"] }
