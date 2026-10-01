@@ -50,6 +50,18 @@ async fn run() -> Result<(), RelayError> {
         );
     }
     let relay = Relay::open(&config)?;
+    match &config.edge {
+        Some(connector) => println!(
+            "[relay] paid write edge: asking {} about {}",
+            connector.connector_url, connector.write_ilp_address
+        ),
+        None => println!(
+            "[relay] paid write edge: none published — set TOON_CONNECTOR_URL and \
+             TOON_WRITE_ILP_ADDRESS for a client to be able to pay this relay from its URL alone"
+        ),
+    }
+    // Asked in the background and never awaited: see `connector`.
+    let _watch = relay.watch_connector(&config);
     let write = listen(&config.write_host, config.write_port).await?;
     let read = listen(&config.read_host, config.read_port).await?;
     println!(

@@ -452,10 +452,24 @@ impl Config {
             sources.text(&CONNECTOR_URL),
             sources.text(&WRITE_ILP_ADDRESS),
         ) {
-            (Some((_, connector_url)), Some((_, write_ilp_address))) => Some(EdgeSettings {
-                connector_url,
-                write_ilp_address,
-            }),
+            (Some((_, connector_url)), Some((_, write_ilp_address))) => {
+                // Checked here, not at the first poll: a URL the relay can
+                // never ask would otherwise start a relay that advertises
+                // nothing, one log line, forever. The connector is on the
+                // relay's own network, so it is plain HTTP.
+                let asked = connector_url
+                    .parse::<hyper::Uri>()
+                    .is_ok_and(|uri| uri.scheme_str() == Some("http") && uri.authority().is_some());
+                if !asked {
+                    return Err(RelayError::InvalidConnectorUrl {
+                        value: connector_url,
+                    });
+                }
+                Some(EdgeSettings {
+                    connector_url,
+                    write_ilp_address,
+                })
+            }
             (None, None) => None,
             (Some(_), None) => {
                 return Err(RelayError::EdgeIncomplete {
@@ -971,6 +985,26 @@ mod tests {
         ])
         .expect("both unset");
         assert!(empty.edge.is_none());
+    }
+
+    #[test]
+    fn a_connector_url_the_relay_cannot_ask_refuses_the_start() {
+        for url in [
+            "connector:3000/ilp",
+            "https://connector:3000/ilp",
+            "http://",
+            "not a url",
+        ] {
+            let result = config(&[
+                ("TOON_SECRET_KEY", &ones()),
+                ("TOON_CONNECTOR_URL", url),
+                ("TOON_WRITE_ILP_ADDRESS", "g.toon.relay"),
+            ]);
+            assert!(
+                matches!(result, Err(RelayError::InvalidConnectorUrl { .. })),
+                "{url}"
+            );
+        }
     }
 
     #[test]

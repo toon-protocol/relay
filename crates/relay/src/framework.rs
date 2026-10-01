@@ -32,15 +32,9 @@ use nostr_database::{
 use nostr_sdk::local_relay::{LocalRelay, RateLimit, WritePolicy, WritePolicyResult};
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{RelayError, Store, VerifiedEvent};
-
-/// What a client that sends `EVENT` over WebSocket is told, after the
-/// `restricted: ` prefix the framework writes. It is the TypeScript relay's
-/// text for a relay that does not know its write edge; naming the edge
-/// arrives with the connector edge (#199).
-const WRITE_REFUSAL: &str = "writes require ILP payment, and this relay does not publish where \
-     — ask its operator, then see this relay's NIP-11 document (GET its URL with \
-     Accept: application/nostr+json)";
+use crate::connector::EdgeSlot;
+use crate::document::write_refusal;
+use crate::{Carriage, RelayError, Store, VerifiedEvent};
 
 type Answer<'a, T> = Pin<Box<dyn Future<Output = Result<T, DatabaseError>> + Send + 'a>>;
 
@@ -51,11 +45,15 @@ pub(crate) struct ReadSide {
 }
 
 impl ReadSide {
-    /// A read side that answers `REQ` from `store`.
-    pub(crate) fn new(store: Store) -> Self {
+    /// A read side that answers `REQ` from `store`, and refuses `EVENT`
+    /// towards the Write Edge in `edge` as it stands at the time.
+    pub(crate) fn new(store: Store, edge: EdgeSlot, write_carriage: Option<Carriage>) -> Self {
         let framework = LocalRelay::builder()
             .database(StoredEvents(store))
-            .write_policy(RefuseWrites)
+            .write_policy(RefuseWrites {
+                edge,
+                write_carriage,
+            })
             // The framework counts `EVENT`s before it asks the write policy,
             // and past its allowance answers `rate-limited` instead. Every
             // `EVENT` is refused anyway, so the count is lifted and the
@@ -88,9 +86,13 @@ impl ReadSide {
     }
 }
 
-/// The write policy: every `EVENT` a client sends is refused.
+/// The write policy: every `EVENT` a client sends is refused, with where
+/// to send it instead.
 #[derive(Debug)]
-struct RefuseWrites;
+struct RefuseWrites {
+    edge: EdgeSlot,
+    write_carriage: Option<Carriage>,
+}
 
 impl WritePolicy for RefuseWrites {
     fn admit_event<'a>(
@@ -98,9 +100,8 @@ impl WritePolicy for RefuseWrites {
         _event: &'a Event,
         _peer: &'a SocketAddr,
     ) -> Pin<Box<dyn Future<Output = WritePolicyResult> + Send + 'a>> {
-        Box::pin(async {
-            WritePolicyResult::reject(MachineReadablePrefix::Restricted, WRITE_REFUSAL)
-        })
+        let refusal = write_refusal(self.edge.current().as_deref(), self.write_carriage);
+        Box::pin(async { WritePolicyResult::reject(MachineReadablePrefix::Restricted, refusal) })
     }
 }
 

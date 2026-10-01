@@ -141,6 +141,18 @@ pub enum RelayError {
     #[error("events of kind {kind} are not stored by this build yet")]
     KindNotStoredYet { kind: u16 },
 
+    /// `TOON_CONNECTOR_URL` is not a plain `http://` URL the relay can ask.
+    #[error(
+        "TOON_CONNECTOR_URL must be an http:// URL of the connector's self-description, \
+         like http://connector:3000/ilp, not {value:?}"
+    )]
+    InvalidConnectorUrl { value: String },
+
+    /// The connector could not be asked, or did not answer with a
+    /// self-description. The relay serves without an edge and asks again.
+    #[error("{url} could not be read: {reason}")]
+    ConnectorUnreadable { url: String, reason: String },
+
     /// The address this relay was told its writes are paid at is not the
     /// prefix of any route its connector publishes. Nothing is advertised.
     #[error(

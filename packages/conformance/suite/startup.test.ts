@@ -33,8 +33,7 @@ describe('relay image conformance: a connector that is down at start', () => {
         ilp_address: STUB_ILP_ADDRESS,
         price: Number(STUB_PRICE),
       });
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 });
 
@@ -82,9 +81,8 @@ describe('relay image conformance: settings the relay refuses to start with', ()
 describe('relay image conformance: documented environment variables', () => {
   const blocked = ['aa'.repeat(32), 'bb'.repeat(32)].join(',');
 
-  // The Rust relay accepts every variable but does not serve the NIP-11
-  // document these assertions read (#199). TOON_DEV_MODE is set to false:
-  // the Rust relay refuses true, which it has no mode for (#200).
+  // TOON_DEV_MODE is set to false: the Rust relay refuses true, which it has
+  // no mode for (#200).
   conformanceTest(
     'every documented variable is accepted, and takes effect where it is visible',
     async () => {
@@ -142,8 +140,7 @@ describe('relay image conformance: documented environment variables', () => {
         rateLimit: { maxRequests: 5, windowMs: 2000 },
         maxBodyBytes: 4096,
       });
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 
   conformanceTest('NOSTR_SECRET_KEY alone sets the identity', async () => {
