@@ -1,7 +1,5 @@
 import { finalizeEvent, generateSecretKey } from 'nostr-tools/pure';
-import type { Event } from 'nostr-tools';
 import { afterAll, beforeAll, describe, expect } from 'vitest';
-import WebSocket from 'ws';
 import { startRelay, type RunningRelay } from './harness/relay-container.js';
 import {
   STUB_ILP_ADDRESS,
@@ -9,6 +7,7 @@ import {
   STUB_SEAL_KEY,
   STUB_WRITE_EDGE,
 } from './harness/stub-connector.js';
+import { query } from './harness/client.js';
 import { conformanceTest, imageUnderTest } from './implementation.js';
 
 let relay: RunningRelay;
@@ -20,29 +19,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await relay?.stop();
 });
-
-/** Send a REQ and collect events until EOSE. */
-function query(url: string, filter: Record<string, unknown>): Promise<Event[]> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
-    const events: Event[] = [];
-    const timer = setTimeout(() => {
-      ws.close();
-      reject(new Error('no EOSE'));
-    }, 10_000);
-    ws.on('error', reject);
-    ws.on('open', () => ws.send(JSON.stringify(['REQ', 'conf', filter])));
-    ws.on('message', (data) => {
-      const message = JSON.parse(String(data)) as [string, ...unknown[]];
-      if (message[0] === 'EVENT') events.push(message[2] as Event);
-      if (message[0] === 'EOSE') {
-        clearTimeout(timer);
-        ws.close();
-        resolve(events);
-      }
-    });
-  });
-}
 
 describe('relay image conformance: tracer', () => {
   conformanceTest('GET /health returns the documented body shape', async () => {
