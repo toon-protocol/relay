@@ -31,3 +31,8 @@ ordinary test.
   live delivery of stored writes, `POST /write-ephemeral`, retired paths.
 - `ephemeral-rate-limit.test.ts`: the ephemeral `429`, in its own relay so
   exhausting the limiter cannot starve the other cases.
+- `store.test.ts`: what the store keeps, replaces, deletes and expires
+  (replaceable and addressable kinds, tag filters, kind 5, NIP-40 with
+  enforcement on and off, the operator blocklist, duplicates), observed only
+  through writes and reads on the wire. Known differences between the
+  TypeScript relay and the spec are marked `expectedFailureFor: ['typescript']`.

@@ -26,7 +26,7 @@ const NO_SUCH_ID = '0'.repeat(64);
 beforeAll(async () => {
   relay = await startRelay(imageUnderTest());
   capped = await startRelay(imageUnderTest(), {
-    TOON_MAX_CONNECTIONS: String(MAX_CONNECTIONS),
+    env: { TOON_MAX_CONNECTIONS: String(MAX_CONNECTIONS) },
   });
 });
 
