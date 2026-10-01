@@ -42,8 +42,6 @@ export interface StubConnector {
   ilpUrl: string;
   /** How many `GET /ilp` requests it has answered (or would have). */
   requests(): number;
-  /** Replace the document it serves from now on. */
-  setDocument(document: IlpDocument): void;
   /** Start listening on its port; a no-op while already listening. */
   start(): Promise<void>;
   /** Stop listening; the port stays reserved so `start()` brings it back. */
@@ -69,7 +67,7 @@ export async function startStubConnector(
   advertisedHost: string,
   options: StubConnectorOptions = {}
 ): Promise<StubConnector> {
-  let document = options.document ?? ilpDocument();
+  const document = options.document ?? ilpDocument();
   let requests = 0;
   let server: Server | undefined;
 
@@ -107,9 +105,6 @@ export async function startStubConnector(
   return {
     ilpUrl: `http://${advertisedHost}:${port}/ilp`,
     requests: () => requests,
-    setDocument: (next) => {
-      document = next;
-    },
     start: async () => {
       if (server === undefined) await listen(port);
     },

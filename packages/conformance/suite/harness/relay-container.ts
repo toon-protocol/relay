@@ -170,10 +170,20 @@ export async function runRelayToExit(
 ): Promise<ExitedRelay> {
   const args = options.args ?? [];
   const command = args.length > 0 ? [...relayCommand(), ...args] : [];
+  // Named, so a relay that wrongly keeps running is removed, not leaked.
+  const name = `conformance-exit-${process.pid}-${Date.now()}`;
   try {
     const { stdout, stderr } = await run(
       'docker',
-      ['run', '--rm', ...envArgs(options.env ?? {}), image, ...command],
+      [
+        'run',
+        '--rm',
+        '--name',
+        name,
+        ...envArgs(options.env ?? {}),
+        image,
+        ...command,
+      ],
       { timeout: 60_000 }
     );
     return { code: 0, output: `${stdout}\n${stderr}` };
@@ -184,7 +194,10 @@ export async function runRelayToExit(
       stderr?: string;
       killed?: boolean;
     };
-    if (typeof failed.code !== 'number' || failed.killed) throw error;
+    if (typeof failed.code !== 'number' || failed.killed) {
+      await docker('rm', '-f', name).catch(() => undefined);
+      throw error;
+    }
     return {
       code: failed.code,
       output: `${failed.stdout ?? ''}\n${failed.stderr ?? ''}`,

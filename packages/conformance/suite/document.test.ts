@@ -9,6 +9,7 @@ import { getDocument, settledDocument, waitForEdge } from './harness/nip11.js';
 import {
   ilpDocument,
   STUB_ILP_ADDRESS,
+  STUB_PRICE,
   STUB_SEAL_KEY,
   STUB_SETTLEMENTS,
   STUB_WRITE_EDGE,
@@ -35,7 +36,7 @@ async function carriageOf(options: StartOptions): Promise<unknown> {
 }
 
 const route = (extra: Record<string, unknown> = {}) => [
-  { prefix: STUB_ILP_ADDRESS, price: '1000', ...extra },
+  { prefix: STUB_ILP_ADDRESS, price: STUB_PRICE, ...extra },
 ];
 
 describe('relay image conformance: the information document edge', () => {
@@ -51,7 +52,7 @@ describe('relay image conformance: the information document edge', () => {
         connector_url: STUB_WRITE_EDGE,
         connector_seal_key: STUB_SEAL_KEY,
         carriage: 'http',
-        price: 1000,
+        price: Number(STUB_PRICE),
         settlement: STUB_SETTLEMENTS,
       });
     }
@@ -161,7 +162,7 @@ describe('relay image conformance: the information document body', () => {
         auth_required: false,
       });
       expect(body['fees']).toEqual({
-        publication: [{ amount: 1000, unit: 'uusdc' }],
+        publication: [{ amount: Number(STUB_PRICE), unit: 'uusdc' }],
       });
       expect(body['supported_nips']).toEqual([1, 9, 11, 16, 40]);
       expect(body['software']).toEqual(expect.any(String));

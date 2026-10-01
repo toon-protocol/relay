@@ -8,8 +8,10 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['suite/**/*.test.ts'],
-    // Booting an image can include a cold start; tests themselves are quick.
-    testTimeout: 30_000,
+    // Booting an image can include a cold start, and most cases boot their
+    // own relay inside the test (up to 60s for /health, then 30s for the
+    // document), so a test must outlast the harness's own deadlines.
+    testTimeout: 120_000,
     hookTimeout: 120_000,
   },
 });
