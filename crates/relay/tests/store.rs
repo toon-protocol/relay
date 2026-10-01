@@ -264,6 +264,38 @@ async fn an_addressable_kind_keeps_the_newest_event_per_author_kind_and_d_tag() 
 }
 
 #[tokio::test]
+async fn a_held_row_whose_tags_the_nostr_crate_rejects_is_still_replaced_by_its_address() {
+    let dir = tempdir().expect("a temp dir");
+    let path = typescript_database(dir.path());
+    let author = Keys::generate();
+    let connection = Connection::open(&path).expect("the database opens");
+    connection
+        .execute(
+            "INSERT INTO events VALUES (?, ?, 30023, '', '[[],[\"d\",\"a\"]]', 1000, ?, 1, NULL)",
+            rusqlite::params![
+                "ab".repeat(32),
+                author.public_key().to_hex(),
+                "cd".repeat(64)
+            ],
+        )
+        .expect("a row");
+    drop(connection);
+
+    let store = Store::open(&path).expect("it opens");
+    let newer = signed_by(&author, 30_023, 2_000, &[&["d", "a"]]);
+    store.save(&verified(&newer)).await.expect("saved");
+    let rows: i64 = Connection::open(&path)
+        .expect("the database opens")
+        .query_row(
+            "SELECT COUNT(*) FROM events WHERE kind = 30023",
+            [],
+            |row| row.get(0),
+        )
+        .expect("counted");
+    assert_eq!(rows, 1);
+}
+
+#[tokio::test]
 async fn a_missing_d_tag_is_the_empty_d_tag() {
     let dir = tempdir().expect("a temp dir");
     let store = Store::open(&typescript_database(dir.path())).expect("it opens");

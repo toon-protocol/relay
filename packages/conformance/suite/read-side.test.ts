@@ -204,8 +204,7 @@ describe('read side: filters', () => {
           )
         ).toEqual(ids([article]));
       });
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 
   conformanceTest(

@@ -207,7 +207,8 @@ fn save(connection: &Connection, event: &Event) -> Result<Saved, RelayError> {
     let tags = serde_json::to_string(&event.tags).map_err(RelayError::TagsNotJson)?;
     let id = event.id.to_hex();
     let pubkey = event.pubkey.to_hex();
-    let created_at = event.created_at.as_secs();
+    let created_at = whole_seconds(event.created_at.as_secs());
+    let address = d_value(&event.tags);
 
     // The read and the write are one transaction. The connection is behind a
     // mutex, so no other writer in this process can read the old row between.
@@ -223,14 +224,14 @@ fn save(connection: &Connection, event: &Event) -> Result<Saved, RelayError> {
             let held_id: String = row.get(0)?;
             let held_at: i64 = row.get(1)?;
             let held_tags: String = row.get(2)?;
-            if rule == Rule::Addressable && !same_address(&held_tags, d_value(&event.tags)) {
+            if rule == Rule::Addressable && !same_address(&held_tags, address) {
                 continue;
             }
             if held_id == id {
                 return Ok(Saved::Duplicate);
             }
             // The newer event wins; on a tie, the lower id.
-            let held_wins = match held_at.cmp(&i64::try_from(created_at).unwrap_or(i64::MAX)) {
+            let held_wins = match held_at.cmp(&created_at) {
                 std::cmp::Ordering::Greater => true,
                 std::cmp::Ordering::Equal => held_id < id,
                 std::cmp::Ordering::Less => false,
@@ -255,7 +256,7 @@ fn save(connection: &Connection, event: &Event) -> Result<Saved, RelayError> {
             kind,
             event.content,
             tags,
-            seconds(created_at),
+            created_at,
             event.sig.to_string(),
             seconds(unix_seconds()),
             expiration(&event.tags).map(seconds),
@@ -269,10 +270,24 @@ fn save(connection: &Connection, event: &Event) -> Result<Saved, RelayError> {
     })
 }
 
-/// Whether a stored row's tags carry exactly `d` as their `d` tag value. Text
-/// that is not tags is no address.
+/// Whether a stored row's tags carry exactly `d` as their `d` tag value, read
+/// as the TypeScript relay reads them: the first tag whose name is `d`, its
+/// value or empty. The row is read as plain JSON, not as nostr tags, so a row
+/// the TypeScript relay stored with a tag the nostr crate rejects (an empty
+/// one, say) still has its address. Text that is not a JSON array is no
+/// address.
 fn same_address(stored_tags: &str, d: &str) -> bool {
-    serde_json::from_str::<Tags>(stored_tags).is_ok_and(|tags| d_value(&tags) == d)
+    let Ok(tags) = serde_json::from_str::<Vec<serde_json::Value>>(stored_tags) else {
+        return false;
+    };
+    let held = tags
+        .iter()
+        .filter_map(serde_json::Value::as_array)
+        .find(|tag| tag.first().and_then(serde_json::Value::as_str) == Some("d"))
+        .map_or("", |tag| {
+            tag.get(1).and_then(serde_json::Value::as_str).unwrap_or("")
+        });
+    held == d
 }
 
 /// The event's NIP-40 expiration as the TypeScript relay reads it: the value
@@ -385,5 +400,10 @@ fn placeholders(count: usize) -> String {
 }
 
 fn seconds(timestamp: u64) -> Value {
-    Value::Integer(i64::try_from(timestamp).unwrap_or(i64::MAX))
+    Value::Integer(whole_seconds(timestamp))
+}
+
+/// A timestamp as SQLite's integer holds it, clamped at the largest it can.
+fn whole_seconds(timestamp: u64) -> i64 {
+    i64::try_from(timestamp).unwrap_or(i64::MAX)
 }
