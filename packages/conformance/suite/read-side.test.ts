@@ -204,8 +204,7 @@ describe('read side: filters', () => {
           )
         ).toEqual(ids([article]));
       });
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 
   conformanceTest(
@@ -376,8 +375,7 @@ describe('read side: EVENT over WebSocket', () => {
       await withClient(async (client) => {
         expect(await client.req('stored', { ids: [event.id] })).toEqual([]);
       });
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 });
 

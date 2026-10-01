@@ -7,24 +7,31 @@
 //! [`Store::save`] takes a [`VerifiedEvent`] and nothing else: that is the one
 //! way an event reaches the file.
 //!
-//! This is the spike's store (#193). It keeps regular events and answers
-//! filters. Replacement (#195) and deletion (#196) are not built, so the
-//! kinds they govern are refused rather than stored under the wrong rule.
+//! It keeps regular events, replaces replaceable and addressable ones,
+//! applies deletion requests, and answers filters. Ephemeral kinds (#198) are
+//! never kept: the write side delivers them without asking the store, which
+//! refuses them rather than store them under the wrong rule.
 //!
-//! What it does not do yet, and a reader should not assume: it does not
-//! consult the tombstone tables or the operator blocklist before saving, so a
-//! regular event its author deleted through the TypeScript relay would be
-//! admitted again; and it does not leave expired events out of a query
-//! (#196). It writes `expires_at`, because the row must be the one the
-//! TypeScript relay would write.
+//! Retention (#196) is the store's, as the TypeScript store's is:
+//!
+//! - A kind 5 retracts the author's own events, by id and by address, and
+//!   leaves a tombstone in `deleted_events` / `deleted_addresses`, so
+//!   publishing the event again does not bring it back. It is then stored
+//!   like any regular event.
+//! - An id on the operator's blocklist is dropped silently, and swept from
+//!   the file when the store opens.
+//! - With expiration enforced, a query leaves out an event whose
+//!   `expires_at` has passed, and [`Store::reap_expired`] deletes the ones
+//!   that expired longer ago than a grace period.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use nostr::event::{Event, Tags};
 use nostr::filter::Filter;
 use rusqlite::types::Value;
-use rusqlite::{Connection, params, params_from_iter};
+use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 
 use crate::clock::unix_seconds;
 use crate::{RelayError, VerifiedEvent};
@@ -84,6 +91,24 @@ const HAS_TAG: &str = "CASE WHEN json_valid(events.tags) THEN EXISTS (\
 /// tag: JavaScript's `Number.MAX_SAFE_INTEGER`.
 const MAX_EXPIRATION: u64 = (1 << 53) - 1;
 
+/// The operator's retention settings, which the store enforces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Retention {
+    /// Leave events past their NIP-40 expiration out of every answer.
+    pub enforce_expiration: bool,
+    /// Event ids (64 lowercase hex characters) that are never stored.
+    pub blocked_event_ids: BTreeSet<String>,
+}
+
+impl Default for Retention {
+    fn default() -> Self {
+        Self {
+            enforce_expiration: true,
+            blocked_event_ids: BTreeSet::new(),
+        }
+    }
+}
+
 /// What [`Store::save`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Saved {
@@ -91,6 +116,12 @@ pub enum Saved {
     New,
     /// The event was already held; nothing was written.
     Duplicate,
+    /// A held event of the same kind, author (and `d` tag, if addressable)
+    /// is newer, or as new and lower by id; nothing was written.
+    Superseded,
+    /// The event is on the operator's blocklist, or its author has retracted
+    /// it: nothing was written, and the writer is told nothing of it.
+    Dropped,
 }
 
 /// The event store over one SQLite file. Cheap to clone: every clone is the
@@ -98,12 +129,20 @@ pub enum Saved {
 #[derive(Debug, Clone)]
 pub struct Store {
     connection: Arc<Mutex<Connection>>,
+    retention: Arc<Retention>,
 }
 
 impl Store {
     /// Open the database at `path`, creating the file and the schema if they
     /// are not there. An existing database is opened as it is.
     pub fn open(path: &Path) -> Result<Self, RelayError> {
+        Self::open_with(path, Retention::default())
+    }
+
+    /// [`Store::open`] under the operator's retention settings. Blocked ids
+    /// the file already holds are deleted now: refusing them on arrival
+    /// helps only with events that have not arrived yet.
+    pub fn open_with(path: &Path, retention: Retention) -> Result<Self, RelayError> {
         let open = || {
             let connection = Connection::open(path)?;
             // The TypeScript relay's journal settings (connector#685): a
@@ -115,6 +154,11 @@ impl Store {
             // not on the first write.
             connection.prepare(INSERT)?;
             connection.prepare(SELECT)?;
+            let mut purge = connection.prepare("DELETE FROM events WHERE id = ?")?;
+            for id in &retention.blocked_event_ids {
+                purge.execute([id])?;
+            }
+            drop(purge);
             Ok(connection)
         };
         let connection = open().map_err(|source| RelayError::StoreOpen {
@@ -123,23 +167,50 @@ impl Store {
         })?;
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
+            retention: Arc::new(retention),
         })
     }
 
     /// Save a verified event.
     ///
-    /// Only regular kinds are stored yet. A kind governed by a rule this
-    /// store does not have (replaceable, addressable, deletion, ephemeral) is
+    /// A replaceable or addressable kind replaces the event it supersedes in
+    /// the same transaction, or is [`Saved::Superseded`]. A deletion request
+    /// (kind 5) is stored and retracts what it names. An ephemeral kind is
     /// [`RelayError::KindNotStoredYet`] and nothing is written.
     pub async fn save(&self, event: &VerifiedEvent) -> Result<Saved, RelayError> {
         let event = event.clone();
-        self.blocking(move |connection| save(connection, event.event()))
+        let retention = Arc::clone(&self.retention);
+        self.blocking(move |connection| save(connection, &retention, event.event()))
             .await
+    }
+
+    /// Whether `event` is one this store would serve now: false only for an
+    /// expired event while expiration is enforced. Live delivery asks it, so
+    /// a subscriber is not sent what a query would leave out.
+    pub fn serves(&self, event: &Event) -> bool {
+        !self.retention.enforce_expiration
+            || expiration(&event.tags).is_none_or(|at| at > unix_seconds())
+    }
+
+    /// Delete the events that expired more than `grace` seconds ago, and say
+    /// how many. The grace period is the safety net for enforcement itself:
+    /// serving already leaves expired events out, so what the reaper deletes
+    /// is only what nothing would have served anyway.
+    pub async fn reap_expired(&self, grace: u64) -> Result<usize, RelayError> {
+        self.blocking(move |connection| {
+            let before = seconds(unix_seconds().saturating_sub(grace));
+            Ok(connection.execute(
+                "DELETE FROM events WHERE expires_at IS NOT NULL AND expires_at <= ?",
+                [before],
+            )?)
+        })
+        .await
     }
 
     /// The stored events matching `filter`, newest first, at most its `limit`.
     pub async fn query(&self, filter: Filter) -> Result<Vec<Event>, RelayError> {
-        self.blocking(move |connection| query(connection, &filter))
+        let enforce_expiration = self.retention.enforce_expiration;
+        self.blocking(move |connection| query(connection, &filter, enforce_expiration))
             .await
     }
 
@@ -162,26 +233,115 @@ impl Store {
     }
 }
 
-fn save(connection: &Connection, event: &Event) -> Result<Saved, RelayError> {
+/// How a kind is kept. The ranges are #185's, not the protocol crate's,
+/// which also calls kind 41 replaceable and classifies 10032-10099 as
+/// replaceable where this relay keys them by `d` tag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Rule {
+    /// One row per event.
+    Regular,
+    /// One row per author and kind.
+    Replaceable,
+    /// One row per author, kind and `d` tag.
+    Addressable,
+    /// A NIP-09 deletion request: one row per event, and it retracts what it
+    /// names.
+    Deletion,
+    /// Never stored: the write side delivers an ephemeral event and keeps
+    /// nothing (#198).
+    Ephemeral,
+}
+
+fn rule(kind: u16) -> Rule {
+    match kind {
+        5 => Rule::Deletion,
+        20_000..=29_999 => Rule::Ephemeral,
+        10_032..=10_099 | 30_000..=39_999 => Rule::Addressable,
+        0 | 3 | 10_000..=19_999 => Rule::Replaceable,
+        _ => Rule::Regular,
+    }
+}
+
+fn save(
+    connection: &Connection,
+    retention: &Retention,
+    event: &Event,
+) -> Result<Saved, RelayError> {
     let kind = event.kind.as_u16();
-    if !is_regular(kind) {
+    let rule = rule(kind);
+    if rule == Rule::Ephemeral {
         return Err(RelayError::KindNotStoredYet { kind });
     }
+    if retention.blocked_event_ids.contains(&event.id.to_hex()) {
+        return Ok(Saved::Dropped);
+    }
     let tags = serde_json::to_string(&event.tags).map_err(RelayError::TagsNotJson)?;
-    let inserted = connection.execute(
+    let id = event.id.to_hex();
+    let pubkey = event.pubkey.to_hex();
+    let created_at = seconds_i64(event.created_at.as_secs());
+    let address = d_tag(&event.tags);
+
+    // The retraction, the replacement and the insert are one transaction: a
+    // deletion that failed half way must not leave its tombstones without
+    // its effect. The connection is behind a mutex, so no other writer in
+    // this process can read the old row between.
+    let transaction = connection.unchecked_transaction()?;
+    if is_retracted(&transaction, event)? {
+        return Ok(Saved::Dropped);
+    }
+    if rule == Rule::Deletion {
+        apply_deletion(&transaction, event)?;
+    }
+    if matches!(rule, Rule::Replaceable | Rule::Addressable) {
+        let mut statement = transaction.prepare_cached(
+            "SELECT id, created_at, tags FROM events WHERE pubkey = ? AND kind = ?",
+        )?;
+        let mut rows = statement.query(params![pubkey, kind])?;
+        let mut held: Vec<String> = Vec::new();
+        let mut superseded = false;
+        while let Some(row) = rows.next()? {
+            let held_id: String = row.get(0)?;
+            let held_at: i64 = row.get(1)?;
+            let held_tags: String = row.get(2)?;
+            if rule == Rule::Addressable && !same_address(&held_tags, address) {
+                continue;
+            }
+            if held_id == id {
+                return Ok(Saved::Duplicate);
+            }
+            // The newer event wins; on a tie, the lower id.
+            let held_wins = match held_at.cmp(&created_at) {
+                std::cmp::Ordering::Greater => true,
+                std::cmp::Ordering::Equal => held_id < id,
+                std::cmp::Ordering::Less => false,
+            };
+            superseded |= held_wins;
+            held.push(held_id);
+        }
+        drop(rows);
+        drop(statement);
+        if superseded {
+            return Ok(Saved::Superseded);
+        }
+        for held_id in held {
+            transaction.execute("DELETE FROM events WHERE id = ?", params![held_id])?;
+        }
+    }
+    let inserted = transaction.execute(
         INSERT,
         params![
-            event.id.to_hex(),
-            event.pubkey.to_hex(),
+            id,
+            pubkey,
             kind,
             event.content,
             tags,
-            seconds(event.created_at.as_secs()),
+            created_at,
             event.sig.to_string(),
             seconds(unix_seconds()),
             expiration(&event.tags).map(seconds),
         ],
     )?;
+    transaction.commit()?;
     Ok(if inserted == 0 {
         Saved::Duplicate
     } else {
@@ -189,15 +349,165 @@ fn save(connection: &Connection, event: &Event) -> Result<Saved, RelayError> {
     })
 }
 
-/// Whether `kind` is stored as one row per event with no other rule. The
-/// ranges are #185's, not the protocol crate's, which also calls kind 41
-/// replaceable.
-fn is_regular(kind: u16) -> bool {
-    let replaceable = kind == 0 || kind == 3 || (10_000..20_000).contains(&kind);
-    let ephemeral = (20_000..30_000).contains(&kind);
-    let addressable = (30_000..40_000).contains(&kind);
-    let deletion = kind == 5;
-    !(replaceable || ephemeral || addressable || deletion)
+/// Whether a stored row's tags carry exactly `d` as their `d` tag value, read
+/// as the TypeScript relay reads them: the first tag whose name is `d`, its
+/// value or empty. The row is read as plain JSON, not as nostr tags, so a row
+/// the TypeScript relay stored with a tag the nostr crate rejects (an empty
+/// one, say) still has its address. Text that is not a JSON array is no
+/// address.
+fn same_address(stored_tags: &str, d: &str) -> bool {
+    let Ok(tags) = serde_json::from_str::<Vec<serde_json::Value>>(stored_tags) else {
+        return false;
+    };
+    let held = tags
+        .iter()
+        .filter_map(serde_json::Value::as_array)
+        .find(|tag| tag.first().and_then(serde_json::Value::as_str) == Some("d"))
+        .map_or("", |tag| {
+            tag.get(1).and_then(serde_json::Value::as_str).unwrap_or("")
+        });
+    held == d
+}
+
+/// The `d` tag value an event is addressed by: the first `d` tag's, empty
+/// when there is none.
+fn d_tag(tags: &Tags) -> &str {
+    tags.iter()
+        .find(|tag| tag.kind() == "d")
+        .and_then(|tag| tag.content())
+        .unwrap_or("")
+}
+
+/// Whether the event's author has retracted it: its id is tombstoned under
+/// the author's key, or its address is tombstoned at or after its time.
+fn is_retracted(connection: &Connection, event: &Event) -> Result<bool, RelayError> {
+    let by_id: Option<String> = connection
+        .query_row(
+            "SELECT pubkey FROM deleted_events WHERE event_id = ?",
+            [event.id.to_hex()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if by_id.is_some_and(|pubkey| pubkey == event.pubkey.to_hex()) {
+        return Ok(true);
+    }
+    let coordinate = format!(
+        "{}:{}:{}",
+        event.kind.as_u16(),
+        event.pubkey.to_hex(),
+        d_tag(&event.tags)
+    );
+    let deleted_at: Option<i64> = connection
+        .query_row(
+            "SELECT deleted_at FROM deleted_addresses WHERE coordinate = ?",
+            [coordinate],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(deleted_at.is_some_and(|at| seconds_i64(event.created_at.as_secs()) <= at))
+}
+
+/// Retract what the kind 5 `deletion` names, and only what its own author
+/// published, no later than the deletion. The tombstone for an id is written
+/// whether or not the event has arrived; [`is_retracted`] checks the author
+/// when it does.
+fn apply_deletion(connection: &Connection, deletion: &Event) -> Result<(), RelayError> {
+    let author = deletion.pubkey.to_hex();
+    let at = seconds_i64(deletion.created_at.as_secs());
+    let mut ids = BTreeSet::new();
+    let mut addresses = BTreeSet::new();
+    for tag in deletion.tags.iter() {
+        let Some(value) = tag.content() else { continue };
+        match tag.kind().to_string().as_str() {
+            "e" if is_hex_64(value) => {
+                ids.insert(value.to_string());
+            }
+            "a" => {
+                if let Some(address) = Address::parse(value) {
+                    addresses.insert(address);
+                }
+            }
+            _ => {}
+        }
+    }
+    for id in ids {
+        connection.execute(
+            "INSERT OR REPLACE INTO deleted_events (event_id, pubkey, deleted_at) VALUES (?, ?, ?)",
+            params![id, author, at],
+        )?;
+        connection.execute(
+            "DELETE FROM events WHERE id = ? AND pubkey = ? AND created_at <= ?",
+            params![id, author, at],
+        )?;
+    }
+    for address in addresses {
+        // An address in somebody else's name is ignored outright.
+        if address.pubkey != author {
+            continue;
+        }
+        // A later request must not lower an earlier one's watermark.
+        connection.execute(
+            "INSERT INTO deleted_addresses (coordinate, deleted_at) VALUES (?, ?) \
+             ON CONFLICT(coordinate) DO UPDATE SET deleted_at = MAX(deleted_at, excluded.deleted_at)",
+            params![address.coordinate(), at],
+        )?;
+        let mut held = connection
+            .prepare("SELECT id, created_at, tags FROM events WHERE pubkey = ? AND kind = ?")?;
+        let mut rows = held.query(params![address.pubkey, address.kind])?;
+        let mut doomed = Vec::new();
+        while let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            let created_at: i64 = row.get(1)?;
+            let tags: String = row.get(2)?;
+            let Ok(tags) = serde_json::from_str::<Tags>(&tags) else {
+                continue;
+            };
+            if created_at <= at && d_tag(&tags) == address.identifier {
+                doomed.push(id);
+            }
+        }
+        for id in doomed {
+            connection.execute("DELETE FROM events WHERE id = ?", [id])?;
+        }
+    }
+    Ok(())
+}
+
+/// An `a` tag's coordinate, `<kind>:<pubkey>:<identifier>`. The identifier
+/// may itself hold `:`.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Address {
+    kind: u16,
+    pubkey: String,
+    identifier: String,
+}
+
+impl Address {
+    fn parse(value: &str) -> Option<Self> {
+        let (kind, rest) = value.split_once(':')?;
+        let (pubkey, identifier) = rest.split_once(':')?;
+        if kind.is_empty() || !kind.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        Some(Self {
+            // A kind past 65535 names nothing an event can have.
+            kind: kind.parse().ok()?,
+            pubkey: is_hex_64(pubkey).then(|| pubkey.to_string())?,
+            identifier: identifier.to_string(),
+        })
+    }
+
+    /// The coordinate as the tombstone table keys it.
+    fn coordinate(&self) -> String {
+        format!("{}:{}:{}", self.kind, self.pubkey, self.identifier)
+    }
+}
+
+fn is_hex_64(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 /// The event's NIP-40 expiration as the TypeScript relay reads it: the value
@@ -210,9 +520,20 @@ fn expiration(tags: &Tags) -> Option<u64> {
         .find_map(|value| value.parse::<u64>().ok().filter(|at| *at <= MAX_EXPIRATION))
 }
 
-fn query(connection: &Connection, filter: &Filter) -> Result<Vec<Event>, RelayError> {
+fn query(
+    connection: &Connection,
+    filter: &Filter,
+    enforce_expiration: bool,
+) -> Result<Vec<Event>, RelayError> {
     let mut conditions: Vec<String> = Vec::new();
     let mut parameters: Vec<Value> = Vec::new();
+
+    // A condition, not a post-filter: the filter's `limit` counts only the
+    // events actually served.
+    if enforce_expiration {
+        conditions.push("(expires_at IS NULL OR expires_at > ?)".to_string());
+        parameters.push(seconds(unix_seconds()));
+    }
 
     let mut one_of = |column: &str, values: Vec<Value>| {
         conditions.push(format!("{column} IN ({})", placeholders(values.len())));
@@ -309,6 +630,10 @@ fn placeholders(count: usize) -> String {
     vec!["?"; count].join(", ")
 }
 
+fn seconds_i64(timestamp: u64) -> i64 {
+    i64::try_from(timestamp).unwrap_or(i64::MAX)
+}
+
 fn seconds(timestamp: u64) -> Value {
-    Value::Integer(i64::try_from(timestamp).unwrap_or(i64::MAX))
+    Value::Integer(seconds_i64(timestamp))
 }

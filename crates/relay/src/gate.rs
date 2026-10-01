@@ -25,7 +25,6 @@
 
 use std::collections::HashSet;
 use std::future::Future;
-use std::sync::{Arc, PoisonError, RwLock};
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -35,8 +34,9 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::protocol::{CloseFrame, Role, WebSocketConfig};
 
-use crate::document::CONTENT_TYPE;
-use crate::{RelayError, WriteEdge};
+use crate::connector::EdgeSlot;
+use crate::document::write_refusal;
+use crate::{Carriage, RelayError};
 
 /// The most subscriptions one connection holds. Replacing one is not another.
 pub(crate) const MAX_SUBSCRIPTIONS: usize = 20;
@@ -51,42 +51,23 @@ const PIPE_BUFFER: usize = 64 * 1024;
 /// The reason a connection past the cap is closed with.
 const CLOSE_REASON_FULL: &str = "max connections reached";
 
-/// What the relay knows of its Write Edge, shared with the document. Empty
-/// until the connector has been read.
-pub(crate) type KnownEdge = Arc<RwLock<Option<WriteEdge>>>;
+/// What an `EVENT`'s refusal is written from: the Write Edge as it stands when
+/// the `EVENT` arrives, and the carriage the operator states where the
+/// connector states none.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Refusal {
+    pub(crate) edge: EdgeSlot,
+    pub(crate) write_carriage: Option<Carriage>,
+}
 
-/// What a client that sends `EVENT` over WebSocket is told: the TypeScript
-/// relay's words, for a relay that does and does not know its Write Edge.
-///
-/// The sealing key is left to the document: it is too long for an `OK`
-/// message a client may be logging a line at a time. A free route still
-/// refuses the WebSocket write (the lane is the restriction, not the price),
-/// so it must not claim payment is required.
-pub(crate) fn write_refusal(edge: Option<&WriteEdge>) -> String {
-    let document =
-        format!("this relay's NIP-11 document (GET its URL with Accept: {CONTENT_TYPE})");
-    let Some(edge) = edge else {
-        return format!(
-            "restricted: writes require ILP payment, and this relay does not publish where \
-             — ask its operator, then see {document}"
-        );
-    };
-    let carriage = edge.carriage().map_or(String::new(), |carriage| {
-        format!(" over {}", carriage.as_str())
-    });
-    let address = edge.ilp_address();
-    let url = edge.connector_url();
-    let lead = match edge.price() {
-        0 => format!(
-            "restricted: writes arrive as TOON packets and this one is free \
-             — send this event to {address} through {url}{carriage}"
-        ),
-        price => format!(
-            "restricted: writes require ILP payment — send this event to {address} \
-             through {url}{carriage}, {price} uusdc per write"
-        ),
-    };
-    format!("{lead}; the sealing key is in {document}")
+impl Refusal {
+    /// What a client that sends `EVENT` over WebSocket is told: the
+    /// TypeScript relay's words, for a relay that does and does not know its
+    /// Write Edge.
+    fn words(&self) -> String {
+        let refusal = write_refusal(self.edge.current().as_deref(), self.write_carriage);
+        format!("restricted: {refusal}")
+    }
 }
 
 /// What the gate does with one message from a client.
@@ -104,7 +85,7 @@ pub(crate) enum Verdict {
 #[derive(Debug, Default)]
 pub(crate) struct Gate {
     open: HashSet<String>,
-    edge: KnownEdge,
+    refusal: Refusal,
 }
 
 impl Gate {
@@ -151,8 +132,7 @@ impl Gate {
                     .and_then(|event| event.get("id"))
                     .cloned()
                     .unwrap_or(Value::Null);
-                let edge = self.edge.read().unwrap_or_else(PoisonError::into_inner);
-                Verdict::Answer(json!(["OK", id, false, write_refusal(edge.as_ref())]).to_string())
+                Verdict::Answer(json!(["OK", id, false, self.refusal.words()]).to_string())
             }
             _ => Verdict::Forward(text.to_string()),
         }
@@ -209,10 +189,10 @@ where
 
 /// Serve `client`, a connection already upgraded to WebSocket, until either
 /// side closes it. `framework` is handed the far end of the pipe the framework
-/// speaks on; `edge` is what an `EVENT`'s refusal names.
+/// speaks on; `refusal` is what an `EVENT` is answered with.
 pub(crate) async fn through<S, F, Fut>(
     client: S,
-    edge: KnownEdge,
+    refusal: Refusal,
     framework: F,
 ) -> Result<(), RelayError>
 where
@@ -229,7 +209,7 @@ where
     let mut inner = WebSocketStream::from_raw_socket(near, Role::Client, Some(config)).await;
     let mut gate = Gate {
         open: HashSet::new(),
-        edge,
+        refusal,
     };
 
     let ended = loop {
@@ -310,7 +290,7 @@ mod tests {
     #[test]
     fn every_event_is_refused_by_the_gate_whatever_it_is() {
         let mut gate = Gate::default();
-        let refusal = write_refusal(None);
+        let refusal = Refusal::default().words();
         for (text, id) in [
             (r#"["EVENT",{"id":"abc","sig":"bad"}]"#, json!("abc")),
             (

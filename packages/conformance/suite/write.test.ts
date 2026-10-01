@@ -163,43 +163,26 @@ describe('relay image conformance: POST /write-ephemeral', () => {
       } finally {
         subscription.close();
       }
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 
-  conformanceTest(
-    '400 for a kind outside the ephemeral range',
-    async () => {
-      expect((await ephemeral({ event: signedEvent(1) })).status).toBe(400);
-    },
-    { expectedFailureFor: ['rust'] }
-  );
+  conformanceTest('400 for a kind outside the ephemeral range', async () => {
+    expect((await ephemeral({ event: signedEvent(1) })).status).toBe(400);
+  });
 
-  conformanceTest(
-    '400 for a body with no event',
-    async () => {
-      expect((await ephemeral({})).status).toBe(400);
-    },
-    { expectedFailureFor: ['rust'] }
-  );
+  conformanceTest('400 for a body with no event', async () => {
+    expect((await ephemeral({})).status).toBe(400);
+  });
 
-  conformanceTest(
-    '422 for a bad signature',
-    async () => {
-      const event = signedEvent(20100);
-      const bad = { ...event, sig: '0'.repeat(128) };
-      expect((await ephemeral({ event: bad })).status).toBe(422);
-    },
-    { expectedFailureFor: ['rust'] }
-  );
+  conformanceTest('422 for a bad signature', async () => {
+    const event = signedEvent(20100);
+    const bad = { ...event, sig: '0'.repeat(128) };
+    expect((await ephemeral({ event: bad })).status).toBe(422);
+  });
 
-  conformanceTest(
-    '413 for a body over the size cap',
-    async () => {
-      // Twice the relay's default 8 KiB ephemeral body cap.
-      const event = signedEvent(20100, 'x'.repeat(16 * 1024));
-      expect((await ephemeral({ event })).status).toBe(413);
-    },
-    { expectedFailureFor: ['rust'] }
-  );
+  conformanceTest('413 for a body over the size cap', async () => {
+    // Twice the relay's default 8 KiB ephemeral body cap.
+    const event = signedEvent(20100, 'x'.repeat(16 * 1024));
+    expect((await ephemeral({ event })).status).toBe(413);
+  });
 });

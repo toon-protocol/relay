@@ -200,7 +200,11 @@ async fn a_connection_past_the_cap_is_closed_with_1013() {
     use tokio_tungstenite::tungstenite::Message;
     use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
-    let running = running_with(&[("TOON_MAX_CONNECTIONS", "2")]).await;
+    let running = running_with(|name| match name {
+        "TOON_MAX_CONNECTIONS" => Some("2".to_string()),
+        _ => None,
+    })
+    .await;
     let mut held = Vec::new();
     for _ in 0..2 {
         let mut client = Client::connect(&running.read_url).await;
@@ -248,7 +252,8 @@ async fn the_document_states_the_limits_and_does_not_advertise_auth() {
     assert_eq!(document["limitation"]["max_subscriptions"], 20);
     assert_eq!(document["limitation"]["max_filters"], 10);
     assert_eq!(document["limitation"]["auth_required"], false);
-    assert_eq!(document["supported_nips"], json!([1, 9, 11, 16]));
+    // 40 is claimed while expiration is enforced, which it is by default.
+    assert_eq!(document["supported_nips"], json!([1, 9, 11, 16, 40]));
 }
 
 /// A filter nothing matches, which a subscription can hold without the

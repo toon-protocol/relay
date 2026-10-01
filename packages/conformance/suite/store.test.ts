@@ -58,8 +58,7 @@ describe('relay image conformance: replaceable kinds', () => {
       expect(
         await storedIds(relay, { authors: [pubkey], kinds: [kind] })
       ).toEqual(ids(newest));
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 
   conformanceTestEach(
@@ -77,8 +76,7 @@ describe('relay image conformance: replaceable kinds', () => {
       expect(
         await storedIds(relay, { authors: [pubkey], kinds: [10002] })
       ).toEqual(ids(lower));
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 
   conformanceTestEach(
@@ -95,7 +93,7 @@ describe('relay image conformance: replaceable kinds', () => {
         await storedIds(relay, { authors: [pubkey], kinds: [kind] })
       ).toEqual(ids(newer));
     },
-    { expectedFailureFor: ['typescript', 'rust'] }
+    { expectedFailureFor: ['typescript'] }
   );
 });
 
@@ -127,29 +125,24 @@ describe('relay image conformance: addressable kinds', () => {
       expect(
         await storedIds(relay, { authors: [pubkey], kinds: [kind] })
       ).toEqual(ids(aNew, b));
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 
-  conformanceTest(
-    'a missing d tag is the empty d tag',
-    async () => {
-      const { secretKey, pubkey } = author();
-      const t = now();
-      const bare = sign(secretKey, { kind: 30023, created_at: t - 10 });
-      const empty = sign(secretKey, {
-        kind: 30023,
-        created_at: t,
-        tags: [['d', '']],
-      });
-      await publishOk(relay, bare);
-      await publishOk(relay, empty);
-      expect(
-        await storedIds(relay, { authors: [pubkey], kinds: [30023] })
-      ).toEqual(ids(empty));
-    },
-    { expectedFailureFor: ['rust'] }
-  );
+  conformanceTest('a missing d tag is the empty d tag', async () => {
+    const { secretKey, pubkey } = author();
+    const t = now();
+    const bare = sign(secretKey, { kind: 30023, created_at: t - 10 });
+    const empty = sign(secretKey, {
+      kind: 30023,
+      created_at: t,
+      tags: [['d', '']],
+    });
+    await publishOk(relay, bare);
+    await publishOk(relay, empty);
+    expect(
+      await storedIds(relay, { authors: [pubkey], kinds: [30023] })
+    ).toEqual(ids(empty));
+  });
 
   conformanceTest(
     'a kind just outside 10032-10099 is replaceable, not addressable',
@@ -171,8 +164,7 @@ describe('relay image conformance: addressable kinds', () => {
       expect(
         await storedIds(relay, { authors: [pubkey], kinds: [10100] })
       ).toEqual(ids(newer));
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 
   conformanceTest(
@@ -213,7 +205,7 @@ describe('relay image conformance: addressable kinds', () => {
       ).toEqual(ids(plain, underscoreNew, percent));
     },
     // relay#160: the d-tag lookup is a SQL LIKE.
-    { expectedFailureFor: ['typescript', 'rust'] }
+    { expectedFailureFor: ['typescript'] }
   );
 
   conformanceTest(
@@ -238,7 +230,7 @@ describe('relay image conformance: addressable kinds', () => {
       ).toEqual(ids(lower, upper));
     },
     // relay#160: SQLite LIKE is case-insensitive for ASCII.
-    { expectedFailureFor: ['typescript', 'rust'] }
+    { expectedFailureFor: ['typescript'] }
   );
 });
 
@@ -332,8 +324,7 @@ describe('relay image conformance: deletion (kind 5)', () => {
       expect(await storedIds(relay, { authors: [pubkey], kinds: [1] })).toEqual(
         ids(keeper)
       );
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 
   conformanceTest(
@@ -369,8 +360,7 @@ describe('relay image conformance: deletion (kind 5)', () => {
       expect(
         await storedIds(relay, { authors: [pubkey], kinds: [30023] })
       ).toEqual(ids(other));
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 
   conformanceTest(
@@ -412,8 +402,7 @@ describe('relay image conformance: deletion (kind 5)', () => {
       expect(
         await storedIds(relay, { authors: [victim.pubkey], kinds: [30023] })
       ).toEqual(ids(later));
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 });
 
@@ -462,8 +451,7 @@ describe('relay image conformance: expiration enforced', () => {
       } finally {
         subscription.close();
       }
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 });
 
@@ -480,6 +468,9 @@ describe('relay image conformance: expiration not enforced', () => {
     await lax?.stop();
   });
 
+  // The Rust relay stores the event and delivers it live, but its framework
+  // leaves an expired event out of every REQ answer whatever the store
+  // returns, with no setting to turn that off (#196).
   conformanceTest(
     'an expired event is returned and delivered',
     async () => {
@@ -534,7 +525,6 @@ describe('relay image conformance: operator blocklist', () => {
       expect(await storedIds(blocking, { authors: [pubkey] })).toEqual(
         ids(other)
       );
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 });

@@ -26,7 +26,7 @@ use std::collections::BTreeSet;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::{Arc, PoisonError};
+use std::sync::Arc;
 
 use nostr::event::{Event, EventId};
 use nostr::filter::Filter;
@@ -39,8 +39,8 @@ use nostr_sdk::local_relay::{LocalRelay, WritePolicy, WritePolicyResult};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Semaphore;
 
-use crate::gate::KnownEdge;
-use crate::{RelayError, Store, VerifiedEvent, WriteEdge, gate};
+use crate::connector::EdgeSlot;
+use crate::{Carriage, RelayError, Store, VerifiedEvent, gate};
 
 type Answer<'a, T> = Pin<Box<dyn Future<Output = Result<T, DatabaseError>> + Send + 'a>>;
 
@@ -48,15 +48,21 @@ type Answer<'a, T> = Pin<Box<dyn Future<Output = Result<T, DatabaseError>> + Sen
 #[derive(Debug, Clone)]
 pub(crate) struct ReadSide {
     framework: LocalRelay,
-    edge: KnownEdge,
+    edge: EdgeSlot,
+    write_carriage: Option<Carriage>,
     connections: Arc<Semaphore>,
 }
 
 impl ReadSide {
-    /// A read side that answers `REQ` from `store` and holds at most
+    /// A read side that answers `REQ` from `store`, refuses `EVENT` towards
+    /// the Write Edge in `edge` as it stands at the time, and holds at most
     /// `max_connections` connections at once.
-    pub(crate) fn new(store: Store, max_connections: usize) -> Self {
-        let edge = KnownEdge::default();
+    pub(crate) fn new(
+        store: Store,
+        edge: EdgeSlot,
+        write_carriage: Option<Carriage>,
+        max_connections: usize,
+    ) -> Self {
         let framework = LocalRelay::builder()
             .database(StoredEvents(store))
             .write_policy(RefuseWrites)
@@ -64,23 +70,10 @@ impl ReadSide {
         Self {
             framework,
             edge,
+            write_carriage,
             // More permits than a semaphore can hold is no cap at all.
             connections: Arc::new(Semaphore::new(max_connections.min(Semaphore::MAX_PERMITS))),
         }
-    }
-
-    /// Record the Write Edge the connector states, or `None` when it states
-    /// none: the refusal and the document name it from here on.
-    pub(crate) fn know_edge(&self, edge: Option<WriteEdge>) {
-        *self.edge.write().unwrap_or_else(PoisonError::into_inner) = edge;
-    }
-
-    /// The Write Edge the relay knows, if it knows one.
-    pub(crate) fn edge(&self) -> Option<WriteEdge> {
-        self.edge
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
     }
 
     /// Speak NIP-01 with `peer` on `stream`, a connection already upgraded to
@@ -95,7 +88,11 @@ impl ReadSide {
             return gate::refuse_full(stream).await;
         };
         let framework = self.framework.clone();
-        gate::through(stream, Arc::clone(&self.edge), move |pipe| async move {
+        let refusal = gate::Refusal {
+            edge: self.edge.clone(),
+            write_carriage: self.write_carriage,
+        };
+        gate::through(stream, refusal, move |pipe| async move {
             framework
                 .take_connection(pipe, peer)
                 .await
