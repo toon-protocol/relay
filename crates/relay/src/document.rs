@@ -12,7 +12,6 @@
 
 use serde::Serialize;
 
-use crate::config::Description;
 use crate::{Carriage, WriteEdge};
 
 /// The media type NIP-11 gives the document.
@@ -40,7 +39,9 @@ const MAX_FILTERS: u32 = 10;
 #[derive(Debug, Clone)]
 pub(crate) struct Settings {
     pub(crate) pubkey: String,
-    pub(crate) description: Description,
+    pub(crate) name: Option<String>,
+    pub(crate) description: Option<String>,
+    pub(crate) contact: Option<String>,
     pub(crate) write_carriage: Option<Carriage>,
     pub(crate) enforce_expiration: bool,
 }
@@ -110,10 +111,10 @@ impl Document {
             supported_nips.push(EXPIRATION_NIP);
         }
         Self {
-            name: settings.description.name.clone(),
-            description: settings.description.description.clone(),
+            name: settings.name.clone(),
+            description: settings.description.clone(),
             pubkey: settings.pubkey.clone(),
-            contact: settings.description.contact.clone(),
+            contact: settings.contact.clone(),
             supported_nips,
             software: SOFTWARE,
             version: env!("CARGO_PKG_VERSION"),

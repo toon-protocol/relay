@@ -40,7 +40,7 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
 use serde_json::Value;
 
-use crate::config::ConnectorConfig;
+use crate::config::EdgeSettings;
 use crate::{RelayError, WriteEdge};
 
 /// How often an unknown edge is retried.
@@ -92,7 +92,7 @@ impl Default for Intervals {
 
 /// Ask the connector for the edge until the task is aborted. Never returns
 /// and never fails: every outcome is a state of `slot`.
-pub(crate) async fn watch(connector: ConnectorConfig, intervals: Intervals, slot: EdgeSlot) {
+pub(crate) async fn watch(connector: EdgeSettings, intervals: Intervals, slot: EdgeSlot) {
     let client = Client::builder(TokioExecutor::new()).build_http();
     let mut reported: Option<String> = None;
     loop {
@@ -131,19 +131,19 @@ pub(crate) async fn watch(connector: ConnectorConfig, intervals: Intervals, slot
 
 type HttpClient = Client<HttpConnector, Empty<Bytes>>;
 
-async fn read(client: &HttpClient, connector: &ConnectorConfig) -> Result<WriteEdge, RelayError> {
+async fn read(client: &HttpClient, connector: &EdgeSettings) -> Result<WriteEdge, RelayError> {
     let unreadable = |reason: String| RelayError::ConnectorUnreadable {
-        url: connector.url.clone(),
+        url: connector.connector_url.clone(),
         reason,
     };
-    let body = tokio::time::timeout(TIMEOUT, fetch(client, &connector.url))
+    let body = tokio::time::timeout(TIMEOUT, fetch(client, &connector.connector_url))
         .await
         .map_err(|_| unreadable("it did not answer in time".to_string()))?
         .map_err(unreadable)?;
     let description = parse(&body).map_err(|reason| {
         unreadable(format!("it is not a connector self-description: {reason}"))
     })?;
-    WriteEdge::read(&connector.ilp_address, &description)
+    WriteEdge::read(&connector.write_ilp_address, &description)
 }
 
 async fn fetch(client: &HttpClient, url: &str) -> Result<Bytes, String> {
@@ -209,7 +209,6 @@ mod tests {
 
     use super::*;
     use crate::Carriage;
-    use crate::config::Description;
     use crate::document::{Document, Settings, write_refusal};
 
     const SEAL_KEY: &str = "0x04abababababababababababababababababababababababababababababababab";
@@ -245,7 +244,9 @@ mod tests {
     fn settings() -> Settings {
         Settings {
             pubkey: "ab".repeat(32),
-            description: Description::default(),
+            name: None,
+            description: None,
+            contact: None,
             write_carriage: None,
             enforce_expiration: true,
         }
@@ -326,9 +327,9 @@ mod tests {
         let address = stub(answer).await;
         let slot = EdgeSlot::default();
         let task = tokio::spawn(watch(
-            ConnectorConfig {
-                url: format!("http://{address}/ilp"),
-                ilp_address: "g.toon.relay".to_string(),
+            EdgeSettings {
+                connector_url: format!("http://{address}/ilp"),
+                write_ilp_address: "g.toon.relay".to_string(),
             },
             quickly(),
             slot.clone(),
@@ -366,9 +367,9 @@ mod tests {
         let address = stub(answer.clone()).await;
         let slot = EdgeSlot::default();
         let task = tokio::spawn(watch(
-            ConnectorConfig {
-                url: format!("http://{address}/ilp"),
-                ilp_address: "g.toon.relay".to_string(),
+            EdgeSettings {
+                connector_url: format!("http://{address}/ilp"),
+                write_ilp_address: "g.toon.relay".to_string(),
             },
             quickly(),
             slot.clone(),
@@ -391,9 +392,9 @@ mod tests {
         let address = stub(answer).await;
         let slot = EdgeSlot::default();
         let task = tokio::spawn(watch(
-            ConnectorConfig {
-                url: format!("http://{address}/ilp"),
-                ilp_address: "g.toon.elsewhere".to_string(),
+            EdgeSettings {
+                connector_url: format!("http://{address}/ilp"),
+                write_ilp_address: "g.toon.elsewhere".to_string(),
             },
             quickly(),
             slot.clone(),
@@ -402,9 +403,9 @@ mod tests {
         // read: so the other is refused for its route, not for no answer.
         let terminated = EdgeSlot::default();
         let control = tokio::spawn(watch(
-            ConnectorConfig {
-                url: format!("http://{address}/ilp"),
-                ilp_address: "g.toon.relay".to_string(),
+            EdgeSettings {
+                connector_url: format!("http://{address}/ilp"),
+                write_ilp_address: "g.toon.relay".to_string(),
             },
             quickly(),
             terminated.clone(),
@@ -424,9 +425,9 @@ mod tests {
         let client = Client::builder(TokioExecutor::new()).build_http();
         let error = read(
             &client,
-            &ConnectorConfig {
-                url: format!("http://{address}/ilp"),
-                ilp_address: "g.toon.relay".to_string(),
+            &EdgeSettings {
+                connector_url: format!("http://{address}/ilp"),
+                write_ilp_address: "g.toon.relay".to_string(),
             },
         )
         .await

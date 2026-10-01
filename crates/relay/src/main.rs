@@ -7,7 +7,7 @@
 use std::net::SocketAddr;
 use std::process::ExitCode;
 
-use relay::{Config, Relay, RelayError};
+use relay::{Config, Invocation, Relay, RelayError, USAGE};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::watch;
@@ -24,12 +24,36 @@ async fn main() -> ExitCode {
 }
 
 async fn run() -> Result<(), RelayError> {
-    let config = Config::from_env(|name| std::env::var(name).ok())?;
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    // Arguments are visible to other users in a process listing (CWE-214).
+    for flag in ["--mnemonic", "--secret-key"] {
+        if args
+            .iter()
+            .any(|arg| arg == flag || arg.starts_with(&format!("{flag}=")))
+        {
+            eprintln!(
+                "Warning: {flag} is visible in process listings. Prefer the environment variable."
+            );
+        }
+    }
+    let config = match Config::from_args_and_env(args, |name| std::env::var(name).ok())? {
+        Invocation::Help => {
+            println!("{USAGE}");
+            return Ok(());
+        }
+        Invocation::Run(config) => config,
+    };
+    if let Some(workers) = config.verify_workers {
+        println!(
+            "verify workers ({workers}, TOON_VERIFY_WORKERS or --verify-workers) has no effect: signatures are verified natively, \
+             without a worker pool"
+        );
+    }
     let relay = Relay::open(&config)?;
-    match &config.connector {
+    match &config.edge {
         Some(connector) => println!(
             "[relay] paid write edge: asking {} about {}",
-            connector.url, connector.ilp_address
+            connector.connector_url, connector.write_ilp_address
         ),
         None => println!(
             "[relay] paid write edge: none published — set TOON_CONNECTOR_URL and \
@@ -59,8 +83,13 @@ async fn run() -> Result<(), RelayError> {
         // The sender is dropped, never sent on: `changed` ends when it is.
         let _ = stopped.changed().await;
     };
-    let write = axum::serve(write, relay.write_router())
-        .with_graceful_shutdown(until_stopped(stopped.clone()));
+    let write = axum::serve(
+        write,
+        relay
+            .write_router()
+            .into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(until_stopped(stopped.clone()));
     let read = axum::serve(
         read,
         relay
