@@ -6,9 +6,9 @@
 # so it can read and write the files already in a volume. What differs is
 # inside: one static binary on Alpine, and no JavaScript runtime.
 #
-# NOT published. CI builds it and runs the conformance suite against it;
-# publish-relay-image.yml still ships only the TypeScript image, which owns
-# `:release` until the cutover.
+# Published only as a candidate (publish-rust-candidate.yml): under `rust-*`
+# tags, never `:release` or `:latest`, which the TypeScript image owns until
+# the cutover. CI builds it too and runs the conformance suite against it.
 #
 # Build from repo root:
 #   docker build -f crates/relay/Dockerfile -t relay-rust:ci .
@@ -46,6 +46,12 @@ RUN cargo chef cook --release --locked -p relay --recipe-path recipe.json
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+
+# The release handle (YYYY.MM.DD.N), reported as the version by /health and the
+# Relay Information Document. Declared here, after the dependency layer, so a
+# new handle rebuilds only the relay crate. Empty means the crate version.
+# (A build ARG is in the environment of every RUN after it, so cargo sees it.)
+ARG TOON_RELEASE_HANDLE=
 
 # The Alpine target is musl with a static C runtime, so this is one static
 # binary with nothing to install beside it.

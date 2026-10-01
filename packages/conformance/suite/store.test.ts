@@ -293,7 +293,7 @@ describe('relay image conformance: tag filters', () => {
     },
     // Stored results apply the key; the live matcher ignores it and
     // delivers every event of the author.
-    { expectedFailureFor: ['typescript', 'rust'] }
+    { expectedFailureFor: ['typescript'] }
   );
 });
 
@@ -468,9 +468,6 @@ describe('relay image conformance: expiration not enforced', () => {
     await lax?.stop();
   });
 
-  // The Rust relay stores the event and delivers it live, but its framework
-  // leaves an expired event out of every REQ answer whatever the store
-  // returns, with no setting to turn that off (#196).
   conformanceTest(
     'an expired event is returned and delivered',
     async () => {
@@ -492,8 +489,7 @@ describe('relay image conformance: expiration not enforced', () => {
       } finally {
         subscription.close();
       }
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 });
 

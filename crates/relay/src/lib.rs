@@ -35,6 +35,7 @@ mod read;
 mod route;
 mod store;
 mod verified;
+mod version;
 mod write;
 
 pub use config::{Config, EdgeSettings, Invocation, USAGE};
@@ -43,6 +44,12 @@ pub use error::RelayError;
 pub use route::TerminatedRoute;
 pub use store::{Retention, Saved, Store};
 pub use verified::VerifiedEvent;
+/// The version the relay reports: its release handle, or the crate version
+/// when built without one. See the `version` module.
+pub fn version() -> &'static str {
+    version::VERSION
+}
+
 pub use write::{Chain, PaymentStatement};
 
 use std::sync::Arc;

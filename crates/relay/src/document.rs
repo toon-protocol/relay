@@ -113,7 +113,7 @@ impl Document {
             contact: settings.contact.clone(),
             supported_nips,
             software: SOFTWARE,
-            version: env!("CARGO_PKG_VERSION"),
+            version: crate::version::VERSION,
             limitation: Limitation {
                 payment_required: paid,
                 restricted_writes: true,

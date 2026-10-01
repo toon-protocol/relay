@@ -261,3 +261,67 @@ async fn the_document_states_the_limits_and_does_not_advertise_auth() {
 fn no_such_event() -> serde_json::Value {
     json!({ "ids": ["0".repeat(64)] })
 }
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after the epoch")
+        .as_secs()
+}
+
+#[tokio::test]
+async fn an_expired_event_is_served_by_req_only_while_expiration_is_not_enforced() {
+    let t = unix_now();
+    let expired = signed(1, t - 200, &[&["expiration", &(t - 100).to_string()]]);
+    let newer = signed(1, t - 50, &[]);
+    let older = signed(1, t - 300, &[]);
+
+    let lax = running_with(|name| match name {
+        "TOON_ENFORCE_EXPIRATION" => Some("false".to_string()),
+        _ => None,
+    })
+    .await;
+    for event in [&older, &expired, &newer] {
+        assert_eq!(write(&lax.relay, delivery(event)).await.0, 200);
+    }
+    let mut client = Client::connect(&lax.read_url).await;
+    let found = client.req("all", json!({ "kinds": [1] })).await;
+    let want = [&newer, &expired, &older].map(|e| serde_json::to_value(e).expect("JSON"));
+    assert_eq!(found, want, "newest first, the expired one among them");
+
+    let enforcing = running().await;
+    for event in [&older, &newer] {
+        assert_eq!(write(&enforcing.relay, delivery(event)).await.0, 200);
+    }
+    let mut client = Client::connect(&enforcing.read_url).await;
+    let found = client.req("all", json!({ "kinds": [1] })).await;
+    assert_eq!(found.len(), 2, "enforced: the expired event is not served");
+}
+
+#[tokio::test]
+async fn a_multi_letter_tag_key_filters_stored_results_and_live_events_alike() {
+    let t = unix_now();
+    let hit = signed(1, t - 10, &[&["ab", "x"]]);
+    let miss = signed(1, t - 20, &[&["ab", "y"]]);
+    let running = running().await;
+    for event in [&hit, &miss] {
+        assert_eq!(write(&running.relay, delivery(event)).await.0, 200);
+    }
+
+    let mut client = Client::connect(&running.read_url).await;
+    let found = client
+        .req("multi", json!({ "kinds": [1], "#ab": ["x"] }))
+        .await;
+    assert_eq!(found, vec![serde_json::to_value(&hit).expect("JSON")]);
+
+    let live_hit = signed(1, t - 5, &[&["ab", "x"]]);
+    let live_miss = signed(1, t - 4, &[&["ab", "y"]]);
+    for event in [&live_miss, &live_hit] {
+        assert_eq!(write(&running.relay, delivery(event)).await.0, 200);
+    }
+    assert_eq!(
+        client.next().await,
+        Some(json!(["EVENT", "multi", live_hit]))
+    );
+    assert_eq!(client.next().await, None);
+}

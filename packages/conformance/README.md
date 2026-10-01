@@ -37,16 +37,12 @@ runs as `it.fails` (it must still fail, and goes red when it starts passing, so
 the marker cannot go stale); under every other implementation it is an
 ordinary test.
 
-The Rust relay is being built one surface at a time, so many cases carry
-`'rust'` today. It answers `GET /health`; takes a regular event on
-`POST /write`, stores it and serves it over WebSocket, stored or live; refuses
-`EVENT` over WebSocket; answers `426` to a plain `GET` on the read port; and
-refuses a bad identity or port. Replaceable, addressable, deletion and
-ephemeral kinds are answered `501` until the store slices land. A change that
-builds a surface removes that surface's `'rust'` markers in the same change,
-because a marked case that passes is red. Cases that wait for a relay to
-refuse a setting it does not read yet run to the harness's 60s deadline, which
-is what makes the Rust run take minutes.
+The Rust relay passes the whole suite: no case is marked
+`expectedFailureFor: ['rust']`, and `deploy/rust-workspace.test.ts` fails the
+build if one is added back. The suite is a required check against the Rust
+image (the `conformance` job in `ci.yml`, and again before the candidate is
+published). Under `typescript` only the documented divergences from the spec
+are expected to fail.
 
 ## Coverage
 

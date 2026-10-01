@@ -184,6 +184,11 @@ impl Store {
             .await
     }
 
+    /// Whether an expired event is left out of every answer.
+    pub fn enforces_expiration(&self) -> bool {
+        self.retention.enforce_expiration
+    }
+
     /// Whether `event` is one this store would serve now: false only for an
     /// expired event while expiration is enforced. Live delivery asks it, so
     /// a subscriber is not sent what a query would leave out.

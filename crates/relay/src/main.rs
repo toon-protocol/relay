@@ -69,7 +69,7 @@ async fn run() -> Result<(), RelayError> {
     let read = listen(&config.read_host, config.read_port).await?;
     println!(
         "relay {} listening: writes on {}:{} (POST /write, GET /health), reads on {}:{} (NIP-01 WebSocket)",
-        env!("CARGO_PKG_VERSION"),
+        relay::version(),
         config.write_host,
         config.write_port,
         config.read_host,
