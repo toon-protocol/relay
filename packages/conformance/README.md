@@ -11,10 +11,10 @@ docker build -f packages/relay/Dockerfile -t relay:ci .
 CONFORMANCE_IMAGE=relay:ci pnpm --filter @toon-protocol/relay-conformance conformance
 ```
 
-| env | meaning | default |
-| --- | --- | --- |
-| `CONFORMANCE_IMAGE` | image reference under test (required) | — |
-| `CONFORMANCE_IMPL` | name of the implementation, e.g. `typescript`, `rust` | `typescript` |
+| env                 | meaning                                               | default      |
+| ------------------- | ----------------------------------------------------- | ------------ |
+| `CONFORMANCE_IMAGE` | image reference under test (required)                 | —            |
+| `CONFORMANCE_IMPL`  | name of the implementation, e.g. `typescript`, `rust` | `typescript` |
 
 ## Expected failures
 

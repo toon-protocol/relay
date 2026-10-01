@@ -3,7 +3,12 @@ import type { Event } from 'nostr-tools';
 import { afterAll, beforeAll, describe, expect } from 'vitest';
 import WebSocket from 'ws';
 import { startRelay, type RunningRelay } from './harness/relay-container.js';
-import { STUB_ILP_ADDRESS, STUB_SEAL_KEY } from './harness/stub-connector.js';
+import {
+  STUB_ILP_ADDRESS,
+  STUB_PRICE,
+  STUB_SEAL_KEY,
+  STUB_WRITE_EDGE,
+} from './harness/stub-connector.js';
 import { conformanceTest, imageUnderTest } from './implementation.js';
 
 let relay: RunningRelay;
@@ -95,8 +100,9 @@ describe('relay image conformance: tracer', () => {
 
       expect(document['toon']).toMatchObject({
         ilp_address: STUB_ILP_ADDRESS,
-        connector_url: relay.connector.httpEndpoint,
+        connector_url: STUB_WRITE_EDGE,
         connector_seal_key: STUB_SEAL_KEY,
+        price: Number(STUB_PRICE),
       });
     }
   );

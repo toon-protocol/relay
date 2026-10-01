@@ -4,12 +4,16 @@ import type { AddressInfo } from 'node:net';
 export const STUB_ILP_ADDRESS = 'g.toon.relay';
 export const STUB_SEAL_KEY = 'ab'.repeat(32);
 export const STUB_PRICE = '1000';
+/**
+ * The Write Edge the stub advertises as its `httpEndpoint`. Deliberately not
+ * the URL the relay reads `GET /ilp` from, so a relay that echoes its own
+ * configuration instead of the connector's self-description is caught.
+ */
+export const STUB_WRITE_EDGE = 'http://write-edge.stub.invalid:8080';
 
 export interface StubConnector {
-  /** The port it listens on, on every interface. */
-  port: number;
-  /** The `httpEndpoint` it advertises: what the relay should name as the edge. */
-  httpEndpoint: string;
+  /** The URL of its `GET /ilp`, as the relay container reaches it. */
+  ilpUrl: string;
   stop(): Promise<void>;
 }
 
@@ -22,13 +26,12 @@ export interface StubConnector {
 export async function startStubConnector(
   advertisedHost: string
 ): Promise<StubConnector> {
-  let httpEndpoint = '';
   const server: Server = createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/ilp') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(
         JSON.stringify({
-          httpEndpoint,
+          httpEndpoint: STUB_WRITE_EDGE,
           edgeIdentity: { keyId: 'stub', publicKey: STUB_SEAL_KEY },
           settlements: [
             {
@@ -39,7 +42,8 @@ export async function startStubConnector(
           ],
           routes: [
             { prefix: STUB_ILP_ADDRESS, price: STUB_PRICE },
-            { prefix: `${STUB_ILP_ADDRESS}.store`, price: STUB_PRICE },
+            // A longer prefix at another price, which is not the relay's edge.
+            { prefix: `${STUB_ILP_ADDRESS}.store`, price: '2000' },
           ],
         })
       );
@@ -49,10 +53,8 @@ export async function startStubConnector(
   });
   await new Promise<void>((resolve) => server.listen(0, '0.0.0.0', resolve));
   const { port } = server.address() as AddressInfo;
-  httpEndpoint = `http://${advertisedHost}:${port}/ilp`;
   return {
-    port,
-    httpEndpoint,
+    ilpUrl: `http://${advertisedHost}:${port}/ilp`,
     stop: () =>
       new Promise<void>((resolve) => {
         server.closeAllConnections();

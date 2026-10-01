@@ -77,7 +77,7 @@ export async function startRelay(image: string): Promise<RunningRelay> {
       '-e',
       `TOON_SECRET_KEY=${secretKey}`,
       '-e',
-      `TOON_CONNECTOR_URL=${connector.httpEndpoint}`,
+      `TOON_CONNECTOR_URL=${connector.ilpUrl}`,
       '-e',
       `TOON_WRITE_ILP_ADDRESS=${STUB_ILP_ADDRESS}`,
       image
