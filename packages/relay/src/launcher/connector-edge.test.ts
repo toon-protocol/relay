@@ -13,7 +13,7 @@ import {
   edgeFromSelfDescription,
 } from './connector-edge.js';
 
-/** The devnet relay connector's answer, as served on 2026-09-23. */
+/** The devnet relay connector's answer, as served today. */
 const DEVNET_SELF_DESCRIPTION = {
   ilpAddresses: ['g.toon.relay', 'g.toon.relay.ephemeral'],
   httpEndpoint: 'https://proxy.relay.devnet.toonprotocol.dev/ilp',
@@ -23,21 +23,14 @@ const DEVNET_SELF_DESCRIPTION = {
     keyId: 'connector-signer',
     publicKey: '0x04915d29908235be4b53f8f23cd7ac72c88c99be3bcca876dadf5c1a4494',
   },
-  settlements: [
+  batchSettlements: [
     {
-      chain: 'evm:84532',
-      settlementAddress: '0x3f43d923a611bcb2d0bfb5d6ee2c3ac3efeaf308',
-      tokenNetworkRegistry: '0x0c41d9d424d6b075a3cea1068a694f7847a8cca5',
-      tokenNetwork: '0xe9e05dfecfe165266c88d73e61d483612651952a',
-      tokenAddress: '0x49bee1bca5d15fb0963117923403f9498119a9ce',
-      decimals: 6,
+      network: 'evm:84532',
+      asset: '0x49bee1bca5d15fb0963117923403f9498119a9ce',
     },
     {
-      chain: 'solana',
-      settlementAddress: 'GzvGVjq3dnNM79MpWRvYCvVcAgPWzDdYisMwGxHF4u9F',
-      programId: '2aEVJ8koKD8LTZrLRSGtAtU7LBt4e7QjjCgf1kzQ7Rip',
-      tokenAddress: '34eSxY7qxQ4GzyhDJ8GpUcTz1WWzruGbJbR8q6TtxfQU',
-      decimals: 6,
+      network: 'solana',
+      asset: '34eSxY7qxQ4GzyhDJ8GpUcTz1WWzruGbJbR8q6TtxfQU',
     },
   ],
   routes: [
@@ -67,14 +60,12 @@ describe('edgeFromSelfDescription', () => {
       price: 1,
       settlement: [
         {
-          chain: 'evm:84532',
-          token: '0x49bee1bca5d15fb0963117923403f9498119a9ce',
-          decimals: 6,
+          network: 'evm:84532',
+          asset: '0x49bee1bca5d15fb0963117923403f9498119a9ce',
         },
         {
-          chain: 'solana',
-          token: '34eSxY7qxQ4GzyhDJ8GpUcTz1WWzruGbJbR8q6TtxfQU',
-          decimals: 6,
+          network: 'solana',
+          asset: '34eSxY7qxQ4GzyhDJ8GpUcTz1WWzruGbJbR8q6TtxfQU',
         },
       ],
     });
@@ -82,6 +73,27 @@ describe('edgeFromSelfDescription', () => {
     // route and publishes no carriage at all, so the document says nothing
     // about one rather than guessing.
     expect(edge?.carriage).toBeUndefined();
+  });
+
+  it('yields an empty list, still publishing the edge, without batchSettlements', () => {
+    const { batchSettlements: _dropped, ...bare } = DEVNET_SELF_DESCRIPTION;
+    const { edge, error } = edgeFromSelfDescription(bare, 'g.toon.relay');
+
+    expect(error).toBeUndefined();
+    expect(edge?.settlement).toEqual([]);
+  });
+
+  it('no longer reads the retired settlements key', () => {
+    const { batchSettlements: _dropped, ...bare } = DEVNET_SELF_DESCRIPTION;
+    const { edge } = edgeFromSelfDescription(
+      {
+        ...bare,
+        settlements: [{ chain: 'solana', tokenAddress: 'x', decimals: 6 }],
+      },
+      'g.toon.relay'
+    );
+
+    expect(edge?.settlement).toEqual([]);
   });
 
   it('refuses an address its connector does not terminate, and says which it does', () => {

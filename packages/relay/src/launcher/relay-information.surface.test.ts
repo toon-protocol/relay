@@ -74,7 +74,7 @@ const SELF_DESCRIPTION = {
   httpEndpoint: 'https://proxy.relay.example/ilp',
   btpEndpoint: 'wss://proxy.relay.example/ilp/btp',
   edgeIdentity: { keyId: 'connector-signer', publicKey: '0x04915d2990' },
-  settlements: [{ chain: 'solana', tokenAddress: '34eSxY7', decimals: 6 }],
+  batchSettlements: [{ network: 'solana', asset: '34eSxY7' }],
   routes: [
     { prefix: 'g.toon.relay', price: '1', requiredTransport: 'btp' },
     { prefix: 'g.toon.relay.ephemeral', price: '0' },
@@ -137,7 +137,7 @@ describe('the relay information document, served', () => {
       connector_seal_key: '0x04915d2990',
       carriage: 'btp',
       price: 1,
-      settlement: [{ chain: 'solana', token: '34eSxY7', decimals: 6 }],
+      settlement: [{ network: 'solana', asset: '34eSxY7' }],
     });
     expect(document.limitation.payment_required).toBe(true);
     expect(document.fees).toEqual({

@@ -155,3 +155,11 @@ await relay.stop();
 ## License
 
 MIT
+
+## `toon.settlement` in the relay information document
+
+`toon.settlement` lists the settlement terms the connector accepts, read from
+its `batchSettlements` on `GET /ilp` and copied verbatim as `{network, asset}`
+entries (EVM and Solana alike). An absent `batchSettlements` yields `[]`. This
+shape is knowingly ahead of TOON Network spec §13.1, which still specifies
+`{chain, token, decimals}`.
