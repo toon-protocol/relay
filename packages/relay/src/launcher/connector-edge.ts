@@ -74,7 +74,7 @@ export const DEFAULT_EDGE_RETRY_MS = 5_000;
 interface SelfDescription {
   httpEndpoint?: unknown;
   edgeIdentity?: { keyId?: unknown; publicKey?: unknown };
-  settlements?: unknown;
+  batchSettlements?: unknown;
   routes?: unknown;
   requiredTransport?: unknown;
 }
@@ -95,13 +95,9 @@ function readSettlements(value: unknown): RelaySettlement[] {
   const settlements: RelaySettlement[] = [];
   for (const entry of value) {
     if (typeof entry !== 'object' || entry === null) continue;
-    const { chain, tokenAddress, decimals } = entry as Record<string, unknown>;
-    if (
-      typeof chain === 'string' &&
-      typeof tokenAddress === 'string' &&
-      typeof decimals === 'number'
-    ) {
-      settlements.push({ chain, token: tokenAddress, decimals });
+    const { network, asset } = entry as Record<string, unknown>;
+    if (typeof network === 'string' && typeof asset === 'string') {
+      settlements.push({ network, asset });
     }
   }
   return settlements;
@@ -205,7 +201,7 @@ export function edgeFromSelfDescription(
       connector_seal_key: sealKey,
       ...(carriage !== undefined && { carriage }),
       price,
-      settlement: readSettlements(self.settlements),
+      settlement: readSettlements(self.batchSettlements),
     },
   };
 }
