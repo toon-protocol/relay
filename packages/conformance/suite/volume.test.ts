@@ -130,10 +130,18 @@ describe.skipIf(!both)('relay image conformance: image swap over /data', () => {
       try {
         // Its own events and the other image's tombstone and replacement
         // rules are all honoured by the image that did not write them.
+        // The deletion request is itself a stored event, and is served.
         const readNow = () =>
           storedIds(second, { authors: [pubkey], limit: 100 });
         expect(await readNow()).toEqual(
-          ids(regular, newReplaceable, newAddressable, lasting, expiring)
+          ids(
+            regular,
+            newReplaceable,
+            newAddressable,
+            deletion,
+            lasting,
+            expiring
+          )
         );
 
         // Replaced and deleted events stay gone when re-submitted.
@@ -146,13 +154,20 @@ describe.skipIf(!both)('relay image conformance: image swap over /data', () => {
           await publish(second, event);
         }
         expect(await readNow()).toEqual(
-          ids(regular, newReplaceable, newAddressable, lasting, expiring)
+          ids(
+            regular,
+            newReplaceable,
+            newAddressable,
+            deletion,
+            lasting,
+            expiring
+          )
         );
 
         // The expiring event is read as expired once its time has passed.
         while (now() <= expiresAt) await settle(500);
         expect(await readNow()).toEqual(
-          ids(regular, newReplaceable, newAddressable, lasting)
+          ids(regular, newReplaceable, newAddressable, deletion, lasting)
         );
 
         // The second image can write to the volume too.
@@ -168,7 +183,14 @@ describe.skipIf(!both)('relay image conformance: image swap over /data', () => {
         expect(
           await storedIds(third, { authors: [pubkey], limit: 100 })
         ).toEqual(
-          ids(regular, newReplaceable, newAddressable, lasting, written)
+          ids(
+            regular,
+            newReplaceable,
+            newAddressable,
+            deletion,
+            lasting,
+            written
+          )
         );
       } finally {
         await third.stop();
