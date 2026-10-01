@@ -1,0 +1,15 @@
+error[E0308]: mismatched types
+ --> tests/compile_fail/store_given_an_unverified_event.rs:7:24
+  |
+7 |     let _ = store.save(event).await;
+  |                   ---- ^^^^^ expected `&VerifiedEvent`, found `&Event`
+  |                   |
+  |                   arguments to this method are incorrect
+  |
+  = note: expected reference `&VerifiedEvent`
+             found reference `&nostr::event::Event`
+note: method defined here
+ --> src/store.rs
+  |
+  |     pub async fn save(&self, event: &VerifiedEvent) -> Result<Saved, RelayError> {
+  |                  ^^^^

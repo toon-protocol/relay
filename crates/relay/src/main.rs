@@ -4,11 +4,13 @@
 //! which is what the TypeScript relay does and what operators grep for (#185,
 //! story 48).
 
+use std::net::SocketAddr;
 use std::process::ExitCode;
 
-use relay::{Config, RelayError, write_router};
+use relay::{Config, Relay, RelayError};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{SignalKind, signal};
+use tokio::sync::watch;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -23,22 +25,50 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), RelayError> {
     let config = Config::from_env(|name| std::env::var(name).ok())?;
-    let (host, port) = (config.write_host.as_str(), config.write_port);
-    let listener = TcpListener::bind((host, port))
+    let relay = Relay::open(&config)?;
+    let write = listen(&config.write_host, config.write_port).await?;
+    let read = listen(&config.read_host, config.read_port).await?;
+    println!(
+        "relay {} listening: writes on {}:{} (POST /write, GET /health), reads on {}:{} (NIP-01 WebSocket)",
+        env!("CARGO_PKG_VERSION"),
+        config.write_host,
+        config.write_port,
+        config.read_host,
+        config.read_port,
+    );
+
+    // One stop signal for both listeners; either failing stops the relay.
+    let (stop, stopped) = watch::channel(());
+    tokio::spawn(async move {
+        stop_requested().await;
+        drop(stop);
+    });
+    let until_stopped = |mut stopped: watch::Receiver<()>| async move {
+        // The sender is dropped, never sent on: `changed` ends when it is.
+        let _ = stopped.changed().await;
+    };
+    let write = axum::serve(write, relay.write_router())
+        .with_graceful_shutdown(until_stopped(stopped.clone()));
+    let read = axum::serve(
+        read,
+        relay
+            .read_router()
+            .into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(until_stopped(stopped));
+    tokio::try_join!(write.into_future(), read.into_future())
+        .map(|_| ())
+        .map_err(RelayError::Serve)
+}
+
+async fn listen(host: &str, port: u16) -> Result<TcpListener, RelayError> {
+    TcpListener::bind((host, port))
         .await
         .map_err(|source| RelayError::Bind {
             host: host.to_string(),
             port,
             source,
-        })?;
-    println!(
-        "relay {} listening on {host}:{port} (GET /health)",
-        env!("CARGO_PKG_VERSION")
-    );
-    axum::serve(listener, write_router(&config))
-        .with_graceful_shutdown(stop_requested())
-        .await
-        .map_err(RelayError::Serve)
+        })
 }
 
 /// Resolves on SIGTERM or SIGINT. The relay is PID 1 in its container, where

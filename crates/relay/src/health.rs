@@ -6,8 +6,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Json;
 use axum::extract::State;
-use nostr::key::PublicKey;
 use serde::Serialize;
+
+use crate::Relay;
 
 /// The body: the TypeScript relay's keys, in its order.
 #[derive(Serialize)]
@@ -20,10 +21,10 @@ pub(crate) struct Health {
     timestamp: u64,
 }
 
-pub(crate) async fn health(State(identity): State<PublicKey>) -> Json<Health> {
+pub(crate) async fn health(State(relay): State<Relay>) -> Json<Health> {
     Json(Health {
         status: "healthy",
-        pubkey: identity.to_hex(),
+        pubkey: relay.identity.to_hex(),
         capabilities: ["relay"],
         version: env!("CARGO_PKG_VERSION"),
         timestamp: unix_millis(),

@@ -55,8 +55,7 @@ describe('relay image conformance: tracer', () => {
 
       const found = await query(relay.readWsUrl, { ids: [event.id] });
       expect(found.map((e) => e.id)).toEqual([event.id]);
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 
   conformanceTest(

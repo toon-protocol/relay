@@ -29,55 +29,35 @@ const write = (body: unknown, headers: Record<string, string> = {}) =>
   post(`${relay.writeUrl}/write`, body, headers);
 
 describe('relay image conformance: POST /write', () => {
-  conformanceTest(
-    '200 carries the event id and a stored-at time',
-    async () => {
-      const event = signedEvent(1);
-      const response = await write({ event });
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({
-        eventId: event.id,
-        storedAt: expect.any(Number),
-      });
-    },
-    { expectedFailureFor: ['rust'] }
-  );
+  conformanceTest('200 carries the event id and a stored-at time', async () => {
+    const event = signedEvent(1);
+    const response = await write({ event });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      eventId: event.id,
+      storedAt: expect.any(Number),
+    });
+  });
 
-  conformanceTest(
-    '400 for a body that is not JSON',
-    async () => {
-      expect((await write('not json')).status).toBe(400);
-    },
-    { expectedFailureFor: ['rust'] }
-  );
+  conformanceTest('400 for a body that is not JSON', async () => {
+    expect((await write('not json')).status).toBe(400);
+  });
 
-  conformanceTest(
-    '400 for a body with no event',
-    async () => {
-      expect((await write({})).status).toBe(400);
-    },
-    { expectedFailureFor: ['rust'] }
-  );
+  conformanceTest('400 for a body with no event', async () => {
+    expect((await write({})).status).toBe(400);
+  });
 
-  conformanceTest(
-    '422 for a bad signature',
-    async () => {
-      const event = signedEvent(1);
-      const bad = { ...event, sig: '0'.repeat(128) };
-      expect((await write({ event: bad })).status).toBe(422);
-    },
-    { expectedFailureFor: ['rust'] }
-  );
+  conformanceTest('422 for a bad signature', async () => {
+    const event = signedEvent(1);
+    const bad = { ...event, sig: '0'.repeat(128) };
+    expect((await write({ event: bad })).status).toBe(422);
+  });
 
-  conformanceTest(
-    '422 for an id that does not match the content',
-    async () => {
-      const event = signedEvent(1);
-      const bad = { ...event, content: 'tampered after signing' };
-      expect((await write({ event: bad })).status).toBe(422);
-    },
-    { expectedFailureFor: ['rust'] }
-  );
+  conformanceTest('422 for an id that does not match the content', async () => {
+    const event = signedEvent(1);
+    const bad = { ...event, content: 'tampered after signing' };
+    expect((await write({ event: bad })).status).toBe(422);
+  });
 
   conformanceTest(
     'a retired path returns 404: /publish and /handle-packet',
@@ -141,8 +121,7 @@ describe('relay image conformance: payment attribution', () => {
         const response = await write({ event: signedEvent(1) }, headers);
         expect(response.status).toBe(200);
         expect(await response.json()).not.toHaveProperty('payment');
-      },
-      { expectedFailureFor: ['rust'] }
+      }
     );
   }
 });
@@ -162,8 +141,7 @@ describe('relay image conformance: live delivery of stored writes', () => {
       }
       const stored = await query(relay.readWsUrl, { ids: [event.id] });
       expect(stored.map((e) => e.id)).toEqual([event.id]);
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 });
 

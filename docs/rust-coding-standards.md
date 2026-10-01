@@ -57,7 +57,22 @@ unit tests are for logic worth testing in isolation.
   does not. `crates/relay/Dockerfile` repeats the version in its `FROM`, so
   bump both together.
 
-`deploy/rust-workspace.test.ts` fails the build if either rule is undone.
+- **A rule that can be a type is a type, with a test that the wrong
+  construction does not compile.** Each invariant in #185 is a type with one
+  constructor (`VerifiedEvent::verify` is the first). Its forbidden
+  constructions live in `crates/relay/tests/compile_fail/`, one file each,
+  beside the compiler's reason for refusing it, and `trybuild` fails the test
+  if one of them builds or fails for a different reason. A `compile_fail`
+  doctest would pass on any error, including a renamed import. Regenerate the
+  reasons after a deliberate change or a toolchain bump with
+  `TRYBUILD=overwrite cargo test -p relay --test compile_fail`.
+- **The framework is imported by one module.** `nostr-sdk`'s `local_relay` is
+  declared alpha, so `nostr-sdk` and `nostr-database` are on exact pins and
+  only `crates/relay/src/framework.rs` names them. The `nostr` protocol crate
+  is used everywhere.
+
+`deploy/rust-workspace.test.ts` fails the build if the unsafe rule, the
+toolchain pin or the framework rule is undone.
 
 ## Not adopted
 

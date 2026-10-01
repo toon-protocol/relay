@@ -1,0 +1,11 @@
+error[E0423]: cannot initialize a tuple struct which contains private fields
+ --> tests/compile_fail/verified_event_built_without_verifying.rs:8:5
+  |
+8 |     VerifiedEvent(event)
+  |     ^^^^^^^^^^^^^
+  |
+note: constructor is not visible here due to private fields
+ --> src/verified.rs
+  |
+  | pub struct VerifiedEvent(Event);
+  |                          ^^^^^ private field

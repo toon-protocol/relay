@@ -2,8 +2,11 @@
 //! stops the relay with a named error rather than falling back to a default
 //! (#185, story 48).
 //!
-//! Only the settings this slice acts on are read. The rest of the TypeScript
-//! relay's environment and its flags arrive with the surfaces they configure.
+//! Only the settings a built surface acts on are read. The rest of the
+//! TypeScript relay's environment and its flags arrive with the surfaces they
+//! configure (#200).
+
+use std::path::PathBuf;
 
 use nostr::key::{Keys, PublicKey, SecretKey};
 
@@ -14,27 +17,40 @@ use crate::RelayError;
 const SECRET_KEY_NAMES: [&str; 2] = ["TOON_SECRET_KEY", "NOSTR_SECRET_KEY"];
 const WRITE_PORT: &str = "TOON_BLS_PORT";
 const WRITE_HOST: &str = "TOON_WRITE_HOST";
+const READ_PORT: &str = "TOON_RELAY_PORT";
+const READ_HOST: &str = "TOON_HOST";
+const DATA_DIR: &str = "TOON_DATA_DIR";
 
 const DEFAULT_WRITE_PORT: u16 = 3100;
-const DEFAULT_WRITE_HOST: &str = "0.0.0.0";
+const DEFAULT_READ_PORT: u16 = 7100;
+const DEFAULT_HOST: &str = "0.0.0.0";
+const DEFAULT_DATA_DIR: &str = "./data";
+
+/// The database file inside the data directory: the TypeScript relay's name.
+const DATABASE_FILE: &str = "events.db";
 
 /// A complete, validated configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
     /// The node's Nostr public key, derived from its secret key.
     pub identity: PublicKey,
-    /// The host `GET /health` (and later the write endpoints) listens on: an
+    /// The host the write port (`POST /write`, `GET /health`) listens on: an
     /// IP address or a name, resolved when the listener binds.
     pub write_host: String,
     pub write_port: u16,
+    /// The host and port of the read side: the NIP-01 WebSocket.
+    pub read_host: String,
+    pub read_port: u16,
+    /// The directory that holds the database, created if it is missing.
+    pub data_dir: PathBuf,
 }
 
 impl Config {
     /// Read the configuration through `lookup`, which answers like
     /// `std::env::var(name).ok()`.
     ///
-    /// Empty values are read as the TypeScript relay reads them. An empty port
-    /// or host is the default. An empty `TOON_SECRET_KEY` is still the
+    /// Empty values are read as the TypeScript relay reads them. An empty port,
+    /// host or data directory is the default. An empty `TOON_SECRET_KEY` is still the
     /// variable that was chosen, so it is a missing identity and does not
     /// fall through to the alias.
     pub fn from_env(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, RelayError> {
@@ -47,25 +63,30 @@ impl Config {
             .ok_or(RelayError::MissingIdentity)?;
         let identity = public_key(&secret_key).ok_or(RelayError::InvalidSecretKey { name })?;
 
-        let write_port = match non_empty(WRITE_PORT) {
-            None => DEFAULT_WRITE_PORT,
+        let port = |name: &'static str, default: u16| match non_empty(name) {
+            None => Ok(default),
             Some(value) => match value.parse::<u16>() {
-                Ok(port) if port != 0 => port,
-                _ => {
-                    return Err(RelayError::InvalidPort {
-                        name: WRITE_PORT,
-                        value,
-                    });
-                }
+                Ok(port) if port != 0 => Ok(port),
+                _ => Err(RelayError::InvalidPort { name, value }),
             },
         };
-        let write_host = non_empty(WRITE_HOST).unwrap_or_else(|| DEFAULT_WRITE_HOST.to_string());
+        let host = |name: &str| non_empty(name).unwrap_or_else(|| DEFAULT_HOST.to_string());
 
         Ok(Self {
             identity,
-            write_host,
-            write_port,
+            write_host: host(WRITE_HOST),
+            write_port: port(WRITE_PORT, DEFAULT_WRITE_PORT)?,
+            read_host: host(READ_HOST),
+            read_port: port(READ_PORT, DEFAULT_READ_PORT)?,
+            data_dir: non_empty(DATA_DIR)
+                .unwrap_or_else(|| DEFAULT_DATA_DIR.to_string())
+                .into(),
         })
+    }
+
+    /// Where the database is: `events.db` in the data directory.
+    pub fn database_path(&self) -> PathBuf {
+        self.data_dir.join(DATABASE_FILE)
     }
 }
 
@@ -81,6 +102,8 @@ fn public_key(hex: &str) -> Option<PublicKey> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
 
     /// The x-only public keys of the secret keys `11…11` and `22…22`.
@@ -182,16 +205,47 @@ mod tests {
 
     #[test]
     fn a_port_outside_1_to_65535_is_refused_by_name() {
-        for bad in ["x", "0", "65536", "-1", "3100abc"] {
-            let error = config(&[("TOON_SECRET_KEY", &ones()), ("TOON_BLS_PORT", bad)])
-                .expect_err("not a port");
-            assert!(matches!(
-                error,
-                RelayError::InvalidPort {
-                    name: "TOON_BLS_PORT",
-                    ..
-                }
-            ));
+        for name in ["TOON_BLS_PORT", "TOON_RELAY_PORT"] {
+            for bad in ["x", "0", "65536", "-1", "3100abc"] {
+                let error =
+                    config(&[("TOON_SECRET_KEY", &ones()), (name, bad)]).expect_err("not a port");
+                assert!(
+                    matches!(error, RelayError::InvalidPort { name: refused, .. } if refused == name)
+                );
+            }
         }
+    }
+
+    #[test]
+    fn the_read_side_defaults_to_port_7100_on_every_interface() {
+        let config = config(&[("TOON_SECRET_KEY", &ones())]).expect("a secret key is enough");
+        assert_eq!(config.read_host, "0.0.0.0");
+        assert_eq!(config.read_port, 7100);
+    }
+
+    #[test]
+    fn the_read_listener_follows_toon_relay_port_and_toon_host() {
+        let config = config(&[
+            ("TOON_SECRET_KEY", &ones()),
+            ("TOON_RELAY_PORT", "7200"),
+            ("TOON_HOST", "127.0.0.1"),
+        ])
+        .expect("a valid port and host");
+        assert_eq!(config.read_host, "127.0.0.1");
+        assert_eq!(config.read_port, 7200);
+    }
+
+    #[test]
+    fn the_database_is_events_db_in_the_data_directory() {
+        let default = config(&[("TOON_SECRET_KEY", &ones())]).expect("a secret key is enough");
+        assert_eq!(default.database_path(), Path::new("./data/events.db"));
+
+        let moved = config(&[("TOON_SECRET_KEY", &ones()), ("TOON_DATA_DIR", "/data")])
+            .expect("a data directory");
+        assert_eq!(moved.database_path(), Path::new("/data/events.db"));
+
+        let empty = config(&[("TOON_SECRET_KEY", &ones()), ("TOON_DATA_DIR", "")])
+            .expect("an empty data directory is the default");
+        assert_eq!(empty.database_path(), Path::new("./data/events.db"));
     }
 }

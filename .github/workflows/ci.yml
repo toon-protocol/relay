@@ -275,8 +275,8 @@ jobs:
   # until the TypeScript source is removed (#185).
   #
   # `typescript` is the image `image-build` builds and the only one published.
-  # `rust` (#192) is built here and nowhere else: it answers `GET /health` and
-  # refuses a bad identity, and every case it does not pass yet is declared
+  # `rust` (#192) is built here and nowhere else. It is built one surface at a
+  # time (#185), and every case it does not pass yet is declared
   # `expectedFailureFor: ['rust']`, so the job is green on exactly what is
   # built and goes red the day a marked case starts passing.
   conformance:

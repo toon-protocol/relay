@@ -1,7 +1,8 @@
-//! The one error type of this crate. Each variant is a way the relay refuses
-//! to start, worded for the operator reading `Error: …` in a container log.
+//! The one error type of this crate. A variant is either a way the relay
+//! refuses to start, worded for the operator reading `Error: …` in a container
+//! log, or a way it refuses one request, which the handler turns into a status.
 
-/// Why the relay did not start, or stopped.
+/// Why the relay did not start, stopped, or refused a request.
 #[derive(Debug, thiserror::Error)]
 pub enum RelayError {
     /// No identity variable is set, or the one that was chosen is empty.
@@ -20,8 +21,8 @@ pub enum RelayError {
     #[error("{name} must be an integer between 1 and 65535, got {value:?}")]
     InvalidPort { name: &'static str, value: String },
 
-    /// The write listener could not bind: the host did not resolve, or the
-    /// address is taken or not ours to bind.
+    /// A listener could not bind: the host did not resolve, or the address is
+    /// taken or not ours to bind.
     #[error("could not listen on {host}:{port}: {source}")]
     Bind {
         host: String,
@@ -29,7 +30,55 @@ pub enum RelayError {
         source: std::io::Error,
     },
 
-    /// The listener failed after it was serving.
-    #[error("the write listener stopped: {0}")]
+    /// A listener failed after it was serving.
+    #[error("a listener stopped: {0}")]
     Serve(std::io::Error),
+
+    /// The data directory is not there and could not be created.
+    #[error("could not create the data directory {}: {source}", path.display())]
+    DataDir {
+        path: std::path::PathBuf,
+        source: std::io::Error,
+    },
+
+    /// A read-side connection ended on an error the framework reported: the
+    /// peer broke the protocol, or went over a limit.
+    #[error("{0}")]
+    ReadSide(String),
+
+    /// The event's id is not the hash of its content: it was altered after
+    /// it was signed, or never had an honest id.
+    #[error("the event id does not match the event")]
+    EventIdMismatch,
+
+    /// The event's signature is not its author's signature over its id.
+    #[error("the event signature is not valid for its author and id")]
+    EventSignatureInvalid,
+
+    /// The database file could not be opened, or holds a schema that is not
+    /// the relay's.
+    #[error("could not open the event store at {}: {source}", path.display())]
+    StoreOpen {
+        path: std::path::PathBuf,
+        source: rusqlite::Error,
+    },
+
+    /// SQLite refused a read or a write.
+    #[error("the event store failed: {0}")]
+    Store(#[from] rusqlite::Error),
+
+    /// The task running a store call ended without an answer: it panicked,
+    /// or the runtime is shutting down.
+    #[error("the event store did not answer")]
+    StoreStopped,
+
+    /// The event's tags could not be written as JSON.
+    #[error("the event's tags could not be encoded: {0}")]
+    TagsNotJson(serde_json::Error),
+
+    /// The event is of a kind whose storage rule this build does not have
+    /// yet: replaceable, addressable, deletion or ephemeral (#195, #196,
+    /// #198). It was not stored.
+    #[error("events of kind {kind} are not stored by this build yet")]
+    KindNotStoredYet { kind: u16 },
 }

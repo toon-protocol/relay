@@ -14,7 +14,11 @@ import {
   STUB_PRICE,
   STUB_WRITE_EDGE,
 } from './harness/stub-connector.js';
-import { conformanceTest, imageUnderTest } from './implementation.js';
+import {
+  conformanceTest,
+  imageUnderTest,
+  type ConformanceTestOptions,
+} from './implementation.js';
 
 let relay: RunningRelay;
 let capped: RunningRelay;
@@ -121,8 +125,7 @@ describe('read side: filters', () => {
           )
         ).toEqual(ids([b, d]));
       });
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 
   conformanceTest(
@@ -161,8 +164,7 @@ describe('read side: filters', () => {
           await client.req('and', { ids: [alpha.id], '#t': ['gamma'] })
         ).toEqual([]);
       });
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 
   conformanceTest(
@@ -232,7 +234,7 @@ describe('read side: filters', () => {
         );
       });
     },
-    { expectedFailureFor: ['typescript', 'rust'] }
+    { expectedFailureFor: ['typescript'] }
   );
 
   conformanceTest(
@@ -271,27 +273,23 @@ describe('read side: filters', () => {
     { expectedFailureFor: ['typescript', 'rust'] }
   );
 
-  conformanceTest(
-    'event frames are plain NIP-01 JSON objects',
-    async () => {
-      const event = signed(generateSecretKey(), {
-        tags: [['t', 'frame']],
-        content: 'héllo "quoted"',
-      });
-      await publish(relay.writeUrl, event);
-      await withClient(async (client) => {
-        client.send(['REQ', 'frame', { ids: [event.id] }]);
-        const frame = await client.next((f) => f[0] === 'EVENT');
-        // Parsed, not byte-for-byte: key order and whitespace are the relay's.
-        expect(frame).toEqual([
-          'EVENT',
-          'frame',
-          JSON.parse(JSON.stringify(event)),
-        ]);
-      });
-    },
-    { expectedFailureFor: ['rust'] }
-  );
+  conformanceTest('event frames are plain NIP-01 JSON objects', async () => {
+    const event = signed(generateSecretKey(), {
+      tags: [['t', 'frame']],
+      content: 'héllo "quoted"',
+    });
+    await publish(relay.writeUrl, event);
+    await withClient(async (client) => {
+      client.send(['REQ', 'frame', { ids: [event.id] }]);
+      const frame = await client.next((f) => f[0] === 'EVENT');
+      // Parsed, not byte-for-byte: key order and whitespace are the relay's.
+      expect(frame).toEqual([
+        'EVENT',
+        'frame',
+        JSON.parse(JSON.stringify(event)),
+      ]);
+    });
+  });
 });
 
 describe('read side: subscriptions', () => {
@@ -309,29 +307,24 @@ describe('read side: subscriptions', () => {
         );
         expect((frame[2] as { id: string }).id).toBe(event.id);
       });
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 
-  conformanceTest(
-    'CLOSE stops a subscription',
-    async () => {
-      const key = generateSecretKey();
-      const author = getPublicKey(key);
-      await withClient(async (client) => {
-        await client.req('gone', { authors: [author] });
-        client.send(['CLOSE', 'gone']);
-        // A second subscription proves CLOSE was processed before the write.
-        await client.req('barrier', { authors: [author] });
-        await publish(relay.writeUrl, signed(key));
-        // The write was fanned out, so `gone` would have had it by now.
-        await client.next((f) => f[0] === 'EVENT' && f[1] === 'barrier');
-        const rest = await client.quiet();
-        expect(rest.filter((f) => f[1] === 'gone')).toEqual([]);
-      });
-    },
-    { expectedFailureFor: ['rust'] }
-  );
+  conformanceTest('CLOSE stops a subscription', async () => {
+    const key = generateSecretKey();
+    const author = getPublicKey(key);
+    await withClient(async (client) => {
+      await client.req('gone', { authors: [author] });
+      client.send(['CLOSE', 'gone']);
+      // A second subscription proves CLOSE was processed before the write.
+      await client.req('barrier', { authors: [author] });
+      await publish(relay.writeUrl, signed(key));
+      // The write was fanned out, so `gone` would have had it by now.
+      await client.next((f) => f[0] === 'EVENT' && f[1] === 'barrier');
+      const rest = await client.quiet();
+      expect(rest.filter((f) => f[1] === 'gone')).toEqual([]);
+    });
+  });
 
   conformanceTest(
     're-using a subscription id replaces the subscription',
@@ -352,8 +345,7 @@ describe('read side: subscriptions', () => {
           []
         );
       });
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 });
 
@@ -390,14 +382,19 @@ describe('read side: EVENT over WebSocket', () => {
 });
 
 describe('read side: malformed input', () => {
-  const notices: [string, unknown][] = [
+  // The Rust relay's framework accepts an empty subscription id (#197).
+  const notices: [string, unknown, ConformanceTestOptions?][] = [
     ['bad JSON', '{not json'],
     ['a non-array message', '{"a":1}'],
     ['an unknown message type', ['BOGUS', 'x']],
-    ['an invalid subscription id', ['REQ', '', {}]],
+    [
+      'an invalid subscription id',
+      ['REQ', '', {}],
+      { expectedFailureFor: ['rust'] },
+    ],
     ['a non-string subscription id', ['REQ', 7, {}]],
   ];
-  for (const [name, message] of notices) {
+  for (const [name, message, expectation] of notices) {
     conformanceTest(
       `${name} gets a NOTICE`,
       async () => {
@@ -407,7 +404,7 @@ describe('read side: malformed input', () => {
           expect(typeof frame[1]).toBe('string');
         });
       },
-      { expectedFailureFor: ['rust'] }
+      expectation
     );
   }
 });
@@ -482,7 +479,6 @@ describe('read side: plain HTTP on the read port', () => {
     async () => {
       const response = await fetch(relay.readUrl);
       expect(response.status).toBe(426);
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 });
