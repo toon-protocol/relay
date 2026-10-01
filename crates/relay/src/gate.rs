@@ -240,22 +240,22 @@ impl Gate {
     /// `items` (after the id) lose the keys it ignores. Whether any did.
     fn watch(&mut self, id: &str, items: &mut [Value]) -> bool {
         self.watched.remove(id);
+        let before: Vec<Value> = items.iter().skip(2).cloned().collect();
         let mut filters = Vec::new();
-        let mut stripped = false;
         for filter in items.iter_mut().skip(2) {
-            let before = filter.clone();
             match Wanted::take(filter) {
-                Some(wanted) => {
-                    stripped |= *filter != before;
-                    filters.push(wanted);
-                }
-                // The framework answers it in its own words.
+                Some(wanted) => filters.push(wanted),
+                // The framework answers it in its own words, so it hears the
+                // whole request, every filter as the client sent it.
                 None => {
-                    *filter = before;
+                    for (filter, before) in items.iter_mut().skip(2).zip(before) {
+                        *filter = before;
+                    }
                     return false;
                 }
             }
         }
+        let stripped = items.iter().skip(2).ne(before.iter());
         let post_filter = filters.iter().any(|wanted| !wanted.multi.is_empty());
         if post_filter || self.serves_expired {
             self.watched.insert(
@@ -382,22 +382,21 @@ where
     Ok(())
 }
 
-/// The frames that answer `id`'s stored phase from the store.
-async fn stored_answer(gate: &mut Gate, store: &Store, id: String) -> Vec<String> {
+/// The frames that answer `id`'s stored phase from the store, or, when the
+/// store cannot be read, the `CLOSED` the client is told instead.
+async fn stored_answer(gate: &mut Gate, store: &Store, id: &str) -> Result<Vec<String>, String> {
     let mut found = Vec::new();
-    for filter in gate.stored_queries(&id) {
+    for filter in gate.stored_queries(id) {
         match store.query(filter).await {
             Ok(events) => found.push(events),
             Err(error) => {
                 eprintln!("read: subscription {id} could not be answered from the store: {error}");
-                gate.forget(&id);
-                return vec![
-                    json!(["CLOSED", id, "error: the store could not be read"]).to_string(),
-                ];
+                gate.forget(id);
+                return Err(json!(["CLOSED", id, "error: the store could not be read"]).to_string());
             }
         }
     }
-    gate.stored_frames(&id, found)
+    Ok(gate.stored_frames(id, found))
 }
 
 /// Serve `client`, a connection already upgraded to WebSocket, until either
@@ -463,7 +462,18 @@ where
                     let frames = match gate.relay_sent(&text) {
                         Relayed::Pass => vec![text.to_string()],
                         Relayed::Drop => Vec::new(),
-                        Relayed::StoredDue(id) => stored_answer(&mut gate, &store, id).await,
+                        Relayed::StoredDue(id) => match stored_answer(&mut gate, &store, &id).await {
+                            Ok(frames) => frames,
+                            // The client is told it is closed, so the framework
+                            // closes it too and sends no live events for it.
+                            Err(closed) => {
+                                let close = json!(["CLOSE", id]).to_string();
+                                if inner.send(Message::text(close)).await.is_err() {
+                                    break Ok(());
+                                }
+                                vec![closed]
+                            }
+                        },
                     };
                     let mut failed = None;
                     for frame in frames {
@@ -665,6 +675,21 @@ mod tests {
         let frames = gate.stored_frames("a", vec![]);
         assert_eq!(frames, vec![r#"["EOSE","a"]"#.to_string()]);
         assert_eq!(gate.relay_sent(r#"["EVENT","a",{}]"#), Relayed::Pass);
+    }
+
+    #[test]
+    fn a_request_the_framework_must_refuse_reaches_it_with_every_filter_whole() {
+        let mut gate = Gate::default();
+        let whole = "ab".repeat(32);
+        let text =
+            format!(r##"["REQ","a",{{"#ab":["x"],"ids":["abcd","{whole}"]}},{{"kinds":"x"}}]"##);
+        let Verdict::Forward(sent) = gate.client_sent(&text) else {
+            panic!("forwarded");
+        };
+        let sent: Value = serde_json::from_str(&sent).expect("the gate sends JSON");
+        assert_eq!(sent[2], json!({ "#ab": ["x"], "ids": [whole] }));
+        assert_eq!(sent[3], json!({ "kinds": "x" }));
+        assert!(gate.stored_queries("a").is_empty());
     }
 
     #[test]

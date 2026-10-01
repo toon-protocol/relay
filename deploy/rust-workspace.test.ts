@@ -397,15 +397,18 @@ describe('the TypeScript image owns :release; Rust publishes only a candidate', 
     ].map((m) => m[0].trim());
     expect(tagRules).toEqual([
       'type=raw,value=rust-candidate',
-      'type=raw,value=rust-${{ steps.handle.outputs.handle }}',
+      'type=raw,value=rust-${{ needs.handle.outputs.handle }}',
       'type=sha,prefix=rust-sha-',
     ]);
     expect(text).toMatch(/flavor:\s*latest=false/);
     expect(text).not.toMatch(/value=(release|latest)\b/);
-    // The handle that names the tag is the one built into the binary.
-    expect(text).toContain(
-      'TOON_RELEASE_HANDLE=${{ steps.handle.outputs.handle }}'
-    );
+    // The handle that names the tag is the one built into the binary, in the
+    // image the suite runs against and in the one pushed.
+    expect(
+      text.match(
+        /TOON_RELEASE_HANDLE=\$\{\{ needs\.handle\.outputs\.handle \}\}/g
+      )
+    ).toHaveLength(2);
   });
 
   it('publishes the candidate only after the suite passed against the Rust image with nothing expected to fail', () => {
@@ -414,10 +417,13 @@ describe('the TypeScript image owns :release; Rust publishes only a candidate', 
     ) as {
       jobs: Record<
         string,
-        { needs?: string; steps?: { env?: Record<string, string> }[] }
+        {
+          needs?: string | string[];
+          steps?: { env?: Record<string, string> }[];
+        }
       >;
     };
-    expect(workflow.jobs['publish']?.needs).toBe('conformance');
+    expect(workflow.jobs['publish']?.needs).toContain('conformance');
     const env = Object.assign(
       {},
       ...(workflow.jobs['conformance']?.steps ?? []).map((s) => s.env ?? {})

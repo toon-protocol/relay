@@ -32,8 +32,43 @@ permissions:
   packages: write
 
 jobs:
+  # The handle is the UTC date plus the next free ordinal for that date,
+  # read from the tags already on the package, so a second publish the same
+  # day is `.2` and nothing ever reuses one. Only a package with no versions
+  # yet (404) reads as none taken: any other failure stops the publish rather
+  # than fall back to `.1` and overwrite an immutable handle.
+  handle:
+    name: Choose the release handle
+    runs-on: ubuntu-latest
+    outputs:
+      handle: ${{ steps.handle.outputs.handle }}
+    steps:
+      - name: Choose the release handle
+        id: handle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          DATE=$(date -u +%Y.%m.%d)
+          if ! TAGS=$(gh api --paginate "/orgs/$OWNER/packages/container/relay/versions" \
+                        --jq '.[].metadata.container.tags[]' 2>err); then
+            grep -q 'HTTP 404' err || { cat err >&2; exit 1; }
+            TAGS=
+          fi
+          TAKEN=$(printf '%s\n' "$TAGS" \
+                  | grep -E "^rust-${DATE//./\\.}\.[0-9]+\$" \
+                  | sed -E 's/.*\.([0-9]+)$/\1/' | sort -n | tail -1 || true)
+          HANDLE="$DATE.$(( ${TAKEN:-0} + 1 ))"
+          echo "handle=$HANDLE"
+          echo "handle=$HANDLE" >> "$GITHUB_OUTPUT"
+
+  # The suite runs against the image built with the handle, and that build
+  # fills the cache `publish` builds from, so what is pushed is the build the
+  # suite accepted, reporting the version it is tagged with.
   conformance:
     name: Conformance suite against the Rust image
+    needs: handle
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,7 +94,10 @@ jobs:
           push: false
           load: true
           tags: relay:conformance
+          build-args: |
+            TOON_RELEASE_HANDLE=${{ needs.handle.outputs.handle }}
           cache-from: type=gha,scope=relay-rust
+          cache-to: type=gha,mode=max,scope=relay-rust
 
       - name: Run the suite against the image
         env:
@@ -70,7 +108,7 @@ jobs:
 
   publish:
     name: Push the candidate
-    needs: conformance
+    needs: [handle, conformance]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -84,25 +122,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # The handle is the UTC date plus the next free ordinal for that date,
-      # read from the tags already on the package, so a second publish the same
-      # day is `.2` and nothing ever reuses one.
-      - name: Choose the release handle
-        id: handle
-        env:
-          GH_TOKEN: ${{ github.token }}
-          OWNER: ${{ github.repository_owner }}
-        run: |
-          set -euo pipefail
-          DATE=$(date -u +%Y.%m.%d)
-          TAKEN=$(gh api --paginate "/orgs/$OWNER/packages/container/relay/versions" \
-                    --jq '.[].metadata.container.tags[]' 2>/dev/null \
-                  | grep -E "^rust-${DATE//./\\.}\.[0-9]+\$" \
-                  | sed -E 's/.*\.([0-9]+)$/\1/' | sort -n | tail -1 || true)
-          HANDLE="$DATE.$(( ${TAKEN:-0} + 1 ))"
-          echo "handle=$HANDLE"
-          echo "handle=$HANDLE" >> "$GITHUB_OUTPUT"
-
       - name: Derive tags
         id: meta
         uses: docker/metadata-action@v5
@@ -111,7 +130,7 @@ jobs:
           flavor: latest=false
           tags: |
             type=raw,value=rust-candidate
-            type=raw,value=rust-${{ steps.handle.outputs.handle }}
+            type=raw,value=rust-${{ needs.handle.outputs.handle }}
             type=sha,prefix=rust-sha-
 
       - name: Build and push
@@ -121,7 +140,7 @@ jobs:
           file: crates/relay/Dockerfile
           push: true
           build-args: |
-            TOON_RELEASE_HANDLE=${{ steps.handle.outputs.handle }}
+            TOON_RELEASE_HANDLE=${{ needs.handle.outputs.handle }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=relay-rust
