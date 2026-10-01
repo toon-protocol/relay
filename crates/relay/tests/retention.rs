@@ -357,7 +357,7 @@ async fn a_blocked_write_is_answered_as_a_stored_one_and_stores_nothing() {
 }
 
 #[tokio::test]
-async fn the_reaper_sweeps_at_boot_and_a_zero_interval_never_starts_it() {
+async fn the_reaper_sweeps_at_boot_and_a_zero_interval_or_unenforced_expiration_never_starts_it() {
     let t = now();
     let expired = signed(1, t - 9000, &[&["expiration", &(t - 5000).to_string()]]);
     let dir = tempdir().expect("a temp dir");
@@ -368,11 +368,12 @@ async fn the_reaper_sweeps_at_boot_and_a_zero_interval_never_starts_it() {
         .await
         .expect("saved");
     let data_dir = dir.path().to_string_lossy().into_owned();
-    let config = |interval: &'static str| {
+    let config = |interval: &'static str, enforce: &'static str| {
         let data_dir = data_dir.clone();
         relay::Config::from_env(move |name| match name {
             "TOON_SECRET_KEY" => Some("1".repeat(64)),
             "TOON_DATA_DIR" => Some(data_dir.clone()),
+            "TOON_ENFORCE_EXPIRATION" => Some(enforce.to_string()),
             "TOON_EXPIRATION_REAP_GRACE_SECONDS" => Some("0".to_string()),
             "TOON_EXPIRATION_REAP_INTERVAL_SECONDS" => Some(interval.to_string()),
             _ => None,
@@ -386,11 +387,16 @@ async fn the_reaper_sweeps_at_boot_and_a_zero_interval_never_starts_it() {
             .expect("counts")
     };
 
-    let disabled = relay::Relay::open(&config("0")).expect("opens");
+    let disabled = relay::Relay::open(&config("0", "true")).expect("opens");
     assert!(disabled.spawn_reaper().is_none());
+    let unenforced = relay::Relay::open(&config("3600", "false")).expect("opens");
+    assert!(
+        unenforced.spawn_reaper().is_none(),
+        "a relay serving expired events must not delete them"
+    );
     assert_eq!(rows(), 1);
 
-    let enabled = relay::Relay::open(&config("3600")).expect("opens");
+    let enabled = relay::Relay::open(&config("3600", "true")).expect("opens");
     let reaper = enabled
         .spawn_reaper()
         .expect("an interval above zero runs it");

@@ -54,9 +54,10 @@ pub struct Relay {
     reaper: Reaper,
 }
 
-/// When the reaper runs and how long it lets an expired event stay.
+/// Whether the reaper runs, when, and how long it lets an expired event stay.
 #[derive(Debug, Clone, Copy)]
 struct Reaper {
+    enforce_expiration: bool,
     grace_seconds: u64,
     interval_seconds: u64,
 }
@@ -81,6 +82,7 @@ impl Relay {
             read_side: ReadSide::new(store.clone()),
             store,
             reaper: Reaper {
+                enforce_expiration: config.enforce_expiration,
                 grace_seconds: config.reap_grace_seconds,
                 interval_seconds: config.reap_interval_seconds,
             },
@@ -89,16 +91,19 @@ impl Relay {
 
     /// Start the NIP-40 reaper: one sweep now, then one every configured
     /// interval, each deleting what expired longer ago than the grace
-    /// period. An interval of zero disables it, and nothing is started.
+    /// period. An interval of zero disables it, and so does turning
+    /// expiration enforcement off: a relay still serving expired events must
+    /// not be quietly deleting them. Either way nothing is started.
     ///
-    /// Must be called inside a Tokio runtime. Drop the handle's task by
-    /// aborting it; the relay does not need to.
+    /// Must be called inside a Tokio runtime. Dropping the handle detaches
+    /// the task; aborting it stops the reaper.
     pub fn spawn_reaper(&self) -> Option<tokio::task::JoinHandle<()>> {
         let Reaper {
+            enforce_expiration,
             grace_seconds,
             interval_seconds,
         } = self.reaper;
-        if interval_seconds == 0 {
+        if !enforce_expiration || interval_seconds == 0 {
             return None;
         }
         let store = self.store.clone();

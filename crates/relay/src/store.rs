@@ -554,5 +554,5 @@ fn seconds_i64(timestamp: u64) -> i64 {
 }
 
 fn seconds(timestamp: u64) -> Value {
-    Value::Integer(i64::try_from(timestamp).unwrap_or(i64::MAX))
+    Value::Integer(seconds_i64(timestamp))
 }
