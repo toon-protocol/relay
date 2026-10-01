@@ -41,7 +41,7 @@ impl Lane {
     pub(crate) fn new(config: &Config) -> Self {
         Self {
             limiter: RateLimiter::new(
-                config.ephemeral_rate_limit,
+                u64::from(config.ephemeral_rate_limit),
                 Duration::from_millis(config.ephemeral_rate_window_ms),
             ),
             max_body_bytes: usize::try_from(config.ephemeral_max_body_bytes).unwrap_or(usize::MAX),
@@ -114,7 +114,7 @@ pub(crate) async fn write_ephemeral(State(relay): State<Relay>, request: Request
     if relay.log_writes {
         println!("{}", log_line(&event, "write-ephemeral", None));
     }
-    let event = match verified_event(event) {
+    let event = match verified_event(&relay, event) {
         Ok(event) => event,
         Err(refusal) => return refusal.into_response(),
     };

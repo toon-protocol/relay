@@ -6,7 +6,10 @@
 //! TypeScript relay already writes, and served to a client that sends `REQ`
 //! over WebSocket, stored or live. Beside it, `GET /health`, and the types
 //! that hold the relay's rules (#194): a verified event, a payment statement,
-//! a Write Edge and a terminated route, each with one constructor. The edge
+//! a Write Edge and a terminated route, each with one constructor. The whole
+//! command line and environment of the TypeScript relay is accepted (#200),
+//! `/metrics` is served, and the process stops cleanly on SIGINT and SIGTERM.
+//! The edge
 //! and the route are read by nothing yet; the connector edge (#199) is built
 //! on them. Every other surface in #185's compatibility contract is a later
 //! slice, and until it lands the conformance suite lists it as an expected
@@ -23,13 +26,14 @@ mod edge;
 mod error;
 mod framework;
 mod health;
+mod metrics;
 mod read;
 mod route;
 mod store;
 mod verified;
 mod write;
 
-pub use config::Config;
+pub use config::{Config, EdgeSettings, Invocation, USAGE};
 pub use edge::{Carriage, Settlement, WriteEdge};
 pub use error::RelayError;
 pub use route::TerminatedRoute;
@@ -44,6 +48,7 @@ use axum::routing::{any, get, post};
 use nostr::key::PublicKey;
 
 use crate::framework::ReadSide;
+use crate::metrics::Metrics;
 
 /// A relay: its identity, its store, and the read side that serves the store
 /// and receives what the write side accepts. Cheap to clone; every clone is
@@ -53,6 +58,7 @@ pub struct Relay {
     identity: PublicKey,
     store: Store,
     read_side: ReadSide,
+    metrics: Metrics,
     ephemeral: Arc<write::Lane>,
     log_writes: bool,
 }
@@ -69,6 +75,7 @@ impl Relay {
         Ok(Self {
             identity: config.identity,
             read_side: ReadSide::new(store.clone()),
+            metrics: Metrics::new(config),
             ephemeral: Arc::new(write::Lane::new(config)),
             log_writes: config.log_writes,
             store,
@@ -85,6 +92,7 @@ impl Relay {
     pub fn write_router(&self) -> Router {
         Router::new()
             .route("/health", get(health::health))
+            .route("/metrics", get(metrics::metrics))
             .route("/write", post(write::write))
             .route("/write-ephemeral", post(write::write_ephemeral))
             .with_state(self.clone())

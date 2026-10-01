@@ -21,9 +21,64 @@ pub enum RelayError {
     #[error("{name} must be an integer between 1 and 65535, got {value:?}")]
     InvalidPort { name: &'static str, value: String },
 
-    /// `name` is set to something that is not a positive whole number.
-    #[error("{name} must be a positive integer, got {value:?}")]
-    InvalidPositiveInteger { name: &'static str, value: String },
+    /// `name` holds a number the setting does not allow.
+    #[error("{name} must be {expected}, got {value:?}")]
+    InvalidSetting {
+        name: &'static str,
+        expected: &'static str,
+        value: String,
+    },
+
+    /// Both a mnemonic and a secret key were given.
+    #[error("provide either a mnemonic or a secret key, not both")]
+    BothIdentities,
+
+    /// `name` holds something that is not a BIP-39 mnemonic. The words are
+    /// deliberately not echoed.
+    #[error("{name} must be a valid BIP-39 mnemonic (12 or 24 words)")]
+    InvalidMnemonic { name: &'static str },
+
+    /// `TOON_DEV_MODE=true` or `--dev-mode`: skip signature verification.
+    #[error(
+        "TOON_DEV_MODE=true (or --dev-mode) is not supported: this relay always verifies event \
+         signatures. Unset it, or set it to false"
+    )]
+    DevModeRefused,
+
+    /// One half of the paid write edge was given without the other.
+    #[error("{given} and {missing} go together: set both, or neither")]
+    EdgeIncomplete {
+        given: &'static str,
+        missing: &'static str,
+    },
+
+    /// The write carriage is neither `http` nor `btp`.
+    #[error("{name} must be \"http\" or \"btp\", not {value:?}")]
+    InvalidCarriage { name: &'static str, value: String },
+
+    /// The blocklist holds an entry that is not an event id.
+    #[error(
+        "TOON_BLOCKED_EVENT_IDS entries must be 64-character hex event ids; rejected: {}",
+        rejected.join(", ")
+    )]
+    InvalidBlockedEventIds { rejected: Vec<String> },
+
+    /// A flag the relay does not have.
+    #[error("unknown option {flag}")]
+    UnknownFlag { flag: String },
+
+    /// A flag that takes a value was the last argument.
+    #[error("option {flag} needs a value")]
+    FlagNeedsValue { flag: &'static str },
+
+    /// A flag that stands alone was given a value with `=`.
+    #[error("option {flag} takes no value")]
+    FlagTakesNoValue { flag: &'static str },
+
+    /// An argument that is not a flag. It is deliberately not echoed: an
+    /// unquoted `--mnemonic` leaves the rest of its words here.
+    #[error("unexpected argument: every argument is a --flag or a flag's value")]
+    UnexpectedArgument,
 
     /// A listener could not bind: the host did not resolve, or the address is
     /// taken or not ours to bind.

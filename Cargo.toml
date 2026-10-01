@@ -31,7 +31,7 @@ http-body-util = "0.1"
 hyper = "1"
 hyper-util = { version = "0.1", features = ["tokio"] }
 # The protocol crate of the framework #185 names, on that framework's exact pin.
-nostr = { version = "=0.45.4", default-features = false, features = ["std"] }
+nostr = { version = "=0.45.4", default-features = false, features = ["std", "nip06"] }
 # The framework: NIP-01 messages, subscriptions and fan-out (`local_relay`).
 # Its API is declared alpha, so the pin is exact and crates/relay/src/framework.rs
 # is the only module that imports it (deploy/rust-workspace.test.ts). The pin

@@ -14,6 +14,8 @@ mod ephemeral;
 mod limiter;
 mod payment;
 
+use std::time::Instant;
+
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::State;
@@ -85,7 +87,7 @@ pub(crate) async fn write(State(relay): State<Relay>, headers: HeaderMap, body: 
     if relay.log_writes {
         println!("{}", log_line(&event, "write", payment.as_ref()));
     }
-    let event = match verified_event(event) {
+    let event = match verified_event(&relay, event) {
         Ok(event) => event,
         Err(refusal) => return refusal.into_response(),
     };
@@ -136,16 +138,20 @@ fn kind_of(event: &Value) -> Option<u64> {
     event.get("kind")?.as_u64()
 }
 
-/// The event in `event`, once its id and signature are proven. Never
-/// validates a payment: that was the connector's.
-fn verified_event(event: Value) -> Result<VerifiedEvent, Refusal> {
+/// The event in `event`, once its id and signature are proven, with the
+/// verification timed for `GET /metrics`. Never validates a payment: that was
+/// the connector's.
+fn verified_event(relay: &Relay, event: Value) -> Result<VerifiedEvent, Refusal> {
     let event = serde_json::from_value::<Event>(event).map_err(|error| {
         refusal(
             StatusCode::UNPROCESSABLE_ENTITY,
             format!("Invalid event: {error}"),
         )
     })?;
-    VerifiedEvent::verify(event).map_err(|error| match error {
+    let started = Instant::now();
+    let verified = VerifiedEvent::verify(event);
+    relay.metrics.record_verify(started.elapsed());
+    verified.map_err(|error| match error {
         RelayError::EventIdMismatch => {
             refusal(StatusCode::UNPROCESSABLE_ENTITY, "Invalid event id")
         }
