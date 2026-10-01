@@ -39,6 +39,12 @@ export interface StartOptions {
   document?: IlpDocument;
   /** Overrides on top of the default environment. */
   env?: Env;
+  /**
+   * A named docker volume to mount at `/data`, for a case that runs more than
+   * one image over the same database. Created if absent; the caller removes
+   * it with `removeVolume`. Default: the image's own anonymous volume.
+   */
+  volume?: string;
 }
 
 export interface RunningRelay {
@@ -84,6 +90,11 @@ async function waitHealthy(url: string, container: string): Promise<void> {
   throw new Error(`relay never became healthy (${last})\n${logs}`);
 }
 
+/** Remove a named volume (best effort). */
+export async function removeVolume(name: string): Promise<void> {
+  await docker('volume', 'rm', '-f', name).catch(() => undefined);
+}
+
 function envArgs(env: Env): string[] {
   return Object.entries(env).flatMap(([name, value]) =>
     value === undefined ? [] : ['-e', `${name}=${value}`]
@@ -127,6 +138,9 @@ export async function startRelay(
       `127.0.0.1::${writePort}`,
       '-p',
       `127.0.0.1::${readPort}`,
+      ...(options.volume !== undefined
+        ? ['-v', `${options.volume}:/data`]
+        : []),
       ...envArgs(env),
       image
     );
