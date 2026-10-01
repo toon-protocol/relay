@@ -4,12 +4,14 @@ import { startRelay, type RunningRelay } from './harness/relay-container.js';
 import {
   now,
   pubkeyOf,
+  publish,
   publishOk,
   query,
   settle,
   sign,
   storedIds,
   subscribe,
+  until,
 } from './harness/wire.js';
 import {
   conformanceTest,
@@ -266,21 +268,25 @@ describe('relay image conformance: tag filters', () => {
       const subscription = await subscribe(relay, filter);
       try {
         const t = now();
-        for (const [i, value] of ['x', 'y', 'x'].entries()) {
-          await publishOk(
-            relay,
-            sign(secretKey, {
-              kind: 1,
-              created_at: t + i,
-              content: String(i),
-              tags: [['ab', value]],
-            })
-          );
+        const tagged = (value: string, i: number) =>
+          sign(secretKey, {
+            kind: 1,
+            created_at: t + i,
+            content: String(i),
+            tags: [['ab', value]],
+          });
+        const first = tagged('x', 0);
+        const miss = tagged('y', 1);
+        const second = tagged('x', 2);
+        for (const event of [first, miss, second]) {
+          await publishOk(relay, event);
         }
+        const matching = ids(first, second);
+        expect(await storedIds(relay, filter)).toEqual(matching);
+        await until(() => subscription.delivered.length >= matching.length);
         await settle();
-        const stored = await storedIds(relay, filter);
         const live = subscription.delivered.map((e) => e.id).sort();
-        expect(live).toEqual(stored);
+        expect(live).toEqual(matching);
       } finally {
         subscription.close();
       }
@@ -313,8 +319,8 @@ describe('relay image conformance: deletion (kind 5)', () => {
         ids(keeper)
       );
 
-      // Re-submission does not bring it back.
-      await publishOk(relay, target);
+      // Re-submission does not bring it back, however the write is answered.
+      await publish(relay, target);
       expect(await storedIds(relay, { authors: [pubkey], kinds: [1] })).toEqual(
         ids(keeper)
       );
@@ -350,7 +356,7 @@ describe('relay image conformance: deletion (kind 5)', () => {
         await storedIds(relay, { authors: [pubkey], kinds: [30023] })
       ).toEqual(ids(other));
 
-      await publishOk(relay, target);
+      await publish(relay, target);
       expect(
         await storedIds(relay, { authors: [pubkey], kinds: [30023] })
       ).toEqual(ids(other));
@@ -407,7 +413,7 @@ describe('relay image conformance: duplicates', () => {
       const { secretKey, pubkey } = author();
       const event = sign(secretKey, { kind: 1, content: 'twice' });
       await publishOk(relay, event);
-      await publishOk(relay, event);
+      await publish(relay, event);
       const found = await query(relay, { authors: [pubkey] });
       expect(found.map((e) => e.id)).toEqual([event.id]);
     }
@@ -433,8 +439,9 @@ describe('relay image conformance: expiration enforced', () => {
           content: 'live',
           tags: [['expiration', String(t + 3600)]],
         });
-        await publishOk(relay, expired);
+        await publish(relay, expired);
         await publishOk(relay, live);
+        await until(() => subscription.delivered.length > 0);
         await settle();
         expect(await storedIds(relay, { authors: [pubkey] })).toEqual(
           ids(live)
@@ -472,7 +479,7 @@ describe('relay image conformance: expiration not enforced', () => {
         tags: [['expiration', String(t - 100)]],
       });
       await publishOk(lax, expired);
-      await settle();
+      await until(() => subscription.delivered.length > 0);
       expect(await storedIds(lax, { authors: [pubkey] })).toEqual(ids(expired));
       expect(subscription.delivered.map((e) => e.id)).toEqual([expired.id]);
     } finally {
@@ -501,16 +508,14 @@ describe('relay image conformance: operator blocklist', () => {
     'a blocklisted event id is never stored or returned',
     async () => {
       const pubkey = pubkeyOf(secretKey);
-      {
-        const other = sign(secretKey, { kind: 1, content: 'not blocked' });
-        await publishOk(blocking, blocked);
-        await publishOk(blocking, other);
-        await settle();
-        expect(await storedIds(blocking, { ids: [blocked.id] })).toEqual([]);
-        expect(await storedIds(blocking, { authors: [pubkey] })).toEqual(
-          ids(other)
-        );
-      }
+      const other = sign(secretKey, { kind: 1, content: 'not blocked' });
+      // Refused or silently dropped: either way, it must not come back.
+      await publish(blocking, blocked);
+      await publishOk(blocking, other);
+      expect(await storedIds(blocking, { ids: [blocked.id] })).toEqual([]);
+      expect(await storedIds(blocking, { authors: [pubkey] })).toEqual(
+        ids(other)
+      );
     }
   );
 });

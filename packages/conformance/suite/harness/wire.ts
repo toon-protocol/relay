@@ -114,6 +114,14 @@ export function subscribe(
   });
 }
 
-/** Give live delivery time to arrive (or, for a negative, not to). */
+/** Poll until `done()` holds, or give up after `ms` and let the assertion fail. */
+export async function until(done: () => boolean, ms = 5_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!done() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+/** Give live delivery time not to arrive, for a negative. */
 export const settle = (ms = 1_000): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
