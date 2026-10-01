@@ -3,7 +3,7 @@
 A black-box suite for a relay **container image**. It starts the image, starts
 a stub HTTP server standing in for the connector's `GET /ilp`, and talks only
 to the relay's read port (WebSocket + NIP-11) and write port (`POST /write`,
-`GET /health`). It imports nothing from the relay's source, so the same suite
+`POST /write-ephemeral`, `GET /health`, and the retired paths that must `404`). It imports nothing from the relay's source, so the same suite
 can gate any implementation of the relay's wire contract.
 
 ```

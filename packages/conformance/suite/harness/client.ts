@@ -64,6 +64,10 @@ export function subscribe(
     const ws = new WebSocket(url);
     const received: Event[] = [];
     let wake: (() => void) | undefined;
+    const timer = setTimeout(() => {
+      ws.close();
+      reject(new Error('no EOSE'));
+    }, 10_000);
     ws.on('error', reject);
     ws.on('open', () => ws.send(JSON.stringify(['REQ', 'live', filter])));
     ws.on('message', (data) => {
@@ -73,13 +77,16 @@ export function subscribe(
         wake?.();
       }
       if (message[0] === 'EOSE') {
+        clearTimeout(timer);
         resolve({
           async next(ms) {
             if (received.length === 0) {
+              let silence: NodeJS.Timeout | undefined;
               await new Promise<void>((done) => {
                 wake = done;
-                setTimeout(done, ms);
+                silence = setTimeout(done, ms);
               });
+              clearTimeout(silence);
             }
             return received.shift();
           },

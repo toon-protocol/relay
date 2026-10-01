@@ -21,6 +21,10 @@ const TRIPLE = {
   'X-TOON-Chain': 'evm',
 };
 
+/** TRIPLE with one header left out entirely. */
+const without = (name: keyof typeof TRIPLE): Record<string, string> =>
+  Object.fromEntries(Object.entries(TRIPLE).filter(([key]) => key !== name));
+
 const write = (body: unknown, headers: Record<string, string> = {}) =>
   post(`${relay.writeUrl}/write`, body, headers);
 
@@ -96,11 +100,12 @@ describe('relay image conformance: payment attribution', () => {
 
   const discarded: [string, Record<string, string>][] = [
     ['absent', {}],
-    ['missing the payer', { ...TRIPLE, 'X-TOON-Payer': '' }],
-    ['missing the amount', { ...TRIPLE, 'X-TOON-Amount': '' }],
-    ['missing the chain', { ...TRIPLE, 'X-TOON-Chain': '' }],
+    ['missing the payer', without('X-TOON-Payer')],
+    ['missing the amount', without('X-TOON-Amount')],
+    ['missing the chain', without('X-TOON-Chain')],
+    ['carrying an empty payer', { ...TRIPLE, 'X-TOON-Payer': '' }],
     ['an unknown chain', { ...TRIPLE, 'X-TOON-Chain': 'bitcoin' }],
-    ['a non-numeric amount', { ...TRIPLE, 'X-TOON-Amount': '10.5' }],
+    ['a non-integer amount', { ...TRIPLE, 'X-TOON-Amount': '10.5' }],
     ['a malformed payer', { ...TRIPLE, 'X-TOON-Payer': 'evm:0x1234' }],
     ['a payer of the wrong chain', { ...TRIPLE, 'X-TOON-Chain': 'solana' }],
   ];
@@ -121,15 +126,16 @@ describe('relay image conformance: live delivery of stored writes', () => {
     'a stored write reaches a live subscriber without a re-query',
     async () => {
       const subscription = await subscribe(relay.readWsUrl, { kinds: [7777] });
+      const event = signedEvent(7777);
       try {
-        const event = signedEvent(7777);
         expect((await write({ event })).status).toBe(200);
         const delivered = await subscription.next(10_000);
         expect(delivered?.id).toBe(event.id);
       } finally {
         subscription.close();
       }
-      expect((await query(relay.readWsUrl, { kinds: [7777] })).length).toBe(1);
+      const stored = await query(relay.readWsUrl, { ids: [event.id] });
+      expect(stored.map((e) => e.id)).toEqual([event.id]);
     }
   );
 });
@@ -175,6 +181,7 @@ describe('relay image conformance: POST /write-ephemeral', () => {
   });
 
   conformanceTest('413 for a body over the size cap', async () => {
+    // Twice the relay's default 8 KiB ephemeral body cap.
     const event = signedEvent(20100, 'x'.repeat(16 * 1024));
     expect((await ephemeral({ event })).status).toBe(413);
   });
