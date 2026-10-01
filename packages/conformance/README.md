@@ -37,13 +37,16 @@ runs as `it.fails` (it must still fail, and goes red when it starts passing, so
 the marker cannot go stale); under every other implementation it is an
 ordinary test.
 
-The Rust relay is being built one surface at a time, so most cases carry
-`'rust'` today: it answers `GET /health`, refuses a bad or missing identity
-and accepts the `NOSTR_SECRET_KEY` alias, and `404`s everything else on the
-write port. A change that builds a surface removes that surface's `'rust'`
-markers in the same change, because a marked case that passes is red. Cases
-that wait for a relay to refuse a setting it does not read yet run to the
-harness's 60s deadline, which is what makes the Rust run take minutes.
+The Rust relay is being built one surface at a time, so many cases carry
+`'rust'` today. It answers `GET /health`; takes a regular event on
+`POST /write`, stores it and serves it over WebSocket, stored or live; refuses
+`EVENT` over WebSocket; answers `426` to a plain `GET` on the read port; and
+refuses a bad identity or port. Replaceable, addressable, deletion and
+ephemeral kinds are answered `501` until the store slices land. A change that
+builds a surface removes that surface's `'rust'` markers in the same change,
+because a marked case that passes is red. Cases that wait for a relay to
+refuse a setting it does not read yet run to the harness's 60s deadline, which
+is what makes the Rust run take minutes.
 
 ## Coverage
 

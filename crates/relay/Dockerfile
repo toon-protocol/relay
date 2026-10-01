@@ -23,8 +23,8 @@
 # source-only commit reuses it.
 FROM rust:1.98.0-alpine3.22 AS chef
 
-# musl-dev: libc headers for linking; secp256k1's C sources build with the gcc
-# the base image already carries.
+# musl-dev: libc headers for linking; the C sources of secp256k1 and of the
+# bundled SQLite build with the gcc the base image already carries.
 RUN apk add --no-cache musl-dev
 RUN cargo install cargo-chef --locked --version 0.1.78
 

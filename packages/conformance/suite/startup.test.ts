@@ -44,8 +44,8 @@ describe('relay image conformance: a connector that is down at start', () => {
 
 describe('relay image conformance: settings the relay refuses to start with', () => {
   const key = DEFAULT_SECRET_KEY;
-  // The Rust relay reads only its identity and its write listener so far
-  // (#192), so it refuses a bad identity and starts on everything else.
+  // The Rust relay reads only its identity, its two listeners and its data
+  // directory so far (#193), so it starts on every other setting.
   const notYetInRust: ConformanceTestOptions = {
     expectedFailureFor: ['rust'],
   };
@@ -57,7 +57,6 @@ describe('relay image conformance: settings the relay refuses to start with', ()
     [
       'an invalid port',
       { env: { TOON_SECRET_KEY: key, TOON_RELAY_PORT: 'x' } },
-      notYetInRust,
     ],
     [
       'an invalid carriage',

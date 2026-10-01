@@ -1,0 +1,5 @@
+error[E0594]: cannot assign to data in a `&` reference
+ --> tests/compile_fail/verified_event_altered_after_verifying.rs:7:5
+  |
+7 |     verified.event().content = "altered after verifying".to_string();
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^ cannot assign

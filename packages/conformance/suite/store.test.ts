@@ -265,7 +265,7 @@ describe('relay image conformance: tag filters', () => {
         ).toEqual([idOf[value] ?? '']);
       }
     },
-    { expectedFailureFor: ['typescript', 'rust'] }
+    { expectedFailureFor: ['typescript'] }
   );
 
   conformanceTest(
@@ -427,8 +427,7 @@ describe('relay image conformance: duplicates', () => {
       await publish(relay, event);
       const found = await query(relay, { authors: [pubkey] });
       expect(found.map((e) => e.id)).toEqual([event.id]);
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 });
 

@@ -5,20 +5,29 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
-use relay::{Config, write_router};
+use relay::{Config, Relay};
 use serde_json::Value;
+use tempfile::TempDir;
 use tower::ServiceExt;
 
 /// The x-only public key of the secret key `11…11`.
 const PUBKEY_OF_ONES: &str = "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa";
 
-fn config() -> Config {
-    Config::from_env(|name| (name == "TOON_SECRET_KEY").then(|| "1".repeat(64)))
-        .expect("a 64-character hex secret key is a complete configuration")
+fn relay(data: &TempDir) -> Relay {
+    let data_dir = data.path().to_string_lossy().into_owned();
+    let config = Config::from_env(|name| match name {
+        "TOON_SECRET_KEY" => Some("1".repeat(64)),
+        "TOON_DATA_DIR" => Some(data_dir.clone()),
+        _ => None,
+    })
+    .expect("a secret key and a data directory are a complete configuration");
+    Relay::open(&config).expect("an empty data directory opens")
 }
 
 async fn get(path: &str) -> (StatusCode, Vec<u8>) {
-    let response = write_router(&config())
+    let data = tempfile::tempdir().expect("a temp dir");
+    let response = relay(&data)
+        .write_router()
         .oneshot(
             Request::get(path)
                 .body(Body::empty())

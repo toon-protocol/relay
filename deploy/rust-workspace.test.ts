@@ -8,6 +8,7 @@
  * - one toolchain pin, on edition 2024, with the Rust image's builder on the
  *   same version (a Dockerfile `FROM` cannot read rust-toolchain.toml);
  * - unsafe code forbidden in the workspace, and every crate inheriting that;
+ * - the framework on exact pins and imported by one adapter module (#193);
  * - the Rust image's contract with a stack matching the TypeScript image's:
  *   ports, volume, environment defaults, healthcheck and user id;
  * - the TypeScript image staying the only one any workflow publishes.
@@ -36,6 +37,7 @@ interface WorkspaceManifest {
     members: string[];
     package: { edition: string };
     lints: { rust: Record<string, string> };
+    dependencies: Record<string, string | { version: string }>;
   };
 }
 
@@ -114,6 +116,45 @@ describe('the workspace holds every crate to its rules', () => {
       expect(crate.package.edition?.workspace, `${dir}: edition`).toBe(true);
       expect(crate.package.publish, `${dir}: publish`).toBe(false);
     }
+  });
+});
+
+describe('the framework stays behind one adapter module', () => {
+  // `nostr-sdk`'s `local_relay` is declared alpha (#185). `nostr-database`
+  // holds the trait the adapter implements, and nostr-sdk does not re-export
+  // enough of it to implement the trait through nostr-sdk alone.
+  const FRAMEWORK = ['nostr-sdk', 'nostr-database'];
+  const ADAPTER = 'crates/relay/src/framework.rs';
+
+  /** Every `.rs` file under `dir`, as a repo-relative path. */
+  function rustFiles(dir: string): string[] {
+    return readdirSync(resolve(REPO_ROOT, dir), {
+      withFileTypes: true,
+    }).flatMap((entry) => {
+      const path = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) return rustFiles(path);
+      return entry.name.endsWith('.rs') ? [path] : [];
+    });
+  }
+
+  it('pins each framework crate to one exact version', () => {
+    for (const name of FRAMEWORK) {
+      const dependency = workspace.workspace.dependencies[name];
+      const version =
+        typeof dependency === 'string' ? dependency : dependency?.version;
+      expect(version, name).toMatch(/^=\d+\.\d+\.\d+$/);
+    }
+  });
+
+  it('is named by no Rust file but the adapter', () => {
+    const names = FRAMEWORK.map((name) => name.replace('-', '_'));
+    const importers = crateDirs()
+      .flatMap((dir) => rustFiles(dir))
+      .filter((path) => {
+        const source = readFile(path);
+        return names.some((name) => new RegExp(`\\b${name}\\b`).test(source));
+      });
+    expect(importers).toEqual([ADAPTER]);
   });
 });
 
