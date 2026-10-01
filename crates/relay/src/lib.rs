@@ -40,7 +40,7 @@ pub use config::{Config, EdgeSettings, Invocation, USAGE};
 pub use edge::{Carriage, Settlement, WriteEdge};
 pub use error::RelayError;
 pub use route::TerminatedRoute;
-pub use store::{Saved, Store};
+pub use store::{Retention, Saved, Store};
 pub use verified::VerifiedEvent;
 pub use write::{Chain, PaymentStatement};
 
@@ -68,6 +68,15 @@ pub struct Relay {
     metrics: Metrics,
     ephemeral: Arc<write::Lane>,
     log_writes: bool,
+    reaper: Reaper,
+}
+
+/// Whether the reaper runs, when, and how long it lets an expired event stay.
+#[derive(Debug, Clone, Copy)]
+struct Reaper {
+    enforce_expiration: bool,
+    grace_seconds: u64,
+    interval_seconds: u64,
 }
 
 impl Relay {
@@ -78,7 +87,13 @@ impl Relay {
             path: config.data_dir.clone(),
             source,
         })?;
-        let store = Store::open(&config.database_path())?;
+        let store = Store::open_with(
+            &config.database_path(),
+            Retention {
+                enforce_expiration: config.enforce_expiration,
+                blocked_event_ids: config.blocked_event_ids.iter().cloned().collect(),
+            },
+        )?;
         let edge = EdgeSlot::default();
         Ok(Self {
             identity: config.identity,
@@ -96,7 +111,47 @@ impl Relay {
             ephemeral: Arc::new(write::Lane::new(config)),
             log_writes: config.log_writes,
             store,
+            reaper: Reaper {
+                enforce_expiration: config.enforce_expiration,
+                grace_seconds: config.expiration_reap_grace_seconds,
+                interval_seconds: config.expiration_reap_interval_seconds,
+            },
         })
+    }
+
+    /// Start the NIP-40 reaper: one sweep now, then one every configured
+    /// interval, each deleting what expired longer ago than the grace
+    /// period. An interval of zero disables it, and so does turning
+    /// expiration enforcement off: a relay still serving expired events must
+    /// not be quietly deleting them. Either way nothing is started.
+    ///
+    /// Must be called inside a Tokio runtime. Dropping the handle detaches
+    /// the task; aborting it stops the reaper.
+    pub fn spawn_reaper(&self) -> Option<tokio::task::JoinHandle<()>> {
+        let Reaper {
+            enforce_expiration,
+            grace_seconds,
+            interval_seconds,
+        } = self.reaper;
+        if !enforce_expiration || interval_seconds == 0 {
+            return None;
+        }
+        let store = self.store.clone();
+        Some(tokio::spawn(async move {
+            // The first tick is immediate: the boot sweep. A sweep that
+            // overruns delays the next rather than bunching them.
+            let mut sweeps =
+                tokio::time::interval(std::time::Duration::from_secs(interval_seconds));
+            sweeps.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                sweeps.tick().await;
+                match store.reap_expired(grace_seconds).await {
+                    Ok(0) => {}
+                    Ok(removed) => println!("reaper removed {removed} expired event(s)"),
+                    Err(error) => eprintln!("reaper failed: {error}"),
+                }
+            }
+        }))
     }
 
     /// Start reading the Write Edge from the connector, if one is configured,

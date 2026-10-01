@@ -332,8 +332,7 @@ describe('relay image conformance: deletion (kind 5)', () => {
       expect(await storedIds(relay, { authors: [pubkey], kinds: [1] })).toEqual(
         ids(keeper)
       );
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 
   conformanceTest(
@@ -370,6 +369,8 @@ describe('relay image conformance: deletion (kind 5)', () => {
         await storedIds(relay, { authors: [pubkey], kinds: [30023] })
       ).toEqual(ids(other));
     },
+    // Deletion is built (#196); this case also publishes addressable kinds,
+    // which wait for replacement (#195).
     { expectedFailureFor: ['rust'] }
   );
 
@@ -413,6 +414,8 @@ describe('relay image conformance: deletion (kind 5)', () => {
         await storedIds(relay, { authors: [victim.pubkey], kinds: [30023] })
       ).toEqual(ids(later));
     },
+    // Deletion is built (#196); this case also publishes addressable kinds,
+    // which wait for replacement (#195).
     { expectedFailureFor: ['rust'] }
   );
 });
@@ -462,8 +465,7 @@ describe('relay image conformance: expiration enforced', () => {
       } finally {
         subscription.close();
       }
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 });
 
@@ -480,6 +482,9 @@ describe('relay image conformance: expiration not enforced', () => {
     await lax?.stop();
   });
 
+  // The Rust relay stores the event and delivers it live, but its framework
+  // leaves an expired event out of every REQ answer whatever the store
+  // returns, with no setting to turn that off (#196).
   conformanceTest(
     'an expired event is returned and delivered',
     async () => {
@@ -534,7 +539,6 @@ describe('relay image conformance: operator blocklist', () => {
       expect(await storedIds(blocking, { authors: [pubkey] })).toEqual(
         ids(other)
       );
-    },
-    { expectedFailureFor: ['rust'] }
+    }
   );
 });

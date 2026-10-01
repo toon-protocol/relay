@@ -133,11 +133,9 @@ async fn kinds_whose_storage_rule_is_not_built_yet_are_refused_and_not_stored() 
     let dir = tempdir().expect("a temp dir");
     let store = Store::open(&typescript_database(dir.path())).expect("it opens");
 
-    // Replaceable (0, 3, 10000-19999), deletion (5), ephemeral (20000-29999),
-    // addressable (30000-39999).
-    for kind in [
-        0, 3, 5, 10_002, 10_032, 19_999, 20_000, 29_999, 30_000, 39_999,
-    ] {
+    // Replaceable (0, 3, 10000-19999), ephemeral (20000-29999), addressable
+    // (30000-39999).
+    for kind in [0, 3, 10_002, 10_032, 19_999, 20_000, 29_999, 30_000, 39_999] {
         let result = store
             .save(&verified(&signed(kind, 1_700_000_000, &[])))
             .await;

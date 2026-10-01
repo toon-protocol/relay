@@ -136,8 +136,7 @@ pub enum RelayError {
     TagsNotJson(serde_json::Error),
 
     /// The event is of a kind whose storage rule this build does not have
-    /// yet: replaceable, addressable, deletion or ephemeral (#195, #196,
-    /// #198). It was not stored.
+    /// yet: replaceable, addressable or ephemeral (#195, #198). It was not stored.
     #[error("events of kind {kind} are not stored by this build yet")]
     KindNotStoredYet { kind: u16 },
 

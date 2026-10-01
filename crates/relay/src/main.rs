@@ -50,6 +50,9 @@ async fn run() -> Result<(), RelayError> {
         );
     }
     let relay = Relay::open(&config)?;
+    // Detached: the reaper sweeps for the life of the process.
+    let _reaper = relay.spawn_reaper();
+    print_retention(&config);
     match &config.edge {
         Some(connector) => println!(
             "[relay] paid write edge: asking {} about {}",
@@ -100,6 +103,36 @@ async fn run() -> Result<(), RelayError> {
     tokio::try_join!(write.into_future(), read.into_future())
         .map(|_| ())
         .map_err(RelayError::Serve)
+}
+
+/// The retention posture, printed every boot as the TypeScript relay does: a
+/// relay withholding events says so out loud, the operator blocklist above
+/// all (docs/retention.md).
+fn print_retention(config: &Config) {
+    if config.enforce_expiration {
+        let sweep = match config.expiration_reap_interval_seconds {
+            0 => "disabled".to_string(),
+            seconds => format!("every {seconds}s"),
+        };
+        println!(
+            "[relay] NIP-40 expiration: enforced (reap grace {}s, sweep {sweep})",
+            config.expiration_reap_grace_seconds,
+        );
+    } else {
+        println!(
+            "[relay] NIP-40 expiration: NOT enforced -- expired events are still served (TOON_ENFORCE_EXPIRATION=false)"
+        );
+    }
+    println!("[relay] NIP-09 deletion: enabled (author-signed kind:5 only)");
+    if !config.blocked_event_ids.is_empty() {
+        eprintln!(
+            "[relay] OPERATOR BLOCKLIST ACTIVE -- {} event id(s) refused on write and swept from storage:",
+            config.blocked_event_ids.len(),
+        );
+        for id in &config.blocked_event_ids {
+            eprintln!("[relay]   blocked {id}");
+        }
+    }
 }
 
 async fn listen(host: &str, port: u16) -> Result<TcpListener, RelayError> {
