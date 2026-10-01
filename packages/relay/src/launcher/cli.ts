@@ -207,39 +207,57 @@ function parseNonNegativeIntOption(
   return parsed;
 }
 
+/**
+ * Run `parseArgs`, turning its rejection of an unknown flag or a missing
+ * value into the same one-line `Error:` every other bad setting gets, rather
+ * than a `[Fatal]` stack.
+ */
+function parseFlags<T>(parse: () => T): T {
+  try {
+    return parse();
+  } catch (error) {
+    console.error(
+      `Error: ${error instanceof Error ? error.message : String(error)}`
+    );
+    process.exit(1);
+  }
+}
+
 function parseCli(): RelayConfig {
-  const { values } = parseArgs({
-    options: {
-      mnemonic: { type: 'string' },
-      'secret-key': { type: 'string' },
-      'relay-port': { type: 'string' },
-      'bls-port': { type: 'string' },
-      host: { type: 'string' },
-      'write-host': { type: 'string' },
-      'data-dir': { type: 'string' },
-      'dev-mode': { type: 'boolean' },
-      'verify-ephemeral': { type: 'boolean' },
-      'verify-workers': { type: 'string' },
-      'max-connections': { type: 'string' },
-      'ephemeral-rate-limit': { type: 'string' },
-      'ephemeral-rate-window-ms': { type: 'string' },
-      'ephemeral-max-body-bytes': { type: 'string' },
-      'connector-url': { type: 'string' },
-      'write-ilp-address': { type: 'string' },
-      'write-carriage': { type: 'string' },
-      'relay-name': { type: 'string' },
-      'relay-description': { type: 'string' },
-      'relay-contact': { type: 'string' },
-      'log-writes': { type: 'boolean' },
-      'no-enforce-expiration': { type: 'boolean' },
-      'expiration-reap-grace-seconds': { type: 'string' },
-      'expiration-reap-interval-seconds': { type: 'string' },
-      'blocked-event-ids': { type: 'string' },
-      help: { type: 'boolean' },
-    },
-    strict: true,
-    allowPositionals: false,
-  });
+  const { values } = parseFlags(() =>
+    parseArgs({
+      options: {
+        mnemonic: { type: 'string' },
+        'secret-key': { type: 'string' },
+        'relay-port': { type: 'string' },
+        'bls-port': { type: 'string' },
+        host: { type: 'string' },
+        'write-host': { type: 'string' },
+        'data-dir': { type: 'string' },
+        'dev-mode': { type: 'boolean' },
+        'verify-ephemeral': { type: 'boolean' },
+        'verify-workers': { type: 'string' },
+        'max-connections': { type: 'string' },
+        'ephemeral-rate-limit': { type: 'string' },
+        'ephemeral-rate-window-ms': { type: 'string' },
+        'ephemeral-max-body-bytes': { type: 'string' },
+        'connector-url': { type: 'string' },
+        'write-ilp-address': { type: 'string' },
+        'write-carriage': { type: 'string' },
+        'relay-name': { type: 'string' },
+        'relay-description': { type: 'string' },
+        'relay-contact': { type: 'string' },
+        'log-writes': { type: 'boolean' },
+        'no-enforce-expiration': { type: 'boolean' },
+        'expiration-reap-grace-seconds': { type: 'string' },
+        'expiration-reap-interval-seconds': { type: 'string' },
+        'blocked-event-ids': { type: 'string' },
+        help: { type: 'boolean' },
+      },
+      strict: true,
+      allowPositionals: false,
+    })
+  );
 
   if (values.help) {
     printHelp();

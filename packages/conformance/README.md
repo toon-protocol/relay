@@ -23,3 +23,17 @@ A test that one implementation is known to fail is declared with
 runs as `it.fails` (it must still fail, and goes red when it starts passing, so
 the marker cannot go stale); under every other implementation it is an
 ordinary test.
+
+## What it covers
+
+| file                | covers                                                                                                                                                                                        |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tracer.test.ts`    | one paid write, one free read, one document fetch                                                                                                                                             |
+| `document.test.ts`  | the Relay Information Document in each edge state (known, no connector, unreachable, address not terminated), carriage precedence, `limitation`, `fees`, `supported_nips`, CORS and `OPTIONS` |
+| `endpoints.test.ts` | `GET /health` and `GET /metrics`                                                                                                                                                              |
+| `startup.test.ts`   | a connector that is down at start, settings the relay must refuse (exit non-zero with an `Error:` line), every documented env variable                                                        |
+
+The stub connector is varied per case (`ilpDocument()` overrides, or down /
+absent). A run that passes command-line flags uses the image's documented
+command, `node dist/cli.js`; set `CONFORMANCE_COMMAND` for an implementation
+whose command differs.
