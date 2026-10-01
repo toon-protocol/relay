@@ -7,7 +7,7 @@
 use std::net::SocketAddr;
 use std::process::ExitCode;
 
-use relay::{Config, Relay, RelayError};
+use relay::{Config, Invocation, Relay, RelayError, USAGE};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::watch;
@@ -24,7 +24,34 @@ async fn main() -> ExitCode {
 }
 
 async fn run() -> Result<(), RelayError> {
-    let config = Config::from_env(|name| std::env::var(name).ok())?;
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    // Arguments are visible to other users in a process listing (CWE-214).
+    for flag in ["--mnemonic", "--secret-key"] {
+        if args
+            .iter()
+            .any(|arg| arg == flag || arg.starts_with(&format!("{flag}=")))
+        {
+            eprintln!(
+                "Warning: {flag} is visible in process listings. Prefer the environment variable."
+            );
+        }
+    }
+    let config = match Config::from_args_and_env(args, |name| std::env::var(name).ok())? {
+        Invocation::Help => {
+            println!("{USAGE}");
+            return Ok(());
+        }
+        Invocation::Run(config) => config,
+    };
+    if let Some(workers) = config.verify_workers {
+        println!(
+            "TOON_VERIFY_WORKERS={workers} has no effect: signatures are verified natively, \
+             without a worker pool"
+        );
+    }
+    for id in &config.blocked_event_ids {
+        println!("blocked event id: {id}");
+    }
     let relay = Relay::open(&config)?;
     let write = listen(&config.write_host, config.write_port).await?;
     let read = listen(&config.read_host, config.read_port).await?;

@@ -12,6 +12,8 @@
 
 mod payment;
 
+use std::time::Instant;
+
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::State;
@@ -68,7 +70,10 @@ pub(crate) async fn write(State(relay): State<Relay>, headers: HeaderMap, body: 
             );
         }
     };
-    let event = match VerifiedEvent::verify(event) {
+    let started = Instant::now();
+    let verified = VerifiedEvent::verify(event);
+    relay.metrics.record_verify(started.elapsed());
+    let event = match verified {
         Ok(event) => event,
         Err(RelayError::EventIdMismatch) => {
             return refused(StatusCode::UNPROCESSABLE_ENTITY, "Invalid event id");
