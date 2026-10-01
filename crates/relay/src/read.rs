@@ -27,6 +27,8 @@ use crate::Relay;
 /// RFC 6455 §1.3: appended to the client's key before hashing.
 const WEBSOCKET_GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
+/// Answer one request on the read port: `101` and a hand-off to the read side
+/// for a WebSocket handshake, `426` for anything else.
 pub(crate) async fn read(State(relay): State<Relay>, mut request: Request) -> Response {
     let Some(accept) = websocket_accept(request.method(), request.headers()) else {
         return upgrade_required();

@@ -8,19 +8,25 @@
 //! way an event reaches the file.
 //!
 //! This is the spike's store (#193). It keeps regular events and answers
-//! filters. Replacement (#195), deletion, expiry and the blocklist (#196) are
-//! not built, so the kinds they govern are refused rather than stored under
-//! the wrong rule.
+//! filters. Replacement (#195) and deletion (#196) are not built, so the
+//! kinds they govern are refused rather than stored under the wrong rule.
+//!
+//! What it does not do yet, and a reader should not assume: it does not
+//! consult the tombstone tables or the operator blocklist before saving, so a
+//! regular event its author deleted through the TypeScript relay would be
+//! admitted again; and it does not leave expired events out of a query
+//! (#196). It writes `expires_at`, because the row must be the one the
+//! TypeScript relay would write.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use nostr::event::{Event, Tags};
 use nostr::filter::Filter;
 use rusqlite::types::Value;
 use rusqlite::{Connection, params, params_from_iter};
 
+use crate::clock::unix_seconds;
 use crate::{RelayError, VerifiedEvent};
 
 /// The schema, statement for statement as the TypeScript relay creates it.
@@ -66,7 +72,12 @@ const SELECT: &str = "SELECT id, pubkey, created_at, kind, tags, content, sig FR
 /// One tag condition: the event carries a tag whose name is the first
 /// parameter and whose value is one of the rest. The comparison is on the
 /// parsed JSON, so a `%` or `_` in a value is text and a value matches whole.
-const HAS_TAG: &str = "EXISTS (SELECT 1 FROM json_each(events.tags) AS tag \
+///
+/// `json_valid` comes first because `json_each` raises on text that is not
+/// JSON, which would fail the whole query over one bad row; the `CASE` is
+/// what guarantees the order, which `AND` does not.
+const HAS_TAG: &str = "CASE WHEN json_valid(events.tags) THEN EXISTS (\
+     SELECT 1 FROM json_each(events.tags) AS tag \
      WHERE json_extract(tag.value, '$[0]') = ? AND json_extract(tag.value, '$[1]') IN";
 
 /// The largest whole number the TypeScript relay reads from an `expiration`
@@ -199,13 +210,6 @@ fn expiration(tags: &Tags) -> Option<u64> {
         .find_map(|value| value.parse::<u64>().ok().filter(|at| *at <= MAX_EXPIRATION))
 }
 
-/// A clock set before 1970 reads as 0.
-fn unix_seconds() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
-}
-
 fn query(connection: &Connection, filter: &Filter) -> Result<Vec<Event>, RelayError> {
     let mut conditions: Vec<String> = Vec::new();
     let mut parameters: Vec<Value> = Vec::new();
@@ -241,7 +245,10 @@ fn query(connection: &Connection, filter: &Filter) -> Result<Vec<Event>, RelayEr
         parameters.push(seconds(until.as_secs()));
     }
     for (name, values) in &filter.generic_tags {
-        conditions.push(format!("{HAS_TAG} ({}))", placeholders(values.len())));
+        conditions.push(format!(
+            "{HAS_TAG} ({})) ELSE 0 END",
+            placeholders(values.len())
+        ));
         parameters.push(name.to_string().into());
         parameters.extend(values.iter().cloned().map(Value::from));
     }

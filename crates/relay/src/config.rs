@@ -37,9 +37,11 @@ pub struct Config {
     /// The host the write port (`POST /write`, `GET /health`) listens on: an
     /// IP address or a name, resolved when the listener binds.
     pub write_host: String,
+    /// The write port: `TOON_BLS_PORT`, 3100 unless set.
     pub write_port: u16,
-    /// The host and port of the read side: the NIP-01 WebSocket.
+    /// The host the read side (the NIP-01 WebSocket) listens on.
     pub read_host: String,
+    /// The read port: `TOON_RELAY_PORT`, 7100 unless set.
     pub read_port: u16,
     /// The directory that holds the database, created if it is missing.
     pub data_dir: PathBuf,

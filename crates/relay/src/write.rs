@@ -8,8 +8,6 @@
 //! delivery, `422` for an event that does not verify. Payment attribution
 //! (#194) and the ephemeral lane (#198) are not built yet.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::State;
@@ -19,6 +17,7 @@ use nostr::event::Event;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::clock::unix_seconds;
 use crate::{Relay, RelayError, Saved, VerifiedEvent};
 
 /// The `200` body.
@@ -46,11 +45,11 @@ pub(crate) async fn write(State(relay): State<Relay>, body: Bytes) -> Response {
     let Ok(body) = serde_json::from_slice::<Value>(&body) else {
         return refused(StatusCode::BAD_REQUEST, "Invalid request body");
     };
+    // Missing as the TypeScript relay reads it: absent, or any value
+    // JavaScript calls falsy.
     let event = match body.get("event") {
-        None | Some(Value::Null) => {
-            return refused(StatusCode::BAD_REQUEST, "Missing required field: event");
-        }
-        Some(event) => event.clone(),
+        Some(event) if !is_falsy(event) => event.clone(),
+        _ => return refused(StatusCode::BAD_REQUEST, "Missing required field: event"),
     };
     let event = match serde_json::from_value::<Event>(event) {
         Ok(event) => event,
@@ -66,8 +65,15 @@ pub(crate) async fn write(State(relay): State<Relay>, body: Bytes) -> Response {
         Err(RelayError::EventIdMismatch) => {
             return refused(StatusCode::UNPROCESSABLE_ENTITY, "Invalid event id");
         }
-        Err(_) => {
+        Err(RelayError::EventSignatureInvalid) => {
             return refused(StatusCode::UNPROCESSABLE_ENTITY, "Invalid event signature");
+        }
+        Err(error) => {
+            eprintln!("write: an event could not be verified: {error}");
+            return refused(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "The event could not be verified",
+            );
         }
     };
 
@@ -94,9 +100,13 @@ pub(crate) async fn write(State(relay): State<Relay>, body: Bytes) -> Response {
     .into_response()
 }
 
-/// A clock set before 1970 reads as 0.
-fn unix_seconds() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
+/// Whether JavaScript's `!value` is true of a JSON value.
+fn is_falsy(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::Bool(flag) => !flag,
+        Value::Number(number) => number.as_f64() == Some(0.0),
+        Value::String(text) => text.is_empty(),
+        Value::Array(_) | Value::Object(_) => false,
+    }
 }

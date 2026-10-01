@@ -14,6 +14,7 @@
 //! misused. Nothing is published and nothing outside this workspace imports
 //! it.
 
+mod clock;
 mod config;
 mod error;
 mod framework;

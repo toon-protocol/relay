@@ -36,7 +36,16 @@ async fn a_signed_regular_event_is_answered_200_with_its_id_and_a_stored_at_time
 #[tokio::test]
 async fn a_body_that_is_not_json_or_carries_no_event_is_400() {
     let running = running().await;
-    for body in ["not json", "{}", r#"{"event":null}"#, "[]"] {
+    let bodies = [
+        "not json",
+        "{}",
+        "[]",
+        r#"{"event":null}"#,
+        r#"{"event":false}"#,
+        r#"{"event":0}"#,
+        r#"{"event":""}"#,
+    ];
+    for body in bodies {
         let (status, answer) = write(&running.relay, body).await;
         assert_eq!(status, 400, "{body}");
         assert!(answer["error"].is_string(), "{body}");

@@ -219,3 +219,26 @@ async fn a_tag_filter_matches_the_whole_value_and_treats_like_wildcards_as_text(
         .expect("runs");
     assert_eq!(found, vec![], "a prefix of a value is not the value");
 }
+
+#[tokio::test]
+async fn a_row_whose_tags_are_not_json_is_not_served_and_fails_no_query() {
+    let dir = tempdir().expect("a temp dir");
+    let path = typescript_database(dir.path());
+    Connection::open(&path)
+        .expect("the database opens")
+        .execute(
+            "INSERT INTO events VALUES ('aa', 'bb', 1, 'by hand', 'not json', 1, 'cc', 1, NULL)",
+            [],
+        )
+        .expect("a hand-written row");
+    let store = Store::open(&path).expect("it opens");
+    let event = signed(1, 1_000, &[&["t", "kept"]]);
+    store.save(&verified(&event)).await.expect("saved");
+
+    let found = store.query(Filter::new()).await.expect("runs");
+    assert_eq!(ids(&found), vec![event.id.to_hex()]);
+
+    let tagged = Filter::new().custom_tag(SingleLetterTag::LOWERCASE_T, "kept");
+    let found = store.query(tagged).await.expect("a tag filter runs too");
+    assert_eq!(ids(&found), vec![event.id.to_hex()]);
+}
