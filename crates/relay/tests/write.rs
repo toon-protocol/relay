@@ -73,14 +73,14 @@ async fn a_bad_signature_or_a_tampered_event_is_422() {
 #[tokio::test]
 async fn a_kind_whose_storage_rule_is_not_built_yet_is_501() {
     let running = running().await;
-    let profile = signed(0, 1_700_000_000, &[]);
+    let profile = signed(5, 1_700_000_000, &[]);
 
     let (status, answer) = write(&running.relay, delivery(&profile)).await;
 
     assert_eq!(status, 501);
     assert_eq!(
         answer["error"],
-        "events of kind 0 are not stored by this build yet"
+        "events of kind 5 are not stored by this build yet"
     );
 }
 

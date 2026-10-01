@@ -89,6 +89,9 @@ pub(crate) async fn write(State(relay): State<Relay>, headers: HeaderMap, body: 
         Ok(Saved::New) => relay.read_side.deliver(&event),
         // Already held, so already delivered: the connector retried.
         Ok(Saved::Duplicate) => {}
+        // A newer event of the same address is held: this one is accepted
+        // and paid for but never becomes the current one, and is not served.
+        Ok(Saved::Superseded) => {}
         Err(error @ RelayError::KindNotStoredYet { .. }) => {
             return refused(StatusCode::NOT_IMPLEMENTED, error.to_string());
         }

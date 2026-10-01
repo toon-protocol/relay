@@ -7,9 +7,10 @@
 //! [`Store::save`] takes a [`VerifiedEvent`] and nothing else: that is the one
 //! way an event reaches the file.
 //!
-//! This is the spike's store (#193). It keeps regular events and answers
-//! filters. Replacement (#195) and deletion (#196) are not built, so the
-//! kinds they govern are refused rather than stored under the wrong rule.
+//! It keeps regular events, replaces replaceable and addressable ones, and
+//! answers filters. Deletion (#196) and ephemeral kinds (#198) are not built,
+//! so the kinds they govern are refused rather than stored under the wrong
+//! rule.
 //!
 //! What it does not do yet, and a reader should not assume: it does not
 //! consult the tombstone tables or the operator blocklist before saving, so a
@@ -91,6 +92,9 @@ pub enum Saved {
     New,
     /// The event was already held; nothing was written.
     Duplicate,
+    /// A held event of the same kind, author (and `d` tag, if addressable)
+    /// is newer, or as new and lower by id; nothing was written.
+    Superseded,
 }
 
 /// The event store over one SQLite file. Cheap to clone: every clone is the
@@ -128,8 +132,9 @@ impl Store {
 
     /// Save a verified event.
     ///
-    /// Only regular kinds are stored yet. A kind governed by a rule this
-    /// store does not have (replaceable, addressable, deletion, ephemeral) is
+    /// A replaceable or addressable kind replaces the event it supersedes in
+    /// the same transaction, or is [`Saved::Superseded`]. A kind governed by a
+    /// rule this store does not have (deletion, ephemeral) is
     /// [`RelayError::KindNotStoredYet`] and nothing is written.
     pub async fn save(&self, event: &VerifiedEvent) -> Result<Saved, RelayError> {
         let event = event.clone();
@@ -162,26 +167,101 @@ impl Store {
     }
 }
 
+/// How a kind is kept. The ranges are #185's, not the protocol crate's,
+/// which also calls kind 41 replaceable and classifies 10032-10099 as
+/// replaceable where this relay keys them by `d` tag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Rule {
+    /// One row per event.
+    Regular,
+    /// One row per author and kind.
+    Replaceable,
+    /// One row per author, kind and `d` tag.
+    Addressable,
+    /// Not built yet: deletion (#196) and ephemeral (#198).
+    Unbuilt,
+}
+
+fn rule(kind: u16) -> Rule {
+    match kind {
+        5 | 20_000..=29_999 => Rule::Unbuilt,
+        10_032..=10_099 | 30_000..=39_999 => Rule::Addressable,
+        0 | 3 | 10_000..=19_999 => Rule::Replaceable,
+        _ => Rule::Regular,
+    }
+}
+
+/// The event's `d` tag value: the first `d` tag's, or empty if it has none.
+fn d_value(tags: &Tags) -> &str {
+    tags.iter()
+        .find(|tag| tag.kind() == "d")
+        .map_or("", |tag| tag.content().unwrap_or(""))
+}
+
 fn save(connection: &Connection, event: &Event) -> Result<Saved, RelayError> {
     let kind = event.kind.as_u16();
-    if !is_regular(kind) {
+    let rule = rule(kind);
+    if rule == Rule::Unbuilt {
         return Err(RelayError::KindNotStoredYet { kind });
     }
     let tags = serde_json::to_string(&event.tags).map_err(RelayError::TagsNotJson)?;
-    let inserted = connection.execute(
+    let id = event.id.to_hex();
+    let pubkey = event.pubkey.to_hex();
+    let created_at = event.created_at.as_secs();
+
+    // The read and the write are one transaction. The connection is behind a
+    // mutex, so no other writer in this process can read the old row between.
+    let transaction = connection.unchecked_transaction()?;
+    if rule != Rule::Regular {
+        let mut statement = transaction.prepare_cached(
+            "SELECT id, created_at, tags FROM events WHERE pubkey = ? AND kind = ?",
+        )?;
+        let mut rows = statement.query(params![pubkey, kind])?;
+        let mut held: Vec<String> = Vec::new();
+        let mut superseded = false;
+        while let Some(row) = rows.next()? {
+            let held_id: String = row.get(0)?;
+            let held_at: i64 = row.get(1)?;
+            let held_tags: String = row.get(2)?;
+            if rule == Rule::Addressable && !same_address(&held_tags, d_value(&event.tags)) {
+                continue;
+            }
+            if held_id == id {
+                return Ok(Saved::Duplicate);
+            }
+            // The newer event wins; on a tie, the lower id.
+            let held_wins = match held_at.cmp(&i64::try_from(created_at).unwrap_or(i64::MAX)) {
+                std::cmp::Ordering::Greater => true,
+                std::cmp::Ordering::Equal => held_id < id,
+                std::cmp::Ordering::Less => false,
+            };
+            superseded |= held_wins;
+            held.push(held_id);
+        }
+        drop(rows);
+        drop(statement);
+        if superseded {
+            return Ok(Saved::Superseded);
+        }
+        for held_id in held {
+            transaction.execute("DELETE FROM events WHERE id = ?", params![held_id])?;
+        }
+    }
+    let inserted = transaction.execute(
         INSERT,
         params![
-            event.id.to_hex(),
-            event.pubkey.to_hex(),
+            id,
+            pubkey,
             kind,
             event.content,
             tags,
-            seconds(event.created_at.as_secs()),
+            seconds(created_at),
             event.sig.to_string(),
             seconds(unix_seconds()),
             expiration(&event.tags).map(seconds),
         ],
     )?;
+    transaction.commit()?;
     Ok(if inserted == 0 {
         Saved::Duplicate
     } else {
@@ -189,15 +269,10 @@ fn save(connection: &Connection, event: &Event) -> Result<Saved, RelayError> {
     })
 }
 
-/// Whether `kind` is stored as one row per event with no other rule. The
-/// ranges are #185's, not the protocol crate's, which also calls kind 41
-/// replaceable.
-fn is_regular(kind: u16) -> bool {
-    let replaceable = kind == 0 || kind == 3 || (10_000..20_000).contains(&kind);
-    let ephemeral = (20_000..30_000).contains(&kind);
-    let addressable = (30_000..40_000).contains(&kind);
-    let deletion = kind == 5;
-    !(replaceable || ephemeral || addressable || deletion)
+/// Whether a stored row's tags carry exactly `d` as their `d` tag value. Text
+/// that is not tags is no address.
+fn same_address(stored_tags: &str, d: &str) -> bool {
+    serde_json::from_str::<Tags>(stored_tags).is_ok_and(|tags| d_value(&tags) == d)
 }
 
 /// The event's NIP-40 expiration as the TypeScript relay reads it: the value
