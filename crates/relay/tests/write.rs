@@ -71,17 +71,16 @@ async fn a_bad_signature_or_a_tampered_event_is_422() {
 }
 
 #[tokio::test]
-async fn a_kind_whose_storage_rule_is_not_built_yet_is_501() {
+async fn every_kind_has_a_storage_rule_so_none_is_refused_as_not_built() {
     let running = running().await;
-    let profile = signed(0, 1_700_000_000, &[]);
 
-    let (status, answer) = write(&running.relay, delivery(&profile)).await;
-
-    assert_eq!(status, 501);
-    assert_eq!(
-        answer["error"],
-        "events of kind 0 are not stored by this build yet"
-    );
+    // Replaceable, deletion, addressable and ephemeral: each was a 501 until
+    // its rule was built.
+    for kind in [0, 5, 30_000, 20_000] {
+        let event = signed(kind, 1_700_000_000, &[]);
+        let (status, answer) = write(&running.relay, delivery(&event)).await;
+        assert_eq!(status, 200, "kind {kind}: {answer}");
+    }
 }
 
 const EVM_PAYER: &str = "evm:0xabababababababababababababababababababababababababababababababab";

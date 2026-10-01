@@ -133,9 +133,8 @@ async fn kinds_whose_storage_rule_is_not_built_yet_are_refused_and_not_stored() 
     let dir = tempdir().expect("a temp dir");
     let store = Store::open(&typescript_database(dir.path())).expect("it opens");
 
-    // Replaceable (0, 3, 10000-19999), ephemeral (20000-29999), addressable
-    // (30000-39999).
-    for kind in [0, 3, 10_002, 10_032, 19_999, 20_000, 29_999, 30_000, 39_999] {
+    // Ephemeral (20000-29999).
+    for kind in [20_000, 29_999] {
         let result = store
             .save(&verified(&signed(kind, 1_700_000_000, &[])))
             .await;
@@ -152,6 +151,206 @@ async fn kinds_whose_storage_rule_is_not_built_yet_are_refused_and_not_stored() 
     }
     let found = store.query(Filter::new()).await.expect("the query runs");
     assert_eq!(found.len(), 8);
+}
+
+async fn held(store: &Store, author: &Keys, kind: u16) -> Vec<String> {
+    let filter = Filter::new()
+        .author(author.public_key())
+        .kind(nostr::event::Kind::from(kind));
+    let mut found = ids(&store.query(filter).await.expect("runs"));
+    found.sort();
+    found
+}
+
+fn sorted(events: &[&nostr::event::Event]) -> Vec<String> {
+    let mut ids: Vec<String> = events.iter().map(|event| event.id.to_hex()).collect();
+    ids.sort();
+    ids
+}
+
+#[tokio::test]
+async fn a_replaceable_kind_keeps_the_newest_event_per_author_and_kind() {
+    let dir = tempdir().expect("a temp dir");
+    let store = Store::open(&typescript_database(dir.path())).expect("it opens");
+    for kind in [0, 3, 10_000, 10_002, 10_031, 10_100, 19_999] {
+        let author = Keys::generate();
+        let old = signed_by(&author, kind, 1_000, &[]);
+        let newer = signed_by(&author, kind, 2_000, &[]);
+        let newest = signed_by(&author, kind, 3_000, &[]);
+        assert_eq!(store.save(&verified(&newer)).await.unwrap(), Saved::New);
+        assert_eq!(
+            store.save(&verified(&old)).await.unwrap(),
+            Saved::Superseded
+        );
+        assert_eq!(held(&store, &author, kind).await, sorted(&[&newer]));
+        assert_eq!(store.save(&verified(&newest)).await.unwrap(), Saved::New);
+        assert_eq!(held(&store, &author, kind).await, sorted(&[&newest]));
+        assert_eq!(
+            store.save(&verified(&newest)).await.unwrap(),
+            Saved::Duplicate
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_tie_on_created_at_keeps_the_lower_id_whichever_arrived_first() {
+    let dir = tempdir().expect("a temp dir");
+    let store = Store::open(&typescript_database(dir.path())).expect("it opens");
+    for higher_first in [true, false] {
+        let author = Keys::generate();
+        let a = signed_by(&author, 10_002, 1_000, &[&["t", "a"]]);
+        let b = signed_by(&author, 10_002, 1_000, &[&["t", "b"]]);
+        let (lower, higher) = if a.id < b.id { (a, b) } else { (b, a) };
+        let order = if higher_first {
+            [&higher, &lower]
+        } else {
+            [&lower, &higher]
+        };
+        for event in order {
+            store.save(&verified(event)).await.expect("saved");
+        }
+        assert_eq!(held(&store, &author, 10_002).await, sorted(&[&lower]));
+    }
+}
+
+#[tokio::test]
+async fn rows_a_replaceable_kind_already_accumulated_are_left_until_a_newer_event_replaces_them() {
+    let dir = tempdir().expect("a temp dir");
+    let path = typescript_database(dir.path());
+    let author = Keys::generate();
+    let one = signed_by(&author, 0, 1_000, &[]);
+    let two = signed_by(&author, 0, 2_000, &[]);
+    let connection = Connection::open(&path).expect("the database opens");
+    for event in [&one, &two] {
+        connection
+            .execute(
+                "INSERT INTO events VALUES (?, ?, 0, '', '[]', ?, ?, 1, NULL)",
+                rusqlite::params![
+                    event.id.to_hex(),
+                    event.pubkey.to_hex(),
+                    i64::try_from(event.created_at.as_secs()).unwrap(),
+                    event.sig.to_string()
+                ],
+            )
+            .expect("a row");
+    }
+    drop(connection);
+
+    let store = Store::open(&path).expect("opening does not clean up");
+    assert_eq!(held(&store, &author, 0).await, sorted(&[&one, &two]));
+
+    let newest = signed_by(&author, 0, 3_000, &[]);
+    store.save(&verified(&newest)).await.expect("saved");
+    assert_eq!(held(&store, &author, 0).await, sorted(&[&newest]));
+}
+
+#[tokio::test]
+async fn an_addressable_kind_keeps_the_newest_event_per_author_kind_and_d_tag() {
+    let dir = tempdir().expect("a temp dir");
+    let store = Store::open(&typescript_database(dir.path())).expect("it opens");
+    for kind in [10_032, 10_050, 10_099, 30_000, 30_023, 39_999] {
+        let author = Keys::generate();
+        let a_old = signed_by(&author, kind, 1_000, &[&["d", "a"]]);
+        let a_new = signed_by(&author, kind, 2_000, &[&["d", "a"]]);
+        let b = signed_by(&author, kind, 500, &[&["d", "b"]]);
+        store.save(&verified(&a_new)).await.expect("saved");
+        assert_eq!(
+            store.save(&verified(&a_old)).await.unwrap(),
+            Saved::Superseded
+        );
+        store.save(&verified(&b)).await.expect("saved");
+        assert_eq!(held(&store, &author, kind).await, sorted(&[&a_new, &b]));
+    }
+}
+
+#[tokio::test]
+async fn a_held_row_whose_tags_the_nostr_crate_rejects_is_still_replaced_by_its_address() {
+    let dir = tempdir().expect("a temp dir");
+    let path = typescript_database(dir.path());
+    let author = Keys::generate();
+    let connection = Connection::open(&path).expect("the database opens");
+    connection
+        .execute(
+            "INSERT INTO events VALUES (?, ?, 30023, '', '[[],[\"d\",\"a\"]]', 1000, ?, 1, NULL)",
+            rusqlite::params![
+                "ab".repeat(32),
+                author.public_key().to_hex(),
+                "cd".repeat(64)
+            ],
+        )
+        .expect("a row");
+    drop(connection);
+
+    let store = Store::open(&path).expect("it opens");
+    let newer = signed_by(&author, 30_023, 2_000, &[&["d", "a"]]);
+    store.save(&verified(&newer)).await.expect("saved");
+    let rows: i64 = Connection::open(&path)
+        .expect("the database opens")
+        .query_row(
+            "SELECT COUNT(*) FROM events WHERE kind = 30023",
+            [],
+            |row| row.get(0),
+        )
+        .expect("counted");
+    assert_eq!(rows, 1);
+}
+
+#[tokio::test]
+async fn a_missing_d_tag_is_the_empty_d_tag() {
+    let dir = tempdir().expect("a temp dir");
+    let store = Store::open(&typescript_database(dir.path())).expect("it opens");
+    let author = Keys::generate();
+    let bare = signed_by(&author, 30_023, 1_000, &[]);
+    let empty = signed_by(&author, 30_023, 2_000, &[&["d", ""]]);
+    store.save(&verified(&bare)).await.expect("saved");
+    store.save(&verified(&empty)).await.expect("saved");
+    assert_eq!(held(&store, &author, 30_023).await, sorted(&[&empty]));
+}
+
+#[tokio::test]
+async fn d_tags_are_compared_exactly_so_wildcards_and_case_are_text() {
+    let dir = tempdir().expect("a temp dir");
+    let store = Store::open(&typescript_database(dir.path())).expect("it opens");
+    let author = Keys::generate();
+    let plain = signed_by(&author, 30_023, 1_000, &[&["d", "abc"]]);
+    let underscore = signed_by(&author, 30_023, 2_000, &[&["d", "a_c"]]);
+    let percent = signed_by(&author, 30_023, 3_000, &[&["d", "a%"]]);
+    let lower = signed_by(&author, 30_023, 4_000, &[&["d", "foo"]]);
+    let upper = signed_by(&author, 30_023, 5_000, &[&["d", "FOO"]]);
+    for event in [&plain, &underscore, &percent, &lower, &upper] {
+        store.save(&verified(event)).await.expect("saved");
+    }
+    assert_eq!(
+        held(&store, &author, 30_023).await,
+        sorted(&[&plain, &underscore, &percent, &lower, &upper])
+    );
+
+    let underscore_new = signed_by(&author, 30_023, 6_000, &[&["d", "a_c"]]);
+    store.save(&verified(&underscore_new)).await.expect("saved");
+    assert_eq!(
+        held(&store, &author, 30_023).await,
+        sorted(&[&plain, &underscore_new, &percent, &lower, &upper])
+    );
+}
+
+#[tokio::test]
+async fn limit_applies_to_each_filter_on_its_own() {
+    let dir = tempdir().expect("a temp dir");
+    let store = Store::open(&typescript_database(dir.path())).expect("it opens");
+    for at in 1..=3 {
+        store
+            .save(&verified(&signed(1, at, &[])))
+            .await
+            .expect("saved");
+        store
+            .save(&verified(&signed(7, at, &[])))
+            .await
+            .expect("saved");
+    }
+    for kind in [1, 7] {
+        let filter = Filter::new().kind(nostr::event::Kind::from(kind)).limit(2);
+        assert_eq!(store.query(filter).await.expect("runs").len(), 2);
+    }
 }
 
 #[tokio::test]

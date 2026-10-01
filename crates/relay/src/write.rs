@@ -107,6 +107,9 @@ pub(crate) async fn write(State(relay): State<Relay>, headers: HeaderMap, body: 
             // blocked, or retracted: dropped without a word to the writer, who
             // paid and is answered as for any stored event.
             Ok(Saved::Duplicate | Saved::Dropped) => {}
+            // A newer event of the same address is held: this one is accepted
+            // and paid for but never becomes the current one, and is not served.
+            Ok(Saved::Superseded) => {}
             Err(error @ RelayError::KindNotStoredYet { .. }) => {
                 return refused(StatusCode::NOT_IMPLEMENTED, error.to_string());
             }
