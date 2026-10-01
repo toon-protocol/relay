@@ -90,7 +90,7 @@ impl Default for Intervals {
     }
 }
 
-/// Ask the connector for the edge until the task is dropped. Never returns
+/// Ask the connector for the edge until the task is aborted. Never returns
 /// and never fails: every outcome is a state of `slot`.
 pub(crate) async fn watch(connector: ConnectorConfig, intervals: Intervals, slot: EdgeSlot) {
     let client = Client::builder(TokioExecutor::new()).build_http();
@@ -210,7 +210,7 @@ mod tests {
     use super::*;
     use crate::Carriage;
     use crate::config::Description;
-    use crate::document::{Document, Settings};
+    use crate::document::{Document, Settings, write_refusal};
 
     const SEAL_KEY: &str = "0x04abababababababababababababababababababababababababababababababab";
 
@@ -398,9 +398,22 @@ mod tests {
             quickly(),
             slot.clone(),
         ));
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        // The same connector, asked for the address it does terminate, is
+        // read: so the other is refused for its route, not for no answer.
+        let terminated = EdgeSlot::default();
+        let control = tokio::spawn(watch(
+            ConnectorConfig {
+                url: format!("http://{address}/ilp"),
+                ilp_address: "g.toon.relay".to_string(),
+            },
+            quickly(),
+            terminated.clone(),
+        ));
+        eventually(&terminated, true).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(slot.current().is_none());
         task.abort();
+        control.abort();
     }
 
     #[tokio::test]
@@ -439,6 +452,40 @@ mod tests {
         let silent =
             serde_json::to_value(Document::render(&settings(), Some(&edge))).expect("JSON");
         assert!(silent["toon"].get("carriage").is_none());
+    }
+
+    #[test]
+    fn a_websocket_write_is_refused_towards_the_edge_the_document_names() {
+        let parsed = parse(document().to_string().as_bytes()).expect("a document");
+        let edge = WriteEdge::read("g.toon.relay", &parsed).expect("an edge");
+        let refusal = write_refusal(Some(&edge), None);
+        assert!(
+            refusal.starts_with("writes require ILP payment"),
+            "{refusal}"
+        );
+        for named in [
+            "g.toon.relay",
+            "https://relay.example/ilp",
+            " over http",
+            "1000 uusdc",
+            "application/nostr+json",
+        ] {
+            assert!(refusal.contains(named), "{refusal} names {named}");
+        }
+
+        let mut body = document();
+        body["routes"] = json!([{ "prefix": "g.toon.relay", "price": "0" }]);
+        let parsed = parse(body.to_string().as_bytes()).expect("a document");
+        let free = WriteEdge::read("g.toon.relay", &parsed).expect("an edge");
+        let refusal = write_refusal(Some(&free), Some(Carriage::Btp));
+        assert!(!refusal.contains("require ILP payment"), "{refusal}");
+        assert!(
+            refusal.contains("free") && refusal.contains(" over btp"),
+            "{refusal}"
+        );
+
+        let unknown = write_refusal(None, Some(Carriage::Btp));
+        assert!(unknown.starts_with("writes require ILP payment, and this relay does not"));
     }
 
     #[test]

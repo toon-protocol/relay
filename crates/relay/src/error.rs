@@ -90,6 +90,13 @@ pub enum RelayError {
     )]
     ConnectorSettingsApart,
 
+    /// `TOON_CONNECTOR_URL` is not a plain `http://` URL the relay can ask.
+    #[error(
+        "TOON_CONNECTOR_URL must be an http:// URL of the connector's self-description, \
+         like http://connector:3000/ilp, not {value:?}"
+    )]
+    InvalidConnectorUrl { value: String },
+
     /// `TOON_WRITE_CARRIAGE` is set to something that is not a carriage.
     #[error(
         "TOON_WRITE_CARRIAGE must be \"http\" or \"btp\", not {value:?}. Leave it unset \

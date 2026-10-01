@@ -118,7 +118,19 @@ impl Config {
         // Both or neither: an address nobody checked against a connector is
         // an address clients' money could be sent to and refused.
         let connector = match (non_empty(CONNECTOR_URL), non_empty(WRITE_ILP_ADDRESS)) {
-            (Some(url), Some(ilp_address)) => Some(ConnectorConfig { url, ilp_address }),
+            (Some(url), Some(ilp_address)) => {
+                // Checked here, not at the first poll: a URL the relay can
+                // never ask would otherwise start a relay that advertises
+                // nothing, one log line, forever. The connector is on the
+                // relay's own network, so it is plain HTTP.
+                let asked = url
+                    .parse::<hyper::Uri>()
+                    .is_ok_and(|uri| uri.scheme_str() == Some("http") && uri.authority().is_some());
+                if !asked {
+                    return Err(RelayError::InvalidConnectorUrl { value: url });
+                }
+                Some(ConnectorConfig { url, ilp_address })
+            }
             (None, None) => None,
             _ => return Err(RelayError::ConnectorSettingsApart),
         };
@@ -345,6 +357,26 @@ mod tests {
         for lone in ["TOON_CONNECTOR_URL", "TOON_WRITE_ILP_ADDRESS"] {
             let result = config(&[("TOON_SECRET_KEY", &ones()), (lone, "x")]);
             assert!(matches!(result, Err(RelayError::ConnectorSettingsApart)));
+        }
+    }
+
+    #[test]
+    fn a_connector_url_the_relay_cannot_ask_refuses_the_start() {
+        for url in [
+            "connector:3000/ilp",
+            "https://connector:3000/ilp",
+            "http://",
+            "not a url",
+        ] {
+            let result = config(&[
+                ("TOON_SECRET_KEY", &ones()),
+                ("TOON_CONNECTOR_URL", url),
+                ("TOON_WRITE_ILP_ADDRESS", "g.toon.relay"),
+            ]);
+            assert!(
+                matches!(result, Err(RelayError::InvalidConnectorUrl { .. })),
+                "{url}"
+            );
         }
     }
 

@@ -87,7 +87,7 @@ fn http_request(relay: &Relay, method: &Method, headers: &HeaderMap) -> Response
     if (method == Method::GET || method == Method::HEAD) && asks_for_document(headers) {
         let edge = relay.edge.current();
         let body = serde_json::to_vec(&Document::render(&relay.document, edge.as_deref()))
-            .unwrap_or_default();
+            .expect("the document is strings, numbers and lists, which always serialize");
         let length = body.len().to_string();
         let body = if method == Method::HEAD {
             Vec::new()

@@ -136,10 +136,7 @@ impl Document {
                 ilp_address: edge.ilp_address().to_string(),
                 connector_url: edge.connector_url().to_string(),
                 connector_seal_key: edge.seal_key().to_string(),
-                carriage: edge
-                    .carriage()
-                    .or(settings.write_carriage)
-                    .map(Carriage::as_str),
+                carriage: carriage(edge, settings.write_carriage).map(Carriage::as_str),
                 price: edge.price(),
                 settlement: edge
                     .settlement()
@@ -152,4 +149,47 @@ impl Document {
             }),
         }
     }
+}
+
+/// The carriage a client is told: the connector's, or the operator's where
+/// the connector states none.
+fn carriage(edge: &WriteEdge, write_carriage: Option<Carriage>) -> Option<Carriage> {
+    edge.carriage().or(write_carriage)
+}
+
+/// What a WebSocket `EVENT` is refused with, after the `restricted: ` prefix
+/// the framework writes. It is rendered from the same edge as the document,
+/// so a relay never refuses a write towards one address while advertising
+/// another, and a client can recover from the refusal alone: it names the
+/// address, the connector and the price, and points at the document for the
+/// sealing key. The words after the prefix are the TypeScript relay's, which
+/// clients already match on.
+pub(crate) fn write_refusal(edge: Option<&WriteEdge>, write_carriage: Option<Carriage>) -> String {
+    let document =
+        format!("this relay's NIP-11 document (GET its URL with Accept: {CONTENT_TYPE})");
+    let Some(edge) = edge else {
+        return format!(
+            "writes require ILP payment, and this relay does not publish where — ask its \
+             operator, then see {document}"
+        );
+    };
+    let carriage = carriage(edge, write_carriage).map_or(String::new(), |carriage| {
+        format!(" over {}", carriage.as_str())
+    });
+    let (address, connector) = (edge.ilp_address(), edge.connector_url());
+    // A free relay still refuses the WebSocket write: the lane is the
+    // restriction, not the price, and "requires payment" would be a lie.
+    let lead = if edge.price() > 0 {
+        format!(
+            "writes require ILP payment — send this event to {address} through \
+             {connector}{carriage}, {} {FEE_UNIT} per write",
+            edge.price()
+        )
+    } else {
+        format!(
+            "writes arrive as TOON packets and this one is free — send this event to \
+             {address} through {connector}{carriage}"
+        )
+    };
+    format!("{lead}; the sealing key is in {document}")
 }

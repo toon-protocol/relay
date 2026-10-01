@@ -8,9 +8,11 @@
 //! that hold the relay's rules (#194): a verified event, a payment statement,
 //! a Write Edge and a terminated route, each with one constructor. The edge
 //! is read from the connector's `GET /ilp` in the background (#199) and
-//! rendered into the Relay Information Document on the read port. Every other surface in #185's compatibility contract is a later
-//! slice, and until it lands the conformance suite lists it as an expected
-//! failure for this implementation.
+//! rendered into the Relay Information Document on the read port, and into
+//! the refusal a WebSocket `EVENT` gets. Every other surface in #185's
+//! compatibility contract is a later slice, and until it lands the
+//! conformance suite lists it as an expected failure for this
+//! implementation.
 //!
 //! It is a library only so that the routers can be driven in a test without
 //! the binary, and so the invariant types can be shown not to compile when
@@ -68,16 +70,17 @@ impl Relay {
             source,
         })?;
         let store = Store::open(&config.database_path())?;
+        let edge = EdgeSlot::default();
         Ok(Self {
             identity: config.identity,
-            edge: EdgeSlot::default(),
+            edge: edge.clone(),
             document: Settings {
                 pubkey: config.identity.to_hex(),
                 description: config.description.clone(),
                 write_carriage: config.write_carriage,
                 enforce_expiration: config.enforce_expiration,
             },
-            read_side: ReadSide::new(store.clone()),
+            read_side: ReadSide::new(store.clone(), edge.clone(), config.write_carriage),
             store,
         })
     }
