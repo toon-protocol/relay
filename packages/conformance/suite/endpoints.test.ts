@@ -56,6 +56,7 @@ describe('relay image conformance: operational endpoints', () => {
           maxBodyBytes: 8192,
         },
       });
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 });

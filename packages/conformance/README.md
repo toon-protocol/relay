@@ -11,6 +11,18 @@ docker build -f packages/relay/Dockerfile -t relay:ci .
 CONFORMANCE_IMAGE=relay:ci pnpm --filter @toon-protocol/relay-conformance conformance
 ```
 
+Against the Rust relay (`crates/relay`, #185):
+
+```
+docker build -f crates/relay/Dockerfile -t relay-rust:ci .
+CONFORMANCE_IMAGE=relay-rust:ci CONFORMANCE_IMPL=rust CONFORMANCE_COMMAND=relay \
+  pnpm --filter @toon-protocol/relay-conformance conformance
+```
+
+CI runs both on every pull request. The relay must be able to reach the stub
+connector on the host (`host.docker.internal`); a host firewall that drops
+traffic from the Docker bridge makes every case that needs the write edge fail.
+
 | env                   | meaning                                               | default            |
 | --------------------- | ----------------------------------------------------- | ------------------ |
 | `CONFORMANCE_IMAGE`   | image reference under test (required)                 | —                  |
@@ -24,6 +36,14 @@ A test that one implementation is known to fail is declared with
 runs as `it.fails` (it must still fail, and goes red when it starts passing, so
 the marker cannot go stale); under every other implementation it is an
 ordinary test.
+
+The Rust relay is being built one surface at a time, so most cases carry
+`'rust'` today: it answers `GET /health`, refuses a bad or missing identity
+and accepts the `NOSTR_SECRET_KEY` alias, and `404`s everything else on the
+write port. A change that builds a surface removes that surface's `'rust'`
+markers in the same change, because a marked case that passes is red. Cases
+that wait for a relay to refuse a setting it does not read yet run to the
+harness's 60s deadline, which is what makes the Rust run take minutes.
 
 ## Coverage
 

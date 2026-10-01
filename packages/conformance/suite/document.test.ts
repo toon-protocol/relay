@@ -55,7 +55,8 @@ describe('relay image conformance: the information document edge', () => {
         price: Number(STUB_PRICE),
         settlement: STUB_SETTLEMENTS,
       });
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
   conformanceTest(
@@ -65,7 +66,8 @@ describe('relay image conformance: the information document edge', () => {
       const document = await settledDocument(relay.readUrl);
       expect(document['pubkey']).toMatch(/^[0-9a-f]{64}$/);
       expect(document).not.toHaveProperty('toon');
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
   conformanceTest(
@@ -75,7 +77,8 @@ describe('relay image conformance: the information document edge', () => {
       const document = await settledDocument(relay.readUrl);
       expect(document['pubkey']).toMatch(/^[0-9a-f]{64}$/);
       expect(document).not.toHaveProperty('toon');
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
   conformanceTest(
@@ -89,20 +92,25 @@ describe('relay image conformance: the information document edge', () => {
       );
       expect(document['pubkey']).toMatch(/^[0-9a-f]{64}$/);
       expect(document).not.toHaveProperty('toon');
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
-  conformanceTest('carriage: the route wins over the node', async () => {
-    expect(
-      await carriageOf({
-        document: ilpDocument({
-          routes: route({ requiredTransport: 'http' }),
-          requiredTransport: 'btp',
-        }),
-        env: { TOON_WRITE_CARRIAGE: 'btp' },
-      })
-    ).toBe('http');
-  });
+  conformanceTest(
+    'carriage: the route wins over the node',
+    async () => {
+      expect(
+        await carriageOf({
+          document: ilpDocument({
+            routes: route({ requiredTransport: 'http' }),
+            requiredTransport: 'btp',
+          }),
+          env: { TOON_WRITE_CARRIAGE: 'btp' },
+        })
+      ).toBe('http');
+    },
+    { expectedFailureFor: ['rust'] }
+  );
 
   conformanceTest(
     'carriage: a route that pins nothing falls to the node, which wins over the operator setting',
@@ -116,7 +124,8 @@ describe('relay image conformance: the information document edge', () => {
           env: { TOON_WRITE_CARRIAGE: 'http' },
         })
       ).toBe('btp');
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
   conformanceTest(
@@ -128,14 +137,16 @@ describe('relay image conformance: the information document edge', () => {
           env: { TOON_WRITE_CARRIAGE: 'btp' },
         })
       ).toBe('btp');
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
   conformanceTest(
     'carriage: with nothing pinning one, the document states none',
     async () => {
       expect(await carriageOf({})).toBeUndefined();
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 });
 
@@ -173,7 +184,8 @@ describe('relay image conformance: the information document body', () => {
         await fetch(`${relay.writeUrl}/health`)
       ).json()) as { pubkey: string };
       expect(body['pubkey']).toBe(health.pubkey);
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
   conformanceTest(
@@ -189,7 +201,8 @@ describe('relay image conformance: the information document body', () => {
       expect(document.limitation?.payment_required).toBe(false);
       expect(document.limitation?.restricted_writes).toBe(true);
       expect(document.toon?.price).toBe(0);
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
   conformanceTest(
@@ -197,7 +210,8 @@ describe('relay image conformance: the information document body', () => {
     async () => {
       const { body } = await paidDocument({ TOON_ENFORCE_EXPIRATION: 'false' });
       expect(body['supported_nips']).toEqual([1, 9, 11, 16]);
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
   conformanceTest(
@@ -215,6 +229,7 @@ describe('relay image conformance: the information document body', () => {
       expect(preflight.headers.get('access-control-allow-headers')).toContain(
         'accept'
       );
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 });

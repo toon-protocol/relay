@@ -15,6 +15,11 @@ push, open a PR or close the issue. The runner does all three once you finish.
   the ticket cites it; treat the citation as settled.
 - It is a pnpm workspace (pnpm 8.15.9, Node 22). Dependencies are already installed from
   the lockfile. Never run `npm install`, and never `npm publish`.
+- It is also a Cargo workspace (`crates/`): the Rust relay that is replacing
+  `packages/relay`. `rust-toolchain.toml` pins the toolchain and rustup installs it on the
+  first `cargo` call. Rust code follows `docs/rust-coding-standards.md`. A Rust change is
+  checked from outside by the conformance suite (`packages/conformance/README.md`), which
+  needs Docker and so runs in CI, not in this sandbox.
 - `deploy/` is the deployment of record for the live relay box. `deploy/bundle.test.ts`
   guards it, and it runs as part of `pnpm -r test`. A ticket that edits `deploy/` must keep
   that test green rather than editing the test to fit.
@@ -25,8 +30,10 @@ push, open a PR or close the issue. The runner does all three once you finish.
 - After you finish, the runner runs CI's gate itself and won't open a PR while it is red:
   `pnpm install --frozen-lockfile`, ESLint against the frozen warning baseline in
   `.sandcastle/gate-baseline.json`, `pnpm -r build`, `pnpm typecheck` and
-  `pnpm -r test --if-present`. Run them yourself before you commit. Never weaken, skip or
-  `.skip` a test, and never loosen a lint, to get green.
+  `pnpm -r test --if-present`, then `cargo fmt --all -- --check`, `cargo build --workspace`,
+  `cargo test --workspace` and `cargo clippy --workspace --all-targets -- -D warnings`. Run
+  them yourself before you commit. Never weaken, skip or `.skip` a test, and never loosen a
+  lint, to get green.
 
 ## When you cannot finish
 

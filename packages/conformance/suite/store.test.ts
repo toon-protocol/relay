@@ -58,7 +58,8 @@ describe('relay image conformance: replaceable kinds', () => {
       expect(
         await storedIds(relay, { authors: [pubkey], kinds: [kind] })
       ).toEqual(ids(newest));
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
   conformanceTestEach(
@@ -76,7 +77,8 @@ describe('relay image conformance: replaceable kinds', () => {
       expect(
         await storedIds(relay, { authors: [pubkey], kinds: [10002] })
       ).toEqual(ids(lower));
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
   conformanceTestEach(
@@ -93,7 +95,7 @@ describe('relay image conformance: replaceable kinds', () => {
         await storedIds(relay, { authors: [pubkey], kinds: [kind] })
       ).toEqual(ids(newer));
     },
-    { expectedFailureFor: ['typescript'] }
+    { expectedFailureFor: ['typescript', 'rust'] }
   );
 });
 
@@ -125,24 +127,29 @@ describe('relay image conformance: addressable kinds', () => {
       expect(
         await storedIds(relay, { authors: [pubkey], kinds: [kind] })
       ).toEqual(ids(aNew, b));
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
-  conformanceTest('a missing d tag is the empty d tag', async () => {
-    const { secretKey, pubkey } = author();
-    const t = now();
-    const bare = sign(secretKey, { kind: 30023, created_at: t - 10 });
-    const empty = sign(secretKey, {
-      kind: 30023,
-      created_at: t,
-      tags: [['d', '']],
-    });
-    await publishOk(relay, bare);
-    await publishOk(relay, empty);
-    expect(
-      await storedIds(relay, { authors: [pubkey], kinds: [30023] })
-    ).toEqual(ids(empty));
-  });
+  conformanceTest(
+    'a missing d tag is the empty d tag',
+    async () => {
+      const { secretKey, pubkey } = author();
+      const t = now();
+      const bare = sign(secretKey, { kind: 30023, created_at: t - 10 });
+      const empty = sign(secretKey, {
+        kind: 30023,
+        created_at: t,
+        tags: [['d', '']],
+      });
+      await publishOk(relay, bare);
+      await publishOk(relay, empty);
+      expect(
+        await storedIds(relay, { authors: [pubkey], kinds: [30023] })
+      ).toEqual(ids(empty));
+    },
+    { expectedFailureFor: ['rust'] }
+  );
 
   conformanceTest(
     'a kind just outside 10032-10099 is replaceable, not addressable',
@@ -164,7 +171,8 @@ describe('relay image conformance: addressable kinds', () => {
       expect(
         await storedIds(relay, { authors: [pubkey], kinds: [10100] })
       ).toEqual(ids(newer));
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
   conformanceTest(
@@ -205,7 +213,7 @@ describe('relay image conformance: addressable kinds', () => {
       ).toEqual(ids(plain, underscoreNew, percent));
     },
     // relay#160: the d-tag lookup is a SQL LIKE.
-    { expectedFailureFor: ['typescript'] }
+    { expectedFailureFor: ['typescript', 'rust'] }
   );
 
   conformanceTest(
@@ -230,7 +238,7 @@ describe('relay image conformance: addressable kinds', () => {
       ).toEqual(ids(lower, upper));
     },
     // relay#160: SQLite LIKE is case-insensitive for ASCII.
-    { expectedFailureFor: ['typescript'] }
+    { expectedFailureFor: ['typescript', 'rust'] }
   );
 });
 
@@ -257,7 +265,7 @@ describe('relay image conformance: tag filters', () => {
         ).toEqual([idOf[value] ?? '']);
       }
     },
-    { expectedFailureFor: ['typescript'] }
+    { expectedFailureFor: ['typescript', 'rust'] }
   );
 
   conformanceTest(
@@ -293,7 +301,7 @@ describe('relay image conformance: tag filters', () => {
     },
     // Stored results apply the key; the live matcher ignores it and
     // delivers every event of the author.
-    { expectedFailureFor: ['typescript'] }
+    { expectedFailureFor: ['typescript', 'rust'] }
   );
 });
 
@@ -324,7 +332,8 @@ describe('relay image conformance: deletion (kind 5)', () => {
       expect(await storedIds(relay, { authors: [pubkey], kinds: [1] })).toEqual(
         ids(keeper)
       );
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
   conformanceTest(
@@ -360,7 +369,8 @@ describe('relay image conformance: deletion (kind 5)', () => {
       expect(
         await storedIds(relay, { authors: [pubkey], kinds: [30023] })
       ).toEqual(ids(other));
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
   conformanceTest(
@@ -402,7 +412,8 @@ describe('relay image conformance: deletion (kind 5)', () => {
       expect(
         await storedIds(relay, { authors: [victim.pubkey], kinds: [30023] })
       ).toEqual(ids(later));
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 });
 
@@ -416,7 +427,8 @@ describe('relay image conformance: duplicates', () => {
       await publish(relay, event);
       const found = await query(relay, { authors: [pubkey] });
       expect(found.map((e) => e.id)).toEqual([event.id]);
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 });
 
@@ -451,7 +463,8 @@ describe('relay image conformance: expiration enforced', () => {
       } finally {
         subscription.close();
       }
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 });
 
@@ -468,24 +481,30 @@ describe('relay image conformance: expiration not enforced', () => {
     await lax?.stop();
   });
 
-  conformanceTest('an expired event is returned and delivered', async () => {
-    const { secretKey, pubkey } = author();
-    const subscription = await subscribe(lax, { authors: [pubkey] });
-    try {
-      const t = now();
-      const expired = sign(secretKey, {
-        kind: 1,
-        created_at: t - 200,
-        tags: [['expiration', String(t - 100)]],
-      });
-      await publishOk(lax, expired);
-      await until(() => subscription.delivered.length > 0);
-      expect(await storedIds(lax, { authors: [pubkey] })).toEqual(ids(expired));
-      expect(subscription.delivered.map((e) => e.id)).toEqual([expired.id]);
-    } finally {
-      subscription.close();
-    }
-  });
+  conformanceTest(
+    'an expired event is returned and delivered',
+    async () => {
+      const { secretKey, pubkey } = author();
+      const subscription = await subscribe(lax, { authors: [pubkey] });
+      try {
+        const t = now();
+        const expired = sign(secretKey, {
+          kind: 1,
+          created_at: t - 200,
+          tags: [['expiration', String(t - 100)]],
+        });
+        await publishOk(lax, expired);
+        await until(() => subscription.delivered.length > 0);
+        expect(await storedIds(lax, { authors: [pubkey] })).toEqual(
+          ids(expired)
+        );
+        expect(subscription.delivered.map((e) => e.id)).toEqual([expired.id]);
+      } finally {
+        subscription.close();
+      }
+    },
+    { expectedFailureFor: ['rust'] }
+  );
 });
 
 describe('relay image conformance: operator blocklist', () => {
@@ -516,6 +535,7 @@ describe('relay image conformance: operator blocklist', () => {
       expect(await storedIds(blocking, { authors: [pubkey] })).toEqual(
         ids(other)
       );
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 });

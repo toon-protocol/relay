@@ -1,14 +1,16 @@
 # Domain Docs
 
 How the engineering skills should consume this repo's domain documentation when exploring the
-codebase. This repo is **single-context**: one package, `@toon-protocol/relay`, under `packages/relay`.
+codebase. This repo is **single-context**: one package, `@toon-protocol/relay`, under `packages/relay`,
+and the Rust rebuild of the same relay under `crates/relay` (#185).
 
 ## Before exploring, read these
 
 - **`CLAUDE.md`** at the repo root: what the relay is and is not, how it is deployed, and where
   payment validation lives (only in the connector).
 - **`README.md`**: the operator's guide to running the relay.
-- **`docs/`**: the retention policy (`docs/retention.md`) and this directory.
+- **`docs/`**: the retention policy (`docs/retention.md`), the Rust coding standards
+  (`docs/rust-coding-standards.md`) and this directory.
 
 This repo has no `CONTEXT.md`, no `docs/adr/` and no `CONTEXT-MAP.md`. The decisions that bind the
 relay are recorded in [`toon-protocol/connector`](https://github.com/toon-protocol/connector)

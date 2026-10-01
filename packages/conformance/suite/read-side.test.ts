@@ -121,7 +121,8 @@ describe('read side: filters', () => {
           )
         ).toEqual(ids([b, d]));
       });
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
   conformanceTest(
@@ -160,7 +161,8 @@ describe('read side: filters', () => {
           await client.req('and', { ids: [alpha.id], '#t': ['gamma'] })
         ).toEqual([]);
       });
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
   conformanceTest(
@@ -200,7 +202,8 @@ describe('read side: filters', () => {
           )
         ).toEqual(ids([article]));
       });
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
   conformanceTest(
@@ -229,7 +232,7 @@ describe('read side: filters', () => {
         );
       });
     },
-    { expectedFailureFor: ['typescript'] }
+    { expectedFailureFor: ['typescript', 'rust'] }
   );
 
   conformanceTest(
@@ -247,7 +250,7 @@ describe('read side: filters', () => {
         ).toEqual([]);
       });
     },
-    { expectedFailureFor: ['typescript'] }
+    { expectedFailureFor: ['typescript', 'rust'] }
   );
 
   conformanceTest(
@@ -265,26 +268,30 @@ describe('read side: filters', () => {
         ).toEqual([]);
       });
     },
-    { expectedFailureFor: ['typescript'] }
+    { expectedFailureFor: ['typescript', 'rust'] }
   );
 
-  conformanceTest('event frames are plain NIP-01 JSON objects', async () => {
-    const event = signed(generateSecretKey(), {
-      tags: [['t', 'frame']],
-      content: 'héllo "quoted"',
-    });
-    await publish(relay.writeUrl, event);
-    await withClient(async (client) => {
-      client.send(['REQ', 'frame', { ids: [event.id] }]);
-      const frame = await client.next((f) => f[0] === 'EVENT');
-      // Parsed, not byte-for-byte: key order and whitespace are the relay's.
-      expect(frame).toEqual([
-        'EVENT',
-        'frame',
-        JSON.parse(JSON.stringify(event)),
-      ]);
-    });
-  });
+  conformanceTest(
+    'event frames are plain NIP-01 JSON objects',
+    async () => {
+      const event = signed(generateSecretKey(), {
+        tags: [['t', 'frame']],
+        content: 'héllo "quoted"',
+      });
+      await publish(relay.writeUrl, event);
+      await withClient(async (client) => {
+        client.send(['REQ', 'frame', { ids: [event.id] }]);
+        const frame = await client.next((f) => f[0] === 'EVENT');
+        // Parsed, not byte-for-byte: key order and whitespace are the relay's.
+        expect(frame).toEqual([
+          'EVENT',
+          'frame',
+          JSON.parse(JSON.stringify(event)),
+        ]);
+      });
+    },
+    { expectedFailureFor: ['rust'] }
+  );
 });
 
 describe('read side: subscriptions', () => {
@@ -302,24 +309,29 @@ describe('read side: subscriptions', () => {
         );
         expect((frame[2] as { id: string }).id).toBe(event.id);
       });
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
-  conformanceTest('CLOSE stops a subscription', async () => {
-    const key = generateSecretKey();
-    const author = getPublicKey(key);
-    await withClient(async (client) => {
-      await client.req('gone', { authors: [author] });
-      client.send(['CLOSE', 'gone']);
-      // A second subscription proves CLOSE was processed before the write.
-      await client.req('barrier', { authors: [author] });
-      await publish(relay.writeUrl, signed(key));
-      // The write was fanned out, so `gone` would have had it by now.
-      await client.next((f) => f[0] === 'EVENT' && f[1] === 'barrier');
-      const rest = await client.quiet();
-      expect(rest.filter((f) => f[1] === 'gone')).toEqual([]);
-    });
-  });
+  conformanceTest(
+    'CLOSE stops a subscription',
+    async () => {
+      const key = generateSecretKey();
+      const author = getPublicKey(key);
+      await withClient(async (client) => {
+        await client.req('gone', { authors: [author] });
+        client.send(['CLOSE', 'gone']);
+        // A second subscription proves CLOSE was processed before the write.
+        await client.req('barrier', { authors: [author] });
+        await publish(relay.writeUrl, signed(key));
+        // The write was fanned out, so `gone` would have had it by now.
+        await client.next((f) => f[0] === 'EVENT' && f[1] === 'barrier');
+        const rest = await client.quiet();
+        expect(rest.filter((f) => f[1] === 'gone')).toEqual([]);
+      });
+    },
+    { expectedFailureFor: ['rust'] }
+  );
 
   conformanceTest(
     're-using a subscription id replaces the subscription',
@@ -340,7 +352,8 @@ describe('read side: subscriptions', () => {
           []
         );
       });
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 });
 
@@ -371,7 +384,8 @@ describe('read side: EVENT over WebSocket', () => {
       await withClient(async (client) => {
         expect(await client.req('stored', { ids: [event.id] })).toEqual([]);
       });
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 });
 
@@ -384,47 +398,61 @@ describe('read side: malformed input', () => {
     ['a non-string subscription id', ['REQ', 7, {}]],
   ];
   for (const [name, message] of notices) {
-    conformanceTest(`${name} gets a NOTICE`, async () => {
-      await withClient(async (client) => {
-        client.send(message);
-        const frame = await client.next((f) => f[0] === 'NOTICE');
-        expect(typeof frame[1]).toBe('string');
-      });
-    });
+    conformanceTest(
+      `${name} gets a NOTICE`,
+      async () => {
+        await withClient(async (client) => {
+          client.send(message);
+          const frame = await client.next((f) => f[0] === 'NOTICE');
+          expect(typeof frame[1]).toBe('string');
+        });
+      },
+      { expectedFailureFor: ['rust'] }
+    );
   }
 });
 
 describe('read side: limits', () => {
-  conformanceTest('the subscription limit is enforced', async () => {
-    const limit = (await limitation()).max_subscriptions;
-    await withClient(async (client) => {
-      for (let i = 0; i < limit; i++)
-        await client.req(`s${i}`, { ids: [NO_SUCH_ID] });
-      client.send(['REQ', 'one-too-many', { ids: [NO_SUCH_ID] }]);
-      await client.next((f) => f[0] === 'NOTICE');
-      // Give a relay that NOTICEs and serves anyway time to send its EOSE.
-      await client.quiet();
-      expect(
-        client.frames.some((f) => f[0] === 'EOSE' && f[1] === 'one-too-many')
-      ).toBe(false);
-      // Replacing an existing subscription is not a new one.
-      expect(await client.req('s0', { ids: [NO_SUCH_ID] })).toEqual([]);
-    });
-  });
+  conformanceTest(
+    'the subscription limit is enforced',
+    async () => {
+      const limit = (await limitation()).max_subscriptions;
+      await withClient(async (client) => {
+        for (let i = 0; i < limit; i++)
+          await client.req(`s${i}`, { ids: [NO_SUCH_ID] });
+        client.send(['REQ', 'one-too-many', { ids: [NO_SUCH_ID] }]);
+        await client.next((f) => f[0] === 'NOTICE');
+        // Give a relay that NOTICEs and serves anyway time to send its EOSE.
+        await client.quiet();
+        expect(
+          client.frames.some((f) => f[0] === 'EOSE' && f[1] === 'one-too-many')
+        ).toBe(false);
+        // Replacing an existing subscription is not a new one.
+        expect(await client.req('s0', { ids: [NO_SUCH_ID] })).toEqual([]);
+      });
+    },
+    { expectedFailureFor: ['rust'] }
+  );
 
-  conformanceTest('the filter limit is enforced', async () => {
-    const limit = (await limitation()).max_filters;
-    await withClient(async (client) => {
-      const filter = { ids: [NO_SUCH_ID] };
-      expect(await client.req('ok', ...Array(limit).fill(filter))).toEqual([]);
-      client.send(['REQ', 'many', ...Array(limit + 1).fill(filter)]);
-      await client.next((f) => f[0] === 'NOTICE');
-      await client.quiet();
-      expect(
-        client.frames.some((f) => f[0] === 'EOSE' && f[1] === 'many')
-      ).toBe(false);
-    });
-  });
+  conformanceTest(
+    'the filter limit is enforced',
+    async () => {
+      const limit = (await limitation()).max_filters;
+      await withClient(async (client) => {
+        const filter = { ids: [NO_SUCH_ID] };
+        expect(await client.req('ok', ...Array(limit).fill(filter))).toEqual(
+          []
+        );
+        client.send(['REQ', 'many', ...Array(limit + 1).fill(filter)]);
+        await client.next((f) => f[0] === 'NOTICE');
+        await client.quiet();
+        expect(
+          client.frames.some((f) => f[0] === 'EOSE' && f[1] === 'many')
+        ).toBe(false);
+      });
+    },
+    { expectedFailureFor: ['rust'] }
+  );
 
   conformanceTest(
     'the connection cap closes the excess connection with 1013',
@@ -443,7 +471,8 @@ describe('read side: limits', () => {
       } finally {
         for (const client of held) client.close();
       }
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 });
 
@@ -453,6 +482,7 @@ describe('read side: plain HTTP on the read port', () => {
     async () => {
       const response = await fetch(relay.readUrl);
       expect(response.status).toBe(426);
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 });

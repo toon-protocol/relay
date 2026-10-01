@@ -29,6 +29,33 @@ pnpm -r build
 pnpm -r test
 ```
 
+## The Rust relay
+
+The relay is being rebuilt in Rust as a drop-in replacement for the image
+(spec: #185). Until the cutover the TypeScript package is the deployed relay
+and the only image published; TypeScript feature work is frozen, bug fixes and
+deploy changes continue.
+
+The Rust relay is a Cargo workspace beside the package: `Cargo.toml`,
+`rust-toolchain.toml` (the one toolchain pin; rustup installs it) and
+`crates/relay`, with its image in `crates/relay/Dockerfile`.
+
+```
+cargo fmt --all -- --check
+cargo build --workspace
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+Rust code follows `docs/rust-coding-standards.md` (the connector's standards,
+plus unsafe forbidden and the pinned toolchain).
+
+What decides whether a Rust change is correct is the **conformance suite**
+(`packages/conformance/`): it starts an image and talks only to its ports, and
+CI runs it against both images. A case the Rust relay does not pass yet is
+marked `expectedFailureFor: ['rust']` and goes red once it passes, so a slice
+that builds a surface removes that surface's markers in the same change.
+
 ## Deployment
 
 `deploy/` is **the deployment of record** — the live devnet relay box runs it

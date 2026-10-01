@@ -29,35 +29,55 @@ const write = (body: unknown, headers: Record<string, string> = {}) =>
   post(`${relay.writeUrl}/write`, body, headers);
 
 describe('relay image conformance: POST /write', () => {
-  conformanceTest('200 carries the event id and a stored-at time', async () => {
-    const event = signedEvent(1);
-    const response = await write({ event });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
-      eventId: event.id,
-      storedAt: expect.any(Number),
-    });
-  });
+  conformanceTest(
+    '200 carries the event id and a stored-at time',
+    async () => {
+      const event = signedEvent(1);
+      const response = await write({ event });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        eventId: event.id,
+        storedAt: expect.any(Number),
+      });
+    },
+    { expectedFailureFor: ['rust'] }
+  );
 
-  conformanceTest('400 for a body that is not JSON', async () => {
-    expect((await write('not json')).status).toBe(400);
-  });
+  conformanceTest(
+    '400 for a body that is not JSON',
+    async () => {
+      expect((await write('not json')).status).toBe(400);
+    },
+    { expectedFailureFor: ['rust'] }
+  );
 
-  conformanceTest('400 for a body with no event', async () => {
-    expect((await write({})).status).toBe(400);
-  });
+  conformanceTest(
+    '400 for a body with no event',
+    async () => {
+      expect((await write({})).status).toBe(400);
+    },
+    { expectedFailureFor: ['rust'] }
+  );
 
-  conformanceTest('422 for a bad signature', async () => {
-    const event = signedEvent(1);
-    const bad = { ...event, sig: '0'.repeat(128) };
-    expect((await write({ event: bad })).status).toBe(422);
-  });
+  conformanceTest(
+    '422 for a bad signature',
+    async () => {
+      const event = signedEvent(1);
+      const bad = { ...event, sig: '0'.repeat(128) };
+      expect((await write({ event: bad })).status).toBe(422);
+    },
+    { expectedFailureFor: ['rust'] }
+  );
 
-  conformanceTest('422 for an id that does not match the content', async () => {
-    const event = signedEvent(1);
-    const bad = { ...event, content: 'tampered after signing' };
-    expect((await write({ event: bad })).status).toBe(422);
-  });
+  conformanceTest(
+    '422 for an id that does not match the content',
+    async () => {
+      const event = signedEvent(1);
+      const bad = { ...event, content: 'tampered after signing' };
+      expect((await write({ event: bad })).status).toBe(422);
+    },
+    { expectedFailureFor: ['rust'] }
+  );
 
   conformanceTest(
     'a retired path returns 404: /publish and /handle-packet',
@@ -80,23 +100,28 @@ describe('relay image conformance: payment attribution', () => {
       expect(await response.json()).toMatchObject({
         payment: { payer: EVM_PAYER, amount: '1000', chain: 'evm' },
       });
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
-  conformanceTest('a Solana triple is echoed', async () => {
-    const response = await write(
-      { event: signedEvent(1) },
-      {
-        'X-TOON-Payer': SOLANA_PAYER,
-        'X-TOON-Amount': '5',
-        'X-TOON-Chain': 'solana',
-      }
-    );
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      payment: { payer: SOLANA_PAYER, amount: '5', chain: 'solana' },
-    });
-  });
+  conformanceTest(
+    'a Solana triple is echoed',
+    async () => {
+      const response = await write(
+        { event: signedEvent(1) },
+        {
+          'X-TOON-Payer': SOLANA_PAYER,
+          'X-TOON-Amount': '5',
+          'X-TOON-Chain': 'solana',
+        }
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        payment: { payer: SOLANA_PAYER, amount: '5', chain: 'solana' },
+      });
+    },
+    { expectedFailureFor: ['rust'] }
+  );
 
   const discarded: [string, Record<string, string>][] = [
     ['absent', {}],
@@ -116,7 +141,8 @@ describe('relay image conformance: payment attribution', () => {
         const response = await write({ event: signedEvent(1) }, headers);
         expect(response.status).toBe(200);
         expect(await response.json()).not.toHaveProperty('payment');
-      }
+      },
+      { expectedFailureFor: ['rust'] }
     );
   }
 });
@@ -136,7 +162,8 @@ describe('relay image conformance: live delivery of stored writes', () => {
       }
       const stored = await query(relay.readWsUrl, { ids: [event.id] });
       expect(stored.map((e) => e.id)).toEqual([event.id]);
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 });
 
@@ -163,26 +190,43 @@ describe('relay image conformance: POST /write-ephemeral', () => {
       } finally {
         subscription.close();
       }
-    }
+    },
+    { expectedFailureFor: ['rust'] }
   );
 
-  conformanceTest('400 for a kind outside the ephemeral range', async () => {
-    expect((await ephemeral({ event: signedEvent(1) })).status).toBe(400);
-  });
+  conformanceTest(
+    '400 for a kind outside the ephemeral range',
+    async () => {
+      expect((await ephemeral({ event: signedEvent(1) })).status).toBe(400);
+    },
+    { expectedFailureFor: ['rust'] }
+  );
 
-  conformanceTest('400 for a body with no event', async () => {
-    expect((await ephemeral({})).status).toBe(400);
-  });
+  conformanceTest(
+    '400 for a body with no event',
+    async () => {
+      expect((await ephemeral({})).status).toBe(400);
+    },
+    { expectedFailureFor: ['rust'] }
+  );
 
-  conformanceTest('422 for a bad signature', async () => {
-    const event = signedEvent(20100);
-    const bad = { ...event, sig: '0'.repeat(128) };
-    expect((await ephemeral({ event: bad })).status).toBe(422);
-  });
+  conformanceTest(
+    '422 for a bad signature',
+    async () => {
+      const event = signedEvent(20100);
+      const bad = { ...event, sig: '0'.repeat(128) };
+      expect((await ephemeral({ event: bad })).status).toBe(422);
+    },
+    { expectedFailureFor: ['rust'] }
+  );
 
-  conformanceTest('413 for a body over the size cap', async () => {
-    // Twice the relay's default 8 KiB ephemeral body cap.
-    const event = signedEvent(20100, 'x'.repeat(16 * 1024));
-    expect((await ephemeral({ event })).status).toBe(413);
-  });
+  conformanceTest(
+    '413 for a body over the size cap',
+    async () => {
+      // Twice the relay's default 8 KiB ephemeral body cap.
+      const event = signedEvent(20100, 'x'.repeat(16 * 1024));
+      expect((await ephemeral({ event })).status).toBe(413);
+    },
+    { expectedFailureFor: ['rust'] }
+  );
 });

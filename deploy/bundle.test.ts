@@ -208,6 +208,10 @@ const FILES_THAT_COULD_NAME_A_CONNECTOR_BUILD = [
   'README.md',
 ];
 
+// Both relay images carry the same HEALTHCHECK instruction.
+const IMAGE_HEALTHCHECK =
+  /wget -q --spider "http:\/\/([^:/]+):\$\{TOON_BLS_PORT:-3100\}\/health"/;
+
 // Every wget-based healthcheck this repo ships, and how to pull the target
 // host out of each site's own syntax.
 const HEALTHCHECK_WGET_SITES: { file: string; pattern: RegExp }[] = [
@@ -219,11 +223,8 @@ const HEALTHCHECK_WGET_SITES: { file: string; pattern: RegExp }[] = [
     file: 'deploy/docker-compose.yml',
     pattern: /wget -q --spider http:\/\/([^:/]+):3000\/ilp\/identity/,
   },
-  {
-    file: 'packages/relay/Dockerfile',
-    pattern:
-      /wget -q --spider "http:\/\/([^:/]+):\$\{TOON_BLS_PORT:-3100\}\/health"/,
-  },
+  { file: 'packages/relay/Dockerfile', pattern: IMAGE_HEALTHCHECK },
+  { file: 'crates/relay/Dockerfile', pattern: IMAGE_HEALTHCHECK },
 ];
 
 interface ConnectorToml {
