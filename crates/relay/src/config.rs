@@ -20,11 +20,20 @@ const WRITE_HOST: &str = "TOON_WRITE_HOST";
 const READ_PORT: &str = "TOON_RELAY_PORT";
 const READ_HOST: &str = "TOON_HOST";
 const DATA_DIR: &str = "TOON_DATA_DIR";
+const EPHEMERAL_RATE_LIMIT: &str = "TOON_EPHEMERAL_RATE_LIMIT";
+const EPHEMERAL_RATE_WINDOW_MS: &str = "TOON_EPHEMERAL_RATE_WINDOW_MS";
+const EPHEMERAL_MAX_BODY_BYTES: &str = "TOON_EPHEMERAL_MAX_BODY_BYTES";
+const LOG_WRITES: &str = "TOON_LOG_WRITES";
 
 const DEFAULT_WRITE_PORT: u16 = 3100;
 const DEFAULT_READ_PORT: u16 = 7100;
 const DEFAULT_HOST: &str = "0.0.0.0";
 const DEFAULT_DATA_DIR: &str = "./data";
+/// The free ephemeral lane's bounds: 200 requests per 10 seconds per client,
+/// and an 8 KiB body.
+const DEFAULT_EPHEMERAL_RATE_LIMIT: u64 = 200;
+const DEFAULT_EPHEMERAL_RATE_WINDOW_MS: u64 = 10_000;
+const DEFAULT_EPHEMERAL_MAX_BODY_BYTES: u64 = 8 * 1024;
 
 /// The database file inside the data directory: the TypeScript relay's name.
 const DATABASE_FILE: &str = "events.db";
@@ -45,6 +54,14 @@ pub struct Config {
     pub read_port: u16,
     /// The directory that holds the database, created if it is missing.
     pub data_dir: PathBuf,
+    /// Requests one client may make to `POST /write-ephemeral` per window.
+    pub ephemeral_rate_limit: u64,
+    /// The length of that window, in milliseconds.
+    pub ephemeral_rate_window_ms: u64,
+    /// The largest `POST /write-ephemeral` body accepted, in bytes.
+    pub ephemeral_max_body_bytes: u64,
+    /// Whether one line is logged per write (`TOON_LOG_WRITES=true`).
+    pub log_writes: bool,
 }
 
 impl Config {
@@ -72,6 +89,13 @@ impl Config {
                 _ => Err(RelayError::InvalidPort { name, value }),
             },
         };
+        let positive = |name: &'static str, default: u64| match non_empty(name) {
+            None => Ok(default),
+            Some(value) => match value.parse::<u64>() {
+                Ok(number) if number != 0 => Ok(number),
+                _ => Err(RelayError::InvalidPositiveInteger { name, value }),
+            },
+        };
         let host = |name: &str| non_empty(name).unwrap_or_else(|| DEFAULT_HOST.to_string());
 
         Ok(Self {
@@ -83,6 +107,17 @@ impl Config {
             data_dir: non_empty(DATA_DIR)
                 .unwrap_or_else(|| DEFAULT_DATA_DIR.to_string())
                 .into(),
+            ephemeral_rate_limit: positive(EPHEMERAL_RATE_LIMIT, DEFAULT_EPHEMERAL_RATE_LIMIT)?,
+            ephemeral_rate_window_ms: positive(
+                EPHEMERAL_RATE_WINDOW_MS,
+                DEFAULT_EPHEMERAL_RATE_WINDOW_MS,
+            )?,
+            ephemeral_max_body_bytes: positive(
+                EPHEMERAL_MAX_BODY_BYTES,
+                DEFAULT_EPHEMERAL_MAX_BODY_BYTES,
+            )?,
+            // Only the exact word, as the TypeScript relay reads it.
+            log_writes: lookup(LOG_WRITES).as_deref() == Some("true"),
         })
     }
 
@@ -249,5 +284,59 @@ mod tests {
         let empty = config(&[("TOON_SECRET_KEY", &ones()), ("TOON_DATA_DIR", "")])
             .expect("an empty data directory is the default");
         assert_eq!(empty.database_path(), Path::new("./data/events.db"));
+    }
+
+    #[test]
+    fn the_ephemeral_lane_defaults_are_200_per_10_seconds_and_8_kib() {
+        let config = config(&[("TOON_SECRET_KEY", &ones())]).expect("a secret key is enough");
+        assert_eq!(config.ephemeral_rate_limit, 200);
+        assert_eq!(config.ephemeral_rate_window_ms, 10_000);
+        assert_eq!(config.ephemeral_max_body_bytes, 8192);
+    }
+
+    #[test]
+    fn the_ephemeral_bounds_follow_their_variables_and_refuse_what_is_not_positive() {
+        let set = config(&[
+            ("TOON_SECRET_KEY", &ones()),
+            ("TOON_EPHEMERAL_RATE_LIMIT", "5"),
+            ("TOON_EPHEMERAL_RATE_WINDOW_MS", "2000"),
+            ("TOON_EPHEMERAL_MAX_BODY_BYTES", "4096"),
+        ])
+        .expect("positive integers");
+        assert_eq!(
+            (
+                set.ephemeral_rate_limit,
+                set.ephemeral_rate_window_ms,
+                set.ephemeral_max_body_bytes
+            ),
+            (5, 2000, 4096)
+        );
+        for name in [
+            "TOON_EPHEMERAL_RATE_LIMIT",
+            "TOON_EPHEMERAL_RATE_WINDOW_MS",
+            "TOON_EPHEMERAL_MAX_BODY_BYTES",
+        ] {
+            for bad in ["0", "-1", "x", "1.5"] {
+                let error =
+                    config(&[("TOON_SECRET_KEY", &ones()), (name, bad)]).expect_err("not positive");
+                assert!(matches!(
+                    error,
+                    RelayError::InvalidPositiveInteger { name: refused, ref value } if refused == name && value == bad
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn write_logging_is_off_unless_the_variable_is_exactly_true() {
+        let log = |value: &str| {
+            config(&[("TOON_SECRET_KEY", &ones()), ("TOON_LOG_WRITES", value)])
+                .expect("any value is accepted")
+                .log_writes
+        };
+        assert!(!config(&[("TOON_SECRET_KEY", &ones())]).unwrap().log_writes);
+        assert!(log("true"));
+        assert!(!log("false"));
+        assert!(!log("1"));
     }
 }
