@@ -32,8 +32,8 @@ const PAID_EDGE: RelayWriteEdge = {
   carriage: 'btp',
   price: 1,
   settlement: [
-    { chain: 'evm:84532', token: '0x49bee1', decimals: 6 },
-    { chain: 'solana', token: '34eSxY7', decimals: 6 },
+    { network: 'eip155:84532', asset: '0x0c996d' },
+    { network: 'solana:EtWTRABZ', asset: '34eSxY7' },
   ],
 };
 

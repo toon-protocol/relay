@@ -2,8 +2,9 @@
  * Reading the write edge off a connector's own self-description.
  *
  * The fixture below is the LIVE devnet relay connector's `GET /ilp` response,
- * copied verbatim on 2026-09-23 (keys shortened where the value's length is
- * not the point). Testing against a hand-written shape would have let this
+ * copied verbatim on 2026-09-23, its settlement terms (`batchSettlements`,
+ * `voucherSigners`) re-copied on 2026-10-01 (keys shortened where the value's
+ * length is not the point). Testing against a hand-written shape would have let this
  * module agree with itself while disagreeing with the thing it reads.
  */
 
@@ -13,7 +14,7 @@ import {
   edgeFromSelfDescription,
 } from './connector-edge.js';
 
-/** The devnet relay connector's answer, as served on 2026-09-23. */
+/** The devnet relay connector's answer, as served on 2026-10-01. */
 const DEVNET_SELF_DESCRIPTION = {
   ilpAddresses: ['g.toon.relay', 'g.toon.relay.ephemeral'],
   httpEndpoint: 'https://proxy.relay.devnet.toonprotocol.dev/ilp',
@@ -23,21 +24,37 @@ const DEVNET_SELF_DESCRIPTION = {
     keyId: 'connector-signer',
     publicKey: '0x04915d29908235be4b53f8f23cd7ac72c88c99be3bcca876dadf5c1a4494',
   },
-  settlements: [
+  batchSettlements: [
     {
-      chain: 'evm:84532',
-      settlementAddress: '0x3f43d923a611bcb2d0bfb5d6ee2c3ac3efeaf308',
-      tokenNetworkRegistry: '0x0c41d9d424d6b075a3cea1068a694f7847a8cca5',
-      tokenNetwork: '0xe9e05dfecfe165266c88d73e61d483612651952a',
-      tokenAddress: '0x49bee1bca5d15fb0963117923403f9498119a9ce',
-      decimals: 6,
+      network: 'eip155:84532',
+      asset: '0x0c996d7c934c79a6255254875607fe69df25c0e1',
+      payTo: '0x3f43d923a611bcb2d0bfb5d6ee2c3ac3efeaf308',
+      receiverAuthorizer: '0x3f43d923a611bcb2d0bfb5d6ee2c3ac3efeaf308',
+      withdrawDelay: 86400,
+      name: 'USDC',
+      version: '2',
+      assetTransferMethod: 'eip3009',
+      facilitator: 'https://onboard.devnet.toonprotocol.dev',
     },
     {
-      chain: 'solana',
-      settlementAddress: 'GzvGVjq3dnNM79MpWRvYCvVcAgPWzDdYisMwGxHF4u9F',
-      programId: '2aEVJ8koKD8LTZrLRSGtAtU7LBt4e7QjjCgf1kzQ7Rip',
-      tokenAddress: '34eSxY7qxQ4GzyhDJ8GpUcTz1WWzruGbJbR8q6TtxfQU',
-      decimals: 6,
+      network: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
+      asset: '34eSxY7qxQ4GzyhDJ8GpUcTz1WWzruGbJbR8q6TtxfQU',
+      payTo: 'GzvGVjq3dnNM79MpWRvYCvVcAgPWzDdYisMwGxHF4u9F',
+      feePayer: 'GzvGVjq3dnNM79MpWRvYCvVcAgPWzDdYisMwGxHF4u9F',
+      withdrawDelay: 86400,
+      tokenProgram: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+      minDeposit: '1000000',
+      sponsorEndpoint: '/ilp/batch-settlement/solana/open',
+    },
+  ],
+  voucherSigners: [
+    {
+      network: 'eip155:84532',
+      signer: '0x3f43d923a611bcb2d0bfb5d6ee2c3ac3efeaf308',
+    },
+    {
+      network: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
+      signer: 'GzvGVjq3dnNM79MpWRvYCvVcAgPWzDdYisMwGxHF4u9F',
     },
   ],
   routes: [
@@ -67,14 +84,12 @@ describe('edgeFromSelfDescription', () => {
       price: 1,
       settlement: [
         {
-          chain: 'evm:84532',
-          token: '0x49bee1bca5d15fb0963117923403f9498119a9ce',
-          decimals: 6,
+          network: 'eip155:84532',
+          asset: '0x0c996d7c934c79a6255254875607fe69df25c0e1',
         },
         {
-          chain: 'solana',
-          token: '34eSxY7qxQ4GzyhDJ8GpUcTz1WWzruGbJbR8q6TtxfQU',
-          decimals: 6,
+          network: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
+          asset: '34eSxY7qxQ4GzyhDJ8GpUcTz1WWzruGbJbR8q6TtxfQU',
         },
       ],
     });
@@ -82,6 +97,27 @@ describe('edgeFromSelfDescription', () => {
     // route and publishes no carriage at all, so the document says nothing
     // about one rather than guessing.
     expect(edge?.carriage).toBeUndefined();
+  });
+
+  it('yields an empty list, still publishing the edge, without batchSettlements', () => {
+    const { batchSettlements: _dropped, ...bare } = DEVNET_SELF_DESCRIPTION;
+    const { edge, error } = edgeFromSelfDescription(bare, 'g.toon.relay');
+
+    expect(error).toBeUndefined();
+    expect(edge?.settlement).toEqual([]);
+  });
+
+  it('no longer reads the retired settlements key', () => {
+    const { batchSettlements: _dropped, ...bare } = DEVNET_SELF_DESCRIPTION;
+    const { edge } = edgeFromSelfDescription(
+      {
+        ...bare,
+        settlements: [{ chain: 'solana', tokenAddress: 'x', decimals: 6 }],
+      },
+      'g.toon.relay'
+    );
+
+    expect(edge?.settlement).toEqual([]);
   });
 
   it('refuses an address its connector does not terminate, and says which it does', () => {

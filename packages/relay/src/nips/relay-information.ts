@@ -113,18 +113,23 @@ export interface RelayWriteEdge {
    * means this relay charges nothing, which is not the same as not saying.
    */
   price: number;
-  /** The chains and tokens the connector settles claims in. */
+  /**
+   * The settlement terms the connector accepts, copied from its
+   * `batchSettlements`.
+   */
   settlement: RelaySettlement[];
 }
 
-/** One chain a relay's connector settles in. */
+/**
+ * One settlement term the relay's connector accepts, in the connector's own
+ * spelling (`batchSettlements` on its `GET /ilp`). Knowingly ahead of TOON
+ * Network spec §13.1, which still specifies `{chain, token, decimals}`.
+ */
 export interface RelaySettlement {
-  /** `solana` or `evm:<chainId>`. */
-  chain: string;
-  /** The token's mint or contract address. */
-  token: string;
-  /** The token's own decimals. */
-  decimals: number;
+  /** The connector's CAIP-2 network, e.g. `eip155:84532`. */
+  network: string;
+  /** The connector's asset on that network, copied verbatim. */
+  asset: string;
 }
 
 /** The operator's free-text description of the relay (all optional). */
