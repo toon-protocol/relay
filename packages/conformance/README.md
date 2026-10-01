@@ -11,10 +11,11 @@ docker build -f packages/relay/Dockerfile -t relay:ci .
 CONFORMANCE_IMAGE=relay:ci pnpm --filter @toon-protocol/relay-conformance conformance
 ```
 
-| env                 | meaning                                               | default      |
-| ------------------- | ----------------------------------------------------- | ------------ |
-| `CONFORMANCE_IMAGE` | image reference under test (required)                 | —            |
-| `CONFORMANCE_IMPL`  | name of the implementation, e.g. `typescript`, `rust` | `typescript` |
+| env                   | meaning                                               | default            |
+| --------------------- | ----------------------------------------------------- | ------------------ |
+| `CONFORMANCE_IMAGE`   | image reference under test (required)                 | —                  |
+| `CONFORMANCE_IMPL`    | name of the implementation, e.g. `typescript`, `rust` | `typescript`       |
+| `CONFORMANCE_COMMAND` | the image's command, for a run that passes flags      | `node dist/cli.js` |
 
 ## Expected failures
 
@@ -36,3 +37,15 @@ ordinary test.
   enforcement on and off, the operator blocklist, duplicates), observed only
   through writes and reads on the wire. Known differences between the
   TypeScript relay and the spec are marked `expectedFailureFor: ['typescript']`.
+- `document.test.ts`: the Relay Information Document in each edge state
+  (known, no connector, unreachable, address not terminated), carriage
+  precedence, `limitation`, `fees`, `supported_nips`, CORS and `OPTIONS`.
+- `endpoints.test.ts`: `GET /health` and `GET /metrics`.
+- `startup.test.ts`: a connector that is down at start, settings the relay
+  must refuse (exit non-zero with an `Error:` line), every documented env
+  variable.
+
+The stub connector is varied per case (`ilpDocument()` overrides, or down /
+absent). A run that passes command-line flags uses the image's documented
+command, `node dist/cli.js`; set `CONFORMANCE_COMMAND` for an implementation
+whose command differs.

@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import {
   startStubConnector,
   STUB_ILP_ADDRESS,
+  type IlpDocument,
   type StubConnector,
 } from './stub-connector.js';
 
@@ -13,9 +14,31 @@ const WRITE_PORT = 3100;
 const READ_PORT = 7100;
 const ALIAS = 'host.docker.internal';
 
-export interface RelayOptions {
-  /** Extra environment for the container, e.g. `TOON_ENFORCE_EXPIRATION`. */
-  env?: Record<string, string>;
+/** The relay's identity secret key (hex) unless a case overrides it. */
+export const DEFAULT_SECRET_KEY = '1'.repeat(64);
+
+/**
+ * The image's documented command, for a run that passes command-line flags
+ * (the image's `CMD` is replaced by anything after the image name).
+ */
+function relayCommand(): string[] {
+  return (process.env['CONFORMANCE_COMMAND'] || 'node dist/cli.js').split(' ');
+}
+
+/** Environment overrides: a string sets a variable, `undefined` removes it. */
+export type Env = Record<string, string | undefined>;
+
+export interface StartOptions {
+  /**
+   * What the relay is told about its connector. `up` (default): a stub that
+   * answers. `down`: a stub address nothing listens on yet. `none`: no
+   * connector is configured at all.
+   */
+  connector?: 'up' | 'down' | 'none';
+  /** The self-description the stub serves (default the stub's own). */
+  document?: IlpDocument;
+  /** Overrides on top of the default environment. */
+  env?: Env;
 }
 
 export interface RunningRelay {
@@ -25,6 +48,7 @@ export interface RunningRelay {
   readUrl: string;
   /** `ws://…` form of `readUrl`. */
   readWsUrl: string;
+  /** The stub connector (present even when it is `down` or `none`). */
   connector: StubConnector;
   /** The relay's identity secret key (hex), as given to the container. */
   secretKey: string;
@@ -60,16 +84,37 @@ async function waitHealthy(url: string, container: string): Promise<void> {
   throw new Error(`relay never became healthy (${last})\n${logs}`);
 }
 
+function envArgs(env: Env): string[] {
+  return Object.entries(env).flatMap(([name, value]) =>
+    value === undefined ? [] : ['-e', `${name}=${value}`]
+  );
+}
+
 /**
  * Start `image` plus a stub connector, and wait for the relay's /health.
- * Only the image's two documented ports are touched, from outside.
+ * Only the image's two documented ports are touched, from outside. If the
+ * environment moves a port (`TOON_BLS_PORT`, `TOON_RELAY_PORT`) the harness
+ * follows it.
  */
 export async function startRelay(
   image: string,
-  options: RelayOptions = {}
+  options: StartOptions = {}
 ): Promise<RunningRelay> {
-  const connector = await startStubConnector(ALIAS);
-  const secretKey = '1'.repeat(64);
+  const mode = options.connector ?? 'up';
+  const connector = await startStubConnector(ALIAS, {
+    ...(options.document !== undefined && { document: options.document }),
+    listening: mode !== 'down',
+  });
+  const env: Env = {
+    TOON_SECRET_KEY: DEFAULT_SECRET_KEY,
+    ...(mode !== 'none' && {
+      TOON_CONNECTOR_URL: connector.ilpUrl,
+      TOON_WRITE_ILP_ADDRESS: STUB_ILP_ADDRESS,
+    }),
+    ...options.env,
+  };
+  const writePort = Number(env['TOON_BLS_PORT'] ?? WRITE_PORT);
+  const readPort = Number(env['TOON_RELAY_PORT'] ?? READ_PORT);
   let container: string | undefined;
   try {
     container = await docker(
@@ -79,23 +124,14 @@ export async function startRelay(
       '--add-host',
       `${ALIAS}:host-gateway`,
       '-p',
-      `127.0.0.1::${WRITE_PORT}`,
+      `127.0.0.1::${writePort}`,
       '-p',
-      `127.0.0.1::${READ_PORT}`,
-      '-e',
-      `TOON_SECRET_KEY=${secretKey}`,
-      '-e',
-      `TOON_CONNECTOR_URL=${connector.ilpUrl}`,
-      '-e',
-      `TOON_WRITE_ILP_ADDRESS=${STUB_ILP_ADDRESS}`,
-      ...Object.entries(options.env ?? {}).flatMap(([key, value]) => [
-        '-e',
-        `${key}=${value}`,
-      ]),
+      `127.0.0.1::${readPort}`,
+      ...envArgs(env),
       image
     );
-    const writeUrl = `http://127.0.0.1:${await hostPort(container, WRITE_PORT)}`;
-    const readUrl = `http://127.0.0.1:${await hostPort(container, READ_PORT)}`;
+    const writeUrl = `http://127.0.0.1:${await hostPort(container, writePort)}`;
+    const readUrl = `http://127.0.0.1:${await hostPort(container, readPort)}`;
     await waitHealthy(writeUrl, container);
     const id = container;
     return {
@@ -103,7 +139,7 @@ export async function startRelay(
       readUrl,
       readWsUrl: readUrl.replace(/^http/, 'ws'),
       connector,
-      secretKey,
+      secretKey: env['TOON_SECRET_KEY'] ?? '',
       stop: async () => {
         await docker('rm', '-f', id).catch(() => undefined);
         await connector.stop();
@@ -113,5 +149,58 @@ export async function startRelay(
     if (container) await docker('rm', '-f', container).catch(() => undefined);
     await connector.stop();
     throw error;
+  }
+}
+
+export interface ExitedRelay {
+  /** The process exit code. */
+  code: number;
+  /** Everything it wrote to stdout and stderr. */
+  output: string;
+}
+
+/**
+ * Run `image` with `env` and `args` and wait for it to exit, for settings the
+ * relay must refuse to start with. Only the `TOON_*` variables given are set:
+ * there is no default identity.
+ */
+export async function runRelayToExit(
+  image: string,
+  options: { env?: Env; args?: string[] } = {}
+): Promise<ExitedRelay> {
+  const args = options.args ?? [];
+  const command = args.length > 0 ? [...relayCommand(), ...args] : [];
+  // Named, so a relay that wrongly keeps running is removed, not leaked.
+  const name = `conformance-exit-${process.pid}-${Date.now()}`;
+  try {
+    const { stdout, stderr } = await run(
+      'docker',
+      [
+        'run',
+        '--rm',
+        '--name',
+        name,
+        ...envArgs(options.env ?? {}),
+        image,
+        ...command,
+      ],
+      { timeout: 60_000 }
+    );
+    return { code: 0, output: `${stdout}\n${stderr}` };
+  } catch (error) {
+    const failed = error as {
+      code?: unknown;
+      stdout?: string;
+      stderr?: string;
+      killed?: boolean;
+    };
+    if (typeof failed.code !== 'number' || failed.killed) {
+      await docker('rm', '-f', name).catch(() => undefined);
+      throw error;
+    }
+    return {
+      code: failed.code,
+      output: `${failed.stdout ?? ''}\n${failed.stderr ?? ''}`,
+    };
   }
 }

@@ -9,7 +9,7 @@ import {
 } from './harness/client.js';
 import { startRelay, type RunningRelay } from './harness/relay-container.js';
 import {
-  STUB_CARRIAGE,
+  ilpDocument,
   STUB_ILP_ADDRESS,
   STUB_PRICE,
   STUB_WRITE_EDGE,
@@ -20,11 +20,23 @@ let relay: RunningRelay;
 let capped: RunningRelay;
 
 const MAX_CONNECTIONS = 3;
+/** The carriage the stub pins on the relay's route, so a refusal can name it. */
+const STUB_CARRIAGE = 'btp';
 /** An id no test ever stores, for REQs that only need an EOSE. */
 const NO_SUCH_ID = '0'.repeat(64);
 
 beforeAll(async () => {
-  relay = await startRelay(imageUnderTest());
+  relay = await startRelay(imageUnderTest(), {
+    document: ilpDocument({
+      routes: [
+        {
+          prefix: STUB_ILP_ADDRESS,
+          price: STUB_PRICE,
+          requiredTransport: STUB_CARRIAGE,
+        },
+      ],
+    }),
+  });
   capped = await startRelay(imageUnderTest(), {
     env: { TOON_MAX_CONNECTIONS: String(MAX_CONNECTIONS) },
   });
