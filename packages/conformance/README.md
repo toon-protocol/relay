@@ -55,7 +55,14 @@ are expected to fail.
 
 - `tracer.test.ts`: health, one paid write and read, the NIP-11 document.
 - `write.test.ts`: `POST /write` statuses, `X-TOON-*` payment attribution,
-  live delivery of stored writes, `POST /write-ephemeral`, retired paths.
+  live delivery of stored writes, `POST /write-ephemeral`, retired paths, and
+  the deliberate differences from the TypeScript relay (`422` body for a wrong
+  `id`, `405` with `Allow` for `GET /write`).
+- `read-side.test.ts`: filters, subscriptions, limits and malformed input,
+  including the deliberate differences from the TypeScript relay: an invalid
+  `REQ` (no filter, a numeric filter, `limit: -1`, `kinds: ["x"]`) gets a
+  `NOTICE` and no `EOSE`, and an unsolicited `AUTH` gets `OK false` with
+  `auth-required:`. Each is marked `expectedFailureFor: ['typescript']`.
 - `ephemeral-rate-limit.test.ts`: the ephemeral `429`, in its own relay so
   exhausting the limiter cannot starve the other cases.
 - `store.test.ts`: what the store keeps, replaces, deletes and expires
