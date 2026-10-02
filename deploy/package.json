@@ -1,0 +1,10 @@
+{
+  "name": "@toon-protocol/relay-deploy-guards",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Guards over the deploy bundle, the workflows and the Rust workspace's standing rules; `pnpm -r test` runs them",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run --root .. --config vitest.config.ts"
+  }
+}

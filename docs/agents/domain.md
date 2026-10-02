@@ -1,8 +1,9 @@
 # Domain Docs
 
 How the engineering skills should consume this repo's domain documentation when exploring the
-codebase. This repo is **single-context**: one package, `@toon-protocol/relay`, under `packages/relay`,
-and the Rust rebuild of the same relay under `crates/relay` (#185).
+codebase. This repo is **single-context**: the Rust relay under `crates/relay` (#185). The pnpm
+workspace beside it holds the conformance suite (`packages/conformance`) and the
+deploy guards (`deploy/*.test.ts`).
 
 ## Before exploring, read these
 

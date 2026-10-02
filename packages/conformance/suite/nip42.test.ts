@@ -115,8 +115,7 @@ describe('NIP-42: enabled', () => {
         (body['limitation'] as unknown as { auth_required: boolean })
           .auth_required
       ).toBe(false);
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -129,8 +128,7 @@ describe('NIP-42: enabled', () => {
           expect(a).not.toBe(b);
         });
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -146,8 +144,7 @@ describe('NIP-42: enabled', () => {
         const ok = await client.next((f) => f[0] === 'OK' && f[1] === auth.id);
         expect(ok[2]).toBe(true);
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -169,8 +166,7 @@ describe('NIP-42: enabled', () => {
           expect(ok[2], JSON.stringify(auth)).toBe(false);
         }
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -187,8 +183,7 @@ describe('NIP-42: enabled', () => {
         const ok = await client.next((f) => f[0] === 'OK' && f[1] === auth.id);
         expect(ok[2]).toBe(false);
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -206,8 +201,7 @@ describe('NIP-42: enabled', () => {
           expect(ok[2]).toBe(false);
         });
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 });
 
@@ -223,8 +217,7 @@ describe('NIP-42: required for chosen kinds', () => {
       await withClient(restricted, async (client) => {
         await challengeOf(client);
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -245,8 +238,7 @@ describe('NIP-42: required for chosen kinds', () => {
         }
         expect(client.frames.some((f) => f[0] === 'EOSE')).toBe(false);
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -258,8 +250,7 @@ describe('NIP-42: required for chosen kinds', () => {
           expect.any(Array)
         );
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -283,7 +274,6 @@ describe('NIP-42: required for chosen kinds', () => {
           event.id
         );
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 });

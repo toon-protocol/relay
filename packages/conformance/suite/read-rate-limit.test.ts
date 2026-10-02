@@ -68,8 +68,7 @@ describe('relay image conformance: free read rate limit', () => {
       } finally {
         client.close();
       }
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -85,8 +84,7 @@ describe('relay image conformance: free read rate limit', () => {
         first.close();
         second.close();
       }
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -107,8 +105,7 @@ describe('relay image conformance: free read rate limit', () => {
       for (const refused of answers.slice(PER_SOURCE)) {
         expect(refused).toMatch(SLOW_DOWN);
       }
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -124,8 +121,7 @@ describe('relay image conformance: free read rate limit', () => {
         PER_CONNECTION
       );
       expect(limitation['max_req_per_minute_per_source']).toBe(100000);
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -141,7 +137,6 @@ describe('relay image conformance: free read rate limit', () => {
         expect(exited.code).not.toBe(0);
         expect(exited.output).toContain(name);
       }
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 });

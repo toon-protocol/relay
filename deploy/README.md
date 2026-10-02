@@ -179,9 +179,8 @@ accepts `RELAY_DEV_MODE=true`, which skips signature verification, where the
 Rust relay refuses to start.
 
 The TypeScript image is no longer published, so `sha-7b6bab5` is the newest it
-will ever be. Putting TypeScript back under `:release` for every stack, rather
-than one box, is reverting the commit that flipped it, which is possible only
-until the TypeScript source is removed (#206).
+will ever be. Its source is removed (#206), so there is nothing to build it
+from again: the rollback is that one image, for one box or for every stack.
 
 The connector pin lives in exactly one place: `docker-compose.yml`'s
 `connector.image`, an immutable `rust-sha-` tag. Bumping it is a reviewed

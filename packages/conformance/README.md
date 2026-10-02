@@ -7,32 +7,23 @@ to the relay's read port (WebSocket + NIP-11) and write port (`POST /write`,
 can gate any implementation of the relay's wire contract.
 
 ```
-docker build -f packages/relay/Dockerfile -t relay:ci .
+docker build -f crates/relay/Dockerfile -t relay:ci .
 CONFORMANCE_IMAGE=relay:ci pnpm --filter @toon-protocol/relay-conformance conformance
 ```
 
-Against the Rust relay (`crates/relay`, #185):
-
-```
-docker build -f crates/relay/Dockerfile -t relay-rust:ci .
-CONFORMANCE_IMAGE=relay-rust:ci CONFORMANCE_IMPL=rust CONFORMANCE_COMMAND=relay \
-  pnpm --filter @toon-protocol/relay-conformance conformance
-```
-
-CI runs both on every pull request. The relay must be able to reach the stub
+CI runs it on every pull request. The relay must be able to reach the stub
 connector on the host (`host.docker.internal`); a host firewall that drops
 traffic from the Docker bridge makes every case that needs the write edge fail.
 On such a host the suite can run inside a Docker-in-Docker daemon, which the
 firewall does not see: load the image into a `docker:dind` container, and run
 vitest in a `node` container started with `--network container:<dind>` and
-`DOCKER_HOST=tcp://127.0.0.1:2375`. `soak/dind-conformance.sh` does that for
-both images.
+`DOCKER_HOST=tcp://127.0.0.1:2375`. `soak/dind-conformance.sh` does that.
 
-| env                   | meaning                                               | default            |
-| --------------------- | ----------------------------------------------------- | ------------------ |
-| `CONFORMANCE_IMAGE`   | image reference under test (required)                 | —                  |
-| `CONFORMANCE_IMPL`    | name of the implementation, e.g. `typescript`, `rust` | `typescript`       |
-| `CONFORMANCE_COMMAND` | the image's command, for a run that passes flags      | `node dist/cli.js` |
+| env                   | meaning                                          | default |
+| --------------------- | ------------------------------------------------ | ------- |
+| `CONFORMANCE_IMAGE`   | image reference under test (required)            | —       |
+| `CONFORMANCE_IMPL`    | name of the implementation, e.g. `rust`          | `rust`  |
+| `CONFORMANCE_COMMAND` | the image's command, for a run that passes flags | `relay` |
 
 `soak/` holds what the suite does not cover: a run through the infra sandbox's
 paid path and a benchmark of two images (see `soak/README.md`).
@@ -49,8 +40,7 @@ The Rust relay passes the whole suite: no case is marked
 `expectedFailureFor: ['rust']`, and `deploy/rust-workspace.test.ts` fails the
 build if one is added back. The suite is a required check against the Rust
 image (the `conformance` job in `ci.yml`, and again before the image is
-published). Under `typescript` only the documented divergences from the spec
-are expected to fail.
+published).
 
 ## Coverage
 
@@ -60,32 +50,23 @@ are expected to fail.
   and `default_limit`; a relay that states none is held to having no cap).
 - `write.test.ts`: `POST /write` statuses, `X-TOON-*` payment attribution,
   live delivery of stored writes, `POST /write-ephemeral`, retired paths, and
-  the deliberate differences from the TypeScript relay (`422` body for a wrong
-  `id`, `405` with `Allow` for `GET /write`).
+  the `422` body for a wrong `id` and `405` with `Allow` for `GET /write`.
 - `read-side.test.ts`: filters, subscriptions, limits and malformed input,
-  including the deliberate differences from the TypeScript relay: an invalid
-  `REQ` (no filter, a numeric filter, `limit: -1`, `kinds: ["x"]`) gets a
-  `NOTICE` and no `EOSE`, and an unsolicited `AUTH` gets `OK false` with
-  `auth-required:`. Each is marked `expectedFailureFor: ['typescript']`.
+  including that an invalid `REQ` (no filter, a numeric filter, `limit: -1`,
+  `kinds: ["x"]`) gets a `NOTICE` and no `EOSE`, and an unsolicited `AUTH` gets
+  `OK false` with `auth-required:`.
 - `read-rate-limit.test.ts`: the REQ allowance of a connection and of a source
   address (`CLOSED` with `rate-limited:` and words that say slow down or
-  subscribe), its settings and its place in the document. Each case is marked
-  `expectedFailureFor: ['typescript']`.
+  subscribe), its settings and its place in the document.
 - `ephemeral-rate-limit.test.ts`: the ephemeral `429`, in its own relay so
   exhausting the limiter cannot starve the other cases.
 - `store.test.ts`: what the store keeps, replaces, deletes and expires
   (replaceable and addressable kinds, tag filters, kind 5, NIP-40 with
   enforcement on and off, the operator blocklist, duplicates), observed only
-  through writes and reads on the wire. Known differences between the
-  TypeScript relay and the spec are marked `expectedFailureFor: ['typescript']`.
+  through writes and reads on the wire.
 - `document.test.ts`: the Relay Information Document in each edge state
   (known, no connector, unreachable, address not terminated), carriage
   precedence, `limitation`, `fees`, `supported_nips`, CORS and `OPTIONS`.
-- `volume.test.ts`: the image swap (#201). Writes through one image, restarts
-  on the other over the same named `/data` volume, and reads back regular,
-  replaceable, addressable, deleted and expiring events, in both directions.
-  Needs both images (`CONFORMANCE_TYPESCRIPT_IMAGE`, `CONFORMANCE_RUST_IMAGE`)
-  and is skipped without them; CI runs it in the `image-swap` job.
 - `endpoints.test.ts`: `GET /health` and `GET /metrics`.
 - `startup.test.ts`: a connector that is down at start, settings the relay
   must refuse (exit non-zero with an `Error:` line), every documented env
@@ -93,5 +74,5 @@ are expected to fail.
 
 The stub connector is varied per case (`ilpDocument()` overrides, or down /
 absent). A run that passes command-line flags uses the image's documented
-command, `node dist/cli.js`; set `CONFORMANCE_COMMAND` for an implementation
+command, `relay`; set `CONFORMANCE_COMMAND` for an implementation
 whose command differs.
