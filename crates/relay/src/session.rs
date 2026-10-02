@@ -55,6 +55,7 @@ use crate::Carriage;
 use crate::auth::{self, AuthPolicy, CLOSED_AUTH_REQUIRED};
 use crate::connector::EdgeSlot;
 use crate::document::write_refusal;
+use crate::groups::GroupView;
 use crate::store::Query;
 
 /// The most subscriptions one connection holds. Replacing one is not another.
@@ -366,6 +367,8 @@ pub(crate) struct Session {
     refusal: Refusal,
     /// `None` while NIP-42 is off: no challenge, nothing restricted.
     auth: Option<Authentication>,
+    /// `None` while NIP-29 is off: no group restricts a read.
+    groups: Option<GroupView>,
     subscriptions: HashMap<String, Subscription>,
     queries: Allowance,
     messages: Allowance,
@@ -373,9 +376,14 @@ pub(crate) struct Session {
 
 impl Session {
     /// A connection that has said nothing yet, under `auth` if NIP-42 is on.
-    pub(crate) fn new(refusal: Refusal, auth: Option<AuthPolicy>) -> Self {
+    pub(crate) fn new(
+        refusal: Refusal,
+        auth: Option<AuthPolicy>,
+        groups: Option<GroupView>,
+    ) -> Self {
         Self {
             refusal,
+            groups,
             auth: auth.map(|policy| Authentication {
                 policy,
                 challenge: auth::new_challenge(),
@@ -472,6 +480,9 @@ impl Session {
                 return self.refuse(&id, CLOSED_AUTH_REQUIRED);
             }
         }
+        if let Some(reason) = self.group_refusal(&filters) {
+            return self.refuse(&id, reason);
+        }
         if id.len() > MAX_SUBSCRIPTION_ID {
             return self.refuse(
                 &id,
@@ -506,6 +517,28 @@ impl Session {
         })
     }
 
+    /// Why a REQ of `filters` is closed for the groups it names, if it is.
+    fn group_refusal(&self, filters: &[Wanted]) -> Option<&'static str> {
+        let groups = self.groups.as_ref()?;
+        let keys = self.proven_keys();
+        filters.iter().find_map(|f| groups.refuse(&f.base, keys))
+    }
+
+    /// The keys this connection has proven it holds.
+    fn proven_keys(&self) -> &HashSet<PublicKey> {
+        static NONE: std::sync::LazyLock<HashSet<PublicKey>> =
+            std::sync::LazyLock::new(HashSet::new);
+        self.auth.as_ref().map_or(&NONE, |auth| &auth.proven)
+    }
+
+    /// Whether `event` may be shown on this connection, given the groups it
+    /// belongs to and the keys the connection has proven.
+    fn may_read(&self, event: &Event) -> bool {
+        self.groups
+            .as_ref()
+            .is_none_or(|groups| groups.may_read(event, self.proven_keys()))
+    }
+
     /// End `id` with `reason`. A `CLOSED` says the subscription of that id is
     /// over (NIP-01), so one the refused REQ would have replaced ends too.
     fn refuse(&mut self, id: &str, reason: &str) -> Reply {
@@ -532,6 +565,9 @@ impl Session {
         let mut events: Vec<Event> = Vec::new();
         for found in found {
             for event in found {
+                if !self.may_read(&event) {
+                    continue;
+                }
                 if seen.insert(event.id) {
                     events.push(event);
                 }
@@ -551,6 +587,7 @@ impl Session {
         for live in waiting {
             frames.extend(self.live_frames(live));
             if !seen.contains(&live.event.id)
+                && self.may_read(&live.event)
                 && subscription.filters.iter().any(|f| f.matches(&live.event))
             {
                 frames.push(subscription.frame(&live.json));
@@ -579,8 +616,10 @@ impl Session {
         &'a self,
         live: &'a LiveEvent,
     ) -> impl Iterator<Item = String> + 'a {
+        let readable = self.may_read(&live.event);
         self.subscriptions
             .values()
+            .filter(move |_| readable)
             .filter(|subscription| subscription.filters.iter().any(|f| f.matches(&live.event)))
             .map(|subscription| subscription.frame(&live.json))
     }
@@ -640,7 +679,7 @@ mod tests {
     use super::*;
 
     fn session() -> Session {
-        Session::new(Refusal::default(), None)
+        Session::new(Refusal::default(), None, None)
     }
 
     /// The frames `text` is answered with, when it asks the store nothing.

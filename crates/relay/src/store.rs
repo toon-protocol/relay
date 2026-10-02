@@ -239,6 +239,29 @@ impl Store {
             .await
     }
 
+    /// [`Store::query`] on the calling thread, for the one caller that is not
+    /// async: the relay as it opens, before anything is served.
+    pub(crate) fn query_now(&self, query: impl Into<Query>) -> Result<Vec<Event>, RelayError> {
+        let query = query.into();
+        let connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        run_query(&connection, &query, self.retention.enforce_expiration)
+    }
+
+    /// Delete the events with these ids, and say how many were held.
+    pub(crate) async fn remove(&self, ids: Vec<String>) -> Result<usize, RelayError> {
+        self.blocking(move |connection| {
+            let mut removed = 0;
+            for id in ids {
+                removed += connection.execute("DELETE FROM events WHERE id = ?", [id])?;
+            }
+            Ok(removed)
+        })
+        .await
+    }
+
     /// Run `work` on the connection, off the async worker threads: SQLite
     /// calls block.
     async fn blocking<T, F>(&self, work: F) -> Result<T, RelayError>

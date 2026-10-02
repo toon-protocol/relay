@@ -250,6 +250,7 @@ mod tests {
             write_carriage: None,
             enforce_expiration: true,
             nip42: false,
+            nip29: false,
         }
     }
 

@@ -28,6 +28,7 @@ mod connector;
 mod document;
 mod edge;
 mod error;
+mod groups;
 mod health;
 mod metrics;
 mod read;
@@ -78,6 +79,8 @@ pub struct Relay {
     ephemeral: Arc<write::Lane>,
     log_writes: bool,
     reaper: Reaper,
+    /// NIP-29, while it is on.
+    groups: Option<groups::GroupRules>,
 }
 
 /// Whether the reaper runs, when, and how long it lets an expired event stay.
@@ -105,6 +108,10 @@ impl Relay {
         )?;
         let edge = EdgeSlot::default();
         let auth = config.auth_policy();
+        let groups = config
+            .nip29_groups
+            .then(|| groups::GroupRules::rebuilt(config.signer.clone(), &store))
+            .transpose()?;
         Ok(Self {
             identity: config.identity,
             edge: edge.clone(),
@@ -116,6 +123,7 @@ impl Relay {
                 write_carriage: config.write_carriage,
                 enforce_expiration: config.enforce_expiration,
                 nip42: auth.is_some(),
+                nip29: groups.is_some(),
             },
             read_side: ReadSide::new(
                 store.clone(),
@@ -123,10 +131,12 @@ impl Relay {
                 config.write_carriage,
                 usize::try_from(config.max_connections).unwrap_or(usize::MAX),
                 auth,
+                groups.as_ref().map(groups::GroupRules::view),
             ),
             metrics: Metrics::new(config),
             ephemeral: Arc::new(write::Lane::new(config)),
             log_writes: config.log_writes,
+            groups,
             store,
             reaper: Reaper {
                 enforce_expiration: config.enforce_expiration,

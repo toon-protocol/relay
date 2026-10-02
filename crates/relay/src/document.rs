@@ -31,6 +31,9 @@ const EXPIRATION_NIP: u16 = 40;
 /// NIP-42, claimed only while the relay challenges connections.
 const AUTH_NIP: u16 = 42;
 
+/// NIP-29, claimed only while relay groups are on.
+const GROUPS_NIP: u16 = 29;
+
 /// The unit a price is in: the connector's base units of its asset.
 const FEE_UNIT: &str = "uusdc";
 
@@ -45,6 +48,8 @@ pub(crate) struct Settings {
     pub(crate) enforce_expiration: bool,
     /// NIP-42 is on: the relay challenges connections.
     pub(crate) nip42: bool,
+    /// NIP-29 is on: the relay keeps groups.
+    pub(crate) nip29: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -112,6 +117,9 @@ impl Document {
         let mut supported_nips = BASE_NIPS.to_vec();
         if settings.enforce_expiration {
             supported_nips.push(EXPIRATION_NIP);
+        }
+        if settings.nip29 {
+            supported_nips.push(GROUPS_NIP);
         }
         if settings.nip42 {
             supported_nips.push(AUTH_NIP);
