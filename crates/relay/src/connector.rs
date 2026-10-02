@@ -249,6 +249,7 @@ mod tests {
             contact: None,
             write_carriage: None,
             enforce_expiration: true,
+            nip42: false,
         }
     }
 

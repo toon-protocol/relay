@@ -21,6 +21,7 @@
 //! misused. Nothing is published and nothing outside this workspace imports
 //! it.
 
+mod auth;
 mod clock;
 mod config;
 mod connector;
@@ -113,12 +114,14 @@ impl Relay {
                 contact: config.relay_contact.clone(),
                 write_carriage: config.write_carriage,
                 enforce_expiration: config.enforce_expiration,
+                nip42: config.auth_policy().is_some(),
             },
             read_side: ReadSide::new(
                 store.clone(),
                 edge.clone(),
                 config.write_carriage,
                 usize::try_from(config.max_connections).unwrap_or(usize::MAX),
+                config.auth_policy(),
             ),
             metrics: Metrics::new(config),
             ephemeral: Arc::new(write::Lane::new(config)),
