@@ -61,7 +61,7 @@ use nostr::key::PublicKey;
 use crate::connector::{EdgeSlot, Intervals};
 use crate::document::Settings;
 use crate::metrics::Metrics;
-use crate::read_side::ReadSide;
+use crate::read_side::{ReadLimits, ReadSide};
 
 /// A relay: its identity, its store, and the read side that serves the store
 /// and receives what the write side accepts. Cheap to clone; every clone is
@@ -113,12 +113,18 @@ impl Relay {
                 contact: config.relay_contact.clone(),
                 write_carriage: config.write_carriage,
                 enforce_expiration: config.enforce_expiration,
+                read_rate_limit: config.read_rate_limit,
+                read_source_rate_limit: config.read_source_rate_limit,
             },
             read_side: ReadSide::new(
                 store.clone(),
                 edge.clone(),
                 config.write_carriage,
                 usize::try_from(config.max_connections).unwrap_or(usize::MAX),
+                ReadLimits {
+                    per_connection: config.read_rate_limit,
+                    per_source: config.read_source_rate_limit,
+                },
             ),
             metrics: Metrics::new(config),
             ephemeral: Arc::new(write::Lane::new(config)),

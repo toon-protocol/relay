@@ -174,7 +174,12 @@ describe('relay image conformance: the information document body', () => {
         max_subscriptions: expect.any(Number),
         max_filters: expect.any(Number),
         // Optional: the TypeScript relay states no cap.
-        ...optionalNumbers(body['limitation'], ['max_limit', 'default_limit']),
+        ...optionalNumbers(body['limitation'], [
+          'max_limit',
+          'default_limit',
+          'max_req_per_minute_per_connection',
+          'max_req_per_minute_per_source',
+        ]),
         auth_required: false,
       });
       expect(body['fees']).toEqual({

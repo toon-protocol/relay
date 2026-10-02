@@ -67,6 +67,10 @@ are expected to fail.
   `REQ` (no filter, a numeric filter, `limit: -1`, `kinds: ["x"]`) gets a
   `NOTICE` and no `EOSE`, and an unsolicited `AUTH` gets `OK false` with
   `auth-required:`. Each is marked `expectedFailureFor: ['typescript']`.
+- `read-rate-limit.test.ts`: the REQ allowance of a connection and of a source
+  address (`CLOSED` with `rate-limited:` and words that say slow down or
+  subscribe), its settings and its place in the document. Each case is marked
+  `expectedFailureFor: ['typescript']`.
 - `ephemeral-rate-limit.test.ts`: the ephemeral `429`, in its own relay so
   exhausting the limiter cannot starve the other cases.
 - `store.test.ts`: what the store keeps, replaces, deletes and expires

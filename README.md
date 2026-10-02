@@ -385,6 +385,15 @@ each one.
 | `TOON_EPHEMERAL_RATE_LIMIT`             | `200`     | free-lane requests per key per window                               |
 | `TOON_EPHEMERAL_RATE_WINDOW_MS`         | `10000`   | free-lane rate-limit window                                         |
 | `TOON_EPHEMERAL_MAX_BODY_BYTES`         | `8192`    | free-lane request body cap                                          |
+| `TOON_READ_RATE_LIMIT`                  | `1200`    | REQs a minute one read connection is answered (Rust relay)          |
+| `TOON_READ_SOURCE_RATE_LIMIT`           | `6000`    | REQs a minute all connections of one source address share (Rust relay) |
+
+A REQ over either limit is `CLOSED` with `rate-limited: … slow down, or subscribe`
+(an open subscription is free: it streams live events and is not counted again),
+and both limits are in the NIP-11 `limitation` as `max_req_per_minute_per_connection`
+and `max_req_per_minute_per_source`. The source is the TCP peer's address, so behind
+a reverse proxy every client is the proxy and the source limit is one limit for all of
+them: raise it to suit, or leave the proxy's own limits to tell clients apart.
 
 ---
 
