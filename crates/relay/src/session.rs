@@ -209,6 +209,7 @@ pub(crate) struct Sources {
 const SWEEP_AT: usize = 1024;
 
 impl Sources {
+    /// No sources yet, each to be allowed `per_minute` REQs a minute.
     pub(crate) fn new(per_minute: u32) -> Self {
         Self {
             per_minute,
@@ -216,7 +217,8 @@ impl Sources {
         }
     }
 
-    /// The allowance of the source `ip` is.
+    /// The allowance of the source `ip`, shared with every other connection
+    /// it holds or opened in the last minute.
     pub(crate) fn of(&self, ip: IpAddr) -> SourceAllowance {
         // A poisoned lock only means another connection panicked mid-count;
         // the map is still a valid map.

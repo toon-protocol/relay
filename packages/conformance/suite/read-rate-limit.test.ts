@@ -78,7 +78,8 @@ describe('relay image conformance: free read rate limit', () => {
       const first = await Client.connect(perConnection.readWsUrl);
       const second = await Client.connect(perConnection.readWsUrl);
       try {
-        await ask(first, PER_CONNECTION + 1);
+        const spent = await ask(first, PER_CONNECTION + 1);
+        expect(spent[PER_CONNECTION]).toMatch(SLOW_DOWN);
         expect(await ask(second, 1)).toEqual(['EOSE']);
       } finally {
         first.close();
