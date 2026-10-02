@@ -55,17 +55,19 @@ const ids = (events: { id: string }[]): string[] =>
   events.map((e) => e.id).sort();
 
 /** The `limitation` the relay states in its NIP-11 document. */
-async function limitation(): Promise<{
+interface Limitation {
   max_subscriptions: number;
   max_filters: number;
   max_limit?: number;
   default_limit?: number;
-}> {
+}
+
+async function limitation(): Promise<Limitation> {
   const response = await fetch(relay.readUrl, {
     headers: { accept: 'application/nostr+json' },
   });
   const document = (await response.json()) as {
-    limitation: Awaited<ReturnType<typeof limitation>>;
+    limitation: Limitation;
   };
   return document.limitation;
 }
