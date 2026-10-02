@@ -12,7 +12,7 @@
 
 use serde::Serialize;
 
-use crate::gate::{MAX_FILTERS, MAX_LIMIT, MAX_SUBSCRIPTIONS};
+use crate::session::{MAX_FILTERS, MAX_LIMIT, MAX_SUBSCRIPTIONS};
 use crate::{Carriage, WriteEdge};
 
 /// The media type NIP-11 gives the document.
@@ -159,7 +159,7 @@ fn carriage(edge: &WriteEdge, write_carriage: Option<Carriage>) -> Option<Carria
 }
 
 /// What a WebSocket `EVENT` is refused with, after the `restricted: ` prefix
-/// the framework writes. It is rendered from the same edge as the document,
+/// the session writes. It is rendered from the same edge as the document,
 /// so a relay never refuses a write towards one address while advertising
 /// another, and a client can recover from the refusal alone: it names the
 /// address, the connector and the price, and points at the document for the

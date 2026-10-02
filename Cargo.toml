@@ -32,18 +32,13 @@ futures-util = { version = "0.3", default-features = false, features = ["sink"] 
 http-body-util = "0.1"
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
-# The protocol crate of the framework #185 names, on that framework's exact pin.
+# The protocol crate: events, filters and matching one against the other.
+# NIP-01 messages and subscriptions are the relay's own
+# (crates/relay/src/session.rs). The relay was built on nostr-sdk's
+# `local_relay`, which this crate is the protocol half of; #237 removed it and
+# deploy/rust-workspace.test.ts keeps it out. The pin is exact because the
+# store holds this crate's reading of a filter and an event.
 nostr = { version = "=0.45.4", default-features = false, features = ["std", "nip06"] }
-# The framework: NIP-01 messages and stored answers (`local_relay`).
-# Its API is declared alpha, so the pin is exact and crates/relay/src/framework.rs
-# is the only module that imports it (deploy/rust-workspace.test.ts). The pin
-# does not reach its own framework crates (nostr-memory, async-wsocket), which
-# it asks for by range: Cargo.lock holds those still.
-nostr-sdk = { version = "=0.45.4", default-features = false, features = ["local-relay"] }
-# The framework's database trait. It is named here only because nostr-sdk
-# does not re-export the trait's error type, so the trait cannot be
-# implemented through nostr-sdk alone. Same rule: exact pin, adapter only.
-nostr-database = { version = "=0.45.2", default-features = false }
 # `bundled`: SQLite is compiled in, so the image stays one static binary.
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

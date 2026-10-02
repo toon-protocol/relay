@@ -49,7 +49,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 Rust code follows `docs/rust-coding-standards.md` (the connector's standards,
 plus unsafe forbidden, the pinned toolchain, invariants as types with
-compile-fail tests, and the framework behind one adapter module).
+compile-fail tests, and NIP-01 handling that is the relay's own, on the `nostr`
+protocol crate alone).
 
 What decides whether a Rust change is correct is the **conformance suite**
 (`packages/conformance/`): it starts an image and talks only to its ports, and

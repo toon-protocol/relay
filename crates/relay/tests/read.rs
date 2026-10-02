@@ -1,5 +1,5 @@
 //! The read side over a real socket: the relay accepts the WebSocket upgrade
-//! itself and the framework speaks NIP-01 on the stream it is handed.
+//! itself and speaks NIP-01 on the stream.
 
 mod common;
 
@@ -328,6 +328,47 @@ async fn an_id_that_is_only_a_prefix_matches_nothing() {
 }
 
 #[tokio::test]
+async fn an_id_that_is_only_a_prefix_hears_no_live_event() {
+    let running = running().await;
+    let mut client = Client::connect(&running.read_url).await;
+    assert!(client.req("p", json!({ "ids": ["abcd"] })).await.is_empty());
+    assert!(
+        client
+            .req("a", json!({ "authors": ["abcd"] }))
+            .await
+            .is_empty()
+    );
+    assert!(client.req("all", json!({})).await.is_empty());
+
+    let event = signed(1, 1_700_000_000, &[]);
+    assert_eq!(write(&running.relay, delivery(&event)).await.0, 200);
+    assert_eq!(client.next().await, Some(json!(["EVENT", "all", event])));
+    assert_eq!(client.next().await, None, "neither prefix names it");
+}
+
+#[tokio::test]
+async fn count_is_no_message_type_here_and_an_auth_is_refused() {
+    let running = running().await;
+    let mut client = Client::connect(&running.read_url).await;
+    client.send(json!(["COUNT", "c", {}])).await;
+    assert_eq!(
+        client.next().await,
+        Some(json!(["NOTICE", "error: unknown message type: COUNT"]))
+    );
+    let auth = signed(22242, 1_700_000_000, &[&["challenge", "never issued"]]);
+    client.send(json!(["AUTH", auth])).await;
+    assert_eq!(
+        client.next().await,
+        Some(json!([
+            "OK",
+            auth.id,
+            false,
+            "auth-required: received invalid challenge"
+        ]))
+    );
+}
+
+#[tokio::test]
 async fn a_connection_past_the_cap_is_closed_with_1013() {
     use tokio_tungstenite::tungstenite::Message;
     use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
@@ -390,8 +431,7 @@ async fn the_document_states_the_limits_and_does_not_advertise_auth() {
     assert_eq!(document["supported_nips"], json!([1, 9, 11, 16, 40]));
 }
 
-/// A filter nothing matches, which a subscription can hold without the
-/// framework closing it as unsatisfiable.
+/// A filter nothing matches.
 fn no_such_event() -> serde_json::Value {
     json!({ "ids": ["0".repeat(64)] })
 }

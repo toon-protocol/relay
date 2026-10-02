@@ -1,6 +1,6 @@
 //! The read port's HTTP face. The relay owns this server: it accepts the
 //! WebSocket upgrade itself and hands the upgraded stream to the read side,
-//! so the framework never binds a listener (#185).
+//! which never binds a listener (#185).
 //!
 //! Any request that is not a WebSocket upgrade is answered `426 Upgrade
 //! Required`, as the TypeScript relay answers it and as fleet health checks
@@ -41,7 +41,7 @@ pub(crate) async fn read(State(relay): State<Relay>, mut request: Request) -> Re
     let Some(upgrade) = request.extensions_mut().remove::<OnUpgrade>() else {
         return upgrade_required();
     };
-    // The peer is only a label on the framework's side. A server started
+    // The peer is only a label in the read side's log lines. A server started
     // without connection info still serves reads.
     let peer = request
         .extensions()

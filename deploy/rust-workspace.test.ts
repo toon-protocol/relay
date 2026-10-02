@@ -8,7 +8,8 @@
  * - one toolchain pin, on edition 2024, with the Rust image's builder on the
  *   same version (a Dockerfile `FROM` cannot read rust-toolchain.toml);
  * - unsafe code forbidden in the workspace, and every crate inheriting that;
- * - the framework on exact pins and imported by one adapter module (#193);
+ * - NIP-01 handling the relay's own: the framework it was built on stays out
+ *   of the workspace, and the protocol crate is on an exact pin (#237);
  * - the connector's crate on one commit, named only for its self-description
  *   types, the attribution header names defined in one module, and the
  *   invariant types' fields private to their modules (#194);
@@ -139,23 +140,27 @@ describe('the workspace holds every crate to its rules', () => {
   });
 });
 
-describe('the framework stays behind one adapter module', () => {
-  // `nostr-sdk`'s `local_relay` is declared alpha (#185). `nostr-database`
-  // holds the trait the adapter implements, and nostr-sdk does not re-export
-  // enough of it to implement the trait through nostr-sdk alone.
+describe("NIP-01 handling is the relay's own", () => {
+  // The relay was built on `nostr-sdk`'s `local_relay` (#185), which wraps
+  // every stream it is handed in a WebSocket endpoint with a 128 KiB read
+  // buffer it gives no way to size. #237 took the fallback #185 names: keep
+  // only the `nostr` protocol crate and answer the messages in the relay
+  // (crates/relay/src/session.rs). Bringing the framework back, as a
+  // dependency of the relay's or of another crate's, brings that cost back.
   const FRAMEWORK = ['nostr-sdk', 'nostr-database'];
-  const ADAPTER = 'crates/relay/src/framework.rs';
+  const PROTOCOL = 'nostr';
 
-  it('pins each framework crate to one exact version', () => {
+  it('depends on no framework crate, directly or through another', () => {
     for (const name of FRAMEWORK) {
-      const dependency = workspace.workspace.dependencies[name];
-      const version =
-        typeof dependency === 'string' ? dependency : dependency?.version;
-      expect(version, name).toMatch(/^=\d+\.\d+\.\d+$/);
+      expect(workspace.workspace.dependencies[name], name).toBeUndefined();
     }
+    const locked = [...readFile('Cargo.lock').matchAll(/^name = "(.+)"$/gm)]
+      .map((match) => match[1])
+      .filter((name) => FRAMEWORK.includes(name ?? ''));
+    expect(locked).toEqual([]);
   });
 
-  it('is named by no Rust file but the adapter', () => {
+  it('names no framework crate in a Rust file', () => {
     const names = FRAMEWORK.map((name) => name.replace('-', '_'));
     const importers = crateDirs()
       .flatMap((dir) => rustFiles(dir))
@@ -163,7 +168,16 @@ describe('the framework stays behind one adapter module', () => {
         const source = readFile(path);
         return names.some((name) => new RegExp(`\\b${name}\\b`).test(source));
       });
-    expect(importers).toEqual([ADAPTER]);
+    expect(importers).toEqual([]);
+  });
+
+  it('pins the protocol crate to one exact version', () => {
+    // The store holds this crate's reading of a filter and an event, and the
+    // session matches live events with it.
+    const dependency = workspace.workspace.dependencies[PROTOCOL];
+    const version =
+      typeof dependency === 'string' ? dependency : dependency?.version;
+    expect(version).toMatch(/^=\d+\.\d+\.\d+$/);
   });
 });
 

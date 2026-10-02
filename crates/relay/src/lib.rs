@@ -27,12 +27,12 @@ mod connector;
 mod document;
 mod edge;
 mod error;
-mod framework;
-mod gate;
 mod health;
 mod metrics;
 mod read;
+mod read_side;
 mod route;
+mod session;
 mod store;
 mod verified;
 mod version;
@@ -60,8 +60,8 @@ use nostr::key::PublicKey;
 
 use crate::connector::{EdgeSlot, Intervals};
 use crate::document::Settings;
-use crate::framework::ReadSide;
 use crate::metrics::Metrics;
+use crate::read_side::ReadSide;
 
 /// A relay: its identity, its store, and the read side that serves the store
 /// and receives what the write side accepts. Cheap to clone; every clone is

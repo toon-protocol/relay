@@ -100,8 +100,8 @@ pub enum RelayError {
         source: std::io::Error,
     },
 
-    /// A read-side connection ended on an error the framework reported: the
-    /// peer broke the protocol, or went over a limit.
+    /// A read-side connection ended on an error its WebSocket reported: the
+    /// peer broke the protocol, or sent a message over the size limit.
     #[error("{0}")]
     ReadSide(String),
 
