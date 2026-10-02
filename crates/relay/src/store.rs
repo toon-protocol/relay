@@ -212,7 +212,8 @@ impl Store {
         .await
     }
 
-    /// The stored events matching `filter`, newest first, at most its `limit`.
+    /// The stored events matching `query`, every tag key of it included,
+    /// newest first, at most its filter's `limit`.
     pub async fn query(&self, query: impl Into<Query>) -> Result<Vec<Event>, RelayError> {
         let query = query.into();
         let enforce_expiration = self.retention.enforce_expiration;
@@ -242,7 +243,7 @@ impl Store {
 /// A question put to the store: a `nostr` [`Filter`], which holds single-letter
 /// tag keys only, and the multi-letter ones (`#ab`) it cannot carry. All of
 /// them are conditions of the query, applied before the filter's `limit`.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Query {
     /// What the protocol crate reads of the filter.
     pub filter: Filter,

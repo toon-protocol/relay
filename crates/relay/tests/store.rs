@@ -513,3 +513,20 @@ async fn a_multi_letter_tag_key_is_a_condition_of_the_query_before_the_limit() {
         .expect("runs");
     assert_eq!(found.len(), 3);
 }
+
+#[tokio::test]
+async fn a_newer_event_without_the_multi_letter_key_does_not_hide_the_one_with_it() {
+    let dir = tempdir().expect("a temp dir");
+    let store = Store::open(&typescript_database(dir.path())).expect("it opens");
+    let tagged = signed(1, 1_000, &[&["ab", "x"]]);
+    let newer = signed(1, 2_000, &[]);
+    for event in [&tagged, &newer] {
+        store.save(&verified(event)).await.expect("saved");
+    }
+    let query = Query {
+        filter: Filter::new().kind(nostr::event::Kind::from(1)).limit(1),
+        multi_letter_tags: vec![("ab".to_string(), ["x".to_string()].into())],
+    };
+    let found = store.query(query).await.expect("runs");
+    assert_eq!(ids(&found), ids(std::slice::from_ref(&tagged)));
+}

@@ -173,8 +173,8 @@ impl ReadSide {
     /// `EOSE`, or the `CLOSED` a client is told when the store cannot be read.
     async fn answer(&self, session: &mut Session, request: Request) -> Vec<String> {
         let mut found = Vec::new();
-        for filter in request.queries() {
-            match self.store.query(filter).await {
+        for query in request.queries() {
+            match self.store.query(query).await {
                 Ok(events) => found.push(events),
                 Err(error) => {
                     eprintln!(
