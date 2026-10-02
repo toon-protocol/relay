@@ -67,6 +67,10 @@ published).
 - `document.test.ts`: the Relay Information Document in each edge state
   (known, no connector, unreachable, address not terminated), carriage
   precedence, `limitation`, `fees`, `supported_nips`, CORS and `OPTIONS`.
+- `paid-feed.test.ts`: the paid live feed (#215): the subscribe route and its
+  refusals, what a packet credits, the balance read, the operator's list, the
+  `toon_subscription` document, the NIP-42 challenge, debits per broadcast,
+  exhaustion, free reads and the operator following without paying.
 - `endpoints.test.ts`: `GET /health` and `GET /metrics`.
 - `startup.test.ts`: a connector that is down at start, settings the relay
   must refuse (exit non-zero with an `Error:` line), every documented env

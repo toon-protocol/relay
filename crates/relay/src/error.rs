@@ -45,7 +45,8 @@ pub enum RelayError {
     )]
     DevModeRefused,
 
-    /// One half of the paid write edge was given without the other.
+    /// One of two settings that go together was given without the other:
+    /// the halves of the paid write edge, or of the paid live feed.
     #[error("{given} and {missing} go together: set both, or neither")]
     EdgeIncomplete {
         given: &'static str,
@@ -191,6 +192,29 @@ pub enum RelayError {
     /// whole number of base units a JSON number carries exactly.
     #[error("the connector prices `{address}` at {price:?}, which is not a whole number of uusdc")]
     RoutePriceNotWhole { address: String, price: String },
+
+    /// A subscription row of the paid feed's table cannot be read. The relay
+    /// stops rather than forget a balance.
+    #[error("the subscription of {pubkey} in feed_subscriptions cannot be read")]
+    LedgerRowUnreadable { pubkey: String },
+
+    /// The thread that writes the paid feed's balances to disk could not be
+    /// started.
+    #[error("could not start the thread that keeps the paid feed's balances: {0}")]
+    LedgerWriterNotStarted(std::io::Error),
+
+    /// The connector prices the subscribe route by size: a packet would
+    /// credit something other than one price.
+    #[error(
+        "the connector prices `{address}` by the KiB, so a packet would credit more than one \
+         price: the subscribe route must charge a flat price"
+    )]
+    SubscribeRouteNotFlat { address: String },
+
+    /// The connector charges nothing at the subscribe route: a packet would
+    /// credit nothing.
+    #[error("the connector charges nothing at `{address}`, so a packet would credit nothing")]
+    SubscribeRouteFree { address: String },
 }
 
 /// `a, b, c`, or `nothing` for an empty list.

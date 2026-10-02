@@ -73,6 +73,11 @@ impl TerminatedRoute {
         &self.published.price
     }
 
+    /// The route's price per KiB, when the connector prices it by size.
+    pub(crate) fn price_per_kib(&self) -> Option<&str> {
+        self.published.price_per_kib.as_deref()
+    }
+
     /// The carriage the connector says this route requires, when it says.
     pub(crate) fn required_transport(&self) -> Option<&str> {
         self.published.required_transport.as_deref()

@@ -89,13 +89,7 @@ impl WriteEdge {
             address: route.address().to_string(),
             price: route.price().to_string(),
         })?;
-        let carriage = match route.required_transport() {
-            // The route says nothing of its own, so the node speaks for it.
-            None | Some(EITHER_CARRIAGE) => {
-                Carriage::pinned(connector.required_transport.as_deref())
-            }
-            route => Carriage::pinned(route),
-        };
+        let carriage = route_carriage(&route, connector);
         let settlement = connector
             .batch_settlements
             .iter()
@@ -204,6 +198,19 @@ impl Settlement {
     }
 }
 
+/// The carriage `route` is pinned to: its own, and the node's where the route
+/// states none.
+pub(crate) fn route_carriage(
+    route: &TerminatedRoute,
+    connector: &NodeSelfDescription,
+) -> Option<Carriage> {
+    match route.required_transport() {
+        // The route says nothing of its own, so the node speaks for it.
+        None | Some(EITHER_CARRIAGE) => Carriage::pinned(connector.required_transport.as_deref()),
+        route => Carriage::pinned(route),
+    }
+}
+
 /// A fact the connector published: present and not empty.
 fn published(fact: &Option<String>) -> Option<&str> {
     fact.as_deref().filter(|value| !value.is_empty())
@@ -211,7 +218,7 @@ fn published(fact: &Option<String>) -> Option<&str> {
 
 /// A route's price as a whole number of base units: ASCII digits only, and
 /// no more than a JSON number carries exactly.
-fn whole_price(price: &str) -> Option<u64> {
+pub(crate) fn whole_price(price: &str) -> Option<u64> {
     if price.is_empty() || !price.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }

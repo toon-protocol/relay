@@ -26,6 +26,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 pub(crate) use self::ephemeral::{Lane, write_ephemeral};
+pub(crate) use self::payment::charged_amount;
 pub use self::payment::{Chain, PaymentStatement};
 use crate::clock::unix_seconds;
 use crate::{Relay, RelayError, Saved, VerifiedEvent};

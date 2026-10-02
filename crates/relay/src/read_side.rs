@@ -37,9 +37,11 @@ use tokio_tungstenite::tungstenite::{Error as SocketError, Message};
 
 use crate::auth::AuthPolicy;
 use crate::connector::EdgeSlot;
+use crate::ledger::Charged;
 use crate::session::{
     LiveEvent, LiveFeed, NOTICE_BINARY, Refusal, Reply, Request, Session, Sources,
 };
+use crate::subscribe::Sale;
 use crate::{Carriage, RelayError, Store, VerifiedEvent};
 
 /// The largest message a client may send (5 MiB), and the largest frame.
@@ -69,6 +71,8 @@ pub(crate) struct ReadSide {
     connections: Arc<Semaphore>,
     /// What every connection delivers live events from.
     live: LiveFeed,
+    /// The paid live feed, for a relay that sells it.
+    sale: Option<Sale>,
     /// How many REQs a minute one connection is answered.
     queries_per_minute: u32,
     /// What each source address has left of its REQs.
@@ -106,9 +110,16 @@ impl ReadSide {
             // More permits than a semaphore can hold is no cap at all.
             connections: Arc::new(Semaphore::new(max_connections.min(Semaphore::MAX_PERMITS))),
             live: LiveFeed::new(),
+            sale: None,
             queries_per_minute: limits.per_connection,
             sources: Arc::new(Sources::new(limits.per_source)),
         }
+    }
+
+    /// This read side, selling its live feed under `sale`.
+    pub(crate) fn selling(mut self, sale: Sale) -> Self {
+        self.sale = Some(sale);
+        self
     }
 
     /// Speak NIP-01 with `peer` on `stream`, a connection already upgraded to
@@ -126,12 +137,16 @@ impl ReadSide {
         let mut live = self.live.listen();
         let mut client =
             WebSocketStream::from_raw_socket(stream, Role::Server, Some(socket_config())).await;
-        let mut session = Session::new(
+        let session = Session::new(
             self.refusal.clone(),
             self.auth.clone(),
             self.queries_per_minute,
             self.sources.of(peer.ip()),
         );
+        let mut session = match &self.sale {
+            Some(sale) => session.selling(sale.clone()),
+            None => session,
+        };
         // NIP-42: a relay that challenges says so as the connection opens.
         if let Err(error) = send_all(&mut client, session.greeting()).await {
             return match error {
@@ -148,7 +163,7 @@ impl ReadSide {
                 biased;
                 event = live.recv() => {
                     let frames = match event {
-                        Ok(event) => session.live_frames(&event).collect(),
+                        Ok(event) => session.live_delivery(&event),
                         Err(broadcast::error::RecvError::Lagged(_)) => {
                             live = live.resubscribe();
                             session.overflowed()
@@ -253,8 +268,15 @@ impl ReadSide {
 
     /// Deliver `event` to every open subscription it matches. Nothing is
     /// saved: the caller has saved it, or it is not to be kept.
+    ///
+    /// On a relay that sells its feed this is where an event is charged for,
+    /// once, in the order events are accepted: see [`crate::ledger`].
     pub(crate) fn deliver(&self, event: &VerifiedEvent) {
-        self.live.publish(event.event());
+        let charged = match &self.sale {
+            Some(sale) => sale.ledger.charge(event.event()),
+            None => Charged::default(),
+        };
+        self.live.publish_charged(event.event(), charged);
     }
 }
 

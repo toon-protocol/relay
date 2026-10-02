@@ -133,6 +133,22 @@ const EXPIRATION_REAP_INTERVAL: Setting = Setting {
     flag: "--expiration-reap-interval-seconds",
     env: "TOON_EXPIRATION_REAP_INTERVAL_SECONDS",
 };
+const SUBSCRIBE_ILP_ADDRESS: Setting = Setting {
+    flag: "--subscribe-ilp-address",
+    env: "TOON_SUBSCRIBE_ILP_ADDRESS",
+};
+const BROADCAST_PRICE: Setting = Setting {
+    flag: "--broadcast-price",
+    env: "TOON_BROADCAST_PRICE",
+};
+const RELAY_URL: Setting = Setting {
+    flag: "--relay-url",
+    env: "TOON_RELAY_URL",
+};
+const OPERATOR_PUBKEYS: Setting = Setting {
+    flag: "--operator-pubkeys",
+    env: "TOON_OPERATOR_PUBKEYS",
+};
 const NIP42_AUTH: Setting = Setting {
     flag: "--nip42-auth",
     env: "TOON_NIP42_AUTH",
@@ -147,7 +163,7 @@ const BLOCKED_EVENT_IDS: Setting = Setting {
 };
 
 /// The flags that take a value, and the ones that stand alone.
-const VALUE_FLAGS: [&str; 24] = [
+const VALUE_FLAGS: [&str; 28] = [
     MNEMONIC.flag,
     SECRET_KEY.flag,
     READ_PORT.flag,
@@ -171,6 +187,10 @@ const VALUE_FLAGS: [&str; 24] = [
     EXPIRATION_REAP_GRACE.flag,
     EXPIRATION_REAP_INTERVAL.flag,
     BLOCKED_EVENT_IDS.flag,
+    SUBSCRIBE_ILP_ADDRESS.flag,
+    BROADCAST_PRICE.flag,
+    RELAY_URL.flag,
+    OPERATOR_PUBKEYS.flag,
     AUTH_REQUIRED_KINDS.flag,
 ];
 const SWITCH_FLAGS: [&str; 6] = [
@@ -199,6 +219,9 @@ const DEFAULT_EXPIRATION_REAP_INTERVAL_SECONDS: u64 = 3600;
 /// The most workers the TypeScript relay accepts. The setting has no effect
 /// here, but a value it refused is still refused.
 const MAX_VERIFY_WORKERS: u64 = 256;
+
+/// The largest broadcast price: what survives a JSON number in every client.
+const MAX_BROADCAST_PRICE: u64 = (1 << 53) - 1;
 
 /// The database file inside the data directory: the TypeScript relay's name.
 const DATABASE_FILE: &str = "events.db";
@@ -235,6 +258,10 @@ Options (each flag beats its environment variable):
   --expiration-reap-grace-seconds <n>      TOON_EXPIRATION_REAP_GRACE_SECONDS (default 86400)
   --expiration-reap-interval-seconds <n>   TOON_EXPIRATION_REAP_INTERVAL_SECONDS (default 3600)
   --blocked-event-ids <ids>                TOON_BLOCKED_EVENT_IDS (comma-separated)
+  --subscribe-ilp-address <addr>           TOON_SUBSCRIBE_ILP_ADDRESS (sells the live feed)
+  --broadcast-price <n>                    TOON_BROADCAST_PRICE (what one broadcast event costs)
+  --relay-url <url>                        TOON_RELAY_URL (the URL clients reach this relay at)
+  --operator-pubkeys <keys>                TOON_OPERATOR_PUBKEYS (comma-separated hex keys)
   --nip42-auth                             TOON_NIP42_AUTH=true: challenge connections (NIP-42)
   --auth-required-kinds <kinds>            TOON_AUTH_REQUIRED_KINDS (comma-separated; implies
                                            --nip42-auth; a REQ for these kinds needs AUTH)
@@ -259,6 +286,21 @@ pub struct EdgeSettings {
     pub connector_url: String,
     /// The ILP address whose route terminates at this relay's `POST /write`.
     pub write_ilp_address: String,
+}
+
+/// What the relay was told in order to sell its live feed (#215): all three
+/// settings, or none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubscribeSettings {
+    /// The ILP address whose route terminates at this relay's
+    /// `POST /subscribe`.
+    pub ilp_address: String,
+    /// What the relay debits for each event it broadcasts to a subscriber.
+    pub broadcast_price: u64,
+    /// The URL clients reach this relay at (`wss://…` or `https://…`). Only
+    /// its host is used: the `relay` tag of a NIP-42 event and the `u` tag of
+    /// a NIP-98 one must name it.
+    pub relay_url: String,
 }
 
 /// A complete, validated configuration.
@@ -316,6 +358,11 @@ pub struct Config {
     pub expiration_reap_interval_seconds: u64,
     /// Event ids the operator blocked: lower-case hex, in order, once each.
     pub blocked_event_ids: Vec<String>,
+    /// The paid live feed, or `None` for a relay whose feed is free.
+    pub subscribe: Option<SubscribeSettings>,
+    /// Keys, besides the relay's own, that follow the live feed without
+    /// paying (`TOON_OPERATOR_PUBKEYS`).
+    pub operator_pubkeys: Vec<PublicKey>,
     /// NIP-42 is switched on: connections are challenged. Off unless asked
     /// for, and on whenever `auth_required_kinds` names a kind.
     pub nip42_auth: bool,
@@ -531,6 +578,9 @@ impl Config {
             Some((name, value)) => return Err(RelayError::InvalidCarriage { name, value }),
         };
 
+        let subscribe = sources.subscribe(edge.is_some())?;
+        let operator_pubkeys = sources.operator_pubkeys()?;
+
         let (blocked_event_ids, rejected) = blocked_ids(
             &sources
                 .raw(&BLOCKED_EVENT_IDS)
@@ -589,6 +639,8 @@ impl Config {
                 DEFAULT_EXPIRATION_REAP_INTERVAL_SECONDS,
             )?,
             blocked_event_ids,
+            subscribe,
+            operator_pubkeys,
             nip42_auth: sources.on(&NIP42_AUTH) || !auth_required_kinds.is_empty(),
             auth_required_kinds,
         })))
@@ -607,6 +659,89 @@ impl Config {
 }
 
 impl Sources<'_> {
+    /// The paid live feed's settings: the three of them, or none. The feed is
+    /// sold at a route of the relay's connector, so it needs the connector.
+    fn subscribe(&self, has_connector: bool) -> Result<Option<SubscribeSettings>, RelayError> {
+        let address = self.text(&SUBSCRIBE_ILP_ADDRESS);
+        let price = self.text(&BROADCAST_PRICE);
+        let url = self.text(&RELAY_URL);
+        let settings = [
+            (address.is_some(), SUBSCRIBE_ILP_ADDRESS.env),
+            (price.is_some(), BROADCAST_PRICE.env),
+            (url.is_some(), RELAY_URL.env),
+        ];
+        let given = settings.iter().find(|(set, _)| *set);
+        let missing = settings.iter().find(|(set, _)| !*set);
+        let (Some((_, ilp_address)), Some(_), Some((url_name, relay_url))) = (address, price, url)
+        else {
+            return match (given, missing) {
+                (Some((_, given)), Some((_, missing))) => {
+                    Err(RelayError::EdgeIncomplete { given, missing })
+                }
+                _ => Ok(None),
+            };
+        };
+        let broadcast_price = self
+            .integer(
+                &BROADCAST_PRICE,
+                1..=MAX_BROADCAST_PRICE,
+                "a positive integer a JSON number carries exactly",
+            )?
+            .ok_or(RelayError::EdgeIncomplete {
+                given: SUBSCRIBE_ILP_ADDRESS.env,
+                missing: BROADCAST_PRICE.env,
+            })?;
+        let named = relay_url
+            .parse::<hyper::Uri>()
+            .ok()
+            .filter(|uri| uri.authority().is_some())
+            .filter(|uri| matches!(uri.scheme_str(), Some("ws" | "wss" | "http" | "https")));
+        if named.is_none() {
+            return Err(RelayError::InvalidSetting {
+                name: url_name,
+                expected: "a ws://, wss://, http:// or https:// URL",
+                value: relay_url,
+            });
+        }
+        if !has_connector {
+            return Err(RelayError::EdgeIncomplete {
+                given: SUBSCRIBE_ILP_ADDRESS.env,
+                missing: CONNECTOR_URL.env,
+            });
+        }
+        Ok(Some(SubscribeSettings {
+            ilp_address,
+            broadcast_price,
+            relay_url,
+        }))
+    }
+
+    /// The keys that follow the live feed without paying: hex, separated by
+    /// commas or white space, each once.
+    fn operator_pubkeys(&self) -> Result<Vec<PublicKey>, RelayError> {
+        let Some((name, raw)) = self.text(&OPERATOR_PUBKEYS) else {
+            return Ok(Vec::new());
+        };
+        let mut keys: Vec<PublicKey> = Vec::new();
+        for entry in raw
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .filter(|entry| !entry.is_empty())
+        {
+            let key = (entry.len() == 64)
+                .then(|| PublicKey::from_hex(entry).ok())
+                .flatten()
+                .ok_or_else(|| RelayError::InvalidSetting {
+                    name,
+                    expected: "comma-separated 64-character hex public keys",
+                    value: entry.to_string(),
+                })?;
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        Ok(keys)
+    }
+
     /// The node's identity: a mnemonic or a secret key, never both.
     ///
     /// The secret key is the flag, else `TOON_SECRET_KEY`, else its alias; an
@@ -1188,5 +1323,117 @@ mod tests {
     fn a_mnemonic_and_a_secret_key_together_are_refused() {
         let result = config(&[("TOON_MNEMONIC", ABANDON), ("TOON_SECRET_KEY", &ones())]);
         assert!(matches!(result, Err(RelayError::BothIdentities)));
+    }
+
+    #[test]
+    fn a_relay_sells_its_feed_only_when_told_the_address_the_price_and_its_own_url() {
+        let key = ones();
+        let edge = [
+            ("TOON_CONNECTOR_URL", "http://connector:3000/ilp"),
+            ("TOON_WRITE_ILP_ADDRESS", "g.toon.relay"),
+        ];
+        let selling = [
+            ("TOON_SUBSCRIBE_ILP_ADDRESS", "g.toon.relay.subscribe"),
+            ("TOON_BROADCAST_PRICE", "10"),
+            ("TOON_RELAY_URL", "wss://relay.example"),
+        ];
+        let with = |extra: &[(&str, &str)]| {
+            let mut env = vec![("TOON_SECRET_KEY", key.as_str())];
+            env.extend_from_slice(extra);
+            config(&env)
+        };
+
+        let free = with(&edge).expect("a free feed");
+        assert_eq!(free.subscribe, None);
+        assert!(free.operator_pubkeys.is_empty());
+
+        let all: Vec<_> = edge.iter().chain(selling.iter()).copied().collect();
+        let sold = with(&all)
+            .expect("a complete feed")
+            .subscribe
+            .expect("selling");
+        assert_eq!(sold.ilp_address, "g.toon.relay.subscribe");
+        assert_eq!(sold.broadcast_price, 10);
+        assert_eq!(sold.relay_url, "wss://relay.example");
+
+        // Any one or two of the three is an error naming the pair.
+        for left_out in 0..3 {
+            let some: Vec<_> = edge
+                .iter()
+                .copied()
+                .chain(
+                    selling
+                        .iter()
+                        .copied()
+                        .enumerate()
+                        .filter(|(at, _)| *at != left_out)
+                        .map(|(_, pair)| pair),
+                )
+                .collect();
+            assert!(
+                matches!(with(&some), Err(RelayError::EdgeIncomplete { .. })),
+                "without setting {left_out}"
+            );
+        }
+        // The feed is sold at a route of the connector.
+        let no_connector: Vec<_> = selling.to_vec();
+        assert!(matches!(
+            with(&no_connector),
+            Err(RelayError::EdgeIncomplete {
+                missing: "TOON_CONNECTOR_URL",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_broadcast_price_and_a_relay_url_that_cannot_be_used_stop_the_relay() {
+        let key = ones();
+        let base = [
+            ("TOON_SECRET_KEY", key.as_str()),
+            ("TOON_CONNECTOR_URL", "http://connector:3000/ilp"),
+            ("TOON_WRITE_ILP_ADDRESS", "g.toon.relay"),
+            ("TOON_SUBSCRIBE_ILP_ADDRESS", "g.toon.relay.subscribe"),
+        ];
+        for (price, url) in [
+            ("0", "wss://relay.example"),
+            ("-1", "wss://relay.example"),
+            ("1.5", "wss://relay.example"),
+            ("9007199254740992", "wss://relay.example"),
+            ("10", "relay.example"),
+            ("10", "ftp://relay.example"),
+            ("10", "not a url"),
+        ] {
+            let mut env = base.to_vec();
+            env.push(("TOON_BROADCAST_PRICE", price));
+            env.push(("TOON_RELAY_URL", url));
+            assert!(
+                matches!(config(&env), Err(RelayError::InvalidSetting { .. })),
+                "{price} {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn operator_keys_are_hex_public_keys_each_once() {
+        let key = ones();
+        let ok = config(&[
+            ("TOON_SECRET_KEY", &key),
+            (
+                "TOON_OPERATOR_PUBKEYS",
+                &format!("{PUBKEY_OF_ONES}, {PUBKEY_OF_TWOS} {PUBKEY_OF_ONES}"),
+            ),
+        ])
+        .expect("two keys");
+        assert_eq!(ok.operator_pubkeys.len(), 2);
+        for bad in ["abc", &"z".repeat(64), &format!("{PUBKEY_OF_ONES},abc")] {
+            assert!(matches!(
+                config(&[("TOON_SECRET_KEY", &key), ("TOON_OPERATOR_PUBKEYS", bad)]),
+                Err(RelayError::InvalidSetting {
+                    name: "TOON_OPERATOR_PUBKEYS",
+                    ..
+                })
+            ));
+        }
     }
 }
