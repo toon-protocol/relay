@@ -169,12 +169,12 @@ pub(crate) async fn watch_offering(
             intervals.unknown
         };
         if let Some(subscribing) = &subscribing {
-            let offer = match &reading {
-                Ok((_, description)) => SubscribeOffer::read(&subscribing.address, description),
-                Err(_) => Err(RelayError::ConnectorPublishesNoUrl),
-            };
-            let report = match (&reading, &offer) {
-                (Ok(_), Ok(offer)) => format!(
+            let offer = reading
+                .as_ref()
+                .ok()
+                .map(|(_, description)| SubscribeOffer::read(&subscribing.address, description));
+            let report = match &offer {
+                Some(Ok(offer)) => format!(
                     "[relay] paid live feed: subscribe at {}, {} uusdc per packet{}",
                     offer.ilp_address(),
                     offer.price(),
@@ -183,19 +183,17 @@ pub(crate) async fn watch_offering(
                         carriage.as_str()
                     )),
                 ),
-                (Ok(_), Err(error)) => format!(
+                Some(Err(error)) => format!(
                     "[relay] paid live feed NOT offered: {error}. Until this is fixed the NIP-11 \
                      document names no subscribe route."
                 ),
-                (Err(_), _) => {
-                    "[relay] paid live feed not offered while the edge is unknown".to_string()
-                }
+                None => "[relay] paid live feed not offered while the edge is unknown".to_string(),
             };
             if reported_offer.as_ref() != Some(&report) {
                 println!("{report}");
                 reported_offer = Some(report);
             }
-            subscribing.slot.set(offer.ok());
+            subscribing.slot.set(offer.and_then(Result::ok));
         }
         slot.set(reading.ok().map(|(edge, _)| edge));
         tokio::time::sleep(wait).await;

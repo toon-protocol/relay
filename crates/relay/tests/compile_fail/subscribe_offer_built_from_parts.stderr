@@ -1,0 +1,11 @@
+error[E0451]: fields `route`, `price` and `carriage` of struct `SubscribeOffer` are private
+  --> tests/compile_fail/subscribe_offer_built_from_parts.rs:9:9
+   |
+ 8 |     SubscribeOffer {
+   |     -------------- in this type
+ 9 |         route,
+   |         ^^^^^ private field
+10 |         price: 1000,
+   |         ^^^^^ private field
+11 |         carriage: None,
+   |         ^^^^^^^^ private field

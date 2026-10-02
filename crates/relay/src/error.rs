@@ -45,7 +45,8 @@ pub enum RelayError {
     )]
     DevModeRefused,
 
-    /// One half of the paid write edge was given without the other.
+    /// One of two settings that go together was given without the other:
+    /// the halves of the paid write edge, or of the paid live feed.
     #[error("{given} and {missing} go together: set both, or neither")]
     EdgeIncomplete {
         given: &'static str,
@@ -188,6 +189,11 @@ pub enum RelayError {
     /// stops rather than forget a balance.
     #[error("the subscription of {pubkey} in feed_subscriptions cannot be read")]
     LedgerRowUnreadable { pubkey: String },
+
+    /// The thread that writes the paid feed's balances to disk could not be
+    /// started.
+    #[error("could not start the thread that keeps the paid feed's balances: {0}")]
+    LedgerWriterNotStarted(std::io::Error),
 
     /// The connector prices the subscribe route by size: a packet would
     /// credit something other than one price.

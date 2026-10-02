@@ -98,6 +98,16 @@ struct Entry {
     wanted: Wanted,
 }
 
+impl Entry {
+    fn snapshot(&self, pubkey: PublicKey) -> Snapshot {
+        Snapshot {
+            pubkey,
+            balance: self.balance,
+            filter: self.filter.clone(),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Reading {
     key: PublicKey,
@@ -160,10 +170,7 @@ impl Ledger {
         std::thread::Builder::new()
             .name("ledger-writer".to_string())
             .spawn(move || write_rows(connection, &queued))
-            .map_err(|source| RelayError::DataDir {
-                path: path.to_path_buf(),
-                source,
-            })?;
+            .map_err(RelayError::LedgerWriterNotStarted)?;
         Ok(Self(Arc::new(Books {
             broadcast_price,
             state: Mutex::new(state),
@@ -184,57 +191,86 @@ impl Ledger {
 
     /// Credit `amount` to `key`, opening its subscription with `filter` if it
     /// has none, and replacing the filter when one is given. Answered once
-    /// the new balance is on disk.
+    /// the new balance is on disk, with what the credit added: `amount`, less
+    /// whatever [`MAX_BALANCE`] left no room for. A credit whose row cannot
+    /// be written is taken back, filter and all: the request is refused, and
+    /// the draft forbids crediting a request the relay refuses.
     pub(crate) async fn credit(
         &self,
         key: PublicKey,
         amount: u64,
         filter: Option<(Value, Wanted)>,
-    ) -> Result<Snapshot, CreditError> {
-        let (snapshot, kept) = {
+    ) -> Result<(Snapshot, u64), CreditError> {
+        let (snapshot, added, replaced, kept) = {
             let (books, mut state) = self.books();
-            let entry = match (state.subscriptions.get_mut(&key), filter) {
+            let (entry, replaced) = match (state.subscriptions.get_mut(&key), filter) {
                 (None, None) => return Err(CreditError::FilterRequired),
-                (None, Some((filter, wanted))) => state.subscriptions.entry(key).or_insert(Entry {
-                    balance: 0,
-                    filter,
-                    wanted,
-                }),
+                (None, Some((filter, wanted))) => (
+                    state.subscriptions.entry(key).or_insert(Entry {
+                        balance: 0,
+                        filter,
+                        wanted,
+                    }),
+                    None,
+                ),
                 (Some(entry), filter) => {
-                    if let Some((filter, wanted)) = filter {
-                        entry.filter = filter;
-                        entry.wanted = wanted;
-                    }
-                    entry
+                    let replaced = filter.map(|(filter, wanted)| {
+                        (
+                            std::mem::replace(&mut entry.filter, filter),
+                            std::mem::replace(&mut entry.wanted, wanted),
+                        )
+                    });
+                    (entry, replaced)
                 }
             };
+            let before = entry.balance;
             entry.balance = entry.balance.saturating_add(amount).min(MAX_BALANCE);
-            let snapshot = Snapshot {
-                pubkey: key,
-                balance: entry.balance,
-                filter: entry.filter.clone(),
-            };
+            let snapshot = entry.snapshot(key);
             let (kept, wait) = oneshot::channel();
             queue(books, &snapshot, Some(kept));
-            (snapshot, wait)
+            (snapshot, entry.balance - before, replaced, wait)
         };
-        match kept.await {
-            Ok(Ok(())) => Ok(snapshot),
-            Ok(Err(reason)) => Err(CreditError::NotKept(reason)),
-            Err(_) => Err(CreditError::NotKept(
-                "the ledger writer stopped".to_string(),
-            )),
+        let reason = match kept.await {
+            Ok(Ok(())) => return Ok((snapshot, added)),
+            Ok(Err(reason)) => reason,
+            Err(_) => "the ledger writer stopped".to_string(),
+        };
+        self.take_back(key, added, &snapshot.filter, replaced);
+        Err(CreditError::NotKept(reason))
+    }
+
+    /// Undo a credit whose row was not written: take `added` back off `key`'s
+    /// balance, and put back the filter it replaced unless a later credit has
+    /// replaced it since. The row is queued again, so the table follows.
+    fn take_back(
+        &self,
+        key: PublicKey,
+        added: u64,
+        filter: &Value,
+        replaced: Option<(Value, Wanted)>,
+    ) {
+        let (books, mut state) = self.books();
+        let Some(entry) = state.subscriptions.get_mut(&key) else {
+            return;
+        };
+        entry.balance = entry.balance.saturating_sub(added);
+        if let Some((previous, wanted)) = replaced
+            && entry.filter == *filter
+        {
+            entry.filter = previous;
+            entry.wanted = wanted;
         }
+        let snapshot = entry.snapshot(key);
+        queue(books, &snapshot, None);
     }
 
     /// The subscription of `key`, if it has one.
     pub(crate) fn subscription(&self, key: &PublicKey) -> Option<Snapshot> {
         let (_, state) = self.books();
-        state.subscriptions.get(key).map(|entry| Snapshot {
-            pubkey: *key,
-            balance: entry.balance,
-            filter: entry.filter.clone(),
-        })
+        state
+            .subscriptions
+            .get(key)
+            .map(|entry| entry.snapshot(*key))
     }
 
     /// Every subscription, by key.
@@ -243,11 +279,7 @@ impl Ledger {
         let mut all: Vec<_> = state
             .subscriptions
             .iter()
-            .map(|(key, entry)| Snapshot {
-                pubkey: *key,
-                balance: entry.balance,
-                filter: entry.filter.clone(),
-            })
+            .map(|(key, entry)| entry.snapshot(*key))
             .collect();
         all.sort_by_key(|snapshot| snapshot.pubkey.to_hex());
         all
@@ -337,15 +369,7 @@ impl Ledger {
             }
             entry.balance -= books.broadcast_price;
             charged.paid.push(key);
-            queue(
-                books,
-                &Snapshot {
-                    pubkey: key,
-                    balance: entry.balance,
-                    filter: entry.filter.clone(),
-                },
-                None,
-            );
+            queue(books, &entry.snapshot(key), None);
             if entry.balance < books.broadcast_price {
                 charged.exhausted.push(key);
                 for reading in connections.values_mut().filter(|r| r.key == key) {
@@ -405,10 +429,13 @@ fn read_all(connection: &Connection) -> Result<Result<State, RelayError>, rusqli
         let Some(wanted) = Wanted::read(filter.clone()) else {
             return Ok(Err(unreadable()));
         };
+        let Ok(balance) = u64::try_from(balance) else {
+            return Ok(Err(unreadable()));
+        };
         state.subscriptions.insert(
             key,
             Entry {
-                balance: u64::try_from(balance).unwrap_or(0),
+                balance,
                 filter,
                 wanted,
             },
@@ -461,4 +488,62 @@ fn write_batch(connection: &mut Connection, batch: &[Row]) -> Result<(), rusqlit
         }
     }
     transaction.commit()
+}
+
+#[cfg(test)]
+mod tests {
+    use nostr::key::Keys;
+    use serde_json::json;
+
+    use super::*;
+
+    fn filter(value: Value) -> Option<(Value, Wanted)> {
+        let wanted = Wanted::read(value.clone()).expect("a NIP-01 filter");
+        Some((value, wanted))
+    }
+
+    #[tokio::test]
+    async fn a_credit_answers_what_it_added_which_the_largest_balance_can_cut_short() {
+        let data = tempfile::tempdir().expect("a temp dir");
+        let ledger = Ledger::open(&data.path().join("events.db"), 10).expect("the books");
+        let key = Keys::generate().public_key();
+
+        let (snapshot, added) = ledger
+            .credit(key, MAX_BALANCE - 5, filter(json!({ "kinds": [1] })))
+            .await
+            .expect("a credit");
+        assert_eq!(
+            (snapshot.balance, added),
+            (MAX_BALANCE - 5, MAX_BALANCE - 5)
+        );
+
+        let (snapshot, added) = ledger.credit(key, 1000, None).await.expect("a credit");
+        assert_eq!((snapshot.balance, added), (MAX_BALANCE, 5));
+    }
+
+    #[tokio::test]
+    async fn a_credit_whose_row_is_not_written_is_taken_back_filter_and_all() {
+        let data = tempfile::tempdir().expect("a temp dir");
+        let path = data.path().join("events.db");
+        let ledger = Ledger::open(&path, 10).expect("the books");
+        let key = Keys::generate().public_key();
+        ledger
+            .credit(key, 100, filter(json!({ "kinds": [1] })))
+            .await
+            .expect("a credit");
+
+        // The table goes, so the writer's next row fails.
+        Connection::open(&path)
+            .expect("the file")
+            .execute_batch("DROP TABLE feed_subscriptions")
+            .expect("dropped");
+        let refused = ledger
+            .credit(key, 50, filter(json!({ "kinds": [7] })))
+            .await;
+        assert!(matches!(refused, Err(CreditError::NotKept(_))));
+
+        let standing = ledger.subscription(&key).expect("still subscribed");
+        assert_eq!(standing.balance, 100);
+        assert_eq!(standing.filter, json!({ "kinds": [1] }));
+    }
 }

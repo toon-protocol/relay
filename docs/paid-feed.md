@@ -94,8 +94,12 @@ is for the operator and must not be published.
 - **Memory is the book, the table follows.** A debit happens when an event is
   accepted, on the write path, so it is made in memory and queued to one writer
   thread. A credit waits for its row to be on disk before the subscriber is
-  answered. A crash can lose the last few debits (a subscriber gets those events
-  for free) and never a credit.
+  answered; a credit whose row cannot be written is taken back and the request
+  refused with `500`. A crash can lose the last few debits (a subscriber gets
+  those events for free) and never a credit.
+- **A balance stops at 2^53 − 1**, the largest a JSON number carries exactly.
+  A packet's `credited` is what it added, which is less than its price only at
+  that ceiling.
 - **Charged once, in acceptance order.** The write path decides, per accepted
   event, which subscribers pay: those whose subscription filter matches the
   event and who hold an open `REQ` on any connection that matches it. Each is
@@ -108,6 +112,9 @@ is for the operator and must not be published.
 - An event saved after a `REQ` is registered and before the store is queried can
   be in the stored answer **and** charged; it is sent once, and the charge stands.
   The window is the length of one store query.
+- A packet is credited once per delivery to `POST /subscribe`. The relay has no
+  packet identity to tell a redelivery from a new packet; the connector delivers
+  each fulfilled packet once.
 - A debit is made for a broadcast, not a receipt (the draft says so): an event
   debited and lost to a dropped connection can be read for free as a stored event.
 - Reads are not rate-limited yet, so a reader can poll instead of paying (the

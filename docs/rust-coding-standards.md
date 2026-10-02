@@ -60,7 +60,7 @@ unit tests are for logic worth testing in isolation.
 - **A rule that can be a type is a type, with a test that the wrong
   construction does not compile.** Each invariant in #185 is a type with one
   constructor: `VerifiedEvent::verify`, `PaymentStatement::stated_on` (visible
-  to the paid-write handler alone), `WriteEdge::read` and
+  to the paid-write handler alone), `WriteEdge::read`, `SubscribeOffer::read` and
   `TerminatedRoute::confirm`. Its forbidden constructions live in `crates/relay/tests/compile_fail/`, one file each,
   beside the compiler's reason for refusing it, and `trybuild` fails the test
   if one of them builds or fails for a different reason. A `compile_fail`

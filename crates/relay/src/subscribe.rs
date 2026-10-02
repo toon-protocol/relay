@@ -139,9 +139,9 @@ pub(crate) async fn subscribe(
         );
     };
     match sale.ledger.credit(key, credited, filter).await {
-        Ok(snapshot) => {
+        Ok((snapshot, added)) => {
             let price = sale.ledger.broadcast_price();
-            Json(Standing::of(snapshot, price, Some(credited))).into_response()
+            Json(Standing::of(snapshot, price, Some(added))).into_response()
         }
         Err(CreditError::FilterRequired) => filter_required(),
         Err(CreditError::NotKept(reason)) => {
@@ -172,12 +172,8 @@ pub(crate) fn balance(relay: &Relay, headers: &HeaderMap) -> Option<Response> {
         ));
     };
     let price = sale.ledger.broadcast_price();
-    let mut standing = serde_json::to_value(Standing::of(snapshot, price, None))
-        .expect("a subscription is strings and numbers, which always serialize");
-    // The read answers with the four fields the draft names.
-    if let Some(fields) = standing.as_object_mut() {
-        fields.remove("credited");
-    }
+    // Without `credited`, the read answers with the four fields the draft names.
+    let standing = Standing::of(snapshot, price, None);
     Some(
         (
             StatusCode::OK,
