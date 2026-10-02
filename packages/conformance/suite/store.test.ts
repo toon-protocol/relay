@@ -312,6 +312,7 @@ describe('relay image conformance: multi-letter tag keys and limit', () => {
         });
       // Three tagged events, older than more than the cap of untagged ones.
       const tagged = [0, 1, 2].map((i) => make(i, [['ab', 'x']]));
+      const newestTagged = tagged.slice(-1);
       const untagged = Array.from({ length: 501 }, (_, i) => make(10 + i, []));
       for (const event of tagged) await publishOk(relay, event);
       for (let i = 0; i < untagged.length; i += 50) {
@@ -327,7 +328,7 @@ describe('relay image conformance: multi-letter tag keys and limit', () => {
         '#ab': ['x'],
         limit: 1,
       });
-      expect(newest.map((e) => e.id)).toEqual([tagged[2]!.id]);
+      expect(newest.map((e) => e.id)).toEqual(ids(...newestTagged));
     }
   );
 });
