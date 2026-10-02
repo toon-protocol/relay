@@ -71,5 +71,5 @@ published).
 
 The stub connector is varied per case (`ilpDocument()` overrides, or down /
 absent). A run that passes command-line flags uses the image's documented
-command, `node dist/cli.js`; set `CONFORMANCE_COMMAND` for an implementation
+command, `relay`; set `CONFORMANCE_COMMAND` for an implementation
 whose command differs.

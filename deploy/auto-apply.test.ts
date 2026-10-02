@@ -139,7 +139,10 @@ function addFixtureRequiredVar(originDir: string): string {
 x-toon-network-164-fixture: "\${RELAY_FIXTURE_FLAG:?set RELAY_FIXTURE_FLAG in .env (deploy/.env.example lists every required variable; this one is a TOON_Network#164 test fixture)}"
 `;
   writeFileSync(path, after);
-  return commitAll(originDir, 'docker-compose.yml now needs RELAY_FIXTURE_FLAG');
+  return commitAll(
+    originDir,
+    'docker-compose.yml now needs RELAY_FIXTURE_FLAG'
+  );
 }
 
 function writeEnv(boxDir: string, values: Record<string, string>): void {
@@ -227,10 +230,7 @@ interface Run {
 }
 
 let runs = 0;
-function autoApply(
-  boxDir: string,
-  stubEnv: Record<string, string> = {}
-): Run {
+function autoApply(boxDir: string, stubEnv: Record<string, string> = {}): Run {
   const log = join(boxDir, `stub-log-${runs++}`);
   writeFileSync(log, '');
   const env = {
@@ -339,10 +339,9 @@ describe('a compose apply that fails once after a fast-forward (TOON_Network#164
     // all.
     const fifth = autoApply(box);
     expect(fifth.status).toBe(0);
-    expect(
-      fifth.calls,
-      'a fully-applied box calls docker for nothing'
-    ).toBe('');
+    expect(fifth.calls, 'a fully-applied box calls docker for nothing').toBe(
+      ''
+    );
   });
 });
 
@@ -352,10 +351,7 @@ describe('a box with no deploy/.applied at all', () => {
     const box = cloneBox(origin.dir);
     writeEnv(box, ENV);
 
-    expect(
-      applied(box),
-      'a fresh clone has never written .applied'
-    ).toBeNull();
+    expect(applied(box), 'a fresh clone has never written .applied').toBeNull();
 
     const result = autoApply(box);
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
@@ -436,12 +432,14 @@ describe('COMPOSE_FILE (toon-protocol/relay#166, shared contract v2 point 3)', (
     // Deliberately no writeEnv(box, ...) -- this box has no deploy/.env at all.
 
     const result = autoApply(box);
-    expect(result.status, 'a missing .env must fail the run, not succeed silently').not.toBe(0);
-    expect(result.stderr).toMatch(/deploy\/.env is missing/);
     expect(
-      result.calls,
-      'must fail before ever calling docker compose'
-    ).toBe('');
+      result.status,
+      'a missing .env must fail the run, not succeed silently'
+    ).not.toBe(0);
+    expect(result.stderr).toMatch(/deploy\/.env is missing/);
+    expect(result.calls, 'must fail before ever calling docker compose').toBe(
+      ''
+    );
   });
 });
 
@@ -481,7 +479,10 @@ describe('a merge that changes only connector.toml (relay#173)', () => {
     writeEnv(box, ENV);
     expect(autoApply(box).status).toBe(0);
     const before = connectorInputs(box);
-    expect(before, 'a healthy apply records what the connector runs on').not.toBeNull();
+    expect(
+      before,
+      'a healthy apply records what the connector runs on'
+    ).not.toBeNull();
 
     const sha = changeConnectorToml(origin.dir);
     const result = autoApply(box);
@@ -503,7 +504,9 @@ describe('a merge that changes only connector.toml (relay#173)', () => {
     const result = autoApply(box);
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.calls, 'it did run the apply').toMatch(/up -d/);
-    expect(restarted(result), 'nothing changed, so nothing to restart').toBe(false);
+    expect(restarted(result), 'nothing changed, so nothing to restart').toBe(
+      false
+    );
   });
 
   it('restarts it once on a box that has no record yet, the safer reading', () => {
@@ -558,7 +561,10 @@ describe('a merge that changes only connector.toml (relay#173)', () => {
 
     changeConnectorToml(origin.dir);
     const result = autoApply(box, { STUB_HEALTH_AFTER_RESTART: 'unhealthy' });
-    expect(result.status, 'a connector that refuses the new config fails the run').not.toBe(0);
+    expect(
+      result.status,
+      'a connector that refuses the new config fails the run'
+    ).not.toBe(0);
     expect(restarted(result)).toBe(true);
     expect(result.stdout).toMatch(/FAILED: the connector is 'unhealthy'/);
     expect(applied(box), 'so the next run retries it').toBe(origin.sha);

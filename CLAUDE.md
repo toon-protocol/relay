@@ -43,14 +43,7 @@ conformance suite, the soak tooling (`packages/conformance/`) and the guards in
 
 The relay is a Cargo workspace: `Cargo.toml`, `rust-toolchain.toml` (the one
 toolchain pin; rustup installs it) and `crates/relay`, with its image in
-`crates/relay/Dockerfile`.
-
-```
-cargo fmt --all -- --check
-cargo build --workspace
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-```
+`crates/relay/Dockerfile`; its commands are the `cargo` lines under Build & test.
 
 Rust code follows `docs/rust-coding-standards.md` (the connector's standards,
 plus unsafe forbidden, the pinned toolchain, invariants as types with

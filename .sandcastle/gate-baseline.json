@@ -54,12 +54,13 @@
   "gateShape": {
     "packageManager": "pnpm@8.15.9",
     "workspaces": [
-      "packages/conformance"
+      "packages/conformance",
+      "deploy"
     ],
     "commands": {
       "lint": "eslint .",
       "typecheck": "pnpm run typecheck",
-      "test": "vitest run",
+      "test": "pnpm -r test --if-present",
       "build": "pnpm -r run build"
     },
     "ciWiring": {
