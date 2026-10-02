@@ -47,10 +47,12 @@ use std::time::Instant;
 
 use nostr::event::{Event, Kind};
 use nostr::filter::{Filter, MatchEventOptions};
+use nostr::key::PublicKey;
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
 use crate::Carriage;
+use crate::auth::{self, AuthPolicy, CLOSED_AUTH_REQUIRED};
 use crate::connector::EdgeSlot;
 use crate::document::write_refusal;
 use crate::store::Query;
@@ -348,24 +350,50 @@ impl Reply {
     }
 }
 
+/// What a connection is asked and has proven under NIP-42 (#218).
+#[derive(Debug)]
+struct Authentication {
+    policy: AuthPolicy,
+    /// The challenge this connection was sent, and no other was.
+    challenge: String,
+    /// The keys this connection has proven it holds.
+    proven: HashSet<PublicKey>,
+}
+
 /// One connection's subscriptions and allowances.
 #[derive(Debug)]
 pub(crate) struct Session {
     refusal: Refusal,
+    /// `None` while NIP-42 is off: no challenge, nothing restricted.
+    auth: Option<Authentication>,
     subscriptions: HashMap<String, Subscription>,
     queries: Allowance,
     messages: Allowance,
 }
 
 impl Session {
-    /// A connection that has said nothing yet.
-    pub(crate) fn new(refusal: Refusal) -> Self {
+    /// A connection that has said nothing yet, under `auth` if NIP-42 is on.
+    pub(crate) fn new(refusal: Refusal, auth: Option<AuthPolicy>) -> Self {
         Self {
             refusal,
+            auth: auth.map(|policy| Authentication {
+                policy,
+                challenge: auth::new_challenge(),
+                proven: HashSet::new(),
+            }),
             subscriptions: HashMap::new(),
             queries: Allowance::new(QUERIES_PER_MINUTE),
             messages: Allowance::new(MESSAGES_PER_MINUTE),
         }
+    }
+
+    /// What a connection is sent as it opens: the `AUTH` challenge, if NIP-42
+    /// is on, else nothing.
+    pub(crate) fn greeting(&self) -> Vec<String> {
+        self.auth
+            .iter()
+            .map(|auth| json!(["AUTH", auth.challenge]).to_string())
+            .collect()
     }
 
     /// Count a frame the client sent at `now`, of any kind, so that no kind
@@ -401,7 +429,13 @@ impl Session {
                     json!(["OK", id, false, self.refusal.words()]).to_string(),
                 ])
             }
-            Some("AUTH") => unsolicited_auth(items.into_iter().nth(1)),
+            Some("AUTH") => {
+                let event = items.into_iter().nth(1);
+                match self.auth.as_mut() {
+                    Some(auth) => authenticate(auth, event),
+                    None => unsolicited_auth(event),
+                }
+            }
             Some(other) => Reply::notice(format!("error: unknown message type: {other}")),
             None => Reply::notice("error: unknown message type: "),
         }
@@ -432,6 +466,12 @@ impl Session {
             return Reply::notice("error: invalid filter");
         };
 
+        if let Some(auth) = &self.auth {
+            let restricted = filters.iter().any(|f| auth.policy.restricts(&f.base));
+            if restricted && auth.proven.is_empty() {
+                return self.refuse(&id, CLOSED_AUTH_REQUIRED);
+            }
+        }
         if id.len() > MAX_SUBSCRIPTION_ID {
             return self.refuse(
                 &id,
@@ -556,6 +596,25 @@ impl Session {
     }
 }
 
+/// What an `AUTH` carrying `event` is answered with when the relay issued a
+/// challenge: `OK true` and the connection has proven the signer's key, or
+/// `OK false` and the reason it did not answer the challenge.
+fn authenticate(auth: &mut Authentication, event: Option<Value>) -> Reply {
+    let Some(event) = event.and_then(|event| serde_json::from_value::<Event>(event).ok()) else {
+        return Reply::notice("error: invalid AUTH event");
+    };
+    let id = event.id;
+    let (accepted, words) = match auth::answer(event, &auth.challenge, crate::clock::unix_seconds())
+    {
+        Ok(key) => {
+            auth.proven.insert(key);
+            (true, "")
+        }
+        Err(reason) => (false, reason),
+    };
+    Reply::Frames(vec![json!(["OK", id, accepted, words]).to_string()])
+}
+
 /// What an `AUTH` carrying `event` is answered with. The relay issues no
 /// challenge, so there is none an `AUTH` could answer.
 fn unsolicited_auth(event: Option<Value>) -> Reply {
@@ -581,7 +640,7 @@ mod tests {
     use super::*;
 
     fn session() -> Session {
-        Session::new(Refusal::default())
+        Session::new(Refusal::default(), None)
     }
 
     /// The frames `text` is answered with, when it asks the store nothing.
