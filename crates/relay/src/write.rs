@@ -102,7 +102,11 @@ pub(crate) async fn write(State(relay): State<Relay>, headers: HeaderMap, body: 
         Some(groups) => Some(groups.turn().await),
         None => None,
     };
-    if let Some(Err(denied)) = groups.map(|groups| groups.permit(event.event())) {
+    // An event already held was judged when it first arrived: a retry is
+    // answered as for any stored event, not judged against what it changed.
+    if let Some(Err(denied)) = groups.map(|groups| groups.permit(event.event()))
+        && !matches!(relay.store.holds(event.event().id.to_hex()).await, Ok(true))
+    {
         return refused(denied.status, denied.reason);
     }
 

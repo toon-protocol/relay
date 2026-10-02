@@ -170,17 +170,7 @@ async fn the_groups_come_back_when_the_relay_is_opened_again() {
     let (owner, outsider) = (Keys::generate(), Keys::generate());
     accepted(&running, &in_group(&owner, 9007, "kept", &[])).await;
 
-    let config = relay::Config::from_env(|name| match name {
-        "TOON_SECRET_KEY" => Some("1".repeat(64)),
-        "TOON_NIP29_GROUPS" => Some("true".to_string()),
-        "TOON_DATA_DIR" => running
-            .database
-            .parent()
-            .map(|dir| dir.to_string_lossy().into_owned()),
-        _ => None,
-    })
-    .expect("the same configuration");
-    let reopened = relay::Relay::open(&config).expect("the file opens again");
+    let reopened = reopened(&running);
     assert_eq!(
         write_to(&reopened, &in_group(&outsider, 9, "kept", &[])).await,
         403
@@ -191,6 +181,60 @@ async fn the_groups_come_back_when_the_relay_is_opened_again() {
     );
 }
 
+fn reopened(running: &common::Running) -> relay::Relay {
+    let config = relay::Config::from_env(|name| match name {
+        "TOON_SECRET_KEY" => Some("1".repeat(64)),
+        "TOON_NIP29_GROUPS" => Some("true".to_string()),
+        "TOON_DATA_DIR" => running
+            .database
+            .parent()
+            .map(|dir| dir.to_string_lossy().into_owned()),
+        _ => None,
+    })
+    .expect("the same configuration");
+    relay::Relay::open(&config).expect("the file opens again")
+}
+
 async fn write_to(relay: &relay::Relay, event: &Event) -> u16 {
     write(relay, delivery(event)).await.0
+}
+
+#[tokio::test]
+async fn a_retried_group_event_is_answered_as_stored() {
+    let running = with_groups().await;
+    let owner = Keys::generate();
+    let created = in_group(&owner, 9007, "again", &[]);
+    accepted(&running, &created).await;
+    accepted(&running, &created).await;
+    let leaving = in_group(&owner, 9022, "again", &[]);
+    accepted(&running, &leaving).await;
+    accepted(&running, &leaving).await;
+}
+
+#[tokio::test]
+async fn the_groups_are_rebuilt_in_the_order_their_events_arrived() {
+    let running = with_groups().await;
+    let (owner, member) = (Keys::generate(), Keys::generate());
+    accepted(&running, &in_group(&owner, 9007, "order", &[])).await;
+    // Dated before the group was made, and written after it.
+    let put = signed_by(
+        &owner,
+        9000,
+        NOW - 100,
+        &[&["h", "order"], &["p", &member.public_key().to_hex()]],
+    );
+    accepted(&running, &put).await;
+    // Deleting the put-user's record does not undo it on the next open.
+    let put_id = put.id.to_hex();
+    accepted(
+        &running,
+        &in_group(&owner, 9005, "order", &[&["e", &put_id]]),
+    )
+    .await;
+
+    let reopened = reopened(&running);
+    assert_eq!(
+        write_to(&reopened, &in_group(&member, 9, "order", &[])).await,
+        200
+    );
 }

@@ -197,11 +197,6 @@ impl Group {
         self.is_admin(key) || self.has_role(key, MODERATOR)
     }
 
-    /// Whether the key holds a role that makes it more than a plain member.
-    fn is_privileged(&self, key: &PublicKey) -> bool {
-        self.has_role(key, ADMIN) || self.has_role(key, MODERATOR)
-    }
-
     /// Read the metadata tags of an event (9007 and 9002 carry the same).
     fn edit(&mut self, event: &Event) {
         for tag in event.tags.iter() {
@@ -307,7 +302,7 @@ impl Groups {
                     ));
                 }
                 let grants_roles = people.iter().any(|(_, roles)| !roles.is_empty());
-                let alters_privileged = people.iter().any(|(key, _)| group.is_privileged(key));
+                let alters_privileged = people.iter().any(|(key, _)| group.is_moderator(key));
                 if group.is_admin(author)
                     || (group.is_moderator(author) && !grants_roles && !alters_privileged)
                 {
@@ -324,7 +319,7 @@ impl Groups {
                         "remove-user names a p tag",
                     ));
                 }
-                let removes_privileged = people.iter().any(|(key, _)| group.is_privileged(key));
+                let removes_privileged = people.iter().any(|(key, _)| group.is_moderator(key));
                 if group.is_admin(author) || (group.is_moderator(author) && !removes_privileged) {
                     Ok(())
                 } else {
@@ -401,7 +396,7 @@ impl Groups {
                     .tags
                     .iter()
                     .filter(|tag| tag.kind() == "e")
-                    .filter_map(|tag| tag.content().map(str::to_string))
+                    .filter_map(|tag| tag.content().map(str::to_ascii_lowercase))
                     .collect();
                 return Effect::Retract { group: id, ids };
             }
@@ -485,15 +480,21 @@ pub(crate) struct GroupRules {
 }
 
 impl GroupRules {
-    /// The rules over the groups `stored` builds: the moderation events the
-    /// store holds, in the order they were made.
+    /// The rules over the groups `store` builds: the moderation events it
+    /// holds, in the order they were accepted, judged as they were then. A
+    /// writer chooses its `created_at`, so that is not the order.
     pub(crate) fn rebuilt(signer: Signer, store: &Store) -> Result<Self, crate::RelayError> {
-        let mut stored = store.query_now(Filter::new().kinds(MODERATION_KINDS.map(Kind::from)))?;
-        stored.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
         let mut groups = Groups::default();
-        for event in &stored {
-            if groups.permit(event).is_ok() {
-                groups.apply(event);
+        for event in store.in_arrival_order(MODERATION_KINDS)? {
+            if groups.permit(&event).is_ok() {
+                groups.apply(&event);
+            }
+        }
+        // The next metadata events must replace the ones already stored.
+        for event in store.in_arrival_order(METADATA..=METADATA)? {
+            let at = event.created_at.as_secs();
+            if let Some(group) = group_of(&event).and_then(|id| groups.0.get_mut(id)) {
+                group.published_at = group.published_at.max(at);
             }
         }
         Ok(Self {
@@ -627,11 +628,13 @@ fn metadata_events(signer: &Signer, id: &str, group: &Group) -> Vec<Event> {
     .collect()
 }
 
-/// Delete the events among `ids` that belong to `group`.
+/// Delete the events among `ids` that belong to `group`. A moderation event
+/// is kept: it is the record the group is rebuilt from when the relay opens.
 async fn retract(store: &Store, group: &str, ids: Vec<String>) -> Result<(), crate::RelayError> {
     let held = store.query(in_group(group)).await?;
     let doomed = held
         .iter()
+        .filter(|event| !MODERATION_KINDS.contains(&event.kind.as_u16()))
         .map(|event| event.id.to_hex())
         .filter(|id| ids.contains(id))
         .collect();
