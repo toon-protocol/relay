@@ -2,8 +2,9 @@
 
 What the conformance suite cannot say about an image: that it works behind a
 real connector on the paid path, and how it compares with the image it is
-meant to replace. Five things, all run from this machine against published
-images (#203). Nothing here runs in CI.
+meant to replace. Five things run from this machine against published images
+(#203), and a sixth against a node that is already running (#204). Nothing
+here runs in CI.
 
 ## 1. The infra sandbox, on the image under test
 
@@ -81,3 +82,44 @@ TYPESCRIPT_IMAGE=ghcr.io/toon-protocol/relay:release \
 RUST_IMAGE=ghcr.io/toon-protocol/relay:rust-candidate \
   packages/conformance/soak/dind-conformance.sh
 ```
+
+## 6. A live node, across an image swap
+
+What sections 1 to 5 cannot say: that the image opens a node's own database,
+with what earlier builds left in it. `box.mjs` reads a running node
+from outside, through its two public hostnames (`READ_URL` and `EDGE_URL`,
+the devnet node's by default), and writes nothing (#204).
+
+```
+pnpm --filter @toon-protocol/relay-conformance --silent box baseline > baseline.json
+```
+
+before the swap records the Relay Information Document and every stored
+event. Then, on the node, pin the image in `deploy/.env` and recreate the
+relay alone:
+
+```
+RELAY_IMAGE=ghcr.io/toon-protocol/relay:rust-<handle>    # in deploy/.env
+docker compose up -d relay
+```
+
+`.env` is not in the repository, so `auto-apply.sh` leaves the pin alone, and
+Watchtower has nothing to follow on a tag that never moves. `:release` is not
+involved. After the swap:
+
+```
+EXPECT_VERSION=<handle> pnpm --filter @toon-protocol/relay-conformance --silent box check baseline.json
+```
+
+exits 1 unless the read host answers `426`, the connector's `/ilp/identity`
+`200`, the document is the baseline's apart from `version` and the two limits
+of #233, an `EVENT` over WebSocket is refused with the write address, and every
+baseline event is still served as it was (or has expired, been replaced or
+been deleted since). Run it again through a soak as often as wanted: it reads
+the whole store in about a minute. It cannot see the container's own
+healthcheck; the fleet's verdict on the node, that row included, is the
+connector repository's `fleet-health.yml`.
+
+A rollback is the same three steps with `RELAY_IMAGE` on the last TypeScript
+`sha-<short>` tag and `EXPECT_VERSION` the package version. Take a new
+baseline first, so that what the candidate stored is checked too.
