@@ -42,7 +42,7 @@ pub use config::{Config, EdgeSettings, Invocation, USAGE};
 pub use edge::{Carriage, Settlement, WriteEdge};
 pub use error::RelayError;
 pub use route::TerminatedRoute;
-pub use store::{Retention, Saved, Store};
+pub use store::{Query, Retention, Saved, Store};
 pub use verified::VerifiedEvent;
 /// The version the relay reports: its release handle, or the crate version
 /// when built without one. See the `version` module.

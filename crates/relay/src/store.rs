@@ -24,7 +24,7 @@
 //!   `expires_at` has passed, and [`Store::reap_expired`] deletes the ones
 //!   that expired longer ago than a grace period.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -178,10 +178,28 @@ impl Store {
     /// (kind 5) is stored and retracts what it names. An ephemeral kind is
     /// [`RelayError::KindNotStoredYet`] and nothing is written.
     pub async fn save(&self, event: &VerifiedEvent) -> Result<Saved, RelayError> {
+        self.save_then(event, |_| {}).await
+    }
+
+    /// [`Store::save`], and when the event is [`Saved::New`], `published`
+    /// runs with it before the store lets any query run. An event a later
+    /// query finds has therefore already been through `published`. It runs
+    /// on a blocking thread holding the store: it must not wait.
+    pub async fn save_then(
+        &self,
+        event: &VerifiedEvent,
+        published: impl FnOnce(&VerifiedEvent) + Send + 'static,
+    ) -> Result<Saved, RelayError> {
         let event = event.clone();
         let retention = Arc::clone(&self.retention);
-        self.blocking(move |connection| save(connection, &retention, event.event()))
-            .await
+        self.blocking(move |connection| {
+            let saved = save(connection, &retention, event.event())?;
+            if saved == Saved::New {
+                published(&event);
+            }
+            Ok(saved)
+        })
+        .await
     }
 
     /// Whether an expired event is left out of every answer.
@@ -212,10 +230,12 @@ impl Store {
         .await
     }
 
-    /// The stored events matching `filter`, newest first, at most its `limit`.
-    pub async fn query(&self, filter: Filter) -> Result<Vec<Event>, RelayError> {
+    /// The stored events matching `query`, every tag key of it included,
+    /// newest first, at most its filter's `limit`.
+    pub async fn query(&self, query: impl Into<Query>) -> Result<Vec<Event>, RelayError> {
+        let query = query.into();
         let enforce_expiration = self.retention.enforce_expiration;
-        self.blocking(move |connection| query(connection, &filter, enforce_expiration))
+        self.blocking(move |connection| run_query(connection, &query, enforce_expiration))
             .await
     }
 
@@ -235,6 +255,27 @@ impl Store {
         })
         .await
         .map_err(|_| RelayError::StoreStopped)?
+    }
+}
+
+/// A question put to the store: a `nostr` [`Filter`], which holds single-letter
+/// tag keys only, and the multi-letter ones (`#ab`) it cannot carry. All of
+/// them are conditions of the query, applied before the filter's `limit`.
+#[derive(Debug, Clone)]
+pub struct Query {
+    /// What the protocol crate reads of the filter.
+    pub filter: Filter,
+    /// Tag name (without `#`) and the values it may have. A key with no
+    /// values matches nothing.
+    pub multi_letter_tags: Vec<(String, HashSet<String>)>,
+}
+
+impl From<Filter> for Query {
+    fn from(filter: Filter) -> Self {
+        Self {
+            filter,
+            multi_letter_tags: Vec::new(),
+        }
     }
 }
 
@@ -525,11 +566,12 @@ fn expiration(tags: &Tags) -> Option<u64> {
         .find_map(|value| value.parse::<u64>().ok().filter(|at| *at <= MAX_EXPIRATION))
 }
 
-fn query(
+fn run_query(
     connection: &Connection,
-    filter: &Filter,
+    query: &Query,
     enforce_expiration: bool,
 ) -> Result<Vec<Event>, RelayError> {
+    let filter = &query.filter;
     let mut conditions: Vec<String> = Vec::new();
     let mut parameters: Vec<Value> = Vec::new();
 
@@ -570,13 +612,21 @@ fn query(
         conditions.push("created_at <= ?".to_string());
         parameters.push(seconds(until.as_secs()));
     }
-    for (name, values) in &filter.generic_tags {
+    let mut has_tag = |name: String, values: Vec<String>| {
         conditions.push(format!(
             "{HAS_TAG} ({})) ELSE 0 END",
             placeholders(values.len())
         ));
-        parameters.push(name.to_string().into());
-        parameters.extend(values.iter().cloned().map(Value::from));
+        parameters.push(name.into());
+        parameters.extend(values.into_iter().map(Value::from));
+    };
+    for (name, values) in &filter.generic_tags {
+        has_tag(name.to_string(), values.iter().cloned().collect());
+    }
+    // The protocol crate's filter holds single-letter keys only; a longer
+    // one is a condition of the same kind, so `limit` counts what it admits.
+    for (name, values) in &query.multi_letter_tags {
+        has_tag(name.clone(), values.iter().cloned().collect());
     }
 
     let mut sql = SELECT.to_string();

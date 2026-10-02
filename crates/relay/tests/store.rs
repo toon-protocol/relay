@@ -7,7 +7,7 @@ use common::{recorded_schema, signed, signed_by, typescript_database, verified};
 use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::Keys;
 use nostr::types::Timestamp;
-use relay::{RelayError, Saved, Store};
+use relay::{Query, RelayError, Saved, Store};
 use rusqlite::Connection;
 use tempfile::tempdir;
 
@@ -438,4 +438,95 @@ async fn a_row_whose_tags_are_not_json_is_not_served_and_fails_no_query() {
     let tagged = Filter::new().custom_tag(SingleLetterTag::LOWERCASE_T, "kept");
     let found = store.query(tagged).await.expect("a tag filter runs too");
     assert_eq!(ids(&found), vec![event.id.to_hex()]);
+}
+
+#[tokio::test]
+async fn a_multi_letter_tag_key_is_a_condition_of_the_query_before_the_limit() {
+    let dir = tempdir().expect("a temp dir");
+    let store = Store::open(&typescript_database(dir.path())).expect("it opens");
+    let tagged = signed(1, 1_000, &[&["ab", "x"]]);
+    let other_value = signed(1, 1_500, &[&["ab", "y"], &["cd", "z"]]);
+    let both = signed(1, 1_200, &[&["ab", "x"], &["cd", "z"], &["t", "k"]]);
+    let newer = signed(1, 2_000, &[]);
+    for event in [&tagged, &other_value, &both, &newer] {
+        store.save(&verified(event)).await.expect("saved");
+    }
+    let keys = |pairs: &[(&str, &[&str])]| {
+        pairs
+            .iter()
+            .map(|(name, values)| {
+                (
+                    name.to_string(),
+                    values.iter().map(|v| v.to_string()).collect(),
+                )
+            })
+            .collect()
+    };
+    let ask = |filter: Filter, pairs: &[(&str, &[&str])]| Query {
+        filter,
+        multi_letter_tags: keys(pairs),
+    };
+
+    let kind_one = Filter::new().kind(nostr::event::Kind::from(1));
+    let found = store
+        .query(ask(kind_one.clone().limit(1), &[("ab", &["x"])]))
+        .await
+        .expect("runs");
+    assert_eq!(
+        ids(&found),
+        ids(std::slice::from_ref(&both)),
+        "the newest that has it"
+    );
+
+    let found = store
+        .query(ask(kind_one.clone(), &[("ab", &["x"]), ("cd", &["z"])]))
+        .await
+        .expect("runs");
+    assert_eq!(
+        ids(&found),
+        ids(std::slice::from_ref(&both)),
+        "every key is required"
+    );
+
+    let with_single = kind_one
+        .clone()
+        .custom_tag(SingleLetterTag::LOWERCASE_T, "k");
+    let found = store
+        .query(ask(with_single, &[("ab", &["x"])]))
+        .await
+        .expect("runs");
+    assert_eq!(
+        ids(&found),
+        ids(std::slice::from_ref(&both)),
+        "single-letter keys combine"
+    );
+
+    let found = store
+        .query(ask(kind_one.clone(), &[("ab", &[])]))
+        .await
+        .expect("runs");
+    assert!(found.is_empty(), "a key with no values matches nothing");
+
+    let found = store
+        .query(ask(kind_one, &[("ab", &["x", "y"])]))
+        .await
+        .expect("runs");
+    assert_eq!(found.len(), 3);
+}
+
+#[tokio::test]
+async fn a_newer_event_without_the_multi_letter_key_does_not_hide_the_one_with_it() {
+    let dir = tempdir().expect("a temp dir");
+    let store = Store::open(&typescript_database(dir.path())).expect("it opens");
+    let tagged = signed(1, 1_000, &[&["ab", "x"]]);
+    let newer = signed(1, 2_000, &[]);
+    for event in [&tagged, &newer] {
+        store.save(&verified(event)).await.expect("saved");
+    }
+    let query = Query {
+        filter: Filter::new().kind(nostr::event::Kind::from(1)).limit(1),
+        multi_letter_tags: vec![("ab".to_string(), ["x".to_string()].into())],
+    };
+    let found = store.query(query).await.expect("runs");
+    assert_eq!(ids(&found), ids(std::slice::from_ref(&tagged)));
 }
