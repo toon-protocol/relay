@@ -1,30 +1,134 @@
 name: Publish relay image
 
-# Builds the relay image (packages/relay/Dockerfile) and pushes it to GHCR.
-# Unblocks connector #221/#222: their app-behind-terminator compose points
-# RELAY_IMAGE at this image.
+# Builds the relay image (crates/relay/Dockerfile, the Rust relay of spec #185)
+# and pushes it to GHCR. Since the cutover (#205) this is the image every stack
+# receives: the TypeScript image is still built in CI, for the conformance
+# suite, and is no longer pushed by anything (deploy/rust-workspace.test.ts
+# fails the build if that changes).
 #
-# `latest` is (re)published on every push to main; version tags (vX.Y.Z) also
-# publish semver tags for pinning, plus an immutable sha tag.
+#   release                moves on every publish from main; what a stack follows
+#   latest                 moves with it
+#   rust-<handle>          immutable release handle, YYYY.MM.DD.N (UTC date and
+#                          that day's ordinal), the connector's scheme
+#   rust-sha-<short sha>   immutable per-commit tag
 #
 # `release` is this image's instance of the fleet-wide moving-tag convention
-# (first landed in swap#131): each Linode box runs a
-# label-scoped Watchtower that watches `:release` rather than `:latest`, so an
-# auto-redeploy only ever follows a commit that landed on main and built here —
-# never an unbuilt/untagged one. The immutable `:sha-*` tag stays as the
-# pinning/rollback handle.
+# (first landed in swap#131): a box follows `:release` rather than `:latest`,
+# so an auto-redeploy only ever follows a commit that landed on main and built
+# here. Both move only from main; a run dispatched on another branch writes
+# the two immutable tags and nothing a stack follows.
+#
+# The immutable tags keep the `rust-` prefix the candidate was soaked under
+# (#202), the connector's convention for its own Rust image. Nothing here
+# writes an unprefixed `sha-*` tag: those are the TypeScript builds, and the
+# last of them is the rollback target deploy/README.md names. `rust-candidate`
+# is no longer moved; it stays on the last build before the cutover.
+#
+# The handle is also the version the image reports on /health and in the Relay
+# Information Document (the crate stays at 0.1.0 and is not published).
+#
+# It publishes only after the conformance suite has passed against this
+# commit's image, so `:release` is always a build the suite accepted.
+#
+# Do not re-run a run of this workflow from before #205: a re-run uses the
+# workflow file of its own commit, which builds the TypeScript image and
+# pushes it over `:release` and `:latest`.
 
 on:
   push:
     branches: [main]
-    tags: ['v*']
   workflow_dispatch:
 
-concurrency: publish-relay-image-${{ github.ref }}
+# One group for every ref, not one per ref: two runs choosing a handle at the
+# same time would choose the same one.
+concurrency: publish-relay-image
+
+permissions:
+  contents: read
 
 jobs:
-  build-push:
+  # The handle is the UTC date plus the next free ordinal for that date,
+  # read from the tags already on the package, so a second publish the same
+  # day is `.2` and nothing ever reuses one. Only a package with no versions
+  # yet (404) reads as none taken: any other failure stops the publish rather
+  # than fall back to `.1` and overwrite an immutable handle.
+  handle:
+    name: Choose the release handle
     runs-on: ubuntu-latest
+    # Reads the tags already on the package.
+    permissions:
+      packages: read
+    outputs:
+      handle: ${{ steps.handle.outputs.handle }}
+    steps:
+      - name: Choose the release handle
+        id: handle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          DATE=$(date -u +%Y.%m.%d)
+          if ! TAGS=$(gh api --paginate "/orgs/$OWNER/packages/container/relay/versions" \
+                        --jq '.[].metadata.container.tags[]' 2>err); then
+            grep -q 'HTTP 404' err || { cat err >&2; exit 1; }
+            TAGS=
+          fi
+          TAKEN=$(printf '%s\n' "$TAGS" \
+                  | grep -E "^rust-${DATE//./\\.}\.[0-9]+\$" \
+                  | sed -E 's/.*\.([0-9]+)$/\1/' | sort -n | tail -1 || true)
+          HANDLE="$DATE.$(( ${TAKEN:-0} + 1 ))"
+          echo "handle=$HANDLE"
+          echo "handle=$HANDLE" >> "$GITHUB_OUTPUT"
+
+  # The suite runs against the image built with the handle, and that build
+  # fills the cache `publish` builds from, so what is pushed is the build the
+  # suite accepted, reporting the version it is tagged with.
+  conformance:
+    name: Conformance suite against the image
+    needs: handle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: crates/relay/Dockerfile
+          push: false
+          load: true
+          tags: relay:conformance
+          build-args: |
+            TOON_RELEASE_HANDLE=${{ needs.handle.outputs.handle }}
+          cache-from: type=gha,scope=relay-rust
+          cache-to: type=gha,mode=max,scope=relay-rust
+
+      - name: Run the suite against the image
+        env:
+          CONFORMANCE_IMAGE: relay:conformance
+          CONFORMANCE_IMPL: rust
+          CONFORMANCE_COMMAND: relay
+        run: pnpm --filter @toon-protocol/relay-conformance conformance
+
+  publish:
+    name: Push the image
+    needs: [handle, conformance]
+    runs-on: ubuntu-latest
+    # The only job that can write to the registry.
     permissions:
       contents: read
       packages: write
@@ -40,28 +144,27 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Derive image metadata
+      - name: Derive tags
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/relay
-          # `latest` tracks main; `release` is the Watchtower target (moves on
-          # the same green-main pushes as `latest`); semver tags publish on
-          # vX.Y.Z; sha tags give an immutable handle.
+          flavor: latest=false
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=release,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=rust-${{ needs.handle.outputs.handle }}
+            type=sha,prefix=rust-sha-
 
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: packages/relay/Dockerfile
+          file: crates/relay/Dockerfile
           push: true
+          build-args: |
+            TOON_RELEASE_HANDLE=${{ needs.handle.outputs.handle }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=relay-rust
+          cache-to: type=gha,mode=max,scope=relay-rust

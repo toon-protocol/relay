@@ -21,9 +21,10 @@
 #     an unreviewed change to the TLS edge.
 #
 # Rollback of the relay app is by immutable tag: every build keeps its
-# `sha-<short>` tag in GHCR, so pinning RELAY_IMAGE to one and running
-# `up -d` puts a specific build back. Rolling the connector back is editing
-# the pin in docker-compose.yml.
+# `rust-<handle>` and `rust-sha-<short>` tags in GHCR, so pinning RELAY_IMAGE
+# to one and running `up -d` puts a specific build back (deploy/README.md,
+# "Rolling back to the TypeScript relay", for the build before the Rust
+# relay). Rolling the connector back is editing the pin in docker-compose.yml.
 #
 # `--interval 60` is one manifest check per minute against public
 # repositories, so no registry credentials are mounted. `--cleanup` removes

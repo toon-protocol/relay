@@ -6,6 +6,10 @@ meant to replace. Five things run from this machine against published images
 (#203), and a sixth against a node that is already running (#204). Nothing
 here runs in CI.
 
+This is how the Rust relay was soaked before `:release` flipped to it (#205).
+Since then `:release` is the Rust image, and the TypeScript image the commands
+below compare it with is its last build, `sha-7b6bab5`.
+
 ## 1. The infra sandbox, on the image under test
 
 The sandbox (`toon-protocol/infra`, `sandbox/`) pins its own relay image.
@@ -17,7 +21,7 @@ this repo:
 
 ```
 export COMPOSE_FILE=docker-compose.yml:$RELAY_REPO/packages/conformance/soak/sandbox.override.yml
-export RELAY_IMAGE=ghcr.io/toon-protocol/relay:rust-candidate
+export RELAY_IMAGE=ghcr.io/toon-protocol/relay:release
 make up-payments                 # PROVIDER_CONTEXT=… if ../../provider is not on client 4.x
 make smoke-payments              # paid write, free read-back, x402 deposit
 make smoke-directory             # the provider's paid, replaceable directory events
@@ -47,7 +51,7 @@ how fast the relay is.
 ## 3. The benchmark
 
 ```
-BENCH_IMAGES="typescript=ghcr.io/toon-protocol/relay:release,rust=ghcr.io/toon-protocol/relay:rust-candidate" \
+BENCH_IMAGES="typescript=ghcr.io/toon-protocol/relay:sha-7b6bab5,rust=ghcr.io/toon-protocol/relay:release" \
   pnpm --filter @toon-protocol/relay-conformance bench
 ```
 
@@ -61,7 +65,7 @@ every image the same single core.
 ## 4. The differences
 
 ```
-PROBE_IMAGES="typescript=ghcr.io/toon-protocol/relay:release,rust=ghcr.io/toon-protocol/relay:rust-candidate" \
+PROBE_IMAGES="typescript=ghcr.io/toon-protocol/relay:sha-7b6bab5,rust=ghcr.io/toon-protocol/relay:release" \
   pnpm --filter @toon-protocol/relay-conformance probe
 ```
 
@@ -78,8 +82,8 @@ Docker-in-Docker daemon: for a host whose firewall keeps a relay from the
 suite's stub connector.
 
 ```
-TYPESCRIPT_IMAGE=ghcr.io/toon-protocol/relay:release \
-RUST_IMAGE=ghcr.io/toon-protocol/relay:rust-candidate \
+TYPESCRIPT_IMAGE=ghcr.io/toon-protocol/relay:sha-7b6bab5 \
+RUST_IMAGE=ghcr.io/toon-protocol/relay:release \
   packages/conformance/soak/dind-conformance.sh
 ```
 
@@ -104,8 +108,7 @@ docker compose up -d relay
 ```
 
 `.env` is not in the repository, so `auto-apply.sh` leaves the pin alone, and
-Watchtower has nothing to follow on a tag that never moves. `:release` is not
-involved. After the swap:
+Watchtower has nothing to follow on a tag that never moves. After the swap:
 
 ```
 EXPECT_VERSION=<handle> pnpm --filter @toon-protocol/relay-conformance --silent box check baseline.json
@@ -121,5 +124,6 @@ healthcheck; the fleet's verdict on the node, that row included, is the
 connector repository's `fleet-health.yml`.
 
 A rollback is the same three steps with `RELAY_IMAGE` on the last TypeScript
-`sha-<short>` tag and `EXPECT_VERSION` the package version. Take a new
-baseline first, so that what the candidate stored is checked too.
+build, `ghcr.io/toon-protocol/relay:sha-7b6bab5`, and `EXPECT_VERSION=2.3.1`
+(`deploy/README.md`, "Rolling back to the TypeScript relay"). Take a new
+baseline first, so that what the Rust relay stored is checked too.

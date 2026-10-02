@@ -48,7 +48,7 @@ ordinary test.
 The Rust relay passes the whole suite: no case is marked
 `expectedFailureFor: ['rust']`, and `deploy/rust-workspace.test.ts` fails the
 build if one is added back. The suite is a required check against the Rust
-image (the `conformance` job in `ci.yml`, and again before the candidate is
+image (the `conformance` job in `ci.yml`, and again before the image is
 published). Under `typescript` only the documented divergences from the spec
 are expected to fail.
 

@@ -6,9 +6,9 @@
 # so it can read and write the files already in a volume. What differs is
 # inside: one static binary on Alpine, and no JavaScript runtime.
 #
-# Published only as a candidate (publish-rust-candidate.yml): under `rust-*`
-# tags, never `:release` or `:latest`, which the TypeScript image owns until
-# the cutover. CI builds it too and runs the conformance suite against it.
+# Published as ghcr.io/toon-protocol/relay by publish-relay-image.yml, which
+# moves the `:release` tag deploy/docker-compose.yml pulls by default (#205).
+# CI builds it too and runs the conformance suite against it.
 #
 # Build from repo root:
 #   docker build -f crates/relay/Dockerfile -t relay-rust:ci .

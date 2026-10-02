@@ -8,8 +8,10 @@
 #   * GET  /health, /metrics  on TOON_BLS_PORT
 #   * free NIP-01 WS reads    on TOON_RELAY_PORT (default 7100)
 #
-# Published as ghcr.io/toon-protocol/relay by publish-relay-image.yml, which
-# also moves the `:release` tag deploy/docker-compose.yml pulls by default.
+# No longer published: `:release` is the Rust image (crates/relay/Dockerfile)
+# since #205, and the last build of this one stays in GHCR under its `sha-*`
+# tag as the rollback target (deploy/README.md). CI still builds it, and runs
+# the conformance suite against it, until the TypeScript source is removed.
 #
 # Build from repo root:
 #   docker build -f packages/relay/Dockerfile -t ghcr.io/toon-protocol/relay:latest .

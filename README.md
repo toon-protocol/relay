@@ -262,16 +262,23 @@ that stops being true.
 ## Operate it
 
 **Relay app updates arrive on their own; connector updates do not.** A green
-merge to `main` publishes the relay app image and moves its `:release` tag;
-the Watchtower overlay recreates that container, usually within a minute:
+merge to `main` publishes the relay app image, once the conformance suite has
+passed against it, and moves its `:release` tag; the Watchtower overlay
+recreates that container, usually within a minute:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.watchtower.yml up -d
 ```
 
 It never touches Caddy, which holds the certificates. Every relay build also
-keeps an immutable `:sha-<short>` tag, so a rollback is pinning `RELAY_IMAGE`
-to one and running `up -d`.
+keeps two immutable tags, `:rust-<handle>` (the version it reports, a date and
+that day's ordinal) and `:rust-sha-<short>`, so holding a build or putting one
+back is pinning `RELAY_IMAGE` to one and running `up -d relay`.
+
+`:release` has been the Rust relay since #205. The last TypeScript build is
+still `ghcr.io/toon-protocol/relay:sha-7b6bab5`, and pinning `RELAY_IMAGE` to it is
+the whole rollback: both relays open the same database. The steps are in
+[`deploy/README.md`](deploy/README.md#rolling-back-to-the-typescript-relay).
 
 The **connector** is pinned to an immutable tag in `docker-compose.yml`, which
 by definition never moves, so Watchtower has nothing to follow for it. Its
@@ -362,9 +369,9 @@ each one.
 | `TOON_HOST`                             | `0.0.0.0` | read-port bind address                                              |
 | `TOON_WRITE_HOST`                       | `0.0.0.0` | write-port bind address                                             |
 | `TOON_DATA_DIR`                         | `./data`  | where `events.db` lives                                             |
-| `TOON_DEV_MODE`                         | `false`   | skip signature verification entirely — smoke tests only             |
+| `TOON_DEV_MODE`                         | `false`   | `true` is refused at startup: there is no mode that skips verifying |
 | `TOON_VERIFY_EPHEMERAL`                 | `false`   | full verification on paid ephemeral kinds too                       |
-| `TOON_VERIFY_WORKERS`                   | CPUs − 1  | verify-pool threads; `0` verifies on the event loop                 |
+| `TOON_VERIFY_WORKERS`                   | —         | accepted and has no effect; logged once when set                    |
 | `TOON_MAX_CONNECTIONS`                  | `4096`    | concurrent WS reads (one file descriptor each)                      |
 | `TOON_LOG_WRITES`                       | `false`   | one log line per accepted write                                     |
 | `TOON_ENFORCE_EXPIRATION`               | `true`    | stop serving events past their NIP-40 `expiration`                  |
@@ -394,14 +401,14 @@ Node 22 and pnpm 8.15.9. [Devbox](https://www.jetify.com/devbox/docs/installing_
 pins both to the versions CI uses — `devbox shell`, then `devbox run build`,
 `devbox run test`, `devbox run lint`.
 
-The relay is being rebuilt in Rust as a drop-in replacement for the image
-(#185). That work is the Cargo workspace beside the package (`Cargo.toml`,
-`crates/relay`), on the toolchain `rust-toolchain.toml` pins — rustup installs
-it on the first `cargo` call, and devbox provides rustup. It follows
+The relay every stack runs is the Rust one (#185): the Cargo workspace beside
+the package (`Cargo.toml`, `crates/relay`), on the toolchain
+`rust-toolchain.toml` pins — rustup installs it on the first `cargo` call, and
+devbox provides rustup. It follows
 [`docs/rust-coding-standards.md`](docs/rust-coding-standards.md) and is gated
 by the [conformance suite](packages/conformance/README.md), which CI runs
-against both images. The Rust image is built in CI and not published; the
-TypeScript image is the one every stack runs.
+against both images. The TypeScript package is still here until #206 removes
+it; its image is built in CI and no longer published.
 
 ```bash
 cargo fmt --all -- --check
@@ -410,8 +417,9 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-Every user-visible change needs a changeset (`pnpm changeset`); CI refuses a PR
-without one, and merging publishes the package and moves the `:release` tags.
+Merging to `main` publishes the Rust image and moves `:release`. A change to
+the TypeScript package still needs a changeset (`pnpm changeset`), and merging
+one publishes the npm package.
 The agent factory that opens many of the PRs here is described in
 [`docs/agents/triage-labels.md`](docs/agents/triage-labels.md).
 

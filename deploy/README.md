@@ -121,11 +121,67 @@ surface, and it must never be reachable except from the connector beside it.
 
 | Image                             | Built by                  | Contents                                                                            |
 | --------------------------------- | ------------------------- | ----------------------------------------------------------------------------------- |
-| `ghcr.io/toon-protocol/relay`     | `publish-relay-image.yml` | the relay app (`packages/relay`)                                                    |
+| `ghcr.io/toon-protocol/relay`     | `publish-relay-image.yml` | the relay app (`crates/relay`, the Rust relay)                                      |
 | `ghcr.io/toon-protocol/connector` | the connector repo        | the stock TOON connector — this repo publishes no connector image and only pins one |
 
-The relay app image publishes `:latest`, a moving `:release` (the Watchtower
-target), and an immutable `:sha-<short>` on every green merge to `main`.
+On every green merge to `main`, once the conformance suite has passed against
+the build, the relay app image publishes `:latest`, a moving `:release` (what a
+box follows), and two immutable tags: `:rust-<handle>`, a date and that day's
+ordinal, which is also the version the relay reports on `/health` and in its
+information document, and `:rust-sha-<short>`.
+
+A box takes a moved `:release` when something pulls it. With the Watchtower
+overlay that is within about a minute. Without it, `auto-apply.sh` pulls only
+when it has a merge to apply, and it usually applies a merge before that
+merge's image has been built, tested and pushed, so such a box runs each build
+from the next merge on. `docker compose pull relay && docker compose up -d
+relay` takes the current one by hand.
+
+### Rolling back to the TypeScript relay
+
+`:release` has been the Rust relay since #205. It replaced the TypeScript relay
+as an image swap: same ports, same `/data` volume, same environment, same user
+id, and a database either relay opens as the other left it. So the rollback is
+an image swap back. The last TypeScript build is an immutable tag that nothing
+publishes over:
+
+```bash
+# deploy/.env
+RELAY_IMAGE=ghcr.io/toon-protocol/relay:sha-7b6bab5
+```
+
+```bash
+docker compose up -d relay
+docker compose exec relay wget -q -O- http://127.0.0.1:3100/health   # "version":"2.3.1"
+```
+
+Only the relay container is recreated; the connector and Caddy are not
+touched. On the devnet box this took about six seconds to healthy in each
+direction (#204). `.env` is not in the repository, so `auto-apply.sh` keeps the
+pin: it still pulls and runs `up -d` on every merge, which changes nothing for
+a tag that never moves. The box stays on that build until the line is changed.
+
+To return to the Rust relay, set the line back to
+`ghcr.io/toon-protocol/relay:release` (or delete it; that is the default) and
+pull, since `up -d` alone does not fetch a moved tag:
+
+```bash
+docker compose pull relay && docker compose up -d relay
+```
+
+`packages/conformance/soak/box.mjs` checks a node from outside before and
+after either swap; see [the soak README](../packages/conformance/soak/README.md).
+
+A rollback also puts back what the Rust relay changed on purpose, listed in
+#185's compatibility contract. Two an operator can meet: the TypeScript relay
+answers a filter with every stored match rather than at most 500, and it
+accepts `RELAY_DEV_MODE=true`, which skips signature verification, where the
+Rust relay refuses to start.
+
+The TypeScript image is no longer published, so `sha-7b6bab5` is the newest it
+will ever be. Putting TypeScript back under `:release` for every stack, rather
+than one box, is reverting the commit that flipped it, which is possible only
+until the TypeScript source is removed (#206).
 
 The connector pin lives in exactly one place: `docker-compose.yml`'s
 `connector.image`, an immutable `rust-sha-` tag. Bumping it is a reviewed

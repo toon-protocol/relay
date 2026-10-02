@@ -171,7 +171,8 @@ services:
       # The relay's own Nostr IDENTITY (not money). It will not boot without
       # one, and changing it changes the pubkey clients know this relay by.
       NOSTR_SECRET_KEY: ${RELAY_NOSTR_SECRET_KEY:?set RELAY_NOSTR_SECRET_KEY in .env (32-byte hex)}
-      # true skips event-signature verification on writes. Smoke tests only.
+      # Accepted as false only. The relay has no mode that skips signature
+      # verification, and true stops it at startup.
       TOON_DEV_MODE: ${RELAY_DEV_MODE:-false}
       # Paid-ephemeral verify skip: ephemeral kinds (20000-29999) keep the id
       # check but skip schnorr, which is safe only because 3100 is reachable
