@@ -479,7 +479,12 @@ impl Session {
     /// A filter's `limit` is applied by the store before a tag key the
     /// protocol crate does not read is, so such a filter can be answered with
     /// fewer events than its limit.
-    pub(crate) fn answered(&mut self, request: Request, found: Vec<Vec<Event>>) -> Vec<String> {
+    pub(crate) fn answered(
+        &mut self,
+        request: Request,
+        found: Vec<Vec<Event>>,
+        waiting: &[Arc<LiveEvent>],
+    ) -> Vec<String> {
         let Request { id, subscription } = request;
         let mut seen = HashSet::new();
         let mut events: Vec<Event> = Vec::new();
@@ -491,13 +496,32 @@ impl Session {
             }
         }
         events.sort_by(|a, b| b.created_at.cmp(&a.created_at).then(a.id.cmp(&b.id)));
-        let frames = events
+        let mut frames: Vec<String> = events
             .iter()
             .map(|event| subscription.frame(&event_json(event)))
             .chain(std::iter::once(json!(["EOSE", id]).to_string()))
             .collect();
+        // What was published before the store was asked is delivered to the
+        // open subscriptions as any live event is. The new one is sent it
+        // only if its stored answer did not carry it.
+        for live in waiting {
+            frames.extend(self.live_frames(live));
+            if !seen.contains(&live.event.id)
+                && subscription.filters.iter().any(|f| f.matches(&live.event))
+            {
+                frames.push(subscription.frame(&live.json));
+            }
+        }
         self.subscriptions.insert(id, subscription);
         frames
+    }
+
+    /// The connection fell behind the feed while `request` was being
+    /// answered: it is closed with every open subscription.
+    pub(crate) fn overflowed_during(&mut self, request: Request) -> Vec<String> {
+        let Request { id, subscription } = request;
+        self.subscriptions.insert(id, subscription);
+        self.overflowed()
     }
 
     /// The frames that tell the client the store could not answer `request`.
@@ -579,7 +603,7 @@ mod tests {
     fn open(session: &mut Session, text: &str) {
         let request = asked(session, text);
         let found = vec![Vec::new(); request.queries().len()];
-        session.answered(request, found);
+        session.answered(request, found, &[]);
     }
 
     /// A session holding each of `requests` as an open subscription.
@@ -650,7 +674,7 @@ mod tests {
             vec![twins[1].clone(), old.clone(), twins[0].clone()],
         ];
         let frames: Vec<Value> = session
-            .answered(request, found)
+            .answered(request, found, &[])
             .iter()
             .map(|frame| serde_json::from_str(frame).expect("JSON"))
             .collect();
@@ -831,7 +855,7 @@ mod tests {
             &mut session,
             &format!(r#"["REQ","a",{{"ids":["{}"]}}]"#, stored.id.to_hex()),
         );
-        let frames = session.answered(request, vec![vec![stored.clone()]]);
+        let frames = session.answered(request, vec![vec![stored.clone()]], &[]);
         assert_eq!(frames.len(), 2, "the event and EOSE, and no CLOSED");
         assert_eq!(live(&session, &stored).len(), 1, "and it is still open");
     }
@@ -853,7 +877,7 @@ mod tests {
         assert_eq!(queries[0].ids, Some(BTreeSet::from([event.id])));
         assert_eq!(queries[1].authors, Some(BTreeSet::new()));
         assert_eq!(queries[2].ids, Some(BTreeSet::new()));
-        session.answered(request, vec![Vec::new(); 3]);
+        session.answered(request, vec![Vec::new(); 3], &[]);
         assert_eq!(live(&session, &event).len(), 1, "its whole id is named");
 
         let mut session = subscribed(&[r#"["REQ","p",{"ids":["abcd"]},{"authors":["abcd"]}]"#]);
@@ -868,7 +892,7 @@ mod tests {
         let request = asked(&mut session, r##"["REQ","a",{"kinds":[1],"#ab":["x"]}]"##);
         assert_eq!(request.queries()[0].generic_tags.len(), 0);
         let (hit, miss) = (event(1, &[&["ab", "x"]]), event(1, &[&["ab", "y"]]));
-        let frames = session.answered(request, vec![vec![hit.clone(), miss.clone()]]);
+        let frames = session.answered(request, vec![vec![hit.clone(), miss.clone()]], &[]);
         assert_eq!(frames.len(), 2, "the one that carries the value, and EOSE");
         assert!(frames[0].contains(&hit.id.to_hex()));
 
@@ -882,8 +906,31 @@ mod tests {
         let mut session = session();
         let request = asked(&mut session, r##"["REQ","a",{"#ab":["x"]},{"kinds":[1]}]"##);
         let plain = event(1, &[]);
-        let frames = session.answered(request, vec![vec![plain.clone()], vec![plain]]);
+        let frames = session.answered(request, vec![vec![plain.clone()], vec![plain]], &[]);
         assert_eq!(frames.len(), 2, "the second filter asked for it");
+    }
+
+    #[test]
+    fn an_event_found_by_two_filters_and_waiting_in_the_feed_is_sent_once() {
+        let mut session = session();
+        let request = asked(&mut session, r#"["REQ","a",{"kinds":[1]},{}]"#);
+        let saved = event(1, &[]);
+        // Saved between the two queries: only the second found it, and the
+        // feed already held it. And one the answer did not carry is sent live.
+        let later = event(1, &[&["t", "later"]]);
+        let waiting = [
+            Arc::new(LiveEvent::new(&saved)),
+            Arc::new(LiveEvent::new(&later)),
+        ];
+        let frames = session.answered(request, vec![Vec::new(), vec![saved.clone()]], &waiting);
+        assert_eq!(
+            frames,
+            vec![
+                format!(r#"["EVENT","a",{}]"#, event_json(&saved)),
+                r#"["EOSE","a"]"#.to_string(),
+                format!(r#"["EVENT","a",{}]"#, event_json(&later)),
+            ]
+        );
     }
 
     #[test]
@@ -909,7 +956,7 @@ mod tests {
         let mut session = session();
         let request = asked(&mut session, r#"["REQ","a\"\\b",{}]"#);
         let event = event(1, &[]);
-        let stored = session.answered(request, vec![vec![event.clone()]]);
+        let stored = session.answered(request, vec![vec![event.clone()]], &[]);
         for frame in [stored[0].clone(), live(&session, &event).remove(0)] {
             let frame: Value = serde_json::from_str(&frame).expect("a frame is JSON");
             assert_eq!(frame[1], json!("a\"\\b"));
@@ -921,7 +968,7 @@ mod tests {
         let mut session = session();
         let request = asked(&mut session, r#"["REQ","a",{}]"#);
         assert!(live(&session, &event(1, &[])).is_empty());
-        session.answered(request, vec![Vec::new()]);
+        session.answered(request, vec![Vec::new()], &[]);
         assert_eq!(live(&session, &event(1, &[])).len(), 1);
     }
 

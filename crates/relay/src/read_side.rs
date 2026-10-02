@@ -36,7 +36,7 @@ use tokio_tungstenite::tungstenite::protocol::{CloseFrame, Role, WebSocketConfig
 use tokio_tungstenite::tungstenite::{Error as SocketError, Message};
 
 use crate::connector::EdgeSlot;
-use crate::session::{LiveFeed, NOTICE_BINARY, Refusal, Reply, Request, Session};
+use crate::session::{LiveEvent, LiveFeed, NOTICE_BINARY, Refusal, Reply, Request, Session};
 use crate::{Carriage, RelayError, Store, VerifiedEvent};
 
 /// The largest message a client may send (5 MiB), and the largest frame.
@@ -147,7 +147,9 @@ impl ReadSide {
                     let frames = match message {
                         Message::Text(text) => match session.client_sent(&text, Instant::now()) {
                             Reply::Frames(frames) => frames,
-                            Reply::Ask(request) => self.answer(&mut session, request).await,
+                            Reply::Ask(request) => {
+                                self.answer(&mut session, &mut live, request).await
+                            }
                         },
                         Message::Binary(_) => vec![json!(["NOTICE", NOTICE_BINARY]).to_string()],
                         Message::Close(_) => break Ok(()),
@@ -171,7 +173,18 @@ impl ReadSide {
 
     /// The frames that answer `request`: what the store holds for it and
     /// `EOSE`, or the `CLOSED` a client is told when the store cannot be read.
-    async fn answer(&self, session: &mut Session, request: Request) -> Vec<String> {
+    ///
+    /// The queries run after every event that was saved has been published
+    /// (the write side publishes inside the store's exclusive section), so
+    /// what the feed holds once they are done covers every event they may
+    /// have found. Those are taken, without waiting, and dealt with as the
+    /// answer is built.
+    async fn answer(
+        &self,
+        session: &mut Session,
+        live: &mut broadcast::Receiver<Arc<LiveEvent>>,
+        request: Request,
+    ) -> Vec<String> {
         let mut found = Vec::new();
         for filter in request.queries() {
             match self.store.query(filter).await {
@@ -185,7 +198,19 @@ impl ReadSide {
                 }
             }
         }
-        session.answered(request, found)
+        let mut waiting = Vec::new();
+        loop {
+            match live.try_recv() {
+                Ok(event) => waiting.push(event),
+                Err(broadcast::error::TryRecvError::Lagged(_)) => {
+                    *live = live.resubscribe();
+                    return session.overflowed_during(request);
+                }
+                // Empty, or the relay is going: the loop will see which.
+                Err(_) => break,
+            }
+        }
+        session.answered(request, found, &waiting)
     }
 
     /// Deliver `event` to every open subscription it matches. Nothing is
@@ -346,6 +371,129 @@ mod tests {
         connection.publish(&live);
         assert_eq!(connection.next().await, Some(json!(["EVENT", "a", live])));
         assert_eq!(connection.next_message().await, None);
+    }
+
+    /// A read side over an empty store, a session on it with `open` already
+    /// subscribed, and a listener on its feed: a connection's parts, driven
+    /// without the socket so the order of things is forced.
+    struct Direct {
+        read_side: ReadSide,
+        session: Session,
+        feed: broadcast::Receiver<Arc<LiveEvent>>,
+        _data: tempfile::TempDir,
+    }
+
+    impl Direct {
+        async fn open(open: &[&str]) -> Self {
+            let data = tempfile::tempdir().expect("a temp dir");
+            let store = Store::open(&data.path().join("events.db")).expect("a new database opens");
+            let read_side = ReadSide::new(store, EdgeSlot::default(), None, 1);
+            let feed = read_side.live.listen();
+            let mut direct = Self {
+                read_side,
+                session: Session::new(Refusal::default()),
+                feed,
+                _data: data,
+            };
+            for req in open {
+                direct.req(req).await;
+            }
+            direct
+        }
+
+        async fn req(&mut self, text: &str) -> Vec<Value> {
+            let Reply::Ask(request) = self.session.client_sent(text, Instant::now()) else {
+                panic!("{text} asks the store");
+            };
+            let frames = self
+                .read_side
+                .answer(&mut self.session, &mut self.feed, request)
+                .await;
+            frames
+                .iter()
+                .map(|frame| serde_json::from_str(frame).expect("a frame is JSON"))
+                .collect()
+        }
+
+        /// Save `event` and publish it inside the store's exclusive section,
+        /// as the write side does.
+        async fn save(&self, event: &Event) {
+            let verified = VerifiedEvent::verify(event.clone()).expect("signed");
+            let read_side = self.read_side.clone();
+            self.read_side
+                .store
+                .save_then(&verified, move |event| read_side.deliver(event))
+                .await
+                .expect("saved");
+        }
+
+        /// What the feed delivers to the session now, as frames.
+        fn live(&mut self) -> Vec<Value> {
+            let mut frames = Vec::new();
+            while let Ok(event) = self.feed.try_recv() {
+                frames.extend(self.session.live_frames(&event));
+            }
+            frames
+                .iter()
+                .map(|frame| serde_json::from_str(frame).expect("a frame is JSON"))
+                .collect()
+        }
+    }
+
+    #[tokio::test]
+    async fn an_event_saved_and_published_before_a_request_is_sent_once() {
+        let mut direct = Direct::open(&[]).await;
+        let saved = event("saved");
+        direct.save(&saved).await;
+        let frames = direct.req(r#"["REQ","a",{}]"#).await;
+        assert_eq!(
+            frames,
+            vec![json!(["EVENT", "a", saved]), json!(["EOSE", "a"])]
+        );
+        assert_eq!(direct.live(), Vec::<Value>::new());
+    }
+
+    #[tokio::test]
+    async fn an_event_published_while_a_request_is_answered_goes_live_after_eose() {
+        let mut direct = Direct::open(&[r#"["REQ","other",{}]"#]).await;
+        // In the feed but not in the store: published after the queries.
+        let late = event("late");
+        direct
+            .read_side
+            .deliver(&VerifiedEvent::verify(late.clone()).expect("signed"));
+        let frames = direct.req(r#"["REQ","a",{}]"#).await;
+        assert_eq!(
+            frames,
+            vec![
+                json!(["EOSE", "a"]),
+                json!(["EVENT", "other", late]),
+                json!(["EVENT", "a", late]),
+            ]
+        );
+        assert_eq!(direct.live(), Vec::<Value>::new());
+    }
+
+    #[tokio::test]
+    async fn a_request_that_finds_the_feed_overrun_closes_every_subscription() {
+        let mut direct = Direct::open(&[r#"["REQ","other",{"kinds":[7]}]"#]).await;
+        let one = VerifiedEvent::verify(event("one of too many")).expect("signed");
+        for _ in 0..=2048 {
+            direct.read_side.deliver(&one);
+        }
+        let frames = direct.req(r#"["REQ","a",{"kinds":[7]}]"#).await;
+        let mut closed: Vec<_> = frames
+            .iter()
+            .map(|f| (f[0].clone(), f[1].clone()))
+            .collect();
+        closed.sort_by_key(|(_, id)| id.to_string());
+        assert_eq!(
+            closed,
+            vec![
+                (json!("CLOSED"), json!("a")),
+                (json!("CLOSED"), json!("other"))
+            ]
+        );
+        assert_eq!(direct.live(), Vec::<Value>::new());
     }
 
     #[tokio::test]
