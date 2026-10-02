@@ -297,6 +297,42 @@ describe('relay image conformance: tag filters', () => {
   );
 });
 
+describe('relay image conformance: multi-letter tag keys and limit', () => {
+  conformanceTest(
+    'a multi-letter tag key is applied before the limit, past the 500 cap',
+    async () => {
+      const { secretKey, pubkey } = author();
+      const t = now();
+      const make = (i: number, tags: string[][]) =>
+        sign(secretKey, {
+          kind: 1,
+          created_at: t - 1000 + i,
+          content: String(i),
+          tags,
+        });
+      // Three tagged events, older than more than the cap of untagged ones.
+      const tagged = [0, 1, 2].map((i) => make(i, [['ab', 'x']]));
+      const newestTagged = tagged.slice(-1);
+      const untagged = Array.from({ length: 501 }, (_, i) => make(10 + i, []));
+      for (const event of tagged) await publishOk(relay, event);
+      for (let i = 0; i < untagged.length; i += 50) {
+        await Promise.all(
+          untagged.slice(i, i + 50).map((event) => publishOk(relay, event))
+        );
+      }
+      expect(
+        await storedIds(relay, { authors: [pubkey], '#ab': ['x'] })
+      ).toEqual(ids(...tagged));
+      const newest = await query(relay, {
+        authors: [pubkey],
+        '#ab': ['x'],
+        limit: 1,
+      });
+      expect(newest.map((e) => e.id)).toEqual(ids(...newestTagged));
+    }
+  );
+});
+
 describe('relay image conformance: deletion (kind 5)', () => {
   conformanceTest(
     "a kind 5 removes the author's own event by id, and it stays removed",
@@ -468,29 +504,24 @@ describe('relay image conformance: expiration not enforced', () => {
     await lax?.stop();
   });
 
-  conformanceTest(
-    'an expired event is returned and delivered',
-    async () => {
-      const { secretKey, pubkey } = author();
-      const subscription = await subscribe(lax, { authors: [pubkey] });
-      try {
-        const t = now();
-        const expired = sign(secretKey, {
-          kind: 1,
-          created_at: t - 200,
-          tags: [['expiration', String(t - 100)]],
-        });
-        await publishOk(lax, expired);
-        await until(() => subscription.delivered.length > 0);
-        expect(await storedIds(lax, { authors: [pubkey] })).toEqual(
-          ids(expired)
-        );
-        expect(subscription.delivered.map((e) => e.id)).toEqual([expired.id]);
-      } finally {
-        subscription.close();
-      }
+  conformanceTest('an expired event is returned and delivered', async () => {
+    const { secretKey, pubkey } = author();
+    const subscription = await subscribe(lax, { authors: [pubkey] });
+    try {
+      const t = now();
+      const expired = sign(secretKey, {
+        kind: 1,
+        created_at: t - 200,
+        tags: [['expiration', String(t - 100)]],
+      });
+      await publishOk(lax, expired);
+      await until(() => subscription.delivered.length > 0);
+      expect(await storedIds(lax, { authors: [pubkey] })).toEqual(ids(expired));
+      expect(subscription.delivered.map((e) => e.id)).toEqual([expired.id]);
+    } finally {
+      subscription.close();
     }
-  );
+  });
 });
 
 describe('relay image conformance: operator blocklist', () => {

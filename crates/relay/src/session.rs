@@ -30,7 +30,8 @@
 //! - an `ids` or `authors` entry that is not a whole 64-character hex value
 //!   matches nothing, instead of being a prefix;
 //! - a tag filter on a key longer than one letter (`#ab`), which the protocol
-//!   crate does not read, is applied to the stored answer and to live events;
+//!   crate does not read, is a condition of the store's query, before the
+//!   limit, and is applied to live events;
 //! - an `EVENT` is answered `OK false` with the refusal that names the Write
 //!   Edge, whatever the event: writes are paid and arrive on the write port;
 //! - an `AUTH` is answered `OK false`: the relay issues no challenge (NIP-42
@@ -52,6 +53,7 @@ use tokio::sync::broadcast;
 use crate::Carriage;
 use crate::connector::EdgeSlot;
 use crate::document::write_refusal;
+use crate::store::Query;
 
 /// The most subscriptions one connection holds. Replacing one is not another.
 pub(crate) const MAX_SUBSCRIPTIONS: usize = 20;
@@ -275,14 +277,18 @@ impl Wanted {
         })
     }
 
-    /// The filter as the store is asked: with the limit it is answered to.
-    fn query(&self) -> Filter {
+    /// The filter as the store is asked: with the limit it is answered to,
+    /// and the tag keys the protocol crate does not read.
+    fn query(&self) -> Query {
         let mut filter = self.base.clone();
         let requested = filter
             .limit
             .unwrap_or_else(|| filter.ids.as_ref().map_or(MAX_LIMIT, |ids| ids.len()));
         filter.limit = Some(requested.min(MAX_LIMIT));
-        filter
+        Query {
+            filter,
+            multi_letter_tags: self.multi.clone(),
+        }
     }
 }
 
@@ -317,7 +323,7 @@ impl Request {
     }
 
     /// The questions to put to the store, one for each filter.
-    pub(crate) fn queries(&self) -> Vec<Filter> {
+    pub(crate) fn queries(&self) -> Vec<Query> {
         self.subscription
             .filters
             .iter()
@@ -475,10 +481,6 @@ impl Session {
     /// The frames that answer `request` from what the store `found` for each
     /// of its queries: every event once, newest first and the lower id first
     /// among equals, then `EOSE`. The request is a subscription from here on.
-    ///
-    /// A filter's `limit` is applied by the store before a tag key the
-    /// protocol crate does not read is, so such a filter can be answered with
-    /// fewer events than its limit.
     pub(crate) fn answered(
         &mut self,
         request: Request,
@@ -488,9 +490,9 @@ impl Session {
         let Request { id, subscription } = request;
         let mut seen = HashSet::new();
         let mut events: Vec<Event> = Vec::new();
-        for (wanted, found) in subscription.filters.iter().zip(found) {
+        for found in found {
             for event in found {
-                if wanted.matches_multi_letter_keys(&event) && seen.insert(event.id) {
+                if seen.insert(event.id) {
                     events.push(event);
                 }
             }
@@ -653,7 +655,7 @@ mod tests {
         let kinds: Vec<_> = request
             .queries()
             .into_iter()
-            .map(|filter| filter.kinds.expect("kinds were named"))
+            .map(|query| query.filter.kinds.expect("kinds were named"))
             .collect();
         assert_eq!(
             kinds,
@@ -702,7 +704,7 @@ mod tests {
                 r#"["REQ","a",{{"kinds":[1]}},{{"limit":3}},{{"limit":9999}},{{"ids":["{whole}"]}}]"#
             ),
         );
-        let limits: Vec<_> = request.queries().iter().map(|f| f.limit).collect();
+        let limits: Vec<_> = request.queries().iter().map(|q| q.filter.limit).collect();
         assert_eq!(
             limits,
             vec![Some(MAX_LIMIT), Some(3), Some(MAX_LIMIT), Some(1)]
@@ -876,9 +878,9 @@ mod tests {
             ),
         );
         let queries = request.queries();
-        assert_eq!(queries[0].ids, Some(BTreeSet::from([event.id])));
-        assert_eq!(queries[1].authors, Some(BTreeSet::new()));
-        assert_eq!(queries[2].ids, Some(BTreeSet::new()));
+        assert_eq!(queries[0].filter.ids, Some(BTreeSet::from([event.id])));
+        assert_eq!(queries[1].filter.authors, Some(BTreeSet::new()));
+        assert_eq!(queries[2].filter.ids, Some(BTreeSet::new()));
         session.answered(request, vec![Vec::new(); 3], &[]);
         assert_eq!(live(&session, &event).len(), 1, "its whole id is named");
 
@@ -889,13 +891,14 @@ mod tests {
     }
 
     #[test]
-    fn a_multi_letter_key_is_applied_to_the_stored_answer_and_to_live_events() {
+    fn a_multi_letter_key_is_put_to_the_store_and_applied_to_live_events() {
         let mut session = session();
         let request = asked(&mut session, r##"["REQ","a",{"kinds":[1],"#ab":["x"]}]"##);
-        assert_eq!(request.queries()[0].generic_tags.len(), 0);
+        assert_eq!(request.queries()[0].filter.generic_tags.len(), 0);
+        assert_eq!(request.queries()[0].multi_letter_tags.len(), 1);
         let (hit, miss) = (event(1, &[&["ab", "x"]]), event(1, &[&["ab", "y"]]));
-        let frames = session.answered(request, vec![vec![hit.clone(), miss.clone()]], &[]);
-        assert_eq!(frames.len(), 2, "the one that carries the value, and EOSE");
+        let frames = session.answered(request, vec![vec![hit.clone()]], &[]);
+        assert_eq!(frames.len(), 2, "what the store found, and EOSE");
         assert!(frames[0].contains(&hit.id.to_hex()));
 
         assert_eq!(live(&session, &hit).len(), 1);

@@ -189,8 +189,8 @@ impl ReadSide {
         request: Request,
     ) -> Vec<String> {
         let mut found = Vec::new();
-        for filter in request.queries() {
-            match self.store.query(filter).await {
+        for query in request.queries() {
+            match self.store.query(query).await {
                 Ok(events) => found.push(events),
                 Err(error) => {
                     eprintln!(
