@@ -42,15 +42,18 @@
 //!   a gap in them.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::sync::Arc;
-use std::time::Instant;
+use std::net::IpAddr;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use nostr::event::{Event, Kind};
 use nostr::filter::{Filter, MatchEventOptions};
+use nostr::key::PublicKey;
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
 use crate::Carriage;
+use crate::auth::{self, AuthPolicy, CLOSED_AUTH_REQUIRED};
 use crate::connector::EdgeSlot;
 use crate::document::write_refusal;
 use crate::store::Query;
@@ -75,8 +78,6 @@ const MAX_SUBSCRIPTION_ID: usize = 250;
 /// asked in, together: what bounds the filters a connection makes the relay
 /// keep and match every live event against.
 const MAX_SUBSCRIPTION_BYTES: usize = 1024 * 1024;
-/// How many REQs a connection is answered a minute.
-const QUERIES_PER_MINUTE: u32 = 1_200;
 /// How many frames of any kind a connection may send a minute.
 pub(crate) const MESSAGES_PER_MINUTE: u32 = 6_000;
 /// How many live events may wait for a connection that is not taking them,
@@ -88,6 +89,11 @@ const CLOSED_OVERFLOW: &str =
     "error: live event buffer overflow; resubscribe to recover stored events";
 /// What a subscription is closed with when the store could not answer it.
 const CLOSED_STORE: &str = "error: the store could not be read";
+/// What a REQ over a connection's allowance is closed with: it says what to do
+/// instead, which is the paid way of not polling.
+const CLOSED_CONNECTION_RATE: &str = "rate-limited: too many queries on this connection; slow down, or subscribe (a REQ stays open and streams live events) instead of polling";
+/// What a REQ over its source address's allowance is closed with.
+const CLOSED_SOURCE_RATE: &str = "rate-limited: too many queries from your address; slow down, or subscribe (a REQ stays open and streams live events) instead of polling";
 /// What a binary frame is answered with.
 pub(crate) const NOTICE_BINARY: &str = "binary messages are not processed by this relay";
 
@@ -158,7 +164,7 @@ fn event_json(event: &Event) -> String {
 /// So many of something a minute: a whole minute's worth to begin with,
 /// refilled evenly and never above a minute's worth.
 #[derive(Debug)]
-struct Allowance {
+pub(crate) struct Allowance {
     per_minute: f64,
     left: f64,
     /// When one was last asked for.
@@ -166,7 +172,7 @@ struct Allowance {
 }
 
 impl Allowance {
-    fn new(per_minute: u32) -> Self {
+    pub(crate) fn new(per_minute: u32) -> Self {
         let per_minute = f64::from(per_minute);
         Self {
             per_minute,
@@ -176,7 +182,7 @@ impl Allowance {
     }
 
     /// Take one at `now`. `false` when none is left.
-    fn take(&mut self, now: Instant) -> bool {
+    pub(crate) fn take(&mut self, now: Instant) -> bool {
         if let Some(asked) = self.asked {
             let minutes = now.saturating_duration_since(asked).as_secs_f64() / 60.0;
             self.left = (self.left + minutes * self.per_minute).min(self.per_minute);
@@ -187,6 +193,60 @@ impl Allowance {
         }
         self.left -= 1.0;
         true
+    }
+}
+
+/// One source address's allowance, shared by every connection it opens.
+pub(crate) type SourceAllowance = Arc<Mutex<Allowance>>;
+
+/// The allowances of the source addresses connected now, so that opening
+/// another connection is not a way round a limit.
+#[derive(Debug)]
+pub(crate) struct Sources {
+    per_minute: u32,
+    held: Mutex<HashMap<IpAddr, SourceAllowance>>,
+}
+
+/// How many sources are held before the idle ones are let go.
+const SWEEP_AT: usize = 1024;
+
+impl Sources {
+    /// No sources yet, each to be allowed `per_minute` REQs a minute.
+    pub(crate) fn new(per_minute: u32) -> Self {
+        Self {
+            per_minute,
+            held: Mutex::default(),
+        }
+    }
+
+    /// The allowance of the source `ip`, shared with every other connection
+    /// it holds or opened in the last minute.
+    pub(crate) fn of(&self, ip: IpAddr) -> SourceAllowance {
+        // A poisoned lock only means another connection panicked mid-count;
+        // the map is still a valid map.
+        let mut held = self
+            .held
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if held.len() >= SWEEP_AT && !held.contains_key(&ip) {
+            // A source with no connection and no REQ for a minute has its
+            // whole allowance back, which is what a new one starts with.
+            let now = Instant::now();
+            held.retain(|_, allowance| {
+                Arc::strong_count(allowance) > 1
+                    || allowance
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .asked
+                        .is_some_and(|asked| {
+                            now.saturating_duration_since(asked) < Duration::from_secs(60)
+                        })
+            });
+        }
+        Arc::clone(
+            held.entry(ip)
+                .or_insert_with(|| Arc::new(Mutex::new(Allowance::new(self.per_minute)))),
+        )
     }
 }
 
@@ -348,24 +408,60 @@ impl Reply {
     }
 }
 
+/// What a connection is asked and has proven under NIP-42 (#218).
+#[derive(Debug)]
+struct Authentication {
+    policy: AuthPolicy,
+    /// The challenge this connection was sent, and no other was.
+    challenge: String,
+    /// The keys this connection has proven it holds.
+    proven: HashSet<PublicKey>,
+}
+
 /// One connection's subscriptions and allowances.
 #[derive(Debug)]
 pub(crate) struct Session {
     refusal: Refusal,
+    /// `None` while NIP-42 is off: no challenge, nothing restricted.
+    auth: Option<Authentication>,
     subscriptions: HashMap<String, Subscription>,
     queries: Allowance,
+    /// The allowance of the address the connection came from.
+    source: SourceAllowance,
     messages: Allowance,
 }
 
 impl Session {
-    /// A connection that has said nothing yet.
-    pub(crate) fn new(refusal: Refusal) -> Self {
+    /// A connection that has said nothing yet, under `auth` if NIP-42 is on,
+    /// that is answered `queries_per_minute` REQs a minute and whatever its
+    /// `source` has left.
+    pub(crate) fn new(
+        refusal: Refusal,
+        auth: Option<AuthPolicy>,
+        queries_per_minute: u32,
+        source: SourceAllowance,
+    ) -> Self {
         Self {
             refusal,
+            auth: auth.map(|policy| Authentication {
+                policy,
+                challenge: auth::new_challenge(),
+                proven: HashSet::new(),
+            }),
             subscriptions: HashMap::new(),
-            queries: Allowance::new(QUERIES_PER_MINUTE),
+            queries: Allowance::new(queries_per_minute),
+            source,
             messages: Allowance::new(MESSAGES_PER_MINUTE),
         }
+    }
+
+    /// What a connection is sent as it opens: the `AUTH` challenge, if NIP-42
+    /// is on, else nothing.
+    pub(crate) fn greeting(&self) -> Vec<String> {
+        self.auth
+            .iter()
+            .map(|auth| json!(["AUTH", auth.challenge]).to_string())
+            .collect()
     }
 
     /// Count a frame the client sent at `now`, of any kind, so that no kind
@@ -401,7 +497,13 @@ impl Session {
                     json!(["OK", id, false, self.refusal.words()]).to_string(),
                 ])
             }
-            Some("AUTH") => unsolicited_auth(items.into_iter().nth(1)),
+            Some("AUTH") => {
+                let event = items.into_iter().nth(1);
+                match self.auth.as_mut() {
+                    Some(auth) => authenticate(auth, event),
+                    None => unsolicited_auth(event),
+                }
+            }
             Some(other) => Reply::notice(format!("error: unknown message type: {other}")),
             None => Reply::notice("error: unknown message type: "),
         }
@@ -432,6 +534,12 @@ impl Session {
             return Reply::notice("error: invalid filter");
         };
 
+        if let Some(auth) = &self.auth {
+            let restricted = filters.iter().any(|f| auth.policy.restricts(&f.base));
+            if restricted && auth.proven.is_empty() {
+                return self.refuse(&id, CLOSED_AUTH_REQUIRED);
+            }
+        }
         if id.len() > MAX_SUBSCRIPTION_ID {
             return self.refuse(
                 &id,
@@ -439,7 +547,15 @@ impl Session {
             );
         }
         if !self.queries.take(now) {
-            return self.refuse(&id, "rate-limited: too many queries");
+            return self.refuse(&id, CLOSED_CONNECTION_RATE);
+        }
+        let source_has_one = self
+            .source
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take(now);
+        if !source_has_one {
+            return self.refuse(&id, CLOSED_SOURCE_RATE);
         }
         // The one it replaces gives its bytes back.
         let held: usize = self
@@ -556,6 +672,25 @@ impl Session {
     }
 }
 
+/// What an `AUTH` carrying `event` is answered with when the relay issued a
+/// challenge: `OK true` and the connection has proven the signer's key, or
+/// `OK false` and the reason it did not answer the challenge.
+fn authenticate(auth: &mut Authentication, event: Option<Value>) -> Reply {
+    let Some(event) = event.and_then(|event| serde_json::from_value::<Event>(event).ok()) else {
+        return Reply::notice("error: invalid AUTH event");
+    };
+    let id = event.id;
+    let (accepted, words) = match auth::answer(event, &auth.challenge, crate::clock::unix_seconds())
+    {
+        Ok(key) => {
+            auth.proven.insert(key);
+            (true, "")
+        }
+        Err(reason) => (false, reason),
+    };
+    Reply::Frames(vec![json!(["OK", id, accepted, words]).to_string()])
+}
+
 /// What an `AUTH` carrying `event` is answered with. The relay issues no
 /// challenge, so there is none an `AUTH` could answer.
 fn unsolicited_auth(event: Option<Value>) -> Reply {
@@ -580,8 +715,16 @@ mod tests {
 
     use super::*;
 
+    /// The per-connection allowance the tests run with.
+    const QUERIES_PER_MINUTE: u32 = 1_200;
+
     fn session() -> Session {
-        Session::new(Refusal::default())
+        Session::new(
+            Refusal::default(),
+            None,
+            QUERIES_PER_MINUTE,
+            Arc::new(Mutex::new(Allowance::new(u32::MAX))),
+        )
     }
 
     /// The frames `text` is answered with, when it asks the store nothing.
@@ -1042,12 +1185,53 @@ mod tests {
         };
         assert_eq!(
             frames,
-            vec![json!(["CLOSED", "a", "rate-limited: too many queries"]).to_string()]
+            vec![json!(["CLOSED", "a", CLOSED_CONNECTION_RATE]).to_string()]
         );
         // A twentieth of a second is one more at 1200 a minute.
         let later = start + Duration::from_millis(50);
         assert!(matches!(session.client_sent(text, later), Reply::Ask(_)));
         assert!(matches!(session.client_sent(text, later), Reply::Frames(_)));
+    }
+
+    #[test]
+    fn connections_of_one_source_share_its_allowance_and_another_source_has_its_own() {
+        let sources = Sources::new(3);
+        let ip = |last: u8| IpAddr::from([10, 0, 0, last]);
+        let connect = |last: u8| {
+            Session::new(
+                Refusal::default(),
+                None,
+                QUERIES_PER_MINUTE,
+                sources.of(ip(last)),
+            )
+        };
+        let (mut first, mut second, mut stranger) = (connect(1), connect(1), connect(2));
+        let now = Instant::now();
+        let text = r#"["REQ","a",{}]"#;
+        assert!(matches!(first.client_sent(text, now), Reply::Ask(_)));
+        assert!(matches!(second.client_sent(text, now), Reply::Ask(_)));
+        assert!(matches!(first.client_sent(text, now), Reply::Ask(_)));
+        let Reply::Frames(frames) = second.client_sent(text, now) else {
+            panic!("the source had three, and used them over two connections");
+        };
+        assert_eq!(
+            frames,
+            vec![json!(["CLOSED", "a", CLOSED_SOURCE_RATE]).to_string()]
+        );
+        assert!(matches!(stranger.client_sent(text, now), Reply::Ask(_)));
+        // A new connection does not reset what the source has used.
+        assert!(matches!(
+            connect(1).client_sent(text, now),
+            Reply::Frames(_)
+        ));
+    }
+
+    #[test]
+    fn a_refusal_says_to_slow_down_or_subscribe() {
+        for words in [CLOSED_CONNECTION_RATE, CLOSED_SOURCE_RATE] {
+            assert!(words.starts_with("rate-limited: "));
+            assert!(words.contains("slow down") && words.contains("subscribe"));
+        }
     }
 
     #[test]

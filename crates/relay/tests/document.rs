@@ -56,6 +56,14 @@ async fn asking_for_the_document_by_name_gets_it_without_an_edge() {
     assert_eq!(document["limitation"]["restricted_writes"], json!(true));
     assert_eq!(document["limitation"]["max_limit"], json!(500));
     assert_eq!(document["limitation"]["default_limit"], json!(500));
+    assert_eq!(
+        document["limitation"]["max_req_per_minute_per_connection"],
+        json!(1200)
+    );
+    assert_eq!(
+        document["limitation"]["max_req_per_minute_per_source"],
+        json!(6000)
+    );
     assert!(document.get("toon").is_none());
 }
 

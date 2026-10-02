@@ -28,6 +28,9 @@ const BASE_NIPS: [u16; 4] = [1, 9, 11, 16];
 /// NIP-40, claimed while expiration is enforced.
 const EXPIRATION_NIP: u16 = 40;
 
+/// NIP-42, claimed only while the relay challenges connections.
+const AUTH_NIP: u16 = 42;
+
 /// The unit a price is in: the connector's base units of its asset.
 const FEE_UNIT: &str = "uusdc";
 
@@ -40,6 +43,12 @@ pub(crate) struct Settings {
     pub(crate) contact: Option<String>,
     pub(crate) write_carriage: Option<Carriage>,
     pub(crate) enforce_expiration: bool,
+    /// REQs a minute one connection is answered.
+    pub(crate) read_rate_limit: u32,
+    /// REQs a minute all the connections of one source address are answered.
+    pub(crate) read_source_rate_limit: u32,
+    /// NIP-42 is on: the relay challenges connections.
+    pub(crate) nip42: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -69,6 +78,10 @@ struct Limitation {
     max_filters: usize,
     max_limit: usize,
     default_limit: usize,
+    /// What a client polling free reads is held to. Past either, a REQ is
+    /// `CLOSED` with `rate-limited:`; a subscription is not counted again.
+    max_req_per_minute_per_connection: u32,
+    max_req_per_minute_per_source: u32,
     auth_required: bool,
 }
 
@@ -108,6 +121,9 @@ impl Document {
         if settings.enforce_expiration {
             supported_nips.push(EXPIRATION_NIP);
         }
+        if settings.nip42 {
+            supported_nips.push(AUTH_NIP);
+        }
         Self {
             name: settings.name.clone(),
             description: settings.description.clone(),
@@ -123,6 +139,8 @@ impl Document {
                 max_filters: MAX_FILTERS,
                 max_limit: MAX_LIMIT,
                 default_limit: MAX_LIMIT,
+                max_req_per_minute_per_connection: settings.read_rate_limit,
+                max_req_per_minute_per_source: settings.read_source_rate_limit,
                 auth_required: false,
             },
             // Omitted, not 0, for a relay that charges nothing:
