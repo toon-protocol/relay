@@ -605,7 +605,9 @@ mod tests {
         ));
         let mut client =
             WebSocketStream::from_raw_socket(client_end, Role::Client, Some(socket_config())).await;
-        let text = "x".repeat(MAX_MESSAGE / 2);
+        // A message the gate forwards: what is not one is answered here and
+        // never crosses the pipe.
+        let text = json!(["NEG-MSG", "n", "x".repeat(MAX_MESSAGE / 2)]).to_string();
         assert!(text.len() > READ_BUFFER);
         client.send(Message::text(text.clone())).await.unwrap();
         match client.next().await {
