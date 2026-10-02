@@ -1,0 +1,16 @@
+# Local override for the infra sandbox (toon-protocol/infra, sandbox/): runs
+# the sandbox's `relay` service on the image named by RELAY_IMAGE and tells it
+# where its Write Edge is, so the candidate can be soaked through the paid
+# path without changing the infra repo (#203). See soak/README.md.
+#
+#   cd ../infra/sandbox
+#   COMPOSE_FILE=docker-compose.yml:<this file> RELAY_IMAGE=<image> make up-payments
+services:
+  relay:
+    image: ${RELAY_IMAGE:?set RELAY_IMAGE to the relay image under test}
+    environment:
+      # The connector-edge variables: the hub's self-description, and which
+      # of its routes delivers to this relay's POST /write
+      # (conf/connector-relay.toml in the sandbox).
+      TOON_CONNECTOR_URL: http://relay-connector:3000/ilp
+      TOON_WRITE_ILP_ADDRESS: g.toon.relay

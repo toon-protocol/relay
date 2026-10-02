@@ -5,7 +5,8 @@
   "description": "Black-box conformance suite for a relay container image: talks only to its read and write ports",
   "type": "module",
   "scripts": {
-    "conformance": "vitest run --config vitest.config.ts"
+    "conformance": "vitest run --config vitest.config.ts",
+    "bench": "node soak/bench.mjs"
   },
   "devDependencies": {
     "@types/ws": "^8.5.0",
