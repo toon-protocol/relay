@@ -27,9 +27,8 @@ const both = images.typescript !== '' && images.rust !== '';
 // How long after it is signed the expiring event's expiration falls. The case
 // waits for that time to pass before the second image's first read, so the
 // result does not depend on how long any boot, stop or write takes. The event
-// is written by the first image (which accepts it while still live) and stays
-// on disk past its expiration, so it is the second image's serve-time filter
-// that is exercised.
+// stays on disk past its expiration (for the reap grace), so it is the second
+// image's serve-time filter that is exercised.
 const EXPIRY_MARGIN_S = 5;
 
 // Three boots (each up to 60s for /health) and the wait for the expiry.
@@ -104,7 +103,6 @@ describe.skipIf(!both)('relay image conformance: image swap over /data', () => {
 
       const first = await startRelay(images[from], { volume });
       let expiresAt = 0;
-      let expiring: Event;
       try {
         for (const event of [
           regular,
@@ -122,7 +120,7 @@ describe.skipIf(!both)('relay image conformance: image swap over /data', () => {
         // Signed and written last, on its own, so the batch above is not
         // racing its expiration.
         expiresAt = now() + EXPIRY_MARGIN_S;
-        expiring = sign(secretKey, {
+        const expiring = sign(secretKey, {
           kind: 1,
           created_at: t - 10,
           tags: [['expiration', String(expiresAt)]],

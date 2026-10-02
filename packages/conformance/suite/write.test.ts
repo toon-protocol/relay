@@ -60,7 +60,7 @@ describe('relay image conformance: POST /write', () => {
   });
 
   conformanceTest(
-    '422 for an id that is not the hash of the event, naming the id',
+    '422 with "Invalid event id" for an id that is not the hash of the event',
     async () => {
       const event = signedEvent(1);
       const other = event.id.startsWith('f') ? '0' : 'f';

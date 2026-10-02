@@ -381,7 +381,7 @@ describe('read side: EVENT over WebSocket', () => {
 
 describe('read side: invalid REQ and unsolicited AUTH', () => {
   // Only the frame type of the NOTICE is asserted, not its text.
-  const invalid: [string, unknown][] = [
+  const invalid: [string, unknown[]][] = [
     ['a REQ with no filter', ['REQ', 'nofilter']],
     ['a REQ whose filter is a number', ['REQ', 'numfilter', 5]],
     ['a filter with a negative limit', ['REQ', 'neglimit', { limit: -1 }]],
@@ -394,12 +394,11 @@ describe('read side: invalid REQ and unsolicited AUTH', () => {
         await withClient(async (client) => {
           client.send(message);
           await client.next((f) => f[0] === 'NOTICE');
-          const subId = (message as unknown[])[1];
-          const rest = await client.quiet();
-          expect(rest.filter((f) => f[0] === 'EOSE' && f[1] === subId)).toEqual(
-            []
-          );
-          expect(client.frames.some((f) => f[0] === 'EOSE')).toBe(false);
+          // Give a relay that NOTICEs and serves anyway time to send its EOSE.
+          await client.quiet();
+          expect(
+            client.frames.some((f) => f[0] === 'EOSE' && f[1] === message[1])
+          ).toBe(false);
         });
       },
       { expectedFailureFor: ['typescript'] }
