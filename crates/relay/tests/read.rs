@@ -312,6 +312,8 @@ async fn the_document_states_the_limits_and_does_not_advertise_auth() {
     let document: serde_json::Value = serde_json::from_slice(&body).expect("JSON");
     assert_eq!(document["limitation"]["max_subscriptions"], 20);
     assert_eq!(document["limitation"]["max_filters"], 10);
+    assert_eq!(document["limitation"]["max_limit"], 500);
+    assert_eq!(document["limitation"]["default_limit"], 500);
     assert_eq!(document["limitation"]["auth_required"], false);
     // 40 is claimed while expiration is enforced, which it is by default.
     assert_eq!(document["supported_nips"], json!([1, 9, 11, 16, 40]));

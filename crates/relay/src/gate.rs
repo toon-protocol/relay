@@ -57,10 +57,11 @@ pub(crate) const MAX_SUBSCRIPTIONS: usize = 20;
 /// The most filters one REQ carries.
 pub(crate) const MAX_FILTERS: usize = 10;
 
-/// What the framework gives a filter that names no `limit`, and the most it
-/// answers any one filter with. The gate answers in its place for some
-/// subscriptions and keeps to the same numbers.
-const FRAMEWORK_LIMIT: usize = 500;
+/// The most stored events any one filter is answered with, and the number a
+/// filter that names no `limit` is answered with. One number: the framework is
+/// built with it, the gate's own stored answers keep to it and the Relay
+/// Information Document states it as `max_limit` and `default_limit`.
+pub(crate) const MAX_LIMIT: usize = 500;
 
 /// The framework's own message ceiling (5 MiB), so the gate is not the
 /// smaller limit.
@@ -149,8 +150,8 @@ impl Wanted {
         let mut filter = self.base.clone();
         let requested = filter
             .limit
-            .unwrap_or_else(|| filter.ids.as_ref().map_or(FRAMEWORK_LIMIT, |ids| ids.len()));
-        filter.limit = Some(requested.min(FRAMEWORK_LIMIT));
+            .unwrap_or_else(|| filter.ids.as_ref().map_or(MAX_LIMIT, |ids| ids.len()));
+        filter.limit = Some(requested.min(MAX_LIMIT));
         filter
     }
 }
@@ -771,7 +772,7 @@ mod tests {
             .iter()
             .map(|filter| filter.limit)
             .collect();
-        assert_eq!(limits, vec![Some(500), Some(3), Some(500)]);
+        assert_eq!(limits, vec![Some(MAX_LIMIT), Some(3), Some(MAX_LIMIT)]);
     }
 
     #[test]

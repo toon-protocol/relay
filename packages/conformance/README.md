@@ -54,6 +54,9 @@ are expected to fail.
 ## Coverage
 
 - `tracer.test.ts`: health, one paid write and read, the NIP-11 document.
+- `read-side.test.ts`: filters, subscriptions and the limits the document
+  states, including the cap on stored events per filter (`limitation.max_limit`
+  and `default_limit`; a relay that states none is held to having no cap).
 - `write.test.ts`: `POST /write` statuses, `X-TOON-*` payment attribution,
   live delivery of stored writes, `POST /write-ephemeral`, retired paths, and
   the deliberate differences from the TypeScript relay (`422` body for a wrong
