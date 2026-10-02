@@ -192,6 +192,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No version here: rustup reads rust-toolchain.toml, the one pin.
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+
       - name: Install the musl toolchain
         run: |
           set -euo pipefail
@@ -212,8 +216,14 @@ jobs:
           mkdir dist
           cp "target/${{ matrix.target }}/release/relay" "dist/$NAME"
           # A static binary has no interpreter; this fails the build if the
-          # musl link quietly became a dynamic one.
-          ! readelf -l "dist/$NAME" | grep -q INTERP
+          # musl link quietly became a dynamic one. (Not `! readelf …`: set -e
+          # ignores a negated command, so that line could never fail.)
+          if readelf -l "dist/$NAME" | grep -q INTERP; then
+            echo "dist/$NAME is dynamically linked" >&2
+            exit 1
+          fi
+          # And it runs as a bare binary, outside the image.
+          "dist/$NAME" --help > /dev/null
           (cd dist && sha256sum "$NAME" > "$NAME.sha256")
 
       - uses: actions/upload-artifact@v4
@@ -224,10 +234,12 @@ jobs:
 
   # One GitHub release per publish from main, tagged rust-<handle> like the
   # image, carrying both binaries and one SHA256SUMS file over them. A run on
-  # another branch builds the binaries and releases nothing.
+  # another branch builds the binaries and releases nothing. It waits for the
+  # image: the handle is chosen from the package's tags, so a release made
+  # before its image was pushed could have its handle chosen again.
   release:
     name: Attach the binaries to a release
-    needs: [handle, binary]
+    needs: [handle, binary, publish]
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     permissions:
@@ -249,9 +261,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: rust-${{ needs.handle.outputs.handle }}
+        # Re-runnable: a release an earlier attempt created is reused and its
+        # assets overwritten with this run's build of the same commit.
         run: |
-          gh release create "$TAG" dist/relay-linux-x86_64 dist/relay-linux-aarch64 dist/SHA256SUMS \
+          set -euo pipefail
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Relay $TAG" \
+              --notes "The relay binary for Linux x86_64 and aarch64 (static, musl), the build behind ghcr.io/toon-protocol/relay:$TAG. Verify with \`sha256sum --check SHA256SUMS\`; see the README."
+          fi
+          gh release upload "$TAG" dist/relay-linux-x86_64 dist/relay-linux-aarch64 dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "Relay $TAG" \
-            --notes "The relay binary for Linux x86_64 and aarch64 (static, musl), the build behind ghcr.io/toon-protocol/relay:$TAG. Verify with \`sha256sum --check SHA256SUMS\`; see the README."
+            --clobber

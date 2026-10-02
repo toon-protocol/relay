@@ -440,12 +440,14 @@ chmod +x "relay-linux-$ARCH"
 ```
 
 It is the same program the image runs, configured by the same `TOON_*`
-environment variables and the same flags (`relay --help`; `deploy/.env.example`).
-Only the image's defaults are not baked in, so set what you need:
+environment variables and the same flags (`./relay-linux-$ARCH --help`;
+[every setting the relay reads](#every-setting-the-relay-reads)). The ports
+default to the image's (3100 and 7100); the one image default the binary does
+not share is the data directory, `/data` in the image and `./data` (under the
+working directory) outside it. Only an identity is required:
 
 ```bash
-TOON_SECRET_KEY=<64 hex> TOON_DATA_DIR=./data TOON_BLS_PORT=3100 TOON_RELAY_PORT=7100 \
-  ./relay-linux-$ARCH
+TOON_SECRET_KEY=<64 hex> ./relay-linux-$ARCH
 ```
 
 ## Where to go next
