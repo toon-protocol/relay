@@ -16,7 +16,7 @@ use axum::http::header::{
     ACCESS_CONTROL_ALLOW_ORIGIN, CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, SEC_WEBSOCKET_ACCEPT,
     SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_VERSION, UPGRADE,
 };
-use axum::http::{HeaderMap, HeaderName, Method, StatusCode};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
@@ -26,6 +26,7 @@ use sha1::{Digest, Sha1};
 
 use crate::Relay;
 use crate::document::{CONTENT_TYPE as CONTENT_TYPE_NOSTR, Document};
+use crate::subscribe::{self, BALANCE_MEDIA};
 
 /// RFC 6455 §1.3: appended to the client's key before hashing.
 const WEBSOCKET_GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -78,16 +79,34 @@ fn http_request(relay: &Relay, method: &Method, headers: &HeaderMap) -> Response
     // clients read it, so there is nothing for an origin check to protect.
     let cors = [
         (ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
-        (ACCESS_CONTROL_ALLOW_HEADERS, "accept, content-type"),
+        (
+            ACCESS_CONTROL_ALLOW_HEADERS,
+            "accept, authorization, content-type",
+        ),
         (ACCESS_CONTROL_ALLOW_METHODS, "GET, HEAD, OPTIONS"),
     ];
     if method == Method::OPTIONS {
         return (StatusCode::NO_CONTENT, cors).into_response();
     }
-    if (method == Method::GET || method == Method::HEAD) && asks_for_document(headers) {
+    // A subscriber reading its own balance, under NIP-98.
+    if method == Method::GET
+        && asks_for(headers, BALANCE_MEDIA)
+        && let Some(mut answer) = subscribe::balance(relay, headers)
+    {
+        answer
+            .headers_mut()
+            .insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+        return answer;
+    }
+    if (method == Method::GET || method == Method::HEAD) && asks_for(headers, CONTENT_TYPE_NOSTR) {
         let edge = relay.edge.current();
-        let body = serde_json::to_vec(&Document::render(&relay.document, edge.as_deref()))
-            .expect("the document is strings, numbers and lists, which always serialize");
+        let offer = relay.sale.as_ref().and_then(|sale| sale.offer.current());
+        let body = serde_json::to_vec(&Document::render_offering(
+            &relay.document,
+            edge.as_deref(),
+            offer.as_deref(),
+        ))
+        .expect("the document is strings, numbers and lists, which always serialize");
         let length = body.len().to_string();
         let body = if method == Method::HEAD {
             Vec::new()
@@ -108,8 +127,8 @@ fn http_request(relay: &Relay, method: &Method, headers: &HeaderMap) -> Response
     upgrade_required()
 }
 
-/// Whether `Accept` names the NIP-11 media type, among others, in any case.
-fn asks_for_document(headers: &HeaderMap) -> bool {
+/// Whether `Accept` names `media`, among others, in any case.
+fn asks_for(headers: &HeaderMap, media: &str) -> bool {
     headers
         .get_all(ACCEPT)
         .iter()
@@ -118,7 +137,7 @@ fn asks_for_document(headers: &HeaderMap) -> bool {
         .any(|part| {
             part.split(';')
                 .next()
-                .is_some_and(|media| media.trim().eq_ignore_ascii_case(CONTENT_TYPE_NOSTR))
+                .is_some_and(|listed| listed.trim().eq_ignore_ascii_case(media))
         })
 }
 

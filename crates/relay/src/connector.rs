@@ -41,7 +41,7 @@ use hyper_util::rt::TokioExecutor;
 use serde_json::Value;
 
 use crate::config::EdgeSettings;
-use crate::{RelayError, WriteEdge};
+use crate::{RelayError, SubscribeOffer, WriteEdge};
 
 /// How often an unknown edge is retried.
 pub(crate) const RETRY: Duration = Duration::from_secs(5);
@@ -74,6 +74,33 @@ impl EdgeSlot {
     }
 }
 
+/// The subscribe offer as last read, shared by the poll that writes it and
+/// what renders and credits from it. `None` while it is unknown, which
+/// includes while the Write Edge is.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct OfferSlot(Arc<RwLock<Option<Arc<SubscribeOffer>>>>);
+
+impl OfferSlot {
+    pub(crate) fn current(&self) -> Option<Arc<SubscribeOffer>> {
+        self.0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn set(&self, offer: Option<SubscribeOffer>) {
+        *self.0.write().unwrap_or_else(PoisonError::into_inner) = offer.map(Arc::new);
+    }
+}
+
+/// The subscribe route a relay that sells its feed reads beside its edge.
+#[derive(Debug, Clone)]
+pub(crate) struct Subscribing {
+    /// The address the relay was told the subscribe route is paid at.
+    pub(crate) address: String,
+    pub(crate) slot: OfferSlot,
+}
+
 /// How often to ask.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Intervals {
@@ -92,13 +119,30 @@ impl Default for Intervals {
 
 /// Ask the connector for the edge until the task is aborted. Never returns
 /// and never fails: every outcome is a state of `slot`.
+#[cfg(test)]
 pub(crate) async fn watch(connector: EdgeSettings, intervals: Intervals, slot: EdgeSlot) {
+    watch_offering(connector, intervals, slot, None).await;
+}
+
+/// [`watch`], and when the relay sells its feed, the subscribe offer read
+/// from the same answer. The offer is known only while the edge is: a relay
+/// that publishes `toon_subscription` publishes `toon`.
+pub(crate) async fn watch_offering(
+    connector: EdgeSettings,
+    intervals: Intervals,
+    slot: EdgeSlot,
+    subscribing: Option<Subscribing>,
+) {
     let client = Client::builder(TokioExecutor::new()).build_http();
     let mut reported: Option<String> = None;
+    let mut reported_offer: Option<String> = None;
     loop {
-        let reading = read(&client, &connector).await;
+        let reading = describe(&client, &connector).await.and_then(|description| {
+            WriteEdge::read(&connector.write_ilp_address, &description)
+                .map(|edge| (edge, description))
+        });
         let report = match &reading {
-            Ok(edge) => format!(
+            Ok((edge, _)) => format!(
                 "[relay] paid write edge: {} at {}{}, {} uusdc per write, sealed to {}…",
                 edge.ilp_address(),
                 edge.connector_url(),
@@ -124,14 +168,54 @@ pub(crate) async fn watch(connector: EdgeSettings, intervals: Intervals, slot: E
         } else {
             intervals.unknown
         };
-        slot.set(reading.ok());
+        if let Some(subscribing) = &subscribing {
+            let offer = match &reading {
+                Ok((_, description)) => SubscribeOffer::read(&subscribing.address, description),
+                Err(_) => Err(RelayError::ConnectorPublishesNoUrl),
+            };
+            let report = match (&reading, &offer) {
+                (Ok(_), Ok(offer)) => format!(
+                    "[relay] paid live feed: subscribe at {}, {} uusdc per packet{}",
+                    offer.ilp_address(),
+                    offer.price(),
+                    offer.carriage().map_or(String::new(), |carriage| format!(
+                        " over {}",
+                        carriage.as_str()
+                    )),
+                ),
+                (Ok(_), Err(error)) => format!(
+                    "[relay] paid live feed NOT offered: {error}. Until this is fixed the NIP-11 \
+                     document names no subscribe route."
+                ),
+                (Err(_), _) => {
+                    "[relay] paid live feed not offered while the edge is unknown".to_string()
+                }
+            };
+            if reported_offer.as_ref() != Some(&report) {
+                println!("{report}");
+                reported_offer = Some(report);
+            }
+            subscribing.slot.set(offer.ok());
+        }
+        slot.set(reading.ok().map(|(edge, _)| edge));
         tokio::time::sleep(wait).await;
     }
 }
 
 type HttpClient = Client<HttpConnector, Empty<Bytes>>;
 
+/// The Write Edge in the connector's self-description. The poll reads the
+/// description once and takes the edge and the subscribe offer from it.
+#[cfg(test)]
 async fn read(client: &HttpClient, connector: &EdgeSettings) -> Result<WriteEdge, RelayError> {
+    let description = describe(client, connector).await?;
+    WriteEdge::read(&connector.write_ilp_address, &description)
+}
+
+async fn describe(
+    client: &HttpClient,
+    connector: &EdgeSettings,
+) -> Result<NodeSelfDescription, RelayError> {
     let unreadable = |reason: String| RelayError::ConnectorUnreadable {
         url: connector.connector_url.clone(),
         reason,
@@ -140,10 +224,8 @@ async fn read(client: &HttpClient, connector: &EdgeSettings) -> Result<WriteEdge
         .await
         .map_err(|_| unreadable("it did not answer in time".to_string()))?
         .map_err(unreadable)?;
-    let description = parse(&body).map_err(|reason| {
-        unreadable(format!("it is not a connector self-description: {reason}"))
-    })?;
-    WriteEdge::read(&connector.write_ilp_address, &description)
+    parse(&body)
+        .map_err(|reason| unreadable(format!("it is not a connector self-description: {reason}")))
 }
 
 async fn fetch(client: &HttpClient, url: &str) -> Result<Bytes, String> {
@@ -249,6 +331,7 @@ mod tests {
             contact: None,
             write_carriage: None,
             enforce_expiration: true,
+            broadcast_price: None,
         }
     }
 

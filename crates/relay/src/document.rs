@@ -13,7 +13,7 @@
 use serde::Serialize;
 
 use crate::session::{MAX_FILTERS, MAX_LIMIT, MAX_SUBSCRIPTIONS};
-use crate::{Carriage, WriteEdge};
+use crate::{Carriage, SubscribeOffer, WriteEdge};
 
 /// The media type NIP-11 gives the document.
 pub(crate) const CONTENT_TYPE: &str = "application/nostr+json";
@@ -28,6 +28,10 @@ const BASE_NIPS: [u16; 4] = [1, 9, 11, 16];
 /// NIP-40, claimed while expiration is enforced.
 const EXPIRATION_NIP: u16 = 40;
 
+/// NIP-42, claimed by a relay that sells its live feed: a subscriber proves
+/// which subscription it holds by answering the relay's `AUTH` challenge.
+const AUTH_NIP: u16 = 42;
+
 /// The unit a price is in: the connector's base units of its asset.
 const FEE_UNIT: &str = "uusdc";
 
@@ -40,6 +44,9 @@ pub(crate) struct Settings {
     pub(crate) contact: Option<String>,
     pub(crate) write_carriage: Option<Carriage>,
     pub(crate) enforce_expiration: bool,
+    /// What the relay debits for each event it broadcasts, when it sells its
+    /// live feed.
+    pub(crate) broadcast_price: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -59,6 +66,18 @@ pub(crate) struct Document {
     fees: Option<Fees>,
     #[serde(skip_serializing_if = "Option::is_none")]
     toon: Option<Toon>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    toon_subscription: Option<ToonSubscription>,
+}
+
+/// The paid live feed's offer (the draft NIP's `toon_subscription`).
+#[derive(Debug, Serialize)]
+struct ToonSubscription {
+    ilp_address: String,
+    price: u64,
+    broadcast_price: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    carriage: Option<&'static str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -101,13 +120,39 @@ struct Settled {
 }
 
 impl Document {
-    /// The document for `edge`, or for a relay that publishes none.
+    /// The document for `edge`, or for a relay that publishes none, and no
+    /// offer of the live feed.
+    #[cfg(test)]
     pub(crate) fn render(settings: &Settings, edge: Option<&WriteEdge>) -> Self {
+        Self::render_offering(settings, edge, None)
+    }
+
+    /// [`Self::render`], with the subscribe route the connector publishes. It
+    /// is named only beside a `toon` object, and only by a relay that was
+    /// given a broadcast price: a relay that publishes `toon_subscription`
+    /// publishes `toon`.
+    pub(crate) fn render_offering(
+        settings: &Settings,
+        edge: Option<&WriteEdge>,
+        offer: Option<&SubscribeOffer>,
+    ) -> Self {
         let paid = edge.is_some_and(|edge| edge.price() > 0);
         let mut supported_nips = BASE_NIPS.to_vec();
         if settings.enforce_expiration {
             supported_nips.push(EXPIRATION_NIP);
         }
+        if settings.broadcast_price.is_some() {
+            supported_nips.push(AUTH_NIP);
+        }
+        let subscription =
+            edge.zip(offer)
+                .zip(settings.broadcast_price)
+                .map(|((_, offer), broadcast_price)| ToonSubscription {
+                    ilp_address: offer.ilp_address().to_string(),
+                    price: offer.price(),
+                    broadcast_price,
+                    carriage: offer.carriage().map(Carriage::as_str),
+                });
         Self {
             name: settings.name.clone(),
             description: settings.description.clone(),
@@ -148,6 +193,7 @@ impl Document {
                     })
                     .collect(),
             }),
+            toon_subscription: subscription,
         }
     }
 }

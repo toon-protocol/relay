@@ -47,13 +47,18 @@ use std::time::Instant;
 
 use nostr::event::{Event, Kind};
 use nostr::filter::{Filter, MatchEventOptions};
+use nostr::key::PublicKey;
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
 use crate::Carriage;
+use crate::clock::unix_seconds;
 use crate::connector::EdgeSlot;
 use crate::document::write_refusal;
+use crate::ledger::{Charged, ConnectionId};
+use crate::proof::client_authentication;
 use crate::store::Query;
+use crate::subscribe::Sale;
 
 /// The most subscriptions one connection holds. Replacing one is not another.
 pub(crate) const MAX_SUBSCRIPTIONS: usize = 20;
@@ -88,6 +93,18 @@ const CLOSED_OVERFLOW: &str =
     "error: live event buffer overflow; resubscribe to recover stored events";
 /// What a subscription is closed with when the store could not answer it.
 const CLOSED_STORE: &str = "error: the store could not be read";
+/// What a subscription is closed with when its connection holds no key.
+const CLOSED_AUTH_REQUIRED: &str =
+    "auth-required: the live feed is for subscribers; authenticate (NIP-42) with a subscriber key";
+/// What a subscription is closed with when its connection's key has no
+/// subscription that pays for the feed.
+const CLOSED_PAYMENT_REQUIRED: &str = "payment-required: this key holds no subscription with a balance; subscribe, then send the REQ again";
+/// What a subscription is closed with when its balance ran out.
+const CLOSED_EXHAUSTED: &str = "payment-required: the subscription's balance has run out";
+/// What a subscription is closed with when its connection authenticated as
+/// another key, whose subscription it now holds instead.
+const CLOSED_REAUTHENTICATED: &str =
+    "auth-required: the connection authenticated with another key; send the REQ again";
 /// What a binary frame is answered with.
 pub(crate) const NOTICE_BINARY: &str = "binary messages are not processed by this relay";
 
@@ -116,13 +133,23 @@ pub(crate) struct LiveEvent {
     event: Event,
     /// The event as a frame carries it, written once for every subscriber.
     json: String,
+    /// Whom accepting the event was charged to: the paid subscribers it is
+    /// sent to, and those it left without enough for another. Empty on a
+    /// relay whose feed is free.
+    charged: Charged,
 }
 
 impl LiveEvent {
+    #[cfg(test)]
     fn new(event: &Event) -> Self {
+        Self::charged(event, Charged::default())
+    }
+
+    fn charged(event: &Event, charged: Charged) -> Self {
         Self {
             event: event.clone(),
             json: event_json(event),
+            charged,
         }
     }
 }
@@ -139,9 +166,15 @@ impl LiveFeed {
     }
 
     /// Hand `event` to every connection open now.
+    #[cfg(test)]
     pub(crate) fn publish(&self, event: &Event) {
+        self.publish_charged(event, Charged::default());
+    }
+
+    /// [`Self::publish`], for an event whose price has been charged.
+    pub(crate) fn publish_charged(&self, event: &Event, charged: Charged) {
         // An error only says nobody is connected.
-        let _ = self.0.send(Arc::new(LiveEvent::new(event)));
+        let _ = self.0.send(Arc::new(LiveEvent::charged(event, charged)));
     }
 
     /// Every event published from now on.
@@ -233,8 +266,8 @@ fn keep_whole_values(filter: &mut Value) {
 
 /// One filter of a subscription: what the protocol crate reads of it, and the
 /// tag keys it does not.
-#[derive(Debug)]
-struct Wanted {
+#[derive(Debug, Clone)]
+pub(crate) struct Wanted {
     base: Filter,
     /// `#ab`-style keys with the values they accept.
     multi: MultiLetterKeys,
@@ -242,7 +275,7 @@ struct Wanted {
 
 impl Wanted {
     /// Read `filter` as a client wrote it. `None` when it is not a filter.
-    fn read(mut filter: Value) -> Option<Self> {
+    pub(crate) fn read(mut filter: Value) -> Option<Self> {
         keep_whole_values(&mut filter);
         let multi = take_multi_letter_keys(&mut filter)?;
         let base = serde_json::from_value(filter).ok()?;
@@ -251,7 +284,7 @@ impl Wanted {
 
     /// Whether a live `event` is one this filter asks for: what the store
     /// would have answered it with, had the event been stored.
-    fn matches(&self, event: &Event) -> bool {
+    pub(crate) fn matches(&self, event: &Event) -> bool {
         // A list that names nothing matches nothing, as in the store. The
         // protocol crate reads one as no condition at all, which would send
         // every live event to a filter whose only id was a prefix.
@@ -292,10 +325,37 @@ impl Wanted {
     }
 }
 
+/// How a subscription is fed live events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Feed {
+    /// Every live event it matches: the relay's feed is free, or the
+    /// connection is an operator's.
+    Open,
+    /// The live events its subscriber's balance paid for, which the ledger
+    /// decided when each was accepted. The key is the subscriber's.
+    Paid(PublicKey),
+    /// None: a free read. The stored answer is sent and the subscription is
+    /// closed with this reason.
+    Closed(&'static str),
+}
+
+impl Feed {
+    /// Whether `live` is for a subscription fed this way, whatever its filters.
+    fn admits(self, live: &LiveEvent) -> bool {
+        match self {
+            Self::Open => true,
+            Self::Paid(key) => live.charged.paid.contains(&key),
+            Self::Closed(_) => false,
+        }
+    }
+}
+
 /// An open subscription.
 #[derive(Debug)]
 struct Subscription {
-    filters: Vec<Wanted>,
+    filters: Arc<[Wanted]>,
+    /// Who it is sent live events by.
+    feed: Feed,
     /// How each of its frames begins: `["EVENT","<id>",`.
     head: String,
     /// The bytes of the REQ that asked for it.
@@ -355,17 +415,63 @@ pub(crate) struct Session {
     subscriptions: HashMap<String, Subscription>,
     queries: Allowance,
     messages: Allowance,
+    /// The paid feed, on a relay that sells it.
+    sale: Option<Sale>,
+    /// This connection, as the ledger knows it.
+    connection: ConnectionId,
+    /// What the relay asked this connection to sign (NIP-42).
+    challenge: Option<String>,
+    /// The key this connection authenticated with last.
+    key: Option<PublicKey>,
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        if let Some(sale) = &self.sale {
+            sale.ledger.disconnect(self.connection);
+        }
+    }
 }
 
 impl Session {
-    /// A connection that has said nothing yet.
+    /// A connection that has said nothing yet, on a relay whose feed is free.
     pub(crate) fn new(refusal: Refusal) -> Self {
+        Self::with(refusal, None)
+    }
+
+    /// A connection that has said nothing yet, on a relay that sells its feed.
+    pub(crate) fn selling(refusal: Refusal, sale: Sale) -> Self {
+        Self::with(refusal, Some(sale))
+    }
+
+    fn with(refusal: Refusal, sale: Option<Sale>) -> Self {
+        let connection = sale.as_ref().map_or(0, |sale| sale.ledger.connect());
         Self {
             refusal,
             subscriptions: HashMap::new(),
             queries: Allowance::new(QUERIES_PER_MINUTE),
             messages: Allowance::new(MESSAGES_PER_MINUTE),
+            sale,
+            connection,
+            challenge: None,
+            key: None,
         }
+    }
+
+    /// What a connection to a relay that sells its feed is sent when it
+    /// opens: the NIP-42 challenge. Nothing for one whose feed is free, which
+    /// issues none.
+    pub(crate) fn greeting(&mut self) -> Option<String> {
+        self.sale.as_ref()?;
+        let mut random = [0_u8; 16];
+        if let Err(error) = getrandom::fill(&mut random) {
+            eprintln!("read: no challenge could be made: {error}");
+            return None;
+        }
+        let challenge: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+        let frame = json!(["AUTH", challenge]).to_string();
+        self.challenge = Some(challenge);
+        Some(frame)
     }
 
     /// Count a frame the client sent at `now`, of any kind, so that no kind
@@ -388,6 +494,7 @@ impl Session {
                 // No answer, and none for an id that is not open (NIP-01).
                 if let Some(id) = items.get(1).and_then(Value::as_str) {
                     self.subscriptions.remove(id);
+                    self.unregister(id);
                 }
                 Reply::Frames(Vec::new())
             }
@@ -401,7 +508,10 @@ impl Session {
                     json!(["OK", id, false, self.refusal.words()]).to_string(),
                 ])
             }
-            Some("AUTH") => unsolicited_auth(items.into_iter().nth(1)),
+            Some("AUTH") => match &self.sale {
+                Some(_) => self.authenticated(items.into_iter().nth(1)),
+                None => unsolicited_auth(items.into_iter().nth(1)),
+            },
             Some(other) => Reply::notice(format!("error: unknown message type: {other}")),
             None => Reply::notice("error: unknown message type: "),
         }
@@ -456,9 +566,12 @@ impl Session {
                 ),
             );
         }
+        let filters: Arc<[Wanted]> = filters.into();
+        let feed = self.feed_for(&id, &filters);
         Reply::Ask(Request {
             subscription: Subscription {
                 filters,
+                feed,
                 head: format!("[\"EVENT\",{},", Value::from(id.as_str())),
                 size,
             },
@@ -475,7 +588,73 @@ impl Session {
     /// Forget `id`, and the frame that tells the client it is over.
     fn closed_frame(&mut self, id: &str, reason: &str) -> String {
         self.subscriptions.remove(id);
+        self.unregister(id);
         json!(["CLOSED", id, reason]).to_string()
+    }
+
+    /// Tell the ledger that `id` is no longer open here.
+    fn unregister(&self, id: &str) {
+        if let Some(sale) = &self.sale {
+            sale.ledger.close_request(self.connection, id);
+        }
+    }
+
+    /// How a REQ `id` asking for `filters` is fed live events. On a relay
+    /// that sells its feed a connection that holds a subscription with a
+    /// balance has the REQ registered with the ledger, from now: an event
+    /// accepted after this is charged for it, whether it lands in the stored
+    /// answer or after it.
+    fn feed_for(&self, id: &str, filters: &Arc<[Wanted]>) -> Feed {
+        let Some(sale) = &self.sale else {
+            return Feed::Open;
+        };
+        let Some(key) = self.key else {
+            self.unregister(id);
+            return Feed::Closed(CLOSED_AUTH_REQUIRED);
+        };
+        if sale.operators.contains(&key) {
+            self.unregister(id);
+            Feed::Open
+        } else if sale.ledger.holds(&key) {
+            sale.ledger
+                .open_request(self.connection, key, id, Arc::clone(filters));
+            Feed::Paid(key)
+        } else {
+            self.unregister(id);
+            Feed::Closed(CLOSED_PAYMENT_REQUIRED)
+        }
+    }
+
+    /// What an `AUTH` carrying `event` is answered with on a relay that sells
+    /// its feed. A key that is not the one the connection held closes every
+    /// subscription it had: they were fed for the old key.
+    fn authenticated(&mut self, event: Option<Value>) -> Reply {
+        let Some(event) = event.and_then(|event| serde_json::from_value::<Event>(event).ok())
+        else {
+            return Reply::notice("error: invalid AUTH event");
+        };
+        let (Some(sale), Some(challenge)) = (self.sale.clone(), self.challenge.clone()) else {
+            return unsolicited_auth(serde_json::to_value(event).ok());
+        };
+        let id = event.id;
+        match client_authentication(event, &challenge, &sale.hosts, unix_seconds()) {
+            Err(reason) => Reply::Frames(vec![
+                json!(["OK", id, false, format!("invalid: {reason}")]).to_string(),
+            ]),
+            Ok(key) => {
+                let mut frames = vec![json!(["OK", id, true, ""]).to_string()];
+                if self.key != Some(key) {
+                    let open: Vec<String> = self.subscriptions.keys().cloned().collect();
+                    frames.extend(
+                        open.iter()
+                            .map(|open| self.closed_frame(open, CLOSED_REAUTHENTICATED)),
+                    );
+                    sale.ledger.disconnect(self.connection);
+                }
+                self.key = Some(key);
+                Reply::Frames(frames)
+            }
+        }
     }
 
     /// The frames that answer `request` from what the store `found` for each
@@ -503,20 +682,35 @@ impl Session {
             .map(|event| subscription.frame(&event_json(event)))
             .chain(std::iter::once(json!(["EOSE", id]).to_string()))
             .collect();
+        // A free read ends here: the stored answer and `EOSE` were all it was
+        // owed. Whatever else was published meanwhile still goes to the
+        // subscriptions that are open.
+        self.subscriptions.remove(&id);
+        if let Feed::Closed(reason) = subscription.feed {
+            frames.push(json!(["CLOSED", id, reason]).to_string());
+            for live in waiting {
+                frames.extend(self.live_delivery(live));
+            }
+            return frames;
+        }
         // What was published before the store was asked is delivered to the
         // open subscriptions as any live event is. The new one is sent it
         // only if its stored answer did not carry it, and one it replaces is
         // not sent it at all.
-        self.subscriptions.remove(&id);
         for live in waiting {
             frames.extend(self.live_frames(live));
             if !seen.contains(&live.event.id)
+                && subscription.feed.admits(live)
                 && subscription.filters.iter().any(|f| f.matches(&live.event))
             {
                 frames.push(subscription.frame(&live.json));
             }
         }
         self.subscriptions.insert(id, subscription);
+        // A balance that ran out meanwhile closes this one too.
+        for live in waiting {
+            frames.extend(self.exhausted_by(live));
+        }
         frames
     }
 
@@ -541,14 +735,50 @@ impl Session {
     ) -> impl Iterator<Item = String> + 'a {
         self.subscriptions
             .values()
-            .filter(|subscription| subscription.filters.iter().any(|f| f.matches(&live.event)))
+            .filter(|subscription| {
+                subscription.feed.admits(live)
+                    && subscription.filters.iter().any(|f| f.matches(&live.event))
+            })
             .map(|subscription| subscription.frame(&live.json))
+    }
+
+    /// Everything `live` is to this connection: the frames it is sent in, and
+    /// directly after them the `CLOSED` of every subscription its price
+    /// exhausted.
+    pub(crate) fn live_delivery(&mut self, live: &LiveEvent) -> Vec<String> {
+        let mut frames: Vec<String> = self.live_frames(live).collect();
+        frames.extend(self.exhausted_by(live));
+        frames
+    }
+
+    /// The `CLOSED` of each subscription of this connection fed by a balance
+    /// that accepting `live` left unable to pay for another event. The ledger
+    /// has already stopped charging them.
+    fn exhausted_by(&mut self, live: &LiveEvent) -> Vec<String> {
+        if live.charged.exhausted.is_empty() {
+            return Vec::new();
+        }
+        let ended: Vec<String> = self
+            .subscriptions
+            .iter()
+            .filter(|(_, subscription)| {
+                matches!(subscription.feed, Feed::Paid(key) if live.charged.exhausted.contains(&key))
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        ended
+            .iter()
+            .map(|id| self.closed_frame(id, CLOSED_EXHAUSTED))
+            .collect()
     }
 
     /// The connection missed live events, which cannot be matched any more:
     /// every subscription ends rather than carry on with a gap in it. The
     /// frames that tell the client so.
     pub(crate) fn overflowed(&mut self) -> Vec<String> {
+        if let Some(sale) = &self.sale {
+            sale.ledger.disconnect(self.connection);
+        }
         self.subscriptions
             .drain()
             .map(|(id, _)| json!(["CLOSED", id, CLOSED_OVERFLOW]).to_string())

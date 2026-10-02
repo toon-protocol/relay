@@ -28,19 +28,24 @@ mod document;
 mod edge;
 mod error;
 mod health;
+mod ledger;
 mod metrics;
+mod offer;
+mod proof;
 mod read;
 mod read_side;
 mod route;
 mod session;
 mod store;
+mod subscribe;
 mod verified;
 mod version;
 mod write;
 
-pub use config::{Config, EdgeSettings, Invocation, USAGE};
+pub use config::{Config, EdgeSettings, Invocation, SubscribeSettings, USAGE};
 pub use edge::{Carriage, Settlement, WriteEdge};
 pub use error::RelayError;
+pub use offer::SubscribeOffer;
 pub use route::TerminatedRoute;
 pub use store::{Query, Retention, Saved, Store};
 pub use verified::VerifiedEvent;
@@ -58,10 +63,12 @@ use axum::Router;
 use axum::routing::{any, get, post};
 use nostr::key::PublicKey;
 
-use crate::connector::{EdgeSlot, Intervals};
+use crate::connector::{EdgeSlot, Intervals, OfferSlot, Subscribing};
 use crate::document::Settings;
+use crate::ledger::Ledger;
 use crate::metrics::Metrics;
 use crate::read_side::ReadSide;
+use crate::subscribe::Sale;
 
 /// A relay: its identity, its store, and the read side that serves the store
 /// and receives what the write side accepts. Cheap to clone; every clone is
@@ -75,6 +82,8 @@ pub struct Relay {
     document: Settings,
     metrics: Metrics,
     ephemeral: Arc<write::Lane>,
+    /// The paid live feed, for a relay that sells it.
+    sale: Option<Sale>,
     log_writes: bool,
     reaper: Reaper,
 }
@@ -103,6 +112,35 @@ impl Relay {
             },
         )?;
         let edge = EdgeSlot::default();
+        let sale = config
+            .subscribe
+            .as_ref()
+            .map(|subscribe| {
+                let hosts = proof::Hosts::of(&subscribe.relay_url).ok_or_else(|| {
+                    RelayError::InvalidSetting {
+                        name: "TOON_RELAY_URL",
+                        expected: "a ws://, wss://, http:// or https:// URL",
+                        value: subscribe.relay_url.clone(),
+                    }
+                })?;
+                // Whoever holds the relay's own key is its operator.
+                let mut operators: std::collections::HashSet<PublicKey> =
+                    config.operator_pubkeys.iter().copied().collect();
+                operators.insert(config.identity);
+                Ok::<_, RelayError>(Sale {
+                    ledger: Ledger::open(&config.database_path(), subscribe.broadcast_price)?,
+                    hosts,
+                    operators: Arc::new(operators),
+                    offer: OfferSlot::default(),
+                })
+            })
+            .transpose()?;
+        let read_side = ReadSide::new(
+            store.clone(),
+            edge.clone(),
+            config.write_carriage,
+            usize::try_from(config.max_connections).unwrap_or(usize::MAX),
+        );
         Ok(Self {
             identity: config.identity,
             edge: edge.clone(),
@@ -113,15 +151,15 @@ impl Relay {
                 contact: config.relay_contact.clone(),
                 write_carriage: config.write_carriage,
                 enforce_expiration: config.enforce_expiration,
+                broadcast_price: config.subscribe.as_ref().map(|s| s.broadcast_price),
             },
-            read_side: ReadSide::new(
-                store.clone(),
-                edge.clone(),
-                config.write_carriage,
-                usize::try_from(config.max_connections).unwrap_or(usize::MAX),
-            ),
+            read_side: match &sale {
+                Some(sale) => read_side.selling(sale.clone()),
+                None => read_side,
+            },
             metrics: Metrics::new(config),
             ephemeral: Arc::new(write::Lane::new(config)),
+            sale,
             log_writes: config.log_writes,
             store,
             reaper: Reaper {
@@ -181,10 +219,19 @@ impl Relay {
         intervals: Intervals,
     ) -> Option<tokio::task::JoinHandle<()>> {
         let connector = config.edge.clone()?;
-        Some(tokio::spawn(connector::watch(
+        let subscribing =
+            self.sale
+                .as_ref()
+                .zip(config.subscribe.as_ref())
+                .map(|(sale, subscribe)| Subscribing {
+                    address: subscribe.ilp_address.clone(),
+                    slot: sale.offer.clone(),
+                });
+        Some(tokio::spawn(connector::watch_offering(
             connector,
             intervals,
             self.edge.clone(),
+            subscribing,
         )))
     }
 
@@ -201,6 +248,8 @@ impl Relay {
             .route("/metrics", get(metrics::metrics))
             .route("/write", post(write::write))
             .route("/write-ephemeral", post(write::write_ephemeral))
+            .route("/subscribe", post(subscribe::subscribe))
+            .route("/subscribers", get(subscribe::subscribers))
             .with_state(self.clone())
     }
 

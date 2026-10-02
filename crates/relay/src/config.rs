@@ -125,13 +125,29 @@ const EXPIRATION_REAP_INTERVAL: Setting = Setting {
     flag: "--expiration-reap-interval-seconds",
     env: "TOON_EXPIRATION_REAP_INTERVAL_SECONDS",
 };
+const SUBSCRIBE_ILP_ADDRESS: Setting = Setting {
+    flag: "--subscribe-ilp-address",
+    env: "TOON_SUBSCRIBE_ILP_ADDRESS",
+};
+const BROADCAST_PRICE: Setting = Setting {
+    flag: "--broadcast-price",
+    env: "TOON_BROADCAST_PRICE",
+};
+const RELAY_URL: Setting = Setting {
+    flag: "--relay-url",
+    env: "TOON_RELAY_URL",
+};
+const OPERATOR_PUBKEYS: Setting = Setting {
+    flag: "--operator-pubkeys",
+    env: "TOON_OPERATOR_PUBKEYS",
+};
 const BLOCKED_EVENT_IDS: Setting = Setting {
     flag: "--blocked-event-ids",
     env: "TOON_BLOCKED_EVENT_IDS",
 };
 
 /// The flags that take a value, and the ones that stand alone.
-const VALUE_FLAGS: [&str; 21] = [
+const VALUE_FLAGS: [&str; 25] = [
     MNEMONIC.flag,
     SECRET_KEY.flag,
     READ_PORT.flag,
@@ -153,6 +169,10 @@ const VALUE_FLAGS: [&str; 21] = [
     EXPIRATION_REAP_GRACE.flag,
     EXPIRATION_REAP_INTERVAL.flag,
     BLOCKED_EVENT_IDS.flag,
+    SUBSCRIBE_ILP_ADDRESS.flag,
+    BROADCAST_PRICE.flag,
+    RELAY_URL.flag,
+    OPERATOR_PUBKEYS.flag,
 ];
 const SWITCH_FLAGS: [&str; 5] = [
     DEV_MODE.flag,
@@ -175,6 +195,9 @@ const DEFAULT_EXPIRATION_REAP_INTERVAL_SECONDS: u64 = 3600;
 /// The most workers the TypeScript relay accepts. The setting has no effect
 /// here, but a value it refused is still refused.
 const MAX_VERIFY_WORKERS: u64 = 256;
+
+/// The largest broadcast price: what survives a JSON number in every client.
+const MAX_BROADCAST_PRICE: u64 = (1 << 53) - 1;
 
 /// The database file inside the data directory: the TypeScript relay's name.
 const DATABASE_FILE: &str = "events.db";
@@ -209,6 +232,10 @@ Options (each flag beats its environment variable):
   --expiration-reap-grace-seconds <n>      TOON_EXPIRATION_REAP_GRACE_SECONDS (default 86400)
   --expiration-reap-interval-seconds <n>   TOON_EXPIRATION_REAP_INTERVAL_SECONDS (default 3600)
   --blocked-event-ids <ids>                TOON_BLOCKED_EVENT_IDS (comma-separated)
+  --subscribe-ilp-address <addr>           TOON_SUBSCRIBE_ILP_ADDRESS (sells the live feed)
+  --broadcast-price <n>                    TOON_BROADCAST_PRICE (what one broadcast event costs)
+  --relay-url <url>                        TOON_RELAY_URL (the URL clients reach this relay at)
+  --operator-pubkeys <keys>                TOON_OPERATOR_PUBKEYS (comma-separated hex keys)
   --help                                   show this message
 
 Prefer the environment variables to --mnemonic and --secret-key: arguments
@@ -230,6 +257,21 @@ pub struct EdgeSettings {
     pub connector_url: String,
     /// The ILP address whose route terminates at this relay's `POST /write`.
     pub write_ilp_address: String,
+}
+
+/// What the relay was told in order to sell its live feed (#215): all three
+/// settings, or none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubscribeSettings {
+    /// The ILP address whose route terminates at this relay's
+    /// `POST /subscribe`.
+    pub ilp_address: String,
+    /// What the relay debits for each event it broadcasts to a subscriber.
+    pub broadcast_price: u64,
+    /// The URL clients reach this relay at (`wss://…` or `https://…`). Only
+    /// its host is used: the `relay` tag of a NIP-42 event and the `u` tag of
+    /// a NIP-98 one must name it.
+    pub relay_url: String,
 }
 
 /// A complete, validated configuration.
@@ -281,6 +323,11 @@ pub struct Config {
     pub expiration_reap_interval_seconds: u64,
     /// Event ids the operator blocked: lower-case hex, in order, once each.
     pub blocked_event_ids: Vec<String>,
+    /// The paid live feed, or `None` for a relay whose feed is free.
+    pub subscribe: Option<SubscribeSettings>,
+    /// Keys, besides the relay's own, that follow the live feed without
+    /// paying (`TOON_OPERATOR_PUBKEYS`).
+    pub operator_pubkeys: Vec<PublicKey>,
 }
 
 /// The command line split into the flags that were given.
@@ -491,6 +538,9 @@ impl Config {
             Some((name, value)) => return Err(RelayError::InvalidCarriage { name, value }),
         };
 
+        let subscribe = sources.subscribe(edge.is_some())?;
+        let operator_pubkeys = sources.operator_pubkeys()?;
+
         let (blocked_event_ids, rejected) = blocked_ids(
             &sources
                 .raw(&BLOCKED_EVENT_IDS)
@@ -539,6 +589,8 @@ impl Config {
                 DEFAULT_EXPIRATION_REAP_INTERVAL_SECONDS,
             )?,
             blocked_event_ids,
+            subscribe,
+            operator_pubkeys,
         })))
     }
 
@@ -549,6 +601,89 @@ impl Config {
 }
 
 impl Sources<'_> {
+    /// The paid live feed's settings: the three of them, or none. The feed is
+    /// sold at a route of the relay's connector, so it needs the connector.
+    fn subscribe(&self, has_connector: bool) -> Result<Option<SubscribeSettings>, RelayError> {
+        let address = self.text(&SUBSCRIBE_ILP_ADDRESS);
+        let price = self.text(&BROADCAST_PRICE);
+        let url = self.text(&RELAY_URL);
+        let settings = [
+            (address.is_some(), SUBSCRIBE_ILP_ADDRESS.env),
+            (price.is_some(), BROADCAST_PRICE.env),
+            (url.is_some(), RELAY_URL.env),
+        ];
+        let given = settings.iter().find(|(set, _)| *set);
+        let missing = settings.iter().find(|(set, _)| !*set);
+        let (Some((_, ilp_address)), Some(_), Some((url_name, relay_url))) = (address, price, url)
+        else {
+            return match (given, missing) {
+                (Some((_, given)), Some((_, missing))) => {
+                    Err(RelayError::EdgeIncomplete { given, missing })
+                }
+                _ => Ok(None),
+            };
+        };
+        let broadcast_price = self
+            .integer(
+                &BROADCAST_PRICE,
+                1..=MAX_BROADCAST_PRICE,
+                "a positive integer a JSON number carries exactly",
+            )?
+            .ok_or(RelayError::EdgeIncomplete {
+                given: SUBSCRIBE_ILP_ADDRESS.env,
+                missing: BROADCAST_PRICE.env,
+            })?;
+        let named = relay_url
+            .parse::<hyper::Uri>()
+            .ok()
+            .filter(|uri| uri.authority().is_some())
+            .filter(|uri| matches!(uri.scheme_str(), Some("ws" | "wss" | "http" | "https")));
+        if named.is_none() {
+            return Err(RelayError::InvalidSetting {
+                name: url_name,
+                expected: "a ws://, wss://, http:// or https:// URL",
+                value: relay_url,
+            });
+        }
+        if !has_connector {
+            return Err(RelayError::EdgeIncomplete {
+                given: SUBSCRIBE_ILP_ADDRESS.env,
+                missing: CONNECTOR_URL.env,
+            });
+        }
+        Ok(Some(SubscribeSettings {
+            ilp_address,
+            broadcast_price,
+            relay_url,
+        }))
+    }
+
+    /// The keys that follow the live feed without paying: hex, separated by
+    /// commas or white space, each once.
+    fn operator_pubkeys(&self) -> Result<Vec<PublicKey>, RelayError> {
+        let Some((name, raw)) = self.text(&OPERATOR_PUBKEYS) else {
+            return Ok(Vec::new());
+        };
+        let mut keys: Vec<PublicKey> = Vec::new();
+        for entry in raw
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .filter(|entry| !entry.is_empty())
+        {
+            let key = (entry.len() == 64)
+                .then(|| PublicKey::from_hex(entry).ok())
+                .flatten()
+                .ok_or_else(|| RelayError::InvalidSetting {
+                    name,
+                    expected: "comma-separated 64-character hex public keys",
+                    value: entry.to_string(),
+                })?;
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        Ok(keys)
+    }
+
     /// The node's identity: a mnemonic or a secret key, never both.
     ///
     /// The secret key is the flag, else `TOON_SECRET_KEY`, else its alias; an
