@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "conformance": "vitest run --config vitest.config.ts",
-    "bench": "node soak/bench.mjs"
+    "bench": "node soak/bench.mjs",
+    "probe": "node soak/probe.mjs"
   },
   "devDependencies": {
     "@types/ws": "^8.5.0",

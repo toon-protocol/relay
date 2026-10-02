@@ -24,14 +24,9 @@
 // on the host lands on both, and the figure reported for each is the median
 // of the rounds. The numbers compare images on one host; they are not a
 // capacity figure for any of them.
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { finalizeEvent, generateSecretKey } from 'nostr-tools/pure';
 import WebSocket from 'ws';
-
-const run = promisify(execFile);
-const docker = async (...args) => (await run('docker', args)).stdout.trim();
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+import { docker, imagesFrom, remove, sleep, start } from './relay-image.mjs';
 
 const number = (name, fallback) => Number(process.env[name] ?? fallback);
 const ROUNDS = number('ROUNDS', 3);
@@ -43,17 +38,7 @@ const FANOUT_EVENTS = number('FANOUT_EVENTS', 200);
 // Optional `docker run --cpus` for every image, to compare on equal cores.
 const CPUS = process.env.BENCH_CPUS;
 
-const IMAGES = (process.env.BENCH_IMAGES ?? '')
-  .split(',')
-  .filter(Boolean)
-  .map((pair) => {
-    const at = pair.indexOf('=');
-    return at < 1 ? {} : { name: pair.slice(0, at), image: pair.slice(at + 1) };
-  });
-if (IMAGES.length === 0 || IMAGES.some((i) => !i.name || !i.image)) {
-  console.error('BENCH_IMAGES="<name>=<image>[,<name>=<image>…]" is required');
-  process.exit(2);
-}
+const IMAGES = imagesFrom('BENCH_IMAGES');
 
 // What the connector states on a paid delivery (connector ADR 0040).
 const ATTRIBUTION = {
@@ -72,52 +57,6 @@ function signed(count, label, created_at) {
     )
   );
 }
-
-async function hostPort(container, port) {
-  const match = /:(\d+)$/m.exec(await docker('port', container, `${port}/tcp`));
-  if (!match) throw new Error(`no host port for ${port}`);
-  return Number(match[1]);
-}
-
-async function start(image) {
-  const container = await docker(
-    'run',
-    '-d',
-    '--rm',
-    '-p',
-    '127.0.0.1::3100',
-    '-p',
-    '127.0.0.1::7100',
-    '-e',
-    `TOON_SECRET_KEY=${'1'.repeat(64)}`,
-    '-e',
-    'TOON_MAX_CONNECTIONS=4096',
-    ...(CPUS ? ['--cpus', CPUS] : []),
-    image
-  );
-  try {
-    const writeUrl = `http://127.0.0.1:${await hostPort(container, 3100)}`;
-    const readUrl = `ws://127.0.0.1:${await hostPort(container, 7100)}`;
-    const deadline = Date.now() + 60_000;
-    for (;;) {
-      const healthy = await fetch(`${writeUrl}/health`).then(
-        (r) => r.ok,
-        () => false
-      );
-      if (healthy) break;
-      if (Date.now() > deadline)
-        throw new Error(`${image} never became healthy`);
-      await sleep(100);
-    }
-    return { container, writeUrl, readUrl };
-  } catch (error) {
-    await remove(container);
-    throw error;
-  }
-}
-
-const remove = (container) =>
-  docker('rm', '-f', '-v', container).catch(() => undefined);
 
 /**
  * The container's memory in MiB as `docker stats` counts it: its cgroup's
@@ -245,7 +184,7 @@ async function fanOut({ container, writeUrl, readUrl }, events, sockets) {
 }
 
 async function measure(image, writeEvents, fanOutEvents) {
-  const relay = await start(image);
+  const relay = await start(image, { cpus: CPUS });
   const sockets = [];
   try {
     await sleep(IDLE_SECONDS * 1000);

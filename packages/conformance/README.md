@@ -25,7 +25,8 @@ traffic from the Docker bridge makes every case that needs the write edge fail.
 On such a host the suite can run inside a Docker-in-Docker daemon, which the
 firewall does not see: load the image into a `docker:dind` container, and run
 vitest in a `node` container started with `--network container:<dind>` and
-`DOCKER_HOST=tcp://127.0.0.1:2375`.
+`DOCKER_HOST=tcp://127.0.0.1:2375`. `soak/dind-conformance.sh` does that for
+both images.
 
 | env                   | meaning                                               | default            |
 | --------------------- | ----------------------------------------------------- | ------------------ |
