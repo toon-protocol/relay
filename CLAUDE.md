@@ -1,8 +1,8 @@
 # relay
 
-The TOON Protocol **Nostr relay node**: `@toon-protocol/relay` — a NIP-01
-WebSocket read surface, an HTTP `POST /write` surface, a NIP-11 relay
-information document on the read port, and the `startRelay` launcher/CLI.
+The TOON Protocol **Nostr relay node**, in Rust (`crates/relay`, the `relay` binary and
+image) — a NIP-01 WebSocket read surface, an HTTP `POST /write` surface and a
+NIP-11 relay information document on the read port.
 
 Part of the **TOON Protocol** — pay-to-write Nostr over Interledger (ILP),
 split into per-team repos. The relay is a plain HTTP/WebSocket app: it speaks
@@ -16,7 +16,7 @@ re-validating it — that statement is the whole trust model.
 That rule is also why the relay does not WRITE DOWN where its writes are paid
 for. Its NIP-11 document names an ILP address, a connector URL, a sealing key,
 a carriage and a price, and every one of those is read from the connector's own
-free `GET /ilp` at runtime (`launcher/connector-edge.ts`), never held here. The
+free `GET /ilp` at runtime (`crates/relay/src/edge.rs`), never held here. The
 relay is told exactly one thing it cannot read — which of that connector's
 routes reaches its own `POST /write` — and refuses to advertise an address the
 connector does not terminate. See TOON_Network#121 and its ADR 0024.
@@ -24,29 +24,26 @@ connector does not terminate. See TOON_Network#121 and its ADR 0024.
 ## Build & test
 
 ```
+cargo fmt --all -- --check
+cargo build --workspace
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 pnpm install
 pnpm -r build
 pnpm -r test
 ```
 
+The relay is Rust (rebuilt as a drop-in for the original TypeScript relay, spec
+#185; cut over in #205; the TypeScript source, changesets and npm publishing
+were removed in #206). The pnpm workspace that remains holds only the
+conformance suite, the soak tooling (`packages/conformance/`) and the guards in
+`deploy/*.test.ts`; nothing is published to npm.
+
 ## The Rust relay
 
-The relay was rebuilt in Rust as a drop-in replacement for the image (spec:
-#185), and since the cutover (#205) the Rust relay is the deployed relay and
-the only image published. The TypeScript package stays until #206 removes it:
-its image is still built in CI for the conformance suite, its last published
-build is the rollback target, and work on it is frozen.
-
-The Rust relay is a Cargo workspace beside the package: `Cargo.toml`,
-`rust-toolchain.toml` (the one toolchain pin; rustup installs it) and
-`crates/relay`, with its image in `crates/relay/Dockerfile`.
-
-```
-cargo fmt --all -- --check
-cargo build --workspace
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-```
+The relay is a Cargo workspace: `Cargo.toml`, `rust-toolchain.toml` (the one
+toolchain pin; rustup installs it) and `crates/relay`, with its image in
+`crates/relay/Dockerfile`; its commands are the `cargo` lines under Build & test.
 
 Rust code follows `docs/rust-coding-standards.md` (the connector's standards,
 plus unsafe forbidden, the pinned toolchain, invariants as types with
@@ -55,7 +52,7 @@ protocol crate alone).
 
 What decides whether a Rust change is correct is the **conformance suite**
 (`packages/conformance/`): it starts an image and talks only to its ports, and
-CI runs it against both images. A case the Rust relay does not pass yet is
+CI runs it against the image. A case the Rust relay does not pass yet is
 marked `expectedFailureFor: ['rust']` and goes red once it passes, so a slice
 that builds a surface removes that surface's markers in the same change.
 
@@ -68,7 +65,8 @@ immutable `:rust-<handle>` and `:rust-sha-*` tags:
 
 - `ghcr.io/toon-protocol/relay` — the app (`crates/relay/Dockerfile`)
 
-The rollback to the last TypeScript build is in `deploy/README.md`.
+The rollback to the last TypeScript build (an image that is no longer built from
+anything here) is in `deploy/README.md`.
 
 The connector is the **stock** `ghcr.io/toon-protocol/connector` image on an
 immutable pin, with `deploy/connector.toml` mounted read-only — the same shape
@@ -94,10 +92,11 @@ toon-protocol/toon-meta, which is being retired. Nothing this repo needs to
 build, test or ship depends on it; CI, including the no-op merge guard
 (`.github/scripts/no-op-merge-guard.sh`), is self-contained.
 
-## Publishing
+## Releasing
 
-CI publishes via **changesets + `pnpm`** using the org `NPM_TOKEN` secret.
-**Never run `npm publish`** (it ships unresolved `workspace:*`).
+Merging to `main` publishes the Rust image through `publish-relay-image.yml`
+once the conformance suite passes against it; that is the whole release scheme.
+There are no changesets and no npm package. **Never run `npm publish`.**
 
 ## Agent skills
 

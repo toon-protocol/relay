@@ -72,17 +72,14 @@ PROBE_IMAGES="typescript=ghcr.io/toon-protocol/relay:sha-7b6bab5,rust=ghcr.io/to
 Sends the same malformed and edge inputs to every image, on both ports and
 over WebSocket, and prints the ones they answer differently as a Markdown
 table. Each row is either a divergence that is written down (#185's
-compatibility contract, the suite's `expectedFailureFor: ['typescript']`
-cases) or a bug to file.
+compatibility contract) or a bug to file.
 
-## 5. The suite on both images
+## 5. The suite inside Docker-in-Docker
 
-Against each image in turn, with the image-swap case, inside a
-Docker-in-Docker daemon: for a host whose firewall keeps a relay from the
-suite's stub connector.
+Against the image, inside a Docker-in-Docker daemon: for a host whose firewall
+keeps a relay from the suite's stub connector.
 
 ```
-TYPESCRIPT_IMAGE=ghcr.io/toon-protocol/relay:sha-7b6bab5 \
 RUST_IMAGE=ghcr.io/toon-protocol/relay:release \
   packages/conformance/soak/dind-conformance.sh
 ```

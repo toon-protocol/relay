@@ -22,7 +22,7 @@ export const DEFAULT_SECRET_KEY = '1'.repeat(64);
  * (the image's `CMD` is replaced by anything after the image name).
  */
 function relayCommand(): string[] {
-  return (process.env['CONFORMANCE_COMMAND'] || 'node dist/cli.js').split(' ');
+  return (process.env['CONFORMANCE_COMMAND'] || 'relay').split(' ');
 }
 
 /** Environment overrides: a string sets a variable, `undefined` removes it. */
@@ -41,7 +41,7 @@ export interface StartOptions {
   env?: Env;
   /**
    * A named docker volume to mount at `/data`, for a case that runs more than
-   * one image over the same database. Created if absent; the caller removes
+   * one relay over the same database. Created if absent; the caller removes
    * it with `removeVolume`. Default: the image's own anonymous volume.
    */
   volume?: string;

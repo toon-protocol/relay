@@ -223,7 +223,6 @@ const HEALTHCHECK_WGET_SITES: { file: string; pattern: RegExp }[] = [
     file: 'deploy/docker-compose.yml',
     pattern: /wget -q --spider http:\/\/([^:/]+):3000\/ilp\/identity/,
   },
-  { file: 'packages/relay/Dockerfile', pattern: IMAGE_HEALTHCHECK },
   { file: 'crates/relay/Dockerfile', pattern: IMAGE_HEALTHCHECK },
 ];
 

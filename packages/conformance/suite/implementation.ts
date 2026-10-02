@@ -12,9 +12,9 @@ export function imageUnderTest(): string {
   return image;
 }
 
-/** The name of the implementation under test (default `typescript`). */
+/** The name of the implementation under test (default `rust`). */
 export function implementationName(): string {
-  return process.env['CONFORMANCE_IMPL'] || 'typescript';
+  return process.env['CONFORMANCE_IMPL'] || 'rust';
 }
 
 export interface ConformanceTestOptions {

@@ -2,9 +2,9 @@ name: Publish relay image
 
 # Builds the relay image (crates/relay/Dockerfile, the Rust relay of spec #185)
 # and pushes it to GHCR. Since the cutover (#205) this is the image every stack
-# receives: the TypeScript image is still built in CI, for the conformance
-# suite, and is no longer pushed by anything (deploy/rust-workspace.test.ts
-# fails the build if that changes).
+# receives, and the only relay image built from this repo (the TypeScript relay
+# was removed in #206; deploy/rust-workspace.test.ts fails the build if it
+# comes back).
 #
 #   release                moves on every publish from main; what a stack follows
 #   latest                 moves with it

@@ -1,10 +1,6 @@
 import { afterAll, beforeAll, describe, expect } from 'vitest';
 import { startRelay, type RunningRelay } from './harness/relay-container.js';
-import {
-  conformanceTest,
-  imageUnderTest,
-  implementationName,
-} from './implementation.js';
+import { conformanceTest, imageUnderTest } from './implementation.js';
 
 let relay: RunningRelay;
 
@@ -37,22 +33,8 @@ describe('relay image conformance: operational endpoints', () => {
     async () => {
       const response = await fetch(`${relay.writeUrl}/metrics`);
       expect(response.status).toBe(200);
-      // The event-loop block is a Node measurement: the Rust relay has no
-      // event loop, so it has no such block (#200).
-      const eventLoop =
-        implementationName() === 'typescript'
-          ? {
-              eventLoopDelayMs: {
-                mean: expect.any(Number),
-                p50: expect.any(Number),
-                p99: expect.any(Number),
-                max: expect.any(Number),
-              },
-            }
-          : {};
       expect(await response.json()).toEqual({
         timestamp: expect.any(Number),
-        ...eventLoop,
         verify: {
           implementation: expect.any(String),
           workers: expect.any(Number),

@@ -49,9 +49,8 @@
 #
 # ── WHY IT PUSHES AS A GITHUB APP, AND FAILS WITHOUT ONE ────────────────────
 # The pin bump is pushed with a GitHub App installation token (the org secrets
-# APP_ID / APP_PRIVATE_KEY), never the default `GITHUB_TOKEN`. `release.yml`
-# learned the same thing on the Version Packages PR and its comment there is
-# the record: a push made by `GITHUB_TOKEN` fires NO workflows at all, so the
+# APP_ID / APP_PRIVATE_KEY), never the default `GITHUB_TOKEN`. The retired
+# release workflow (#206) learned the same thing on its Version Packages PR: a push made by `GITHUB_TOKEN` fires NO workflows at all, so the
 # pull request's `pull_request` events run no CI and the required `CI OK`
 # context can never appear. The pull request is open, clean, and permanently
 # BLOCKED. `GITHUB_TOKEN` cannot open one either -- the org forbids Actions
@@ -65,10 +64,8 @@
 # an empty commit to each branch to make CI run at all (TOON_Network#110).
 #
 # So if the App credential is absent this job FAILS at its first step instead
-# of opening a pull request nothing can merge. `release.yml` falls back to
-# `GITHUB_TOKEN` because the job it mostly exists for -- publishing to npm --
-# still works without the App. Here there is no such half: a pin bump that
-# cannot report CI is the entire defect, and a red run says so where a stuck
+# of opening a pull request nothing can merge. There is no half of this job
+# that works without the App: a pin bump that cannot report CI is the entire defect, and a red run says so where a stuck
 # pull request did not.
 name: Adopt connector release
 
@@ -116,8 +113,8 @@ jobs:
 
       - name: Mint the GitHub App token
         id: app-token
-        # Deliberately NO `continue-on-error`, which `release.yml` does have:
-        # its npm publish survives a missing App, and nothing here does.
+        # Deliberately NO `continue-on-error`: nothing here survives a
+        # missing App.
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.APP_ID }}

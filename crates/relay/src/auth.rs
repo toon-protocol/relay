@@ -14,6 +14,11 @@
 //! has nothing to compare the tag with. The challenge, unique to the
 //! connection, is what ties an `AUTH` to this relay.
 //!
+//! A relay that sells its live feed (#215) challenges every connection whether
+//! or not this is on, and is told its URL: there the `AUTH` is checked by
+//! [`crate::proof`], which holds the `relay` tag to that URL, and the key it
+//! proves counts here too.
+//!
 //! This module holds the rules and no connection state. The session keeps the
 //! challenge and who has authenticated, and asks here whether an `AUTH` answers
 //! it and whether a filter needs it.

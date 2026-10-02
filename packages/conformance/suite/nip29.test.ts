@@ -129,16 +129,12 @@ describe('NIP-29: off by default', () => {
 });
 
 describe('NIP-29: enabled', () => {
-  conformanceTest(
-    'lists 29 in supported_nips',
-    async () => {
-      await waitForEdge(groups.readUrl);
-      const { body } = await getDocument(groups.readUrl);
-      expect(body['supported_nips']).toContain(29);
-      expect(body['supported_nips']).toContain(42);
-    },
-    { expectedFailureFor: ['typescript'] }
-  );
+  conformanceTest('lists 29 in supported_nips', async () => {
+    await waitForEdge(groups.readUrl);
+    const { body } = await getDocument(groups.readUrl);
+    expect(body['supported_nips']).toContain(29);
+    expect(body['supported_nips']).toContain(42);
+  });
 
   conformanceTest(
     'a group is created by a 9007, whose author becomes its admin',
@@ -164,8 +160,7 @@ describe('NIP-29: enabled', () => {
         const members = must(byKind.get(39002));
         expect(members.tags.map((t) => t[1])).toContain(getPublicKey(owner));
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -180,8 +175,7 @@ describe('NIP-29: enabled', () => {
         await write(groups, inGroup(owner, CREATE, 'Not A Valid Id!'))
       ).toBe(422);
       expect(await write(groups, signed(owner, { kind: CREATE }))).toBe(422);
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -190,8 +184,7 @@ describe('NIP-29: enabled', () => {
       expect(
         await write(groups, inGroup(generateSecretKey(), CHAT, freshId()))
       ).toBe(404);
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -217,8 +210,7 @@ describe('NIP-29: enabled', () => {
           [getPublicKey(owner), getPublicKey(outsider)].sort()
         );
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -244,8 +236,7 @@ describe('NIP-29: enabled', () => {
       ]) {
         expect(await write(groups, event), JSON.stringify(event)).toBe(403);
       }
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -273,36 +264,31 @@ describe('NIP-29: enabled', () => {
           getPublicKey(member)
         );
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
-  conformanceTest(
-    'editing the metadata replaces the 39000 event',
-    async () => {
-      const owner = generateSecretKey();
-      const group = await createGroup(groups, owner);
-      await publish(
-        groups.writeUrl,
-        inGroup(owner, EDIT_METADATA, group, [
-          ['name', 'Renamed'],
-          ['about', 'for agents'],
-          ['closed'],
-        ])
-      );
-      await withClient(groups, async (client) => {
-        const found = await client.req('meta', {
-          kinds: [39000],
-          '#d': [group],
-        });
-        expect(found).toHaveLength(1);
-        expect(tagValue(must(found[0]), 'name')).toBe('Renamed');
-        expect(tagValue(must(found[0]), 'about')).toBe('for agents');
-        expect(must(found[0]).tags.some((t) => t[0] === 'closed')).toBe(true);
+  conformanceTest('editing the metadata replaces the 39000 event', async () => {
+    const owner = generateSecretKey();
+    const group = await createGroup(groups, owner);
+    await publish(
+      groups.writeUrl,
+      inGroup(owner, EDIT_METADATA, group, [
+        ['name', 'Renamed'],
+        ['about', 'for agents'],
+        ['closed'],
+      ])
+    );
+    await withClient(groups, async (client) => {
+      const found = await client.req('meta', {
+        kinds: [39000],
+        '#d': [group],
       });
-    },
-    { expectedFailureFor: ['typescript'] }
-  );
+      expect(found).toHaveLength(1);
+      expect(tagValue(must(found[0]), 'name')).toBe('Renamed');
+      expect(tagValue(must(found[0]), 'about')).toBe('for agents');
+      expect(must(found[0]).tags.some((t) => t[0] === 'closed')).toBe(true);
+    });
+  });
 
   conformanceTest(
     'clients cannot write the relay-generated metadata kinds',
@@ -314,8 +300,7 @@ describe('NIP-29: enabled', () => {
           await write(groups, signed(owner, { kind, tags: [['d', group]] }))
         ).toBe(403);
       }
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -329,23 +314,18 @@ describe('NIP-29: enabled', () => {
       await publish(groups.writeUrl, inGroup(joiner, JOIN, closed));
       expect(await write(groups, inGroup(joiner, CHAT, open))).toBe(200);
       expect(await write(groups, inGroup(joiner, CHAT, closed))).toBe(403);
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
-  conformanceTest(
-    'a member who leaves can no longer write',
-    async () => {
-      const owner = generateSecretKey();
-      const joiner = generateSecretKey();
-      const group = await createGroup(groups, owner);
-      await publish(groups.writeUrl, inGroup(joiner, JOIN, group));
-      expect(await write(groups, inGroup(joiner, CHAT, group))).toBe(200);
-      await publish(groups.writeUrl, inGroup(joiner, LEAVE, group));
-      expect(await write(groups, inGroup(joiner, CHAT, group))).toBe(403);
-    },
-    { expectedFailureFor: ['typescript'] }
-  );
+  conformanceTest('a member who leaves can no longer write', async () => {
+    const owner = generateSecretKey();
+    const joiner = generateSecretKey();
+    const group = await createGroup(groups, owner);
+    await publish(groups.writeUrl, inGroup(joiner, JOIN, group));
+    expect(await write(groups, inGroup(joiner, CHAT, group))).toBe(200);
+    await publish(groups.writeUrl, inGroup(joiner, LEAVE, group));
+    expect(await write(groups, inGroup(joiner, CHAT, group))).toBe(403);
+  });
 
   conformanceTest(
     'a 9005 by an admin deletes an event of the group',
@@ -365,8 +345,7 @@ describe('NIP-29: enabled', () => {
         });
         expect(found.map((e) => e.id)).not.toContain(message.id);
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -386,8 +365,7 @@ describe('NIP-29: enabled', () => {
           })
         ).toEqual([]);
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -415,8 +393,7 @@ describe('NIP-29: enabled', () => {
           (updated[2] as { tags: string[][] }).tags.map((t) => t[1])
         ).toContain(getPublicKey(joiner));
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 });
 
@@ -433,8 +410,7 @@ describe('NIP-29: reading closed and private groups', () => {
         expect(String(closed[2])).toMatch(/^auth-required:/);
         expect(client.frames.some((f) => f[0] === 'EOSE')).toBe(false);
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -449,8 +425,7 @@ describe('NIP-29: reading closed and private groups', () => {
         const found = await client.req('closed', { '#h': [group] });
         expect(found.map((e) => e.id)).toContain(message.id);
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -465,8 +440,7 @@ describe('NIP-29: reading closed and private groups', () => {
         const closed = await client.next(isClosed('closed'));
         expect(String(closed[2])).toMatch(/^restricted:/);
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -489,8 +463,7 @@ describe('NIP-29: reading closed and private groups', () => {
           )
         ).toBe(false);
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -514,8 +487,7 @@ describe('NIP-29: reading closed and private groups', () => {
         });
         expect(found).toHaveLength(1);
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -532,7 +504,6 @@ describe('NIP-29: reading closed and private groups', () => {
           (f) => f[0] === 'EVENT' && (f[2] as { id: string }).id === message.id
         );
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 });

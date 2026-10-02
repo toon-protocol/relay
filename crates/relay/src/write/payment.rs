@@ -109,6 +109,20 @@ impl PaymentStatement {
     }
 }
 
+/// What the connector says it charged for a delivery, in base units, when it
+/// says so: the one header of the statement a route that is not the paid
+/// write needs, and read with none of the rest. A subscribe packet credits
+/// what its route charged and never the payer (#215), so the payer and the
+/// chain are not read at all. Anything but one well-formed amount is `None`.
+pub(crate) fn charged_amount(headers: &HeaderMap) -> Option<u64> {
+    let amount = stated_once(headers, AMOUNT_HEADER)?;
+    if is_base_units(amount) {
+        amount.parse().ok()
+    } else {
+        None
+    }
+}
+
 /// The value of the header `name` when it is stated exactly once and is not
 /// empty. A header that arrives twice is two statements, and choosing one of
 /// them would be the relay deciding what the connector said.

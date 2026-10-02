@@ -199,6 +199,13 @@ services:
       TOON_EPHEMERAL_RATE_LIMIT: ${RELAY_EPHEMERAL_RATE_LIMIT:-200}
       TOON_EPHEMERAL_RATE_WINDOW_MS: ${RELAY_EPHEMERAL_RATE_WINDOW_MS:-10000}
       TOON_EPHEMERAL_MAX_BODY_BYTES: ${RELAY_EPHEMERAL_MAX_BODY_BYTES:-8192}
+      # Free read limits, REQs a minute (#216). The relay counts a source by
+      # its TCP peer, and every reader here arrives through Caddy, so the
+      # source limit would be one limit shared by every client: it is raised
+      # to what every connection's own limit adds up to, which leaves the
+      # per-connection limit as the one that tells clients apart.
+      TOON_READ_RATE_LIMIT: ${RELAY_READ_RATE_LIMIT:-1200}
+      TOON_READ_SOURCE_RATE_LIMIT: ${RELAY_READ_SOURCE_RATE_LIMIT:-4915200}
       # ── Where a write to this relay is paid for (TOON_Network#121) ────────
       # The relay serves a NIP-11 relay information document on its READ port
       # naming its paid write edge, so a client holding only this relay's URL
