@@ -167,11 +167,14 @@ impl Client {
     }
 
     pub async fn send(&mut self, message: serde_json::Value) {
+        self.send_text(&message.to_string()).await;
+    }
+
+    /// Send `text` as it is, JSON or not.
+    pub async fn send_text(&mut self, text: &str) {
         use futures_util::SinkExt;
         self.socket
-            .send(tokio_tungstenite::tungstenite::Message::text(
-                message.to_string(),
-            ))
+            .send(tokio_tungstenite::tungstenite::Message::text(text))
             .await
             .expect("the connection is open");
     }

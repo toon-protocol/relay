@@ -8,6 +8,11 @@
 //! itself and speaks to the framework over an in-memory pipe, forwarding what
 //! the framework should hear and answering the rest:
 //!
+//! - a message that is not JSON, not an array, of an unknown type or a REQ
+//!   without a string subscription id is a `NOTICE` that names which;
+//! - a `CLOSED` with no reason, which the framework sends when a by-`ids`
+//!   subscription has found all it asked for, is not passed on: the
+//!   subscription stays open, as on the TypeScript relay;
 //! - an empty subscription id, a REQ past the subscription limit and a REQ
 //!   with more filters than the limit are each a `NOTICE`, and the REQ goes
 //!   no further;
@@ -90,7 +95,7 @@ pub(crate) enum Verdict {
     /// Pass this text to the framework.
     Forward(String),
     /// Answer with this `NOTICE`; the framework never hears the message.
-    Refuse(&'static str),
+    Refuse(String),
     /// Answer with this frame; the framework never hears the message.
     Answer(String),
 }
@@ -187,9 +192,14 @@ pub(crate) struct Gate {
 impl Gate {
     /// What to do with `text`, a message the client sent.
     pub(crate) fn client_sent(&mut self, text: &str) -> Verdict {
-        let Ok(Value::Array(mut items)) = serde_json::from_str::<Value>(text) else {
-            // Not a message: the framework says so in its own NOTICE.
-            return Verdict::Forward(text.to_string());
+        let mut items = match serde_json::from_str::<Value>(text) {
+            Ok(Value::Array(items)) => items,
+            Ok(_) => {
+                return Verdict::Refuse(
+                    "error: invalid message format, expected JSON array".to_string(),
+                );
+            }
+            Err(_) => return Verdict::Refuse("error: invalid JSON".to_string()),
         };
         match items.first().and_then(Value::as_str) {
             Some("CLOSE") => {
@@ -200,17 +210,19 @@ impl Gate {
                 Verdict::Forward(text.to_string())
             }
             Some("REQ") => {
-                let Some(id) = items.get(1).and_then(Value::as_str).map(str::to_string) else {
-                    return Verdict::Forward(text.to_string());
+                let Some(id) = items
+                    .get(1)
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_string)
+                else {
+                    return Verdict::Refuse("error: invalid subscription id".to_string());
                 };
-                if id.is_empty() {
-                    return Verdict::Refuse("error: invalid subscription id");
-                }
                 if !self.open.contains(&id) && self.open.len() >= MAX_SUBSCRIPTIONS {
-                    return Verdict::Refuse("error: too many subscriptions");
+                    return Verdict::Refuse("error: too many subscriptions".to_string());
                 }
                 if items.len() - 2 > MAX_FILTERS {
-                    return Verdict::Refuse("error: too many filters");
+                    return Verdict::Refuse("error: too many filters".to_string());
                 }
                 self.open.insert(id.clone());
                 let mut changed = false;
@@ -232,7 +244,11 @@ impl Gate {
                     .unwrap_or(Value::Null);
                 Verdict::Answer(json!(["OK", id, false, self.refusal.words()]).to_string())
             }
-            _ => Verdict::Forward(text.to_string()),
+            Some("COUNT" | "AUTH" | "NEG-OPEN" | "NEG-MSG" | "NEG-CLOSE") => {
+                Verdict::Forward(text.to_string())
+            }
+            Some(other) => Verdict::Refuse(format!("error: unknown message type: {other}")),
+            None => Verdict::Refuse("error: unknown message type: ".to_string()),
         }
     }
 
@@ -282,6 +298,13 @@ impl Gate {
         };
         let id = items.get(1).and_then(Value::as_str);
         if closed {
+            // The framework ends a by-`ids` subscription once it has returned
+            // as many events as ids, with no reason. The TypeScript relay
+            // leaves such a subscription open, so the client never hears it
+            // and the place stays taken until the client closes it.
+            if items.get(2).and_then(Value::as_str) == Some("") {
+                return Relayed::Drop;
+            }
             if let Some(id) = id {
                 self.open.remove(id);
                 self.watched.remove(id);
@@ -548,21 +571,64 @@ mod tests {
         let mut gate = Gate::default();
         assert_eq!(
             gate.client_sent(r#"["REQ","",{}]"#),
-            Verdict::Refuse("error: invalid subscription id")
+            Verdict::Refuse("error: invalid subscription id".to_string())
         );
     }
 
     #[test]
-    fn what_is_not_a_request_is_left_to_the_framework() {
+    fn what_is_not_a_message_is_named_in_a_notice_of_its_own() {
+        let mut gate = Gate::default();
+        for (text, notice) in [
+            ("{not json", "error: invalid JSON"),
+            (
+                r#"{"a":1}"#,
+                "error: invalid message format, expected JSON array",
+            ),
+            (r#"["BOGUS","x"]"#, "error: unknown message type: BOGUS"),
+            (r#"["REQ",7,{}]"#, "error: invalid subscription id"),
+        ] {
+            assert_eq!(
+                gate.client_sent(text),
+                Verdict::Refuse(notice.to_string()),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_messages_the_framework_answers_are_forwarded() {
         let mut gate = Gate::default();
         for text in [
-            "{not json",
-            r#"{"a":1}"#,
-            r#"["BOGUS","x"]"#,
-            r#"["REQ",7,{}]"#,
+            r#"["COUNT","c",{}]"#,
+            r#"["AUTH",{}]"#,
+            r#"["NEG-OPEN","n",{},"00"]"#,
+            r#"["NEG-MSG","n","00"]"#,
+            r#"["NEG-CLOSE","n"]"#,
+            r#"["CLOSE","a"]"#,
         ] {
             assert_eq!(gate.client_sent(text), forwarded(text), "{text}");
         }
+    }
+
+    #[test]
+    fn a_closed_without_a_reason_is_never_heard_and_frees_nothing() {
+        let mut gate = Gate::default();
+        for i in 0..MAX_SUBSCRIPTIONS {
+            gate.client_sent(&format!(r#"["REQ","s{i}",{{}}]"#));
+        }
+        assert_eq!(gate.relay_sent(r#"["CLOSED","s0",""]"#), Relayed::Drop);
+        assert_eq!(
+            gate.client_sent(r#"["REQ","more",{}]"#),
+            Verdict::Refuse("error: too many subscriptions".to_string())
+        );
+        assert_eq!(
+            gate.relay_sent(r#"["CLOSED","s1","error: x"]"#),
+            Relayed::Pass
+        );
+        let text = r#"["REQ","more",{}]"#;
+        assert_eq!(gate.client_sent(text), forwarded(text));
+        gate.client_sent(r#"["CLOSE","s0"]"#);
+        assert_eq!(gate.open.len(), MAX_SUBSCRIPTIONS - 1);
     }
 
     #[test]
@@ -574,7 +640,7 @@ mod tests {
         }
         assert_eq!(
             gate.client_sent(r#"["REQ","more",{}]"#),
-            Verdict::Refuse("error: too many subscriptions")
+            Verdict::Refuse("error: too many subscriptions".to_string())
         );
         let replace = r#"["REQ","s0",{}]"#;
         assert_eq!(gate.client_sent(replace), forwarded(replace));
@@ -594,7 +660,7 @@ mod tests {
         }
         assert_eq!(
             gate.client_sent(r#"["REQ","c",{}]"#),
-            Verdict::Refuse("error: too many subscriptions")
+            Verdict::Refuse("error: too many subscriptions".to_string())
         );
     }
 
@@ -607,7 +673,7 @@ mod tests {
         };
         assert_eq!(
             gate.client_sent(&request(MAX_FILTERS + 1)),
-            Verdict::Refuse("error: too many filters")
+            Verdict::Refuse("error: too many filters".to_string())
         );
         let at_limit = request(MAX_FILTERS);
         assert_eq!(gate.client_sent(&at_limit), Verdict::Forward(at_limit));
