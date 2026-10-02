@@ -13,10 +13,11 @@
  * - the connector's crate on one commit, named only for its self-description
  *   types, the attribution header names defined in one module, and the
  *   invariant types' fields private to their modules (#194);
- * - the Rust image's contract with a stack matching the TypeScript image's:
- *   ports, volume, environment defaults, healthcheck and user id;
+ * - the Rust image's contract with a stack, which the TypeScript image it
+ *   replaced set: ports, volume, environment defaults, healthcheck, user id;
  * - the Rust image owning `:release` and `:latest` (#205), published with its
- *   release handle built in, and the TypeScript image built but never pushed;
+ *   release handle built in, and nothing else pushed;
+ * - nothing of the TypeScript relay, changesets or npm publishing left (#206);
  * - the rollback to the last TypeScript image named as one tag.
  */
 
@@ -27,7 +28,6 @@ import { parse } from 'smol-toml';
 import { parse as parseYaml } from 'yaml';
 
 const REPO_ROOT = resolve(import.meta.dirname, '..');
-const TYPESCRIPT_DOCKERFILE = 'packages/relay/Dockerfile';
 const RUST_DOCKERFILE = 'crates/relay/Dockerfile';
 const PUBLISH_WORKFLOW = 'publish-relay-image.yml';
 
@@ -327,8 +327,9 @@ describe('an invariant type keeps its fields to its own module', () => {
   });
 });
 
-describe('the Rust image is a drop-in for the TypeScript image', () => {
-  const typescript = finalStage(TYPESCRIPT_DOCKERFILE);
+describe("the Rust image keeps the TypeScript image's contract with a stack", () => {
+  // The TypeScript image is gone from the tree (#206); what a deployed stack
+  // relies on is stated here instead of compared against it.
   const rust = finalStage(RUST_DOCKERFILE);
 
   it('is an Alpine runtime carrying one binary', () => {
@@ -339,27 +340,25 @@ describe('the Rust image is a drop-in for the TypeScript image', () => {
   });
 
   it('exposes the same ports, volume and healthcheck', () => {
-    for (const instruction of ['EXPOSE', 'VOLUME', 'HEALTHCHECK']) {
-      expect(instructionsOf(rust, instruction), instruction).toEqual(
-        instructionsOf(typescript, instruction)
-      );
-      expect(instructionsOf(rust, instruction), instruction).toHaveLength(1);
-    }
+    expect(instructionsOf(rust, 'EXPOSE')).toEqual(['EXPOSE 3100 7100']);
+    expect(instructionsOf(rust, 'VOLUME')).toEqual(['VOLUME /data']);
+    expect(instructionsOf(rust, 'HEALTHCHECK')).toHaveLength(1);
   });
 
-  it('sets the same TOON_* defaults', () => {
-    const toonDefaults = (lines: string[]) =>
-      instructionsOf(lines, 'ENV').filter((line) =>
-        line.startsWith('ENV TOON_')
-      );
-    expect(toonDefaults(rust)).toEqual(toonDefaults(typescript));
-    expect(toonDefaults(rust).length).toBeGreaterThan(0);
+  it('sets the TOON_* defaults a stack was written against', () => {
+    const toonDefaults = instructionsOf(rust, 'ENV').filter((line) =>
+      line.startsWith('ENV TOON_')
+    );
+    expect(toonDefaults).toEqual([
+      'ENV TOON_BLS_PORT=3100',
+      'ENV TOON_DATA_DIR=/data',
+      'ENV TOON_RELAY_PORT=7100',
+    ]);
   });
 
-  it('runs as uid and gid 1000, which is `node` in the TypeScript image', () => {
-    // node:*-alpine creates `node` as 1000:1000; the files in a deployed
+  it('runs as uid and gid 1000, which was `node` in the TypeScript image', () => {
+    // node:*-alpine created `node` as 1000:1000; the files in a deployed
     // /data volume are owned by it.
-    expect(instructionsOf(typescript, 'USER')).toEqual(['USER node']);
     expect(instructionsOf(rust, 'USER')).toEqual(['USER relay']);
     const createsUser = rust.find((line) => line.includes('adduser'));
     expect(createsUser).toContain('addgroup -g 1000 relay');
@@ -368,7 +367,7 @@ describe('the Rust image is a drop-in for the TypeScript image', () => {
   });
 });
 
-describe('the Rust image owns :release; the TypeScript image is built and never pushed', () => {
+describe('the Rust image owns :release and is the only image built', () => {
   interface Workflow {
     jobs: Record<
       string,
@@ -460,43 +459,55 @@ describe('the Rust image owns :release; the TypeScript image is built and never 
     expect(manifest).toMatch(/^version\s*=\s*"0\.1\.0"/m);
   });
 
-  it('builds both Dockerfiles in CI without pushing either', () => {
+  it('builds the Rust Dockerfile in CI without pushing it', () => {
     const ci = builds.filter((build) => build.workflow === 'ci.yml');
+    expect(ci.length).toBeGreaterThan(0);
     expect(ci.every((build) => build.with['push'] === false)).toBe(true);
-    // The conformance matrix is where both are built, each under the suite's
-    // name for it and the image's own command.
-    const workflow = parseYaml(readFile(`${workflowDir}/ci.yml`)) as {
-      jobs: {
-        conformance: {
-          strategy: { matrix: { include: Record<string, string>[] } };
-        };
-      };
+    expect(ci.map((build) => build.with['file'])).toEqual([RUST_DOCKERFILE]);
+    // Outside CI the Rust Dockerfile is named by the publish workflow alone.
+    const naming = workflows.filter(
+      (name) =>
+        name !== 'ci.yml' &&
+        readFile(`${workflowDir}/${name}`).includes(RUST_DOCKERFILE)
+    );
+    expect(naming).toEqual([PUBLISH_WORKFLOW]);
+  });
+});
+
+describe('the TypeScript relay, changesets and npm publishing are gone (#206)', () => {
+  it('has no TypeScript relay package, changeset directory or release workflow', () => {
+    for (const path of [
+      'packages/relay',
+      '.changeset',
+      '.github/workflows/release.yml',
+    ]) {
+      expect(existsSync(resolve(REPO_ROOT, path)), path).toBe(false);
+    }
+  });
+
+  it('has no workflow that runs changesets or an npm publish', () => {
+    const workflowDir = '.github/workflows';
+    for (const name of readdirSync(resolve(REPO_ROOT, workflowDir))) {
+      // Comments may say why; a step may not do it.
+      const steps = readFile(`${workflowDir}/${name}`)
+        .split('\n')
+        .filter((line) => !line.trim().startsWith('#'))
+        .join('\n');
+      expect(steps, name).not.toMatch(/changeset|npm publish|NPM_TOKEN/i);
+    }
+  });
+
+  it('keeps no changeset tooling or publishing script in the root manifest', () => {
+    const manifest = JSON.parse(readFile('package.json')) as {
+      scripts: Record<string, string>;
+      devDependencies: Record<string, string>;
     };
-    const matrix = workflow.jobs.conformance.strategy.matrix.include;
-    expect(matrix).toContainEqual(
-      expect.objectContaining({
-        implementation: 'rust',
-        dockerfile: RUST_DOCKERFILE,
-        command: 'relay',
-      })
+    expect(Object.keys(manifest.devDependencies)).not.toContain(
+      '@changesets/cli'
     );
-    expect(matrix).toContainEqual(
-      expect.objectContaining({
-        implementation: 'typescript',
-        dockerfile: TYPESCRIPT_DOCKERFILE,
-      })
-    );
-    // Outside CI the Rust Dockerfile is named by the publish workflow alone,
-    // and the TypeScript one by nothing: a workflow that named it could push
-    // it back over `:release`.
-    const naming = (dockerfile: string) =>
-      workflows.filter(
-        (name) =>
-          name !== 'ci.yml' &&
-          readFile(`${workflowDir}/${name}`).includes(dockerfile)
-      );
-    expect(naming(RUST_DOCKERFILE)).toEqual([PUBLISH_WORKFLOW]);
-    expect(naming(TYPESCRIPT_DOCKERFILE)).toEqual([]);
+    for (const script of Object.values(manifest.scripts)) {
+      expect(script).not.toMatch(/changeset/);
+    }
   });
 });
 

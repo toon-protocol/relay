@@ -28,7 +28,8 @@ const BASE_NIPS: [u16; 4] = [1, 9, 11, 16];
 /// NIP-40, claimed while expiration is enforced.
 const EXPIRATION_NIP: u16 = 40;
 
-/// NIP-42, claimed by a relay that sells its live feed: a subscriber proves
+/// NIP-42, claimed while the relay challenges connections: because it was
+/// told to, or because it sells its live feed, where a subscriber proves
 /// which subscription it holds by answering the relay's `AUTH` challenge.
 const AUTH_NIP: u16 = 42;
 
@@ -47,6 +48,12 @@ pub(crate) struct Settings {
     /// What the relay debits for each event it broadcasts, when it sells its
     /// live feed.
     pub(crate) broadcast_price: Option<u64>,
+    /// REQs a minute one connection is answered.
+    pub(crate) read_rate_limit: u32,
+    /// REQs a minute all the connections of one source address are answered.
+    pub(crate) read_source_rate_limit: u32,
+    /// NIP-42 is on: the relay challenges connections.
+    pub(crate) nip42: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -88,6 +95,10 @@ struct Limitation {
     max_filters: usize,
     max_limit: usize,
     default_limit: usize,
+    /// What a client polling free reads is held to. Past either, a REQ is
+    /// `CLOSED` with `rate-limited:`; a subscription is not counted again.
+    max_req_per_minute_per_connection: u32,
+    max_req_per_minute_per_source: u32,
     auth_required: bool,
 }
 
@@ -141,7 +152,7 @@ impl Document {
         if settings.enforce_expiration {
             supported_nips.push(EXPIRATION_NIP);
         }
-        if settings.broadcast_price.is_some() {
+        if settings.nip42 || settings.broadcast_price.is_some() {
             supported_nips.push(AUTH_NIP);
         }
         let subscription =
@@ -168,6 +179,8 @@ impl Document {
                 max_filters: MAX_FILTERS,
                 max_limit: MAX_LIMIT,
                 default_limit: MAX_LIMIT,
+                max_req_per_minute_per_connection: settings.read_rate_limit,
+                max_req_per_minute_per_source: settings.read_source_rate_limit,
                 auth_required: false,
             },
             // Omitted, not 0, for a relay that charges nothing:

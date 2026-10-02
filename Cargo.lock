@@ -1139,7 +1139,6 @@ dependencies = [
  "base64",
  "connector-domain",
  "futures-util",
- "getrandom 0.3.4",
  "http-body-util",
  "hyper",
  "hyper-util",

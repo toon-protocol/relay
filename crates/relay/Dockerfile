@@ -1,10 +1,10 @@
 # Rust relay container (#192): the image the Rust rebuild (#185) is gated on.
 #
-# A drop-in for packages/relay/Dockerfile's image as far as a stack can tell:
-# the same ports, the same /data volume, the same healthcheck through busybox
-# `wget`, and the same user id (1000, which is `node` in the TypeScript image),
-# so it can read and write the files already in a volume. What differs is
-# inside: one static binary on Alpine, and no JavaScript runtime.
+# A drop-in for the TypeScript relay's image it replaced, as far as a stack can
+# tell: the same ports, the same /data volume, the same healthcheck through
+# busybox `wget`, and the same user id (1000, which was `node` in that image),
+# so it can read and write the files already in a volume. It is one static
+# binary on Alpine.
 #
 # Published as ghcr.io/toon-protocol/relay by publish-relay-image.yml, which
 # moves the `:release` tag deploy/docker-compose.yml pulls by default (#205).
@@ -62,7 +62,7 @@ FROM alpine:3.22
 
 COPY --from=builder /workspace/target/release/relay /usr/local/bin/relay
 
-# The TypeScript image's defaults, name for name.
+# The defaults the TypeScript image had, name for name.
 ENV TOON_BLS_PORT=3100
 ENV TOON_RELAY_PORT=7100
 ENV TOON_DATA_DIR=/data
@@ -73,7 +73,7 @@ EXPOSE 3100 7100
 VOLUME /data
 
 # Run unprivileged, as uid/gid 1000: the id the TypeScript image's `node` user
-# has, and so the owner of every file already in a deployed /data volume.
+# had, and so the owner of every file already in a deployed /data volume.
 RUN addgroup -g 1000 relay \
     && adduser -D -u 1000 -G relay relay \
     && mkdir -p /data && chown relay:relay /data

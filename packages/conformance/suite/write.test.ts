@@ -68,8 +68,7 @@ describe('relay image conformance: POST /write', () => {
       const response = await write({ event: bad });
       expect(response.status).toBe(422);
       expect(await response.json()).toEqual({ error: 'Invalid event id' });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -78,8 +77,7 @@ describe('relay image conformance: POST /write', () => {
       const response = await fetch(`${relay.writeUrl}/write`);
       expect(response.status).toBe(405);
       expect(response.headers.get('allow') ?? '').toMatch(/\bPOST\b/);
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(

@@ -15,8 +15,7 @@ push, open a PR or close the issue. The runner does all three once you finish.
   the ticket cites it; treat the citation as settled.
 - It is a pnpm workspace (pnpm 8.15.9, Node 22). Dependencies are already installed from
   the lockfile. Never run `npm install`, and never `npm publish`.
-- It is also a Cargo workspace (`crates/`): the Rust relay that is replacing
-  `packages/relay`. `rust-toolchain.toml` pins the toolchain and rustup installs it on the
+- It is also a Cargo workspace (`crates/`): the Rust relay. `rust-toolchain.toml` pins the toolchain and rustup installs it on the
   first `cargo` call. Rust code follows `docs/rust-coding-standards.md`. A Rust change is
   checked from outside by the conformance suite (`packages/conformance/README.md`), which
   needs Docker and so runs in CI, not in this sandbox.
@@ -25,8 +24,8 @@ push, open a PR or close the issue. The runner does all three once you finish.
   that test green rather than editing the test to fit.
 - Line numbers cited in older issues drift. Check that a `file.ts:123` reference still points
   at what the text claims before relying on it.
-- A user-visible change to a package needs a changeset (`pnpm changeset`); merging publishes
-  the package.
+- There are no changesets and nothing is published to npm: merging to `main` publishes the
+  Rust image.
 - After you finish, the runner runs CI's gate itself and won't open a PR while it is red:
   `pnpm install --frozen-lockfile`, ESLint against the frozen warning baseline in
   `.sandcastle/gate-baseline.json`, `pnpm -r build`, `pnpm typecheck` and

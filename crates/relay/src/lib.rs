@@ -23,6 +23,7 @@
 //! misused. Nothing is published and nothing outside this workspace imports
 //! it.
 
+mod auth;
 mod clock;
 mod config;
 mod connector;
@@ -69,7 +70,7 @@ use crate::connector::{EdgeSlot, Intervals, OfferSlot, Subscribing};
 use crate::document::Settings;
 use crate::ledger::Ledger;
 use crate::metrics::Metrics;
-use crate::read_side::ReadSide;
+use crate::read_side::{ReadLimits, ReadSide};
 use crate::subscribe::Sale;
 
 /// A relay: its identity, its store, and the read side that serves the store
@@ -114,6 +115,7 @@ impl Relay {
             },
         )?;
         let edge = EdgeSlot::default();
+        let auth = config.auth_policy();
         let sale = config
             .subscribe
             .as_ref()
@@ -142,6 +144,11 @@ impl Relay {
             edge.clone(),
             config.write_carriage,
             usize::try_from(config.max_connections).unwrap_or(usize::MAX),
+            ReadLimits {
+                per_connection: config.read_rate_limit,
+                per_source: config.read_source_rate_limit,
+            },
+            auth.clone(),
         );
         Ok(Self {
             identity: config.identity,
@@ -154,6 +161,9 @@ impl Relay {
                 write_carriage: config.write_carriage,
                 enforce_expiration: config.enforce_expiration,
                 broadcast_price: config.subscribe.as_ref().map(|s| s.broadcast_price),
+                read_rate_limit: config.read_rate_limit,
+                read_source_rate_limit: config.read_source_rate_limit,
+                nip42: auth.is_some(),
             },
             read_side: match &sale {
                 Some(sale) => read_side.selling(sale.clone()),

@@ -3,8 +3,8 @@
 -- for a database an operator already has, so the Rust store can be tested
 -- against one (#193).
 --
--- Not edited by hand: packages/relay/src/storage/schema-fixture.test.ts fails
--- if this file and SqliteEventStore's own schema differ.
+-- Not edited by hand: it was captured from the TypeScript relay, removed in
+-- #206, and is frozen as the schema of the databases that relay left behind.
 CREATE TABLE events (
   id TEXT PRIMARY KEY,
   pubkey TEXT NOT NULL,

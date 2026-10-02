@@ -32,10 +32,7 @@ import {
 } from './harness/paid-feed.js';
 import { conformanceTest, imageUnderTest } from './implementation.js';
 
-// The paid live feed (#215, the draft NIP toon_cli#43). The feature is the
-// Rust relay's: the TypeScript image is frozen by the migration and does not
-// sell its feed, so every case here is an expected failure for it.
-const rustOnly = { expectedFailureFor: ['typescript'] } as const;
+// The paid live feed (#215, the draft NIP toon_cli#43).
 
 const running: RunningRelay[] = [];
 const clients: Client[] = [];
@@ -84,8 +81,7 @@ describe('relay image conformance: the subscribe route', () => {
         broadcast_price: BROADCAST_PRICE,
         filter,
       });
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -102,23 +98,18 @@ describe('relay image conformance: the subscribe route', () => {
         balance: 2 * SUBSCRIBE_PRICE,
         filter,
       });
-    },
-    rustOnly
+    }
   );
 
-  conformanceTest(
-    'a later packet may replace the filter',
-    async () => {
-      const relay = await selling();
-      const key = generateSecretKey();
-      await pay(relay, key, { body: { filter: { kinds: [1] } } });
-      const second = await pay(relay, key, {
-        body: { filter: { kinds: [7] } },
-      });
-      expect(second.body['filter']).toEqual({ kinds: [7] });
-    },
-    rustOnly
-  );
+  conformanceTest('a later packet may replace the filter', async () => {
+    const relay = await selling();
+    const key = generateSecretKey();
+    await pay(relay, key, { body: { filter: { kinds: [1] } } });
+    const second = await pay(relay, key, {
+      body: { filter: { kinds: [7] } },
+    });
+    expect(second.body['filter']).toEqual({ kinds: [7] });
+  });
 
   conformanceTest(
     'what the connector states it charged is what is credited, whoever paid',
@@ -137,8 +128,7 @@ describe('relay image conformance: the subscribe route', () => {
         payer: `evm:0x${'cd'.repeat(32)}`,
       });
       expect(second.body).toMatchObject({ credited: 500, balance: 3000 });
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -152,8 +142,7 @@ describe('relay image conformance: the subscribe route', () => {
       });
       expect(answer.status).toBe(200);
       expect(answer.body).toMatchObject({ credited: SUBSCRIBE_PRICE });
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -186,8 +175,7 @@ describe('relay image conformance: the subscribe route', () => {
       // None of them credited anything.
       const read = await readBalance(relay, nip98(key, { method: 'GET' }));
       expect(read.status).toBe(404);
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -208,8 +196,7 @@ describe('relay image conformance: the subscribe route', () => {
           code: 'invalid_request',
         });
       }
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -223,22 +210,17 @@ describe('relay image conformance: the subscribe route', () => {
       expect(
         (await readBalance(relay, nip98(key, { method: 'GET' }))).status
       ).toBe(404);
-    },
-    rustOnly
+    }
   );
 
-  conformanceTest(
-    'a refused top-up credits nothing',
-    async () => {
-      const relay = await selling();
-      const key = generateSecretKey();
-      await pay(relay, key, { body: { filter: {} } });
-      const refused = await pay(relay, key, { body: { filter: [] } });
-      expect(refused.status).toBe(400);
-      expect(await balanceOf(relay, key)).toBe(SUBSCRIBE_PRICE);
-    },
-    rustOnly
-  );
+  conformanceTest('a refused top-up credits nothing', async () => {
+    const relay = await selling();
+    const key = generateSecretKey();
+    await pay(relay, key, { body: { filter: {} } });
+    const refused = await pay(relay, key, { body: { filter: [] } });
+    expect(refused.status).toBe(400);
+    expect(await balanceOf(relay, key)).toBe(SUBSCRIBE_PRICE);
+  });
 });
 
 describe('relay image conformance: reading the balance', () => {
@@ -258,8 +240,7 @@ describe('relay image conformance: reading the balance', () => {
         broadcast_price: BROADCAST_PRICE,
         filter,
       });
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -280,8 +261,7 @@ describe('relay image conformance: reading the balance', () => {
         nip98(key, { method: 'POST', body: '' })
       );
       expect(posted.status).toBe(401);
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -303,8 +283,7 @@ describe('relay image conformance: reading the balance', () => {
         [pubkeyOf(one)]: SUBSCRIBE_PRICE,
         [pubkeyOf(two)]: 40,
       });
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -324,8 +303,7 @@ describe('relay image conformance: reading the balance', () => {
       } finally {
         await removeVolume(volume);
       }
-    },
-    rustOnly
+    }
   );
 });
 
@@ -345,8 +323,7 @@ describe('relay image conformance: the information document', () => {
       });
       expect(document.supported_nips).toContain(42);
       expect(document['toon']).toBeDefined();
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -360,8 +337,7 @@ describe('relay image conformance: the information document', () => {
         (body) => body['toon_subscription'] !== undefined
       );
       expect(document['toon_subscription']).toMatchObject({ carriage: 'btp' });
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -378,8 +354,7 @@ describe('relay image conformance: the information document', () => {
       );
       expect(document['toon']).toBeDefined();
       expect(document['toon_subscription']).toBeUndefined();
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -398,8 +373,7 @@ describe('relay image conformance: the information document', () => {
         await relay.stop();
         running.splice(running.indexOf(relay), 1);
       }
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -427,8 +401,7 @@ describe('relay image conformance: the live feed', () => {
       const other = await connectAndChallenge(relay);
       clients.push(other.client);
       expect(other.challenge).not.toBe(challenge);
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -448,8 +421,7 @@ describe('relay image conformance: the live feed', () => {
         );
         expect(ok[2]).toBe(false);
       }
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -482,8 +454,7 @@ describe('relay image conformance: the live feed', () => {
       expect(await balanceOf(relay, key)).toBe(
         SUBSCRIBE_PRICE - BROADCAST_PRICE
       );
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -499,8 +470,7 @@ describe('relay image conformance: the live feed', () => {
       await publishOk(relay, sign(author, { kind: 7, content: '+' }));
       expect(eventIds(await framesFor(client, 'feed'))).toEqual([]);
       expect(await balanceOf(relay, key)).toBe(SUBSCRIBE_PRICE);
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -528,8 +498,7 @@ describe('relay image conformance: the live feed', () => {
       expect(await balanceOf(relay, key)).toBe(
         SUBSCRIBE_PRICE - BROADCAST_PRICE
       );
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -572,8 +541,7 @@ describe('relay image conformance: the live feed', () => {
         (f) => f[0] === 'CLOSED' && f[1] === 'again'
       );
       expect(String(refused[2])).toMatch(/^payment-required:/);
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -593,8 +561,7 @@ describe('relay image conformance: the live feed', () => {
       expect(String(closed[2])).toMatch(/^payment-required:/);
       const top = await pay(relay, key, { amount: '5' });
       expect(top.body).toMatchObject({ balance: BROADCAST_PRICE + 4 });
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -619,8 +586,7 @@ describe('relay image conformance: the live feed', () => {
       expect(frames).toEqual(['EVENT', 'EOSE', 'CLOSED']);
       await publishOk(relay, kind1(author, 'after'));
       expect(await framesFor(client, 'q')).toEqual([]);
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -634,8 +600,7 @@ describe('relay image conformance: the live feed', () => {
         (f) => f[0] === 'CLOSED' && f[1] === 'q'
       );
       expect(String(closed[2])).toMatch(/^payment-required:/);
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -653,8 +618,7 @@ describe('relay image conformance: the live feed', () => {
       await publishOk(relay, kind1(author));
       await settle(500);
       expect(await balanceOf(relay, paid)).toBe(SUBSCRIBE_PRICE);
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -675,8 +639,7 @@ describe('relay image conformance: the live feed', () => {
       expect(
         (await readBalance(relay, nip98(operator, { method: 'GET' }))).status
       ).toBe(404);
-    },
-    rustOnly
+    }
   );
 
   conformanceTest(
@@ -692,8 +655,7 @@ describe('relay image conformance: the live feed', () => {
       const live = kind1(generateSecretKey());
       await publishOk(relay, live);
       await client.next((f) => f[0] === 'EVENT' && f[1] === 'feed');
-    },
-    rustOnly
+    }
   );
 });
 
@@ -731,7 +693,6 @@ describe('relay image conformance: settings of the paid feed', () => {
         expect(exited.code, JSON.stringify(env)).not.toBe(0);
         expect(exited.output, JSON.stringify(env)).toMatch(/Error:/);
       }
-    },
-    rustOnly
+    }
   );
 });

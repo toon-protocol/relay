@@ -2,9 +2,9 @@ name: Publish relay image
 
 # Builds the relay image (crates/relay/Dockerfile, the Rust relay of spec #185)
 # and pushes it to GHCR. Since the cutover (#205) this is the image every stack
-# receives: the TypeScript image is still built in CI, for the conformance
-# suite, and is no longer pushed by anything (deploy/rust-workspace.test.ts
-# fails the build if that changes).
+# receives, and the only relay image built from this repo (the TypeScript relay
+# was removed in #206; deploy/rust-workspace.test.ts fails the build if it
+# comes back).
 #
 #   release                moves on every publish from main; what a stack follows
 #   latest                 moves with it
@@ -168,3 +168,110 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=relay-rust
           cache-to: type=gha,mode=max,scope=relay-rust
+
+  # The same relay as a bare binary (#217), for a host with no container
+  # runtime: static musl, one per architecture, each on a native runner so
+  # nothing is emulated. The handle is built in, as in the image, so the binary
+  # reports the version its release is named with. Built with cargo rather than
+  # out of the Dockerfile: it is the same crate, the same lockfile and the same
+  # musl target the image's Alpine stage builds for.
+  binary:
+    name: Build the ${{ matrix.arch }} binary
+    needs: [handle, conformance]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+
+      # No version here: rustup reads rust-toolchain.toml, the one pin.
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+
+      - name: Install the musl toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+          rustup target add "${{ matrix.target }}"
+
+      - name: Build
+        env:
+          TOON_RELEASE_HANDLE: ${{ needs.handle.outputs.handle }}
+          CC: musl-gcc
+        run: cargo build --release --locked -p relay --target "${{ matrix.target }}"
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          NAME="relay-linux-${{ matrix.arch }}"
+          mkdir dist
+          cp "target/${{ matrix.target }}/release/relay" "dist/$NAME"
+          # A static binary has no interpreter; this fails the build if the
+          # musl link quietly became a dynamic one. (Not `! readelf …`: set -e
+          # ignores a negated command, so that line could never fail.)
+          if readelf -l "dist/$NAME" | grep -q INTERP; then
+            echo "dist/$NAME is dynamically linked" >&2
+            exit 1
+          fi
+          # And it runs as a bare binary, outside the image.
+          "dist/$NAME" --help > /dev/null
+          (cd dist && sha256sum "$NAME" > "$NAME.sha256")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relay-linux-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  # One GitHub release per publish from main, tagged rust-<handle> like the
+  # image, carrying both binaries and one SHA256SUMS file over them. A run on
+  # another branch builds the binaries and releases nothing. It waits for the
+  # image: the handle is chosen from the package's tags, so a release made
+  # before its image was pushed could have its handle chosen again.
+  release:
+    name: Attach the binaries to a release
+    needs: [handle, binary, publish]
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Write SHA256SUMS
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          cat relay-linux-*.sha256 > SHA256SUMS
+          sha256sum --check SHA256SUMS
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: rust-${{ needs.handle.outputs.handle }}
+        # Re-runnable: a release an earlier attempt created is reused and its
+        # assets overwritten with this run's build of the same commit.
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Relay $TAG" \
+              --notes "The relay binary for Linux x86_64 and aarch64 (static, musl), the build behind ghcr.io/toon-protocol/relay:$TAG. Verify with \`sha256sum --check SHA256SUMS\`; see the README."
+          fi
+          gh release upload "$TAG" dist/relay-linux-x86_64 dist/relay-linux-aarch64 dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber

@@ -35,9 +35,12 @@ use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::protocol::{CloseFrame, Role, WebSocketConfig};
 use tokio_tungstenite::tungstenite::{Error as SocketError, Message};
 
+use crate::auth::AuthPolicy;
 use crate::connector::EdgeSlot;
 use crate::ledger::Charged;
-use crate::session::{LiveEvent, LiveFeed, NOTICE_BINARY, Refusal, Reply, Request, Session};
+use crate::session::{
+    LiveEvent, LiveFeed, NOTICE_BINARY, Refusal, Reply, Request, Session, Sources,
+};
 use crate::subscribe::Sale;
 use crate::{Carriage, RelayError, Store, VerifiedEvent};
 
@@ -63,24 +66,42 @@ pub(crate) struct ReadSide {
     store: Store,
     /// What an `EVENT` is refused with, on every connection.
     refusal: Refusal,
+    /// How connections are challenged, while NIP-42 is on.
+    auth: Option<AuthPolicy>,
     connections: Arc<Semaphore>,
     /// What every connection delivers live events from.
     live: LiveFeed,
     /// The paid live feed, for a relay that sells it.
     sale: Option<Sale>,
+    /// How many REQs a minute one connection is answered.
+    queries_per_minute: u32,
+    /// What each source address has left of its REQs.
+    sources: Arc<Sources>,
+}
+
+/// How many REQs a minute the read side answers, for one connection and for
+/// all the connections of one source address.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ReadLimits {
+    pub(crate) per_connection: u32,
+    pub(crate) per_source: u32,
 }
 
 impl ReadSide {
     /// A read side that answers `REQ` from `store`, refuses `EVENT` towards
     /// the Write Edge in `edge` as it stands at the time, and holds at most
-    /// `max_connections` connections at once.
+    /// `max_connections` connections at once, each answered REQs as far as
+    /// `limits` allow.
     pub(crate) fn new(
         store: Store,
         edge: EdgeSlot,
         write_carriage: Option<Carriage>,
         max_connections: usize,
+        limits: ReadLimits,
+        auth: Option<AuthPolicy>,
     ) -> Self {
         Self {
+            auth,
             store,
             refusal: Refusal {
                 edge,
@@ -90,6 +111,8 @@ impl ReadSide {
             connections: Arc::new(Semaphore::new(max_connections.min(Semaphore::MAX_PERMITS))),
             live: LiveFeed::new(),
             sale: None,
+            queries_per_minute: limits.per_connection,
+            sources: Arc::new(Sources::new(limits.per_source)),
         }
     }
 
@@ -114,15 +137,22 @@ impl ReadSide {
         let mut live = self.live.listen();
         let mut client =
             WebSocketStream::from_raw_socket(stream, Role::Server, Some(socket_config())).await;
+        let session = Session::new(
+            self.refusal.clone(),
+            self.auth.clone(),
+            self.queries_per_minute,
+            self.sources.of(peer.ip()),
+        );
         let mut session = match &self.sale {
-            Some(sale) => Session::selling(self.refusal.clone(), sale.clone()),
-            None => Session::new(self.refusal.clone()),
+            Some(sale) => session.selling(sale.clone()),
+            None => session,
         };
-        // A relay that sells its feed asks every connection who it is (NIP-42).
-        if let Some(challenge) = session.greeting()
-            && let Err(error) = send_all(&mut client, [challenge]).await
-        {
-            return Err(RelayError::ReadSide(error.to_string()));
+        // NIP-42: a relay that challenges says so as the connection opens.
+        if let Err(error) = send_all(&mut client, session.greeting()).await {
+            return match error {
+                SocketError::AlreadyClosed | SocketError::ConnectionClosed => Ok(()),
+                error => Err(RelayError::ReadSide(error.to_string())),
+            };
         }
 
         let ended = loop {
@@ -297,6 +327,15 @@ mod tests {
     use super::*;
     use crate::session::MESSAGES_PER_MINUTE;
 
+    const LIMITS: ReadLimits = ReadLimits {
+        per_connection: 1_200,
+        per_source: 6_000,
+    };
+
+    fn peer_ip() -> std::net::IpAddr {
+        std::net::IpAddr::from([127, 0, 0, 1])
+    }
+
     #[test]
     fn a_connections_endpoint_does_not_use_the_default_read_buffer() {
         let config = socket_config();
@@ -318,7 +357,7 @@ mod tests {
         async fn open() -> Self {
             let data = tempfile::tempdir().expect("a temp dir");
             let store = Store::open(&data.path().join("events.db")).expect("a new database opens");
-            let read_side = ReadSide::new(store, EdgeSlot::default(), None, 1);
+            let read_side = ReadSide::new(store, EdgeSlot::default(), None, 1, LIMITS, None);
             let (ours, theirs) = tokio::io::duplex(64 * 1024);
             let serving = read_side.clone();
             tokio::spawn(async move {
@@ -417,11 +456,17 @@ mod tests {
         async fn open(open: &[&str]) -> Self {
             let data = tempfile::tempdir().expect("a temp dir");
             let store = Store::open(&data.path().join("events.db")).expect("a new database opens");
-            let read_side = ReadSide::new(store, EdgeSlot::default(), None, 1);
+            let read_side = ReadSide::new(store, EdgeSlot::default(), None, 1, LIMITS, None);
             let feed = read_side.live.listen();
+            let session = Session::new(
+                Refusal::default(),
+                None,
+                LIMITS.per_connection,
+                read_side.sources.of(peer_ip()),
+            );
             let mut direct = Self {
                 read_side,
-                session: Session::new(Refusal::default()),
+                session,
                 feed,
                 _data: data,
             };

@@ -30,11 +30,11 @@ connector.
 
 **Live on the TOON devnet:**
 
-|                   |                                                        |
-| ----------------- | ------------------------------------------------------ |
-| Free reads        | `wss://relay-ws.devnet.toonprotocol.dev`               |
-| Paid writes       | `https://proxy.relay.devnet.toonprotocol.dev/ilp`      |
-| What that node is | `curl https://proxy.relay.devnet.toonprotocol.dev/ilp` |
+|                           |                                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------ |
+| Free reads                | `wss://relay-ws.devnet.toonprotocol.dev`                                             |
+| Paid writes               | `https://proxy.relay.devnet.toonprotocol.dev/ilp`                                    |
+| What that node is         | `curl https://proxy.relay.devnet.toonprotocol.dev/ilp`                               |
 | Where a write is paid for | `curl -H 'Accept: application/nostr+json' https://relay-ws.devnet.toonprotocol.dev/` |
 
 To _use_ the network rather than run a node, start with the
@@ -357,38 +357,49 @@ switch, and it only recovers events still inside the reap grace window.
 ### Every setting the relay reads
 
 CLI flags override environment variables. `deploy/` sets these through
-`.env`; the [package README](packages/relay/README.md) documents the flag for
-each one.
+`.env`; each setting's flag is named beside it in
+[`crates/relay/src/config.rs`](crates/relay/src/config.rs).
 
-| Variable                                | Default   | What it does                                                        |
-| --------------------------------------- | --------- | ------------------------------------------------------------------- |
-| `TOON_SECRET_KEY` / `NOSTR_SECRET_KEY`  | —         | 64-hex identity key. One of this or `TOON_MNEMONIC` is **required** |
-| `TOON_MNEMONIC`                         | —         | BIP-39 mnemonic, NIP-06 derivation                                  |
-| `TOON_RELAY_PORT`                       | `7100`    | WebSocket read port                                                 |
-| `TOON_BLS_PORT`                         | `3100`    | HTTP write / health / metrics port                                  |
-| `TOON_HOST`                             | `0.0.0.0` | read-port bind address                                              |
-| `TOON_WRITE_HOST`                       | `0.0.0.0` | write-port bind address                                             |
-| `TOON_DATA_DIR`                         | `./data`  | where `events.db` lives                                             |
-| `TOON_DEV_MODE`                         | `false`   | `true` is refused at startup: there is no mode that skips verifying |
-| `TOON_VERIFY_EPHEMERAL`                 | `false`   | full verification on paid ephemeral kinds too                       |
-| `TOON_VERIFY_WORKERS`                   | —         | accepted and has no effect; logged once when set                    |
-| `TOON_MAX_CONNECTIONS`                  | `4096`    | concurrent WS reads (one file descriptor each)                      |
-| `TOON_LOG_WRITES`                       | `false`   | one log line per accepted write                                     |
-| `TOON_ENFORCE_EXPIRATION`               | `true`    | stop serving events past their NIP-40 `expiration`                  |
-| `TOON_EXPIRATION_REAP_GRACE_SECONDS`    | `86400`   | how long an expired event stays on disk                             |
-| `TOON_EXPIRATION_REAP_INTERVAL_SECONDS` | `3600`    | how often the reaper sweeps; `0` never                              |
-| `TOON_BLOCKED_EVENT_IDS`                | —         | comma-separated 64-hex event ids to refuse. Ids only, never pubkeys |
-| `TOON_CONNECTOR_URL`                    | —         | the connector's `GET /ilp` this relay reads its write edge from     |
-| `TOON_WRITE_ILP_ADDRESS`                | —         | which of that connector's routes reaches this relay's `POST /write` |
-| `TOON_WRITE_CARRIAGE`                   | —         | the carriage that route pins; fills silence only (TOON_Network#111) |
-| `TOON_SUBSCRIBE_ILP_ADDRESS`            | —         | sells the live feed: the connector route that reaches `POST /subscribe` ([docs/paid-feed.md](docs/paid-feed.md)) |
-| `TOON_BROADCAST_PRICE`                  | —         | what one broadcast event debits from a subscriber (with the two around it) |
-| `TOON_RELAY_URL`                        | —         | the URL clients reach this relay at: its host is checked in NIP-42 and NIP-98 |
-| `TOON_OPERATOR_PUBKEYS`                 | —         | comma-separated hex keys that follow the live feed without paying (the relay's own key always does) |
-| `TOON_RELAY_NAME` / `_DESCRIPTION` / `_CONTACT` | —  | NIP-11 free text; an empty value is left out of the document        |
-| `TOON_EPHEMERAL_RATE_LIMIT`             | `200`     | free-lane requests per key per window                               |
-| `TOON_EPHEMERAL_RATE_WINDOW_MS`         | `10000`   | free-lane rate-limit window                                         |
-| `TOON_EPHEMERAL_MAX_BODY_BYTES`         | `8192`    | free-lane request body cap                                          |
+| Variable                                        | Default   | What it does                                                        |
+| ----------------------------------------------- | --------- | ------------------------------------------------------------------- |
+| `TOON_SECRET_KEY` / `NOSTR_SECRET_KEY`          | —         | 64-hex identity key. One of this or `TOON_MNEMONIC` is **required** |
+| `TOON_MNEMONIC`                                 | —         | BIP-39 mnemonic, NIP-06 derivation                                  |
+| `TOON_RELAY_PORT`                               | `7100`    | WebSocket read port                                                 |
+| `TOON_BLS_PORT`                                 | `3100`    | HTTP write / health / metrics port                                  |
+| `TOON_HOST`                                     | `0.0.0.0` | read-port bind address                                              |
+| `TOON_WRITE_HOST`                               | `0.0.0.0` | write-port bind address                                             |
+| `TOON_DATA_DIR`                                 | `./data`  | where `events.db` lives                                             |
+| `TOON_DEV_MODE`                                 | `false`   | `true` is refused at startup: there is no mode that skips verifying |
+| `TOON_VERIFY_EPHEMERAL`                         | `false`   | full verification on paid ephemeral kinds too                       |
+| `TOON_VERIFY_WORKERS`                           | —         | accepted and has no effect; logged once when set                    |
+| `TOON_MAX_CONNECTIONS`                          | `4096`    | concurrent WS reads (one file descriptor each)                      |
+| `TOON_LOG_WRITES`                               | `false`   | one log line per accepted write                                     |
+| `TOON_ENFORCE_EXPIRATION`                       | `true`    | stop serving events past their NIP-40 `expiration`                  |
+| `TOON_EXPIRATION_REAP_GRACE_SECONDS`            | `86400`   | how long an expired event stays on disk                             |
+| `TOON_EXPIRATION_REAP_INTERVAL_SECONDS`         | `3600`    | how often the reaper sweeps; `0` never                              |
+| `TOON_BLOCKED_EVENT_IDS`                        | —         | comma-separated 64-hex event ids to refuse. Ids only, never pubkeys |
+| `TOON_NIP42_AUTH`                               | `false`   | Rust relay: `true` sends every connection a NIP-42 challenge and lists 42 in `supported_nips` |
+| `TOON_AUTH_REQUIRED_KINDS`                      | —         | Rust relay: comma-separated kinds a connection must `AUTH` to read (a `REQ` that could return one is closed `auth-required:`); implies `TOON_NIP42_AUTH` |
+| `TOON_CONNECTOR_URL`                            | —         | the connector's `GET /ilp` this relay reads its write edge from     |
+| `TOON_WRITE_ILP_ADDRESS`                        | —         | which of that connector's routes reaches this relay's `POST /write` |
+| `TOON_WRITE_CARRIAGE`                           | —         | the carriage that route pins; fills silence only (TOON_Network#111) |
+| `TOON_SUBSCRIBE_ILP_ADDRESS`                    | —         | sells the live feed: the connector route that reaches `POST /subscribe` ([docs/paid-feed.md](docs/paid-feed.md)) |
+| `TOON_BROADCAST_PRICE`                          | —         | what one broadcast event debits from a subscriber (with the two around it) |
+| `TOON_RELAY_URL`                                | —         | the URL clients reach this relay at: its host is checked in NIP-42 and NIP-98 |
+| `TOON_OPERATOR_PUBKEYS`                         | —         | comma-separated hex keys that follow the live feed without paying (the relay's own key always does) |
+| `TOON_RELAY_NAME` / `_DESCRIPTION` / `_CONTACT` | —         | NIP-11 free text; an empty value is left out of the document        |
+| `TOON_EPHEMERAL_RATE_LIMIT`                     | `200`     | free-lane requests per key per window                               |
+| `TOON_EPHEMERAL_RATE_WINDOW_MS`                 | `10000`   | free-lane rate-limit window                                         |
+| `TOON_EPHEMERAL_MAX_BODY_BYTES`                 | `8192`    | free-lane request body cap                                          |
+| `TOON_READ_RATE_LIMIT`                          | `1200`    | REQs a minute one read connection is answered (Rust relay)          |
+| `TOON_READ_SOURCE_RATE_LIMIT`                   | `6000`    | REQs a minute all connections of one source address share (Rust relay) |
+
+A REQ over either limit is `CLOSED` with `rate-limited: … slow down, or subscribe`
+(an open subscription is free: it streams live events and is not counted again),
+and both limits are in the NIP-11 `limitation` as `max_req_per_minute_per_connection`
+and `max_req_per_minute_per_source`. The source is the TCP peer's address, so behind
+a reverse proxy every client is the proxy and the source limit is one limit for all of
+them: raise it to suit, or leave the proxy's own limits to tell clients apart.
 
 ---
 
@@ -405,14 +416,13 @@ Node 22 and pnpm 8.15.9. [Devbox](https://www.jetify.com/devbox/docs/installing_
 pins both to the versions CI uses — `devbox shell`, then `devbox run build`,
 `devbox run test`, `devbox run lint`.
 
-The relay every stack runs is the Rust one (#185): the Cargo workspace beside
-the package (`Cargo.toml`, `crates/relay`), on the toolchain
+The relay is a Rust Cargo workspace (`Cargo.toml`, `crates/relay`), on the toolchain
 `rust-toolchain.toml` pins — rustup installs it on the first `cargo` call, and
 devbox provides rustup. It follows
 [`docs/rust-coding-standards.md`](docs/rust-coding-standards.md) and is gated
 by the [conformance suite](packages/conformance/README.md), which CI runs
-against both images. The TypeScript package is still here until #206 removes
-it; its image is built in CI and no longer published.
+against the image. The pnpm workspace holds only that suite, the soak tooling
+and the guards in `deploy/`.
 
 ```bash
 cargo fmt --all -- --check
@@ -421,17 +431,43 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-Merging to `main` publishes the Rust image and moves `:release`. A change to
-the TypeScript package still needs a changeset (`pnpm changeset`), and merging
-one publishes the npm package.
+Merging to `main` publishes the Rust image and moves `:release`. There is no
+npm package and no changeset.
 The agent factory that opens many of the PRs here is described in
 [`docs/agents/triage-labels.md`](docs/agents/triage-labels.md).
+
+## Running the relay without a container
+
+Each publish from `main` also attaches the relay as a bare binary to a GitHub
+release tagged `rust-<handle>` (the same handle as the image's `rust-<handle>`
+tag): `relay-linux-x86_64` and `relay-linux-aarch64`, static musl builds with
+nothing to install beside them, and `SHA256SUMS` over both.
+
+```bash
+TAG=rust-2026.10.02.1   # a tag from the Releases page
+ARCH=$(uname -m)        # x86_64 or aarch64
+BASE=https://github.com/toon-protocol/relay/releases/download/$TAG
+curl -fsSLO "$BASE/relay-linux-$ARCH" -O "$BASE/SHA256SUMS"
+sha256sum --check --ignore-missing SHA256SUMS
+chmod +x "relay-linux-$ARCH"
+```
+
+It is the same program the image runs, configured by the same `TOON_*`
+environment variables and the same flags (`./relay-linux-$ARCH --help`;
+[every setting the relay reads](#every-setting-the-relay-reads)). The ports
+default to the image's (3100 and 7100); the one image default the binary does
+not share is the data directory, `/data` in the image and `./data` (under the
+working directory) outside it. Only an identity is required:
+
+```bash
+TOON_SECRET_KEY=<64 hex> ./relay-linux-$ARCH
+```
 
 ## Where to go next
 
 |                                                                       |                                                                       |
 | --------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| [`packages/relay/README.md`](packages/relay/README.md)                | the npm package: CLI, HTTP surface, programmatic API                  |
+| [`packages/conformance/README.md`](packages/conformance/README.md)    | the black-box suite a relay image must pass, and the soak tooling     |
 | [`deploy/README.md`](deploy/README.md)                                | the deployment files, one by one                                      |
 | [`docs/retention.md`](docs/retention.md)                              | what the relay stops serving, and how to stop it                      |
 | [toon-protocol/connector](https://github.com/toon-protocol/connector) | the payment proxy: config reference, operator surface, protocol specs |

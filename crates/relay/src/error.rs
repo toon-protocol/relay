@@ -64,6 +64,14 @@ pub enum RelayError {
     )]
     InvalidBlockedEventIds { rejected: Vec<String> },
 
+    /// The kinds to restrict are not a list of kind numbers.
+    #[error(
+        "TOON_AUTH_REQUIRED_KINDS must be comma-separated event kinds (integers 0-65535); \
+         rejected: {}",
+        rejected.join(", ")
+    )]
+    InvalidAuthRequiredKinds { rejected: Vec<String> },
+
     /// A flag the relay does not have.
     #[error("unknown option {flag}")]
     UnknownFlag { flag: String },

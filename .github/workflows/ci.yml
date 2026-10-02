@@ -9,57 +9,6 @@ on:
     branches: [main]
 
 jobs:
-  # `release.yml`'s `changesets/action` runs `pnpm changeset version` AFTER
-  # merge to main, where a failure gates nothing and reads like any other
-  # post-merge red (#140). Until this job there was no changeset job in
-  # `ci.yml` at all, so an invalid release plan (a changeset naming a package
-  # not in the workspace, a misspelled version keyword, or one mixing an
-  # `ignore`d package with a non-ignored one, which changesets refuses
-  # outright) stayed invisible until `release.yml` read it post-merge. That is
-  # exactly what happened in toon-client#611, whose changeset job asserted only
-  # that a `.changeset/*.md` file EXISTS and never parsed one: release.yml went
-  # red on every push to main for a day, hiding five stacked offending
-  # changesets behind the first error `changeset version` stopped at.
-  #
-  # This job runs the byte-identical command to release.yml's `version:`
-  # input, so green here means the release actually gets past versioning --
-  # no second implementation of "is this a valid plan" to drift out of sync.
-  # Deliberately NOT `changeset status`: it additionally resolves
-  # `baseBranch` through git and fails when IT decides packages changed with
-  # no changeset, which is a different (and heavier) assertion this repo
-  # hasn't asked for. Mutating the tree costs nothing -- this is a throwaway
-  # checkout that commits, pushes and publishes nothing -- so the resulting
-  # diff is printed rather than discarded.
-  changeset:
-    name: Changeset
-    runs-on: ubuntu-latest
-    # release.yml itself runs on push-to-main, i.e. after merge -- by then
-    # there is nothing left to gate, so this only needs to run pre-merge.
-    if: github.event_name == 'pull_request'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 8.15.9
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: Assert the changesets form a valid release plan
-        run: |
-          set -euo pipefail
-          pnpm changeset version
-          echo "--- the release plan this PR would produce ---"
-          git --no-pager diff --stat
-          echo "✅ changeset version succeeds — release.yml can get past versioning"
-
   build:
     runs-on: ubuntu-latest
     steps:
@@ -147,8 +96,7 @@ jobs:
       - name: Smoke build
         run: devbox run -- bash -c "pnpm install --frozen-lockfile && pnpm build"
 
-  # The gate for the Cargo workspace (#192): the Rust relay being built beside
-  # the TypeScript package (#185). The four cargo commands are the connector's
+  # The gate for the Cargo workspace (#192): the Rust relay (#185). The four cargo commands are the connector's
   # own gate, in its order (docs/rust-coding-standards.md), and they are also
   # what the factory runs before it opens a PR (.sandcastle/run-gate.ts);
   # deploy/factory-gate.test.ts fails the build if the two drift.
@@ -224,82 +172,16 @@ jobs:
           PR_CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
         run: .github/scripts/no-op-merge-guard.sh
 
-  # The TypeScript relay image. It was the published image until `:release`
-  # flipped to Rust (#205); nothing pushes it now, and it is built here for as
-  # long as the TypeScript source stays (#206), because the conformance job
-  # below still runs the suite against it and a rollback names its last
-  # published build.
-  #
-  # It exists because a Dockerfile that cannot build was otherwise discovered
-  # only after merge. That is not hypothetical: packages/relay/Dockerfile
-  # copies an explicit file list rather than the whole package, so adding a
-  # build-time file at the package root (version-define.ts, #146) broke the
-  # image while every other gate stayed green.
-  #
-  # Build only -- no registry login, no push. It is deliberately NOT part of
-  # the `build` job, whose wall clock is measured against a frozen baseline.
-  image-build:
-    name: Relay image builds
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Build the relay image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: packages/relay/Dockerfile
-          push: false
-          load: true
-          tags: relay:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # The image is the thing that ships, so assert what it reports rather
-      # than trusting that a successful build implies a working one.
-      - name: It reports the version package.json declares
-        run: |
-          set -euo pipefail
-          EXPECTED=$(jq -r .version packages/relay/package.json)
-          ACTUAL=$(docker run --rm --entrypoint node relay:ci \
-            -e "import('/app/dist/index.js').then(m => process.stdout.write(m.VERSION))")
-          echo "package.json=$EXPECTED image=$ACTUAL"
-          [ "$EXPECTED" = "$ACTUAL" ] || {
-            echo "::error::the image reports $ACTUAL but package.json declares $EXPECTED"
-            exit 1
-          }
-
-  # The black-box conformance suite (#187): a relay image is started as a
-  # container with a stub connector beside it, and only its read and write
-  # ports are spoken to. The same suite runs against both implementations
-  # until the TypeScript source is removed (#206).
-  #
-  # `rust` (#192) is the published image (#205) and must pass every case:
-  # nothing is declared `expectedFailureFor: ['rust']` (#202), and this job is
-  # part of `CI OK`. publish-relay-image.yml pushes it after the same suite
-  # passes there. `typescript` is the image `image-build` builds; it is no
-  # longer published.
+  # The black-box conformance suite (#187): the Rust relay image is started as
+  # a container with a stub connector beside it, and only its read and write
+  # ports are spoken to. Nothing is declared `expectedFailureFor` (#202), and
+  # this job is part of `CI OK`. publish-relay-image.yml pushes the image after
+  # the same suite passes there.
   conformance:
-    name: Conformance suite against the ${{ matrix.implementation }} relay image
+    name: Conformance suite against the relay image
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - implementation: typescript
-            dockerfile: packages/relay/Dockerfile
-            command: node dist/cli.js
-            # buildx's default scope: the layers `image-build` already caches.
-            cache-scope: buildkit
-          - implementation: rust
-            dockerfile: crates/relay/Dockerfile
-            command: relay
-            # Its own scope, or the two images evict each other's layers.
-            cache-scope: relay-rust
     steps:
       - uses: actions/checkout@v4
 
@@ -320,12 +202,12 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ${{ matrix.dockerfile }}
+          file: crates/relay/Dockerfile
           push: false
           load: true
           tags: relay:conformance
-          cache-from: type=gha,scope=${{ matrix.cache-scope }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.cache-scope }}
+          cache-from: type=gha,scope=relay-rust
+          cache-to: type=gha,mode=max,scope=relay-rust
 
       # What a stack relies on without asking: the files already in a /data
       # volume belong to uid 1000, and compose healthchecks call `wget`.
@@ -343,70 +225,9 @@ jobs:
       - name: Run the suite against the image
         env:
           CONFORMANCE_IMAGE: relay:conformance
-          CONFORMANCE_IMPL: ${{ matrix.implementation }}
-          CONFORMANCE_COMMAND: ${{ matrix.command }}
+          CONFORMANCE_IMPL: rust
+          CONFORMANCE_COMMAND: relay
         run: pnpm --filter @toon-protocol/relay-conformance conformance
-
-  # Cutover and rollback are both an image swap over the same /data volume
-  # (#201): each image is built and the volume case writes through one and
-  # reads through the other, both ways. Needs both images, so it is its own job.
-  image-swap:
-    name: Either image opens the other's database
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 8.15.9
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Build the TypeScript image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: packages/relay/Dockerfile
-          push: false
-          load: true
-          tags: relay:swap-typescript
-          cache-from: type=gha,scope=buildkit
-
-      - name: Build the Rust image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: crates/relay/Dockerfile
-          push: false
-          load: true
-          tags: relay:swap-rust
-          cache-from: type=gha,scope=relay-rust
-
-      - name: Both images run as the same user id
-        run: |
-          set -euo pipefail
-          TS_UID=$(docker run --rm --entrypoint id relay:swap-typescript -u)
-          RUST_UID=$(docker run --rm --entrypoint id relay:swap-rust -u)
-          echo "typescript=$TS_UID rust=$RUST_UID"
-          [ "$TS_UID" = "$RUST_UID" ] || {
-            echo "::error::the images run as different users ($TS_UID, $RUST_UID)"
-            exit 1
-          }
-
-      - name: Swap images over one volume, both ways
-        env:
-          CONFORMANCE_TYPESCRIPT_IMAGE: relay:swap-typescript
-          CONFORMANCE_RUST_IMAGE: relay:swap-rust
-        run: pnpm --filter @toon-protocol/relay-conformance conformance volume
 
   ci-ok:
     name: CI OK
@@ -417,10 +238,7 @@ jobs:
         rust-gate,
         devbox-validate,
         no-op-merge,
-        changeset,
-        image-build,
         conformance,
-        image-swap,
       ]
     if: always()
     steps:
@@ -429,13 +247,6 @@ jobs:
       # fail, are cancelled, or are skipped (if: always()), and passes ONLY
       # when every gating job reports result == 'success' — a skipped or
       # cancelled gating job must never read as a pass.
-      #
-      # `changeset` is the one deliberate exception: it carries its own
-      # `if: github.event_name == 'pull_request'`, so on a push event its
-      # result is 'skipped' by design (release.yml already re-derives the
-      # same release plan post-merge) — that must read as a pass. On a
-      # pull_request event it has no `if:` of its own to skip it, so a
-      # 'skipped' result there is still a real failure to catch.
       - name: Verify all gating jobs succeeded
         env:
           RESULTS: ${{ toJSON(needs) }}
@@ -446,10 +257,9 @@ jobs:
           echo "Gating job results:"
           echo "$RESULTS" | jq -r 'to_entries[] | "  \(.key): \(.value.result)"'
 
-          FAILED=$(echo "$RESULTS" | jq -r --arg event "$EVENT_NAME" '
+          FAILED=$(echo "$RESULTS" | jq -r '
             to_entries[]
             | select(.value.result != "success")
-            | select((.key == "changeset" and .value.result == "skipped" and $event == "push") | not)
             | .key')
           if [ -n "$FAILED" ]; then
             echo "::error::Gating jobs did not succeed: $(echo "$FAILED" | tr '\n' ' ')"
