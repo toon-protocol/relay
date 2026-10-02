@@ -8,6 +8,11 @@
 //! itself and speaks to the framework over an in-memory pipe, forwarding what
 //! the framework should hear and answering the rest:
 //!
+//! - a message that is not JSON, not an array, of an unknown type or a REQ
+//!   without a string subscription id is a `NOTICE` that names which;
+//! - a `CLOSED` with no reason is not passed on: the framework sends one when
+//!   a by-`ids` subscription has found all it asked for, and the subscription
+//!   stays open, as on the TypeScript relay;
 //! - an empty subscription id, a REQ past the subscription limit and a REQ
 //!   with more filters than the limit are each a `NOTICE`, and the REQ goes
 //!   no further;
@@ -68,23 +73,28 @@ pub(crate) const MAX_SUBSCRIPTIONS: usize = 20;
 /// The most filters one REQ carries.
 pub(crate) const MAX_FILTERS: usize = 10;
 
-/// What the framework gives a filter that names no `limit`, and the most it
-/// answers any one filter with. The gate answers in its place for some
-/// subscriptions and keeps to the same numbers.
-const FRAMEWORK_LIMIT: usize = 500;
+/// The most stored events any one filter is answered with, and the number a
+/// filter that names no `limit` is answered with. One number: the framework is
+/// built with it, the gate's own stored answers keep to it and the Relay
+/// Information Document states it as `max_limit` and `default_limit`.
+pub(crate) const MAX_LIMIT: usize = 500;
 
 /// The framework's own message ceiling (5 MiB), so the gate is not the
 /// smaller limit.
 const MAX_MESSAGE: usize = 5 * 1024 * 1024;
 /// How much the pipe to the framework buffers each way.
 const PIPE_BUFFER: usize = 64 * 1024;
-/// The read buffer of each WebSocket endpoint the gate owns. The WebSocket
-/// layer zero-fills the whole buffer before every read, one that finds
-/// nothing included, and each endpoint is read whenever its connection's task
-/// wakes. At the layer's default of 128 KiB that filling is half the relay's
-/// CPU time during a fan-out (measured in #232), and the buffers are most of
-/// what an idle connection holds (#231). A frame larger than this is still
-/// read whole: the buffer grows to the frame.
+/// The read buffer of each of the gate's two WebSocket endpoints per
+/// connection: the one facing the client and the near end of the pipe.
+///
+/// tungstenite allocates this buffer when an endpoint is created and zero-fills
+/// it on the first read, so at its default of 128 KiB every page is resident
+/// for the life of the connection. Two of them, with the framework's own third,
+/// made an idle connection cost about 415 KiB (821 MiB with 2000 idle
+/// subscribers, against 179 MiB for the TypeScript image). At 4 KiB the two gate
+/// buffers are gone and an idle connection costs about 160 KiB (322 MiB at
+/// 2000, 87 MiB at 500). A message larger than the buffer still passes:
+/// tungstenite grows the buffer to the frame it is reading.
 const READ_BUFFER: usize = 4 * 1024;
 /// How many live events may wait for a connection that is not taking them,
 /// before it has missed one. The framework's own figure.
@@ -121,7 +131,7 @@ pub(crate) enum Verdict {
     /// Pass this text to the framework.
     Forward(String),
     /// Answer with this `NOTICE`; the framework never hears the message.
-    Refuse(&'static str),
+    Refuse(String),
     /// Answer with this frame; the framework never hears the message.
     Answer(String),
 }
@@ -218,8 +228,8 @@ impl Wanted {
         let mut filter = self.base.clone();
         let requested = filter
             .limit
-            .unwrap_or_else(|| filter.ids.as_ref().map_or(FRAMEWORK_LIMIT, |ids| ids.len()));
-        filter.limit = Some(requested.min(FRAMEWORK_LIMIT));
+            .unwrap_or_else(|| filter.ids.as_ref().map_or(MAX_LIMIT, |ids| ids.len()));
+        filter.limit = Some(requested.min(MAX_LIMIT));
         filter
     }
 }
@@ -287,9 +297,14 @@ pub(crate) struct Gate {
 impl Gate {
     /// What to do with `text`, a message the client sent.
     pub(crate) fn client_sent(&mut self, text: &str) -> Verdict {
-        let Ok(Value::Array(mut items)) = serde_json::from_str::<Value>(text) else {
-            // Not a message: the framework says so in its own NOTICE.
-            return Verdict::Forward(text.to_string());
+        let mut items = match serde_json::from_str::<Value>(text) {
+            Ok(Value::Array(items)) => items,
+            Ok(_) => {
+                return Verdict::Refuse(
+                    "error: invalid message format, expected JSON array".to_string(),
+                );
+            }
+            Err(_) => return Verdict::Refuse("error: invalid JSON".to_string()),
         };
         match items.first().and_then(Value::as_str) {
             Some("CLOSE") => {
@@ -325,17 +340,19 @@ impl Gate {
                 Verdict::Forward(text.to_string())
             }
             Some("REQ") => {
-                let Some(id) = items.get(1).and_then(Value::as_str).map(str::to_string) else {
-                    return Verdict::Forward(text.to_string());
+                let Some(id) = items
+                    .get(1)
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_string)
+                else {
+                    return Verdict::Refuse("error: invalid subscription id".to_string());
                 };
-                if id.is_empty() {
-                    return Verdict::Refuse("error: invalid subscription id");
-                }
                 if !self.open.contains(&id) && self.open.len() >= MAX_SUBSCRIPTIONS {
-                    return Verdict::Refuse("error: too many subscriptions");
+                    return Verdict::Refuse("error: too many subscriptions".to_string());
                 }
                 if items.len() - 2 > MAX_FILTERS {
-                    return Verdict::Refuse("error: too many filters");
+                    return Verdict::Refuse("error: too many filters".to_string());
                 }
                 self.open.insert(id.clone());
                 let mut changed = false;
@@ -357,7 +374,11 @@ impl Gate {
                     .unwrap_or(Value::Null);
                 Verdict::Answer(json!(["OK", id, false, self.refusal.words()]).to_string())
             }
-            _ => Verdict::Forward(text.to_string()),
+            Some("AUTH" | "NEG-OPEN" | "NEG-MSG" | "NEG-CLOSE") => {
+                Verdict::Forward(text.to_string())
+            }
+            Some(other) => Verdict::Refuse(format!("error: unknown message type: {other}")),
+            None => Verdict::Refuse("error: unknown message type: ".to_string()),
         }
     }
 
@@ -408,7 +429,8 @@ impl Gate {
     }
 
     /// What to do with `text`, a message the framework sent. A subscription
-    /// it closed is no longer open, whoever closed it.
+    /// it closed with a reason is no longer open, whoever closed it; a
+    /// `CLOSED` with no reason is dropped and the subscription stays open.
     pub(crate) fn relay_sent(&mut self, text: &str) -> Relayed {
         // The framework is told of no new event, so every event it sends is
         // a stored one, in answer to the oldest request. Not parsed.
@@ -439,13 +461,17 @@ impl Gate {
         let oldest = self.awaiting.front().filter(|asked| asked.id() == id);
         match (kind, oldest) {
             ("CLOSED", oldest) => {
-                self.open.remove(id);
                 let reason = items.get(2).and_then(Value::as_str).unwrap_or_default();
                 if reason.is_empty() {
-                    // Not a refusal: it follows the `EOSE` of a request that
-                    // named its events by id and was sent every one.
-                    self.subscriptions.remove(id);
-                } else if oldest.is_some() {
+                    // Not a refusal: the framework ends a by-`ids`
+                    // subscription once it has returned as many events as
+                    // ids. The TypeScript relay leaves such a subscription
+                    // open, so the client never hears this, the place stays
+                    // taken and the gate goes on delivering to it.
+                    return Relayed::Drop;
+                }
+                self.open.remove(id);
+                if oldest.is_some() {
                     // Refused. A subscription it would have replaced stands,
                     // as it does in the framework.
                     self.awaiting.pop_front();
@@ -612,6 +638,29 @@ where
     Ok(())
 }
 
+/// The configuration both of the gate's endpoints are built from.
+fn socket_config() -> WebSocketConfig {
+    WebSocketConfig::default()
+        .read_buffer_size(READ_BUFFER)
+        .max_message_size(Some(MAX_MESSAGE))
+        .max_frame_size(Some(MAX_MESSAGE))
+}
+
+/// Build the gate's two endpoints for one connection from `socket_config`:
+/// the one facing `client` and the one on `near`, the near end of the pipe.
+async fn endpoints<S>(
+    client: S,
+    near: DuplexStream,
+) -> (WebSocketStream<S>, WebSocketStream<DuplexStream>)
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let config = socket_config();
+    let client = WebSocketStream::from_raw_socket(client, Role::Server, Some(config)).await;
+    let near = WebSocketStream::from_raw_socket(near, Role::Client, Some(config)).await;
+    (client, near)
+}
+
 /// Serve `client`, a connection already upgraded to WebSocket, until either
 /// side closes it. `framework` is handed the far end of the pipe the framework
 /// speaks on; `refusal` is what an `EVENT` is answered with, and `live` is
@@ -628,16 +677,11 @@ where
     F: FnOnce(DuplexStream) -> Fut,
     Fut: Future<Output = Result<(), RelayError>> + Send + 'static,
 {
-    let config = WebSocketConfig::default()
-        .read_buffer_size(READ_BUFFER)
-        .max_message_size(Some(MAX_MESSAGE))
-        .max_frame_size(Some(MAX_MESSAGE));
     // Before anything is asked: no event published from here on is missed.
     let mut live = live.listen();
-    let mut client = WebSocketStream::from_raw_socket(client, Role::Server, Some(config)).await;
     let (near, far) = tokio::io::duplex(PIPE_BUFFER);
     let framework = tokio::spawn(framework(far));
-    let mut inner = WebSocketStream::from_raw_socket(near, Role::Client, Some(config)).await;
+    let (mut client, mut inner) = endpoints(client, near).await;
     let mut gate = Gate {
         serves_expired: !store.enforces_expiration(),
         refusal,
@@ -752,6 +796,61 @@ where
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn the_gates_endpoints_do_not_use_the_default_read_buffer() {
+        let (client, _) = tokio::io::duplex(PIPE_BUFFER);
+        let (near, _) = tokio::io::duplex(PIPE_BUFFER);
+        let (client, near) = endpoints(client, near).await;
+        for config in [client.get_config(), near.get_config()] {
+            assert_eq!(config.read_buffer_size, READ_BUFFER);
+            assert!(config.read_buffer_size < WebSocketConfig::default().read_buffer_size);
+            assert_eq!(config.max_message_size, Some(MAX_MESSAGE));
+            assert_eq!(config.max_frame_size, Some(MAX_MESSAGE));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_message_larger_than_the_read_buffer_passes_both_ways() {
+        use futures_util::{SinkExt, StreamExt};
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("relay.db")).unwrap();
+        let (client_end, gate_end) = tokio::io::duplex(PIPE_BUFFER);
+        let gate = tokio::spawn(async move {
+            through(
+                gate_end,
+                Refusal::default(),
+                store,
+                &LiveFeed::new(),
+                |pipe| async move {
+                    // The framework end, on tungstenite's defaults like the real
+                    // one: send every text back as it came.
+                    let mut socket =
+                        WebSocketStream::from_raw_socket(pipe, Role::Server, None).await;
+                    while let Some(Ok(message)) = socket.next().await {
+                        if message.is_text() && socket.send(message).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(())
+                },
+            )
+            .await
+        });
+        let mut client =
+            WebSocketStream::from_raw_socket(client_end, Role::Client, Some(socket_config())).await;
+        // A message the gate forwards: what is not one is answered here and
+        // never crosses the pipe.
+        let text = json!(["NEG-MSG", "n", "x".repeat(MAX_MESSAGE / 2)]).to_string();
+        assert!(text.len() > READ_BUFFER);
+        client.send(Message::text(text.clone())).await.unwrap();
+        match client.next().await {
+            Some(Ok(Message::Text(echoed))) => assert_eq!(echoed.as_str(), text),
+            other => panic!("expected the whole message back, got {other:?}"),
+        }
+        let _ = client.close(None).await;
+        let _ = gate.await;
+    }
+
     fn forwarded(text: &str) -> Verdict {
         Verdict::Forward(text.to_string())
     }
@@ -788,21 +887,64 @@ mod tests {
         let mut gate = Gate::default();
         assert_eq!(
             gate.client_sent(r#"["REQ","",{}]"#),
-            Verdict::Refuse("error: invalid subscription id")
+            Verdict::Refuse("error: invalid subscription id".to_string())
         );
     }
 
     #[test]
-    fn what_is_not_a_request_is_left_to_the_framework() {
+    fn what_is_not_a_message_is_named_in_a_notice_of_its_own() {
+        let mut gate = Gate::default();
+        for (text, notice) in [
+            ("{not json", "error: invalid JSON"),
+            (
+                r#"{"a":1}"#,
+                "error: invalid message format, expected JSON array",
+            ),
+            (r#"["BOGUS","x"]"#, "error: unknown message type: BOGUS"),
+            (r#"["REQ",7,{}]"#, "error: invalid subscription id"),
+        ] {
+            assert_eq!(
+                gate.client_sent(text),
+                Verdict::Refuse(notice.to_string()),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_messages_the_framework_answers_are_forwarded() {
         let mut gate = Gate::default();
         for text in [
-            "{not json",
-            r#"{"a":1}"#,
-            r#"["BOGUS","x"]"#,
-            r#"["REQ",7,{}]"#,
+            r#"["COUNT","c",{}]"#,
+            r#"["AUTH",{}]"#,
+            r#"["NEG-OPEN","n",{},"00"]"#,
+            r#"["NEG-MSG","n","00"]"#,
+            r#"["NEG-CLOSE","n"]"#,
+            r#"["CLOSE","a"]"#,
         ] {
             assert_eq!(gate.client_sent(text), forwarded(text), "{text}");
         }
+    }
+
+    #[test]
+    fn a_closed_without_a_reason_is_never_heard_and_frees_nothing() {
+        let mut gate = Gate::default();
+        for i in 0..MAX_SUBSCRIPTIONS {
+            gate.client_sent(&format!(r#"["REQ","s{i}",{{}}]"#));
+        }
+        assert_eq!(gate.relay_sent(r#"["CLOSED","s0",""]"#), Relayed::Drop);
+        assert_eq!(
+            gate.client_sent(r#"["REQ","more",{}]"#),
+            Verdict::Refuse("error: too many subscriptions".to_string())
+        );
+        assert_eq!(
+            gate.relay_sent(r#"["CLOSED","s1","error: x"]"#),
+            Relayed::Pass
+        );
+        let text = r#"["REQ","more",{}]"#;
+        assert_eq!(gate.client_sent(text), forwarded(text));
+        gate.client_sent(r#"["CLOSE","s0"]"#);
+        assert_eq!(gate.open.len(), MAX_SUBSCRIPTIONS - 1);
     }
 
     #[test]
@@ -814,7 +956,7 @@ mod tests {
         }
         assert_eq!(
             gate.client_sent(r#"["REQ","more",{}]"#),
-            Verdict::Refuse("error: too many subscriptions")
+            Verdict::Refuse("error: too many subscriptions".to_string())
         );
         let replace = r#"["REQ","s0",{}]"#;
         assert_eq!(gate.client_sent(replace), forwarded(replace));
@@ -834,7 +976,7 @@ mod tests {
         }
         assert_eq!(
             gate.client_sent(r#"["REQ","c",{}]"#),
-            Verdict::Refuse("error: too many subscriptions")
+            Verdict::Refuse("error: too many subscriptions".to_string())
         );
     }
 
@@ -847,7 +989,7 @@ mod tests {
         };
         assert_eq!(
             gate.client_sent(&request(MAX_FILTERS + 1)),
-            Verdict::Refuse("error: too many filters")
+            Verdict::Refuse("error: too many filters".to_string())
         );
         let at_limit = request(MAX_FILTERS);
         assert_eq!(gate.client_sent(&at_limit), Verdict::Forward(at_limit));
@@ -945,7 +1087,7 @@ mod tests {
             .iter()
             .map(|filter| filter.limit)
             .collect();
-        assert_eq!(limits, vec![Some(500), Some(3), Some(500)]);
+        assert_eq!(limits, vec![Some(MAX_LIMIT), Some(3), Some(MAX_LIMIT)]);
     }
 
     /// A signed event of `kind` carrying `tags`.
@@ -1097,11 +1239,13 @@ mod tests {
     }
 
     #[test]
-    fn a_subscription_closed_by_either_side_hears_no_live_event() {
+    fn only_a_subscription_the_client_closed_hears_no_live_event() {
         let mut gate = subscribed(&[r#"["REQ","a",{}]"#, r#"["REQ","b",{}]"#]);
         gate.client_sent(r#"["CLOSE","a"]"#);
-        gate.relay_sent(r#"["CLOSED","b",""]"#);
-        assert!(frames(&gate, &event(1, &[])).is_empty());
+        assert_eq!(gate.relay_sent(r#"["CLOSED","b",""]"#), Relayed::Drop);
+        let frames = frames(&gate, &event(1, &[]));
+        assert_eq!(frames.len(), 1, "b was not closed by the client");
+        assert!(frames[0].starts_with(r#"["EVENT","b","#));
     }
 
     #[test]

@@ -75,6 +75,11 @@ impl ReadSide {
         let framework = LocalRelay::builder()
             .database(StoredEvents(store.clone()))
             .write_policy(RefuseWrites)
+            // Set, not left to the framework's defaults: the document states
+            // these numbers.
+            .max_filter_limit(gate::MAX_LIMIT)
+            .default_filter_limit(gate::MAX_LIMIT)
+            .max_query_results(gate::MAX_LIMIT)
             .build();
         Self {
             framework,

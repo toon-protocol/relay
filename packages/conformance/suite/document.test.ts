@@ -139,6 +139,20 @@ describe('relay image conformance: the information document edge', () => {
   );
 });
 
+/** `expect.any(Number)` for each of `keys` that `object` carries. */
+function optionalNumbers(
+  object: unknown,
+  keys: string[]
+): Record<string, unknown> {
+  return Object.fromEntries(
+    keys
+      .filter(
+        (key) => typeof object === 'object' && object !== null && key in object
+      )
+      .map((key) => [key, expect.any(Number)])
+  );
+}
+
 describe('relay image conformance: the information document body', () => {
   let relay: RunningRelay;
 
@@ -159,6 +173,8 @@ describe('relay image conformance: the information document body', () => {
         restricted_writes: true,
         max_subscriptions: expect.any(Number),
         max_filters: expect.any(Number),
+        // Optional: the TypeScript relay states no cap.
+        ...optionalNumbers(body['limitation'], ['max_limit', 'default_limit']),
         auth_required: false,
       });
       expect(body['fees']).toEqual({

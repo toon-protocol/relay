@@ -12,7 +12,7 @@
 
 use serde::Serialize;
 
-use crate::gate::{MAX_FILTERS, MAX_SUBSCRIPTIONS};
+use crate::gate::{MAX_FILTERS, MAX_LIMIT, MAX_SUBSCRIPTIONS};
 use crate::{Carriage, WriteEdge};
 
 /// The media type NIP-11 gives the document.
@@ -67,6 +67,8 @@ struct Limitation {
     restricted_writes: bool,
     max_subscriptions: usize,
     max_filters: usize,
+    max_limit: usize,
+    default_limit: usize,
     auth_required: bool,
 }
 
@@ -119,6 +121,8 @@ impl Document {
                 restricted_writes: true,
                 max_subscriptions: MAX_SUBSCRIPTIONS,
                 max_filters: MAX_FILTERS,
+                max_limit: MAX_LIMIT,
+                default_limit: MAX_LIMIT,
                 auth_required: false,
             },
             // Omitted, not 0, for a relay that charges nothing:

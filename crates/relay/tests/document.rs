@@ -54,6 +54,8 @@ async fn asking_for_the_document_by_name_gets_it_without_an_edge() {
     assert_eq!(document["supported_nips"], json!([1, 9, 11, 16, 40]));
     assert_eq!(document["limitation"]["payment_required"], json!(false));
     assert_eq!(document["limitation"]["restricted_writes"], json!(true));
+    assert_eq!(document["limitation"]["max_limit"], json!(500));
+    assert_eq!(document["limitation"]["default_limit"], json!(500));
     assert!(document.get("toon").is_none());
 }
 
