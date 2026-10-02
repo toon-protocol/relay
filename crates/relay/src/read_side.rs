@@ -127,7 +127,7 @@ impl ReadSide {
                 }
                 // A request is answered whole in this arm, so an event that
                 // arrives during a stored answer waits in the feed and is
-                // delivered after it, never inside it.
+                // delivered after its EOSE, never inside it.
                 frame = client.next() => {
                     let message = match frame {
                         Some(Ok(message)) => message,
@@ -172,7 +172,10 @@ impl ReadSide {
     }
 
     /// The frames that answer `request`: what the store holds for it and
-    /// `EOSE`, or the `CLOSED` a client is told when the store cannot be read.
+    /// `EOSE`, then what waited in the feed meanwhile for the open
+    /// subscriptions; or the `CLOSED` a client is told when the store cannot
+    /// be read; or, when the connection fell behind the feed, the overflow
+    /// `CLOSED` for every subscription.
     ///
     /// The queries run after every event that was saved has been published
     /// (the write side publishes inside the store's exclusive section), so

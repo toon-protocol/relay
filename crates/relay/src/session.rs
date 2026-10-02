@@ -503,7 +503,9 @@ impl Session {
             .collect();
         // What was published before the store was asked is delivered to the
         // open subscriptions as any live event is. The new one is sent it
-        // only if its stored answer did not carry it.
+        // only if its stored answer did not carry it, and one it replaces is
+        // not sent it at all.
+        self.subscriptions.remove(&id);
         for live in waiting {
             frames.extend(self.live_frames(live));
             if !seen.contains(&live.event.id)
@@ -929,6 +931,22 @@ mod tests {
                 format!(r#"["EVENT","a",{}]"#, event_json(&saved)),
                 r#"["EOSE","a"]"#.to_string(),
                 format!(r#"["EVENT","a",{}]"#, event_json(&later)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_waiting_event_is_not_sent_to_the_subscription_a_request_replaces() {
+        let mut session = subscribed(&[r#"["REQ","a",{}]"#]);
+        let request = asked(&mut session, r#"["REQ","a",{"kinds":[1]}]"#);
+        let saved = event(1, &[]);
+        let waiting = [Arc::new(LiveEvent::new(&saved))];
+        let frames = session.answered(request, vec![vec![saved.clone()]], &waiting);
+        assert_eq!(
+            frames,
+            vec![
+                format!(r#"["EVENT","a",{}]"#, event_json(&saved)),
+                r#"["EOSE","a"]"#.to_string(),
             ]
         );
     }
