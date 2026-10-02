@@ -452,6 +452,62 @@ describe('read side: malformed input', () => {
   }
 });
 
+describe('read side: malformed input names the problem', () => {
+  conformanceTest(
+    'the four kinds of malformed input get different NOTICEs',
+    async () => {
+      const texts: string[] = [];
+      for (const message of [
+        '{not json',
+        '{"a":1}',
+        ['BOGUS', 'x'],
+        ['REQ', 7, {}],
+      ]) {
+        await withClient(async (client) => {
+          client.send(message);
+          const frame = await client.next((f) => f[0] === 'NOTICE');
+          expect(typeof frame[1]).toBe('string');
+          texts.push(frame[1] as string);
+          // Exactly one NOTICE answers a message.
+          const rest = await client.quiet();
+          expect(rest.filter((f) => f[0] === 'NOTICE')).toEqual([]);
+        });
+      }
+      expect(new Set(texts).size).toBe(4);
+    }
+  );
+});
+
+describe('read side: a request by ids stays open', () => {
+  conformanceTest(
+    'is answered with its events and EOSE and never a CLOSED',
+    async () => {
+      const event = signed(generateSecretKey(), {
+        kind: 1,
+        created_at: 1_700_000_100,
+      });
+      await publish(relay.writeUrl, event);
+      await withClient(async (client) => {
+        for (const [sub, list, count] of [
+          ['found', [event.id], 1],
+          ['mixed', [event.id, 'abcd'], 1],
+          ['prefix', ['abcd'], 0],
+        ] as const) {
+          expect((await client.req(sub, { ids: [...list] })).length).toBe(
+            count
+          );
+        }
+        await client.quiet();
+        expect(client.frames.filter((f) => f[0] === 'CLOSED')).toEqual([]);
+        // A CLOSE for a subscription is accepted without a NOTICE.
+        client.send(['CLOSE', 'found']);
+        await client.quiet();
+        expect(client.frames.filter((f) => f[0] === 'NOTICE')).toEqual([]);
+      });
+    }
+  );
+});
+
 describe('read side: limits', () => {
   conformanceTest('the subscription limit is enforced', async () => {
     const limit = (await limitation()).max_subscriptions;
