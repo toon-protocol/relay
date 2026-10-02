@@ -68,6 +68,18 @@ pub(crate) const MAX_LIMIT: usize = 500;
 const MAX_MESSAGE: usize = 5 * 1024 * 1024;
 /// How much the pipe to the framework buffers each way.
 const PIPE_BUFFER: usize = 64 * 1024;
+/// The read buffer of each of the gate's two WebSocket endpoints per
+/// connection: the one facing the client and the near end of the pipe.
+///
+/// tungstenite allocates this buffer when an endpoint is created and zero-fills
+/// it on the first read, so at its default of 128 KiB every page is resident
+/// for the life of the connection. Two of them, with the framework's own third,
+/// made an idle connection cost about 415 KiB (821 MiB with 2000 idle
+/// subscribers, against 179 MiB for the TypeScript image). At 4 KiB the two gate
+/// buffers are gone and an idle connection costs about 160 KiB (322 MiB at
+/// 2000, 87 MiB at 500). A message larger than the buffer still passes:
+/// tungstenite grows the buffer to the frame it is reading.
+const READ_BUFFER: usize = 4 * 1024;
 /// The reason a connection past the cap is closed with.
 const CLOSE_REASON_FULL: &str = "max connections reached";
 
@@ -424,6 +436,29 @@ async fn stored_answer(gate: &mut Gate, store: &Store, id: &str) -> Result<Vec<S
     Ok(gate.stored_frames(id, found))
 }
 
+/// The configuration both of the gate's endpoints are built from.
+fn socket_config() -> WebSocketConfig {
+    WebSocketConfig::default()
+        .read_buffer_size(READ_BUFFER)
+        .max_message_size(Some(MAX_MESSAGE))
+        .max_frame_size(Some(MAX_MESSAGE))
+}
+
+/// Build the gate's two endpoints for one connection from `socket_config`:
+/// the one facing `client` and the one on `near`, the near end of the pipe.
+async fn endpoints<S>(
+    client: S,
+    near: DuplexStream,
+) -> (WebSocketStream<S>, WebSocketStream<DuplexStream>)
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let config = socket_config();
+    let client = WebSocketStream::from_raw_socket(client, Role::Server, Some(config)).await;
+    let near = WebSocketStream::from_raw_socket(near, Role::Client, Some(config)).await;
+    (client, near)
+}
+
 /// Serve `client`, a connection already upgraded to WebSocket, until either
 /// side closes it. `framework` is handed the far end of the pipe the framework
 /// speaks on; `refusal` is what an `EVENT` is answered with.
@@ -438,13 +473,9 @@ where
     F: FnOnce(DuplexStream) -> Fut,
     Fut: Future<Output = Result<(), RelayError>> + Send + 'static,
 {
-    let config = WebSocketConfig::default()
-        .max_message_size(Some(MAX_MESSAGE))
-        .max_frame_size(Some(MAX_MESSAGE));
-    let mut client = WebSocketStream::from_raw_socket(client, Role::Server, Some(config)).await;
     let (near, far) = tokio::io::duplex(PIPE_BUFFER);
     let framework = tokio::spawn(framework(far));
-    let mut inner = WebSocketStream::from_raw_socket(near, Role::Client, Some(config)).await;
+    let (mut client, mut inner) = endpoints(client, near).await;
     let mut gate = Gate {
         serves_expired: !store.enforces_expiration(),
         refusal,
@@ -536,6 +567,56 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn the_gates_endpoints_do_not_use_the_default_read_buffer() {
+        let (client, _) = tokio::io::duplex(PIPE_BUFFER);
+        let (near, _) = tokio::io::duplex(PIPE_BUFFER);
+        let (client, near) = endpoints(client, near).await;
+        for config in [client.get_config(), near.get_config()] {
+            assert_eq!(config.read_buffer_size, READ_BUFFER);
+            assert!(config.read_buffer_size < WebSocketConfig::default().read_buffer_size);
+            assert_eq!(config.max_message_size, Some(MAX_MESSAGE));
+            assert_eq!(config.max_frame_size, Some(MAX_MESSAGE));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_message_larger_than_the_read_buffer_passes_both_ways() {
+        use futures_util::{SinkExt, StreamExt};
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("relay.db")).unwrap();
+        let (client_end, gate_end) = tokio::io::duplex(PIPE_BUFFER);
+        let gate = tokio::spawn(through(
+            gate_end,
+            Refusal::default(),
+            store,
+            |pipe| async move {
+                // The framework end, on tungstenite's defaults like the real
+                // one: send every text back as it came.
+                let mut socket = WebSocketStream::from_raw_socket(pipe, Role::Server, None).await;
+                while let Some(Ok(message)) = socket.next().await {
+                    if message.is_text() && socket.send(message).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(())
+            },
+        ));
+        let mut client =
+            WebSocketStream::from_raw_socket(client_end, Role::Client, Some(socket_config())).await;
+        // A message the gate forwards: what is not one is answered here and
+        // never crosses the pipe.
+        let text = json!(["NEG-MSG", "n", "x".repeat(MAX_MESSAGE / 2)]).to_string();
+        assert!(text.len() > READ_BUFFER);
+        client.send(Message::text(text.clone())).await.unwrap();
+        match client.next().await {
+            Some(Ok(Message::Text(echoed))) => assert_eq!(echoed.as_str(), text),
+            other => panic!("expected the whole message back, got {other:?}"),
+        }
+        let _ = client.close(None).await;
+        let _ = gate.await;
+    }
 
     fn forwarded(text: &str) -> Verdict {
         Verdict::Forward(text.to_string())
