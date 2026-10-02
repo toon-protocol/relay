@@ -330,6 +330,23 @@ describe('read side: subscriptions', () => {
   });
 
   conformanceTest(
+    'a subscription that names no whole id hears no live event',
+    async () => {
+      const key = generateSecretKey();
+      await withClient(async (client) => {
+        // Not hex, so it is no id and no prefix of one on either relay.
+        expect(await client.req('none', { ids: ['zzzz'] })).toEqual([]);
+        // A second subscription proves the write was fanned out.
+        await client.req('barrier', { authors: [getPublicKey(key)] });
+        await publish(relay.writeUrl, signed(key));
+        await client.next((f) => f[0] === 'EVENT' && f[1] === 'barrier');
+        const rest = await client.quiet();
+        expect(rest.filter((f) => f[1] === 'none')).toEqual([]);
+      });
+    }
+  );
+
+  conformanceTest(
     're-using a subscription id replaces the subscription',
     async () => {
       const first = generateSecretKey();

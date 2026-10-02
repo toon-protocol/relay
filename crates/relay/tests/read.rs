@@ -1,5 +1,5 @@
 //! The read side over a real socket: the relay accepts the WebSocket upgrade
-//! itself and the framework speaks NIP-01 on the stream it is handed.
+//! itself and speaks NIP-01 on the stream.
 
 mod common;
 
@@ -48,6 +48,77 @@ async fn a_paid_write_is_delivered_live_to_an_open_subscription() {
         Some(json!(["EVENT", "live", event])),
         "the matching event arrives and the other does not"
     );
+    assert_eq!(client.next().await, None);
+}
+
+#[tokio::test]
+async fn a_live_event_reaches_every_subscription_it_matches_on_every_connection() {
+    let running = running().await;
+    let mut first = Client::connect(&running.read_url).await;
+    let mut second = Client::connect(&running.read_url).await;
+    assert!(first.req("a", json!({ "kinds": [7777] })).await.is_empty());
+    assert!(first.req("b", json!({})).await.is_empty());
+    assert!(first.req("c", json!({ "kinds": [1] })).await.is_empty());
+    assert!(second.req("a", json!({ "kinds": [7777] })).await.is_empty());
+
+    let event = signed(7777, 1_700_000_000, &[]);
+    let (status, _) = write(&running.relay, delivery(&event)).await;
+    assert_eq!(status, 200);
+
+    let mut heard = vec![first.next().await, first.next().await];
+    heard.sort_by_key(|frame| frame.as_ref().map(|frame| frame[1].to_string()));
+    assert_eq!(
+        heard,
+        vec![
+            Some(json!(["EVENT", "a", event])),
+            Some(json!(["EVENT", "b", event]))
+        ]
+    );
+    assert_eq!(
+        first.next().await,
+        None,
+        "the other subscription hears nothing"
+    );
+    assert_eq!(second.next().await, Some(json!(["EVENT", "a", event])));
+}
+
+#[tokio::test]
+async fn a_request_sent_behind_one_by_ids_with_the_same_id_is_still_live() {
+    let running = running().await;
+    let stored = signed(1, 1_700_000_000, &[]);
+    assert_eq!(write(&running.relay, delivery(&stored)).await.0, 200);
+
+    // The first names its one event by id and is sent it. The second, with
+    // the same id, is sent before the first is answered.
+    let mut client = Client::connect(&running.read_url).await;
+    client
+        .send(json!(["REQ", "a", { "ids": [stored.id.to_hex()] }]))
+        .await;
+    client.send(json!(["REQ", "a", { "kinds": [7777] }])).await;
+    for expected in [
+        json!(["EVENT", "a", stored]),
+        json!(["EOSE", "a"]),
+        json!(["EOSE", "a"]),
+    ] {
+        assert_eq!(client.next().await, Some(expected));
+    }
+
+    let live = signed(7777, 1_700_000_000, &[]);
+    assert_eq!(write(&running.relay, delivery(&live)).await.0, 200);
+    assert_eq!(client.next().await, Some(json!(["EVENT", "a", live])));
+}
+
+#[tokio::test]
+async fn a_closed_subscription_hears_no_live_event() {
+    let running = running().await;
+    let mut client = Client::connect(&running.read_url).await;
+    assert!(client.req("gone", json!({})).await.is_empty());
+    client.send(json!(["CLOSE", "gone"])).await;
+    // A round trip proves the CLOSE sent before it was heard.
+    assert!(client.req("kept", json!({ "kinds": [7] })).await.is_empty());
+
+    let (status, _) = write(&running.relay, delivery(&signed(1, 1_700_000_000, &[]))).await;
+    assert_eq!(status, 200);
     assert_eq!(client.next().await, None);
 }
 
@@ -257,6 +328,47 @@ async fn an_id_that_is_only_a_prefix_matches_nothing() {
 }
 
 #[tokio::test]
+async fn an_id_that_is_only_a_prefix_hears_no_live_event() {
+    let running = running().await;
+    let mut client = Client::connect(&running.read_url).await;
+    assert!(client.req("p", json!({ "ids": ["abcd"] })).await.is_empty());
+    assert!(
+        client
+            .req("a", json!({ "authors": ["abcd"] }))
+            .await
+            .is_empty()
+    );
+    assert!(client.req("all", json!({})).await.is_empty());
+
+    let event = signed(1, 1_700_000_000, &[]);
+    assert_eq!(write(&running.relay, delivery(&event)).await.0, 200);
+    assert_eq!(client.next().await, Some(json!(["EVENT", "all", event])));
+    assert_eq!(client.next().await, None, "neither prefix names it");
+}
+
+#[tokio::test]
+async fn count_is_no_message_type_here_and_an_auth_is_refused() {
+    let running = running().await;
+    let mut client = Client::connect(&running.read_url).await;
+    client.send(json!(["COUNT", "c", {}])).await;
+    assert_eq!(
+        client.next().await,
+        Some(json!(["NOTICE", "error: unknown message type: COUNT"]))
+    );
+    let auth = signed(22242, 1_700_000_000, &[&["challenge", "never issued"]]);
+    client.send(json!(["AUTH", auth])).await;
+    assert_eq!(
+        client.next().await,
+        Some(json!([
+            "OK",
+            auth.id,
+            false,
+            "auth-required: received invalid challenge"
+        ]))
+    );
+}
+
+#[tokio::test]
 async fn a_connection_past_the_cap_is_closed_with_1013() {
     use tokio_tungstenite::tungstenite::Message;
     use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
@@ -319,8 +431,7 @@ async fn the_document_states_the_limits_and_does_not_advertise_auth() {
     assert_eq!(document["supported_nips"], json!([1, 9, 11, 16, 40]));
 }
 
-/// A filter nothing matches, which a subscription can hold without the
-/// framework closing it as unsatisfiable.
+/// A filter nothing matches.
 fn no_such_event() -> serde_json::Value {
     json!({ "ids": ["0".repeat(64)] })
 }

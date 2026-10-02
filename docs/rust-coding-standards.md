@@ -67,10 +67,15 @@ unit tests are for logic worth testing in isolation.
   doctest would pass on any error, including a renamed import. Regenerate the
   reasons after a deliberate change or a toolchain bump with
   `TRYBUILD=overwrite cargo test -p relay --test compile_fail`.
-- **The framework is imported by one module.** `nostr-sdk`'s `local_relay` is
-  declared alpha, so `nostr-sdk` and `nostr-database` are on exact pins and
-  only `crates/relay/src/framework.rs` names them. The `nostr` protocol crate
-  is used everywhere.
+- **NIP-01 handling is the relay's own.** The relay was built on
+  `nostr-sdk`'s `local_relay` behind one adapter module. That framework wraps
+  every stream in a WebSocket endpoint whose 128 KiB read buffer it gives no
+  way to size, so #237 took the fallback #185 names: `nostr-sdk` and
+  `nostr-database` are gone, and `crates/relay/src/session.rs` says what each
+  message a client sends is answered with. Only the `nostr` protocol crate remains, on an exact pin and used
+  everywhere. The session touches no socket and no store, so its rules are
+  tested without either; `crates/relay/src/read_side.rs` does the reading and
+  writing.
 - **The connector's crate is read for its self-description only.**
   `connector-domain` is a git dependency on one full commit, the one the
   connector image in `deploy/docker-compose.yml` was built from. It also holds
@@ -85,7 +90,7 @@ unit tests are for logic worth testing in isolation.
   the compile-fail tests see the crate from outside, and would not notice.
 
 `deploy/rust-workspace.test.ts` fails the build if the unsafe rule, the
-toolchain pin, the framework rule, the connector-crate rule, the header rule
+toolchain pin, the no-framework rule, the connector-crate rule, the header rule
 or the private-fields rule is undone.
 
 ## Not adopted
