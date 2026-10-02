@@ -245,8 +245,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      # The binaries only: the image build also leaves its build records
+      # (*.dockerbuild) among the run's artifacts, which do not extract here.
       - uses: actions/download-artifact@v4
         with:
+          pattern: relay-linux-*
           path: dist
           merge-multiple: true
 
