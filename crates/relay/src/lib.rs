@@ -21,6 +21,7 @@
 //! misused. Nothing is published and nothing outside this workspace imports
 //! it.
 
+mod auth;
 mod clock;
 mod config;
 mod connector;
@@ -103,6 +104,7 @@ impl Relay {
             },
         )?;
         let edge = EdgeSlot::default();
+        let auth = config.auth_policy();
         Ok(Self {
             identity: config.identity,
             edge: edge.clone(),
@@ -115,6 +117,7 @@ impl Relay {
                 enforce_expiration: config.enforce_expiration,
                 read_rate_limit: config.read_rate_limit,
                 read_source_rate_limit: config.read_source_rate_limit,
+                nip42: auth.is_some(),
             },
             read_side: ReadSide::new(
                 store.clone(),
@@ -125,6 +128,7 @@ impl Relay {
                     per_connection: config.read_rate_limit,
                     per_source: config.read_source_rate_limit,
                 },
+                auth,
             ),
             metrics: Metrics::new(config),
             ephemeral: Arc::new(write::Lane::new(config)),

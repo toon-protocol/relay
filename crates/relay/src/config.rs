@@ -133,13 +133,21 @@ const EXPIRATION_REAP_INTERVAL: Setting = Setting {
     flag: "--expiration-reap-interval-seconds",
     env: "TOON_EXPIRATION_REAP_INTERVAL_SECONDS",
 };
+const NIP42_AUTH: Setting = Setting {
+    flag: "--nip42-auth",
+    env: "TOON_NIP42_AUTH",
+};
+const AUTH_REQUIRED_KINDS: Setting = Setting {
+    flag: "--auth-required-kinds",
+    env: "TOON_AUTH_REQUIRED_KINDS",
+};
 const BLOCKED_EVENT_IDS: Setting = Setting {
     flag: "--blocked-event-ids",
     env: "TOON_BLOCKED_EVENT_IDS",
 };
 
 /// The flags that take a value, and the ones that stand alone.
-const VALUE_FLAGS: [&str; 23] = [
+const VALUE_FLAGS: [&str; 24] = [
     MNEMONIC.flag,
     SECRET_KEY.flag,
     READ_PORT.flag,
@@ -163,12 +171,14 @@ const VALUE_FLAGS: [&str; 23] = [
     EXPIRATION_REAP_GRACE.flag,
     EXPIRATION_REAP_INTERVAL.flag,
     BLOCKED_EVENT_IDS.flag,
+    AUTH_REQUIRED_KINDS.flag,
 ];
-const SWITCH_FLAGS: [&str; 5] = [
+const SWITCH_FLAGS: [&str; 6] = [
     DEV_MODE.flag,
     VERIFY_EPHEMERAL.flag,
     LOG_WRITES.flag,
     ENFORCE_EXPIRATION.flag,
+    NIP42_AUTH.flag,
     "--help",
 ];
 
@@ -225,6 +235,9 @@ Options (each flag beats its environment variable):
   --expiration-reap-grace-seconds <n>      TOON_EXPIRATION_REAP_GRACE_SECONDS (default 86400)
   --expiration-reap-interval-seconds <n>   TOON_EXPIRATION_REAP_INTERVAL_SECONDS (default 3600)
   --blocked-event-ids <ids>                TOON_BLOCKED_EVENT_IDS (comma-separated)
+  --nip42-auth                             TOON_NIP42_AUTH=true: challenge connections (NIP-42)
+  --auth-required-kinds <kinds>            TOON_AUTH_REQUIRED_KINDS (comma-separated; implies
+                                           --nip42-auth; a REQ for these kinds needs AUTH)
   --help                                   show this message
 
 Prefer the environment variables to --mnemonic and --secret-key: arguments
@@ -303,6 +316,11 @@ pub struct Config {
     pub expiration_reap_interval_seconds: u64,
     /// Event ids the operator blocked: lower-case hex, in order, once each.
     pub blocked_event_ids: Vec<String>,
+    /// NIP-42 is switched on: connections are challenged. Off unless asked
+    /// for, and on whenever `auth_required_kinds` names a kind.
+    pub nip42_auth: bool,
+    /// The kinds a connection must authenticate to read, once each, in order.
+    pub auth_required_kinds: Vec<u16>,
 }
 
 /// The command line split into the flags that were given.
@@ -523,6 +541,13 @@ impl Config {
             return Err(RelayError::InvalidBlockedEventIds { rejected });
         }
 
+        let auth_required_kinds = kind_list(
+            &sources
+                .raw(&AUTH_REQUIRED_KINDS)
+                .map(|(_, value)| value)
+                .unwrap_or_default(),
+        )?;
+
         let text = |setting: &Setting| sources.text(setting).map(|(_, value)| value);
         let enforce_expiration = !(sources.flags.switches.contains(ENFORCE_EXPIRATION.flag)
             || lookup(ENFORCE_EXPIRATION.env).is_some_and(|value| value == "false"));
@@ -564,7 +589,15 @@ impl Config {
                 DEFAULT_EXPIRATION_REAP_INTERVAL_SECONDS,
             )?,
             blocked_event_ids,
+            nip42_auth: sources.on(&NIP42_AUTH) || !auth_required_kinds.is_empty(),
+            auth_required_kinds,
         })))
+    }
+
+    /// How connections are treated under NIP-42, or `None` while it is off.
+    pub(crate) fn auth_policy(&self) -> Option<crate::auth::AuthPolicy> {
+        self.nip42_auth
+            .then(|| crate::auth::AuthPolicy::requiring(self.auth_required_kinds.iter().copied()))
     }
 
     /// Where the database is: `events.db` in the data directory.
@@ -617,6 +650,28 @@ fn blocked_ids(raw: &str) -> (Vec<String>, Vec<String>) {
         }
     }
     (ids, rejected)
+}
+
+/// The kinds in `raw` (separated by commas or white space), each once, in
+/// order. An entry that is not a kind refuses the whole list.
+fn kind_list(raw: &str) -> Result<Vec<u16>, RelayError> {
+    let mut kinds: Vec<u16> = Vec::new();
+    let mut rejected = Vec::new();
+    for entry in raw
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|entry| !entry.is_empty())
+    {
+        match entry.parse::<u16>() {
+            Ok(kind) if !kinds.contains(&kind) => kinds.push(kind),
+            Ok(_) => {}
+            Err(_) => rejected.push(entry.to_string()),
+        }
+    }
+    if rejected.is_empty() {
+        Ok(kinds)
+    } else {
+        Err(RelayError::InvalidAuthRequiredKinds { rejected })
+    }
 }
 
 /// The x-only public key of a hex secret key, or `None` if `hex` is not one.
@@ -1047,6 +1102,47 @@ mod tests {
         assert_eq!(none.write_carriage, None);
         let both = config(&[("TOON_SECRET_KEY", &key), ("TOON_WRITE_CARRIAGE", "both")]);
         assert!(matches!(both, Err(RelayError::InvalidCarriage { .. })));
+    }
+
+    #[test]
+    fn nip42_is_off_unless_asked_for_and_chosen_kinds_switch_it_on() {
+        let key = ones();
+        let off = config(&[("TOON_SECRET_KEY", &key)]).expect("valid");
+        assert!(!off.nip42_auth && off.auth_required_kinds.is_empty());
+        assert!(off.auth_policy().is_none());
+
+        let on = config(&[("TOON_SECRET_KEY", &key), ("TOON_NIP42_AUTH", "true")]).expect("valid");
+        assert!(on.nip42_auth && on.auth_required_kinds.is_empty());
+        assert!(on.auth_policy().is_some());
+
+        // Only the exact string switches it, as for every other boolean.
+        let typo =
+            config(&[("TOON_SECRET_KEY", &key), ("TOON_NIP42_AUTH", "True")]).expect("valid");
+        assert!(!typo.nip42_auth);
+
+        let kinds = config(&[
+            ("TOON_SECRET_KEY", &key),
+            ("TOON_AUTH_REQUIRED_KINDS", "4, 1059,4 14"),
+        ])
+        .expect("valid");
+        assert!(kinds.nip42_auth, "chosen kinds imply NIP-42");
+        assert_eq!(kinds.auth_required_kinds, vec![4, 1059, 14]);
+
+        let empty = config(&[("TOON_SECRET_KEY", &key), ("TOON_AUTH_REQUIRED_KINDS", "")])
+            .expect("an empty list is no list");
+        assert!(!empty.nip42_auth);
+    }
+
+    #[test]
+    fn a_kind_list_with_an_entry_that_is_not_a_kind_is_refused() {
+        let key = ones();
+        for bad in ["4,x", "65536", "-1", "1.5"] {
+            let result = config(&[("TOON_SECRET_KEY", &key), ("TOON_AUTH_REQUIRED_KINDS", bad)]);
+            assert!(
+                matches!(result, Err(RelayError::InvalidAuthRequiredKinds { .. })),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

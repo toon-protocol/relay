@@ -17,7 +17,8 @@ futures-util.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
-nostr.workspace = true
+# `os-rng`: the NIP-42 challenge is drawn from the operating system.
+nostr = { workspace = true, features = ["os-rng"] }
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -27,8 +28,6 @@ tokio.workspace = true
 tokio-tungstenite.workspace = true
 
 [dev-dependencies]
-# Tests sign events with keys they generate; the relay itself signs nothing.
-nostr = { workspace = true, features = ["os-rng"] }
 tempfile.workspace = true
 tower.workspace = true
 trybuild.workspace = true

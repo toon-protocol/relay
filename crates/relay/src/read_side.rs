@@ -35,6 +35,7 @@ use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::protocol::{CloseFrame, Role, WebSocketConfig};
 use tokio_tungstenite::tungstenite::{Error as SocketError, Message};
 
+use crate::auth::AuthPolicy;
 use crate::connector::EdgeSlot;
 use crate::session::{
     LiveEvent, LiveFeed, NOTICE_BINARY, Refusal, Reply, Request, Session, Sources,
@@ -63,6 +64,8 @@ pub(crate) struct ReadSide {
     store: Store,
     /// What an `EVENT` is refused with, on every connection.
     refusal: Refusal,
+    /// How connections are challenged, while NIP-42 is on.
+    auth: Option<AuthPolicy>,
     connections: Arc<Semaphore>,
     /// What every connection delivers live events from.
     live: LiveFeed,
@@ -91,8 +94,10 @@ impl ReadSide {
         write_carriage: Option<Carriage>,
         max_connections: usize,
         limits: ReadLimits,
+        auth: Option<AuthPolicy>,
     ) -> Self {
         Self {
+            auth,
             store,
             refusal: Refusal {
                 edge,
@@ -123,9 +128,17 @@ impl ReadSide {
             WebSocketStream::from_raw_socket(stream, Role::Server, Some(socket_config())).await;
         let mut session = Session::new(
             self.refusal.clone(),
+            self.auth.clone(),
             self.queries_per_minute,
             self.sources.of(peer.ip()),
         );
+        // NIP-42: a relay that challenges says so as the connection opens.
+        if let Err(error) = send_all(&mut client, session.greeting()).await {
+            return match error {
+                SocketError::AlreadyClosed | SocketError::ConnectionClosed => Ok(()),
+                error => Err(RelayError::ReadSide(error.to_string())),
+            };
+        }
 
         let ended = loop {
             tokio::select! {
@@ -322,7 +335,7 @@ mod tests {
         async fn open() -> Self {
             let data = tempfile::tempdir().expect("a temp dir");
             let store = Store::open(&data.path().join("events.db")).expect("a new database opens");
-            let read_side = ReadSide::new(store, EdgeSlot::default(), None, 1, LIMITS);
+            let read_side = ReadSide::new(store, EdgeSlot::default(), None, 1, LIMITS, None);
             let (ours, theirs) = tokio::io::duplex(64 * 1024);
             let serving = read_side.clone();
             tokio::spawn(async move {
@@ -421,10 +434,11 @@ mod tests {
         async fn open(open: &[&str]) -> Self {
             let data = tempfile::tempdir().expect("a temp dir");
             let store = Store::open(&data.path().join("events.db")).expect("a new database opens");
-            let read_side = ReadSide::new(store, EdgeSlot::default(), None, 1, LIMITS);
+            let read_side = ReadSide::new(store, EdgeSlot::default(), None, 1, LIMITS, None);
             let feed = read_side.live.listen();
             let session = Session::new(
                 Refusal::default(),
+                None,
                 LIMITS.per_connection,
                 read_side.sources.of(peer_ip()),
             );

@@ -28,6 +28,9 @@ const BASE_NIPS: [u16; 4] = [1, 9, 11, 16];
 /// NIP-40, claimed while expiration is enforced.
 const EXPIRATION_NIP: u16 = 40;
 
+/// NIP-42, claimed only while the relay challenges connections.
+const AUTH_NIP: u16 = 42;
+
 /// The unit a price is in: the connector's base units of its asset.
 const FEE_UNIT: &str = "uusdc";
 
@@ -44,6 +47,8 @@ pub(crate) struct Settings {
     pub(crate) read_rate_limit: u32,
     /// REQs a minute all the connections of one source address are answered.
     pub(crate) read_source_rate_limit: u32,
+    /// NIP-42 is on: the relay challenges connections.
+    pub(crate) nip42: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -115,6 +120,9 @@ impl Document {
         let mut supported_nips = BASE_NIPS.to_vec();
         if settings.enforce_expiration {
             supported_nips.push(EXPIRATION_NIP);
+        }
+        if settings.nip42 {
+            supported_nips.push(AUTH_NIP);
         }
         Self {
             name: settings.name.clone(),
