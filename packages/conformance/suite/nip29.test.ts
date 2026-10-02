@@ -62,6 +62,19 @@ function inGroup(
   return signed(key, { kind, tags: [['h', group], ...extra] });
 }
 
+/**
+ * A chat message in `group` that is not the one `inGroup(key, CHAT, group)`
+ * signed earlier in the same second: that one is the same event, and a retry
+ * of an event already held is answered as stored.
+ */
+function laterChat(key: Uint8Array, group: string) {
+  return signed(key, {
+    kind: CHAT,
+    tags: [['h', group]],
+    content: 'a later message',
+  });
+}
+
 /** Create `group` as `owner`, with `extra` tags (private, closed, name…). */
 async function createGroup(
   relay: RunningRelay,
@@ -254,7 +267,7 @@ describe('NIP-29: enabled', () => {
         groups.writeUrl,
         inGroup(owner, REMOVE_USER, group, [['p', getPublicKey(member)]])
       );
-      expect(await write(groups, inGroup(member, CHAT, group))).toBe(403);
+      expect(await write(groups, laterChat(member, group))).toBe(403);
       await withClient(groups, async (client) => {
         const [members] = await client.req('members', {
           kinds: [39002],
@@ -324,7 +337,7 @@ describe('NIP-29: enabled', () => {
     await publish(groups.writeUrl, inGroup(joiner, JOIN, group));
     expect(await write(groups, inGroup(joiner, CHAT, group))).toBe(200);
     await publish(groups.writeUrl, inGroup(joiner, LEAVE, group));
-    expect(await write(groups, inGroup(joiner, CHAT, group))).toBe(403);
+    expect(await write(groups, laterChat(joiner, group))).toBe(403);
   });
 
   conformanceTest(
