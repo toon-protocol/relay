@@ -24,10 +24,12 @@ const images = {
 type Implementation = keyof typeof images;
 const both = images.typescript !== '' && images.rust !== '';
 
-// How long the expiring event outlives the first image's start: it must still
-// be live when the second image first reads it, after the first image's writes,
-// its stop and the second image's boot.
-const EXPIRY_MARGIN_S = 30;
+// How long after it is signed the expiring event's expiration falls. The case
+// waits for that time to pass before the second image's first read, so the
+// result does not depend on how long any boot, stop or write takes. The event
+// stays on disk past its expiration (for the reap grace), so it is the second
+// image's serve-time filter that is exercised.
+const EXPIRY_MARGIN_S = 5;
 
 // Three boots (each up to 60s for /health) and the wait for the expiry.
 vi.setConfig({ testTimeout: 300_000 });
@@ -100,13 +102,7 @@ describe.skipIf(!both)('relay image conformance: image swap over /data', () => {
       const written = sign(secretKey, { kind: 1, content: 'second' });
 
       const first = await startRelay(images[from], { volume });
-      // Signed once the first image is up, so its boot does not eat the margin.
-      const expiresAt = now() + EXPIRY_MARGIN_S;
-      const expiring = sign(secretKey, {
-        kind: 1,
-        created_at: t - 10,
-        tags: [['expiration', String(expiresAt)]],
-      });
+      let expiresAt = 0;
       try {
         for (const event of [
           regular,
@@ -118,10 +114,18 @@ describe.skipIf(!both)('relay image conformance: image swap over /data', () => {
           doomedAddressable,
           deletion,
           lasting,
-          expiring,
         ]) {
           await publishOk(first, event);
         }
+        // Signed and written last, on its own, so the batch above is not
+        // racing its expiration.
+        expiresAt = now() + EXPIRY_MARGIN_S;
+        const expiring = sign(secretKey, {
+          kind: 1,
+          created_at: t - 10,
+          tags: [['expiration', String(expiresAt)]],
+        });
+        await publishOk(first, expiring);
       } finally {
         await first.stop();
       }
@@ -133,16 +137,16 @@ describe.skipIf(!both)('relay image conformance: image swap over /data', () => {
         // The deletion request is itself a stored event, and is served.
         const readNow = () =>
           storedIds(second, { authors: [pubkey], limit: 100 });
-        expect(await readNow()).toEqual(
-          ids(
-            regular,
-            newReplaceable,
-            newAddressable,
-            deletion,
-            lasting,
-            expiring
-          )
+        // The expiration has passed before the second image's first read.
+        while (now() <= expiresAt) await settle(250);
+        const live = ids(
+          regular,
+          newReplaceable,
+          newAddressable,
+          deletion,
+          lasting
         );
+        expect(await readNow()).toEqual(live);
 
         // Replaced and deleted events stay gone when re-submitted.
         for (const event of [
@@ -153,22 +157,7 @@ describe.skipIf(!both)('relay image conformance: image swap over /data', () => {
         ]) {
           await publish(second, event);
         }
-        expect(await readNow()).toEqual(
-          ids(
-            regular,
-            newReplaceable,
-            newAddressable,
-            deletion,
-            lasting,
-            expiring
-          )
-        );
-
-        // The expiring event is read as expired once its time has passed.
-        while (now() <= expiresAt) await settle(500);
-        expect(await readNow()).toEqual(
-          ids(regular, newReplaceable, newAddressable, deletion, lasting)
-        );
+        expect(await readNow()).toEqual(live);
 
         // The second image can write to the volume too.
         await publishOk(second, written);

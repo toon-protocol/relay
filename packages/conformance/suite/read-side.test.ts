@@ -55,15 +55,19 @@ const ids = (events: { id: string }[]): string[] =>
   events.map((e) => e.id).sort();
 
 /** The `limitation` the relay states in its NIP-11 document. */
-async function limitation(): Promise<{
+interface Limitation {
   max_subscriptions: number;
   max_filters: number;
-}> {
+  max_limit?: number;
+  default_limit?: number;
+}
+
+async function limitation(): Promise<Limitation> {
   const response = await fetch(relay.readUrl, {
     headers: { accept: 'application/nostr+json' },
   });
   const document = (await response.json()) as {
-    limitation: { max_subscriptions: number; max_filters: number };
+    limitation: Limitation;
   };
   return document.limitation;
 }
@@ -379,6 +383,56 @@ describe('read side: EVENT over WebSocket', () => {
   );
 });
 
+describe('read side: invalid REQ and unsolicited AUTH', () => {
+  // Only the frame type of the NOTICE is asserted, not its text.
+  const invalid: [string, unknown[]][] = [
+    ['a REQ with no filter', ['REQ', 'nofilter']],
+    ['a REQ whose filter is a number', ['REQ', 'numfilter', 5]],
+    ['a filter with a negative limit', ['REQ', 'neglimit', { limit: -1 }]],
+    ['a filter with a non-numeric kind', ['REQ', 'badkind', { kinds: ['x'] }]],
+  ];
+  for (const [name, message] of invalid) {
+    conformanceTest(
+      `${name} gets a NOTICE and no EOSE`,
+      async () => {
+        await withClient(async (client) => {
+          client.send(message);
+          await client.next((f) => f[0] === 'NOTICE');
+          // Give a relay that NOTICEs and serves anyway time to send its EOSE.
+          await client.quiet();
+          expect(
+            client.frames.some((f) => f[0] === 'EOSE' && f[1] === message[1])
+          ).toBe(false);
+        });
+      },
+      { expectedFailureFor: ['typescript'] }
+    );
+  }
+
+  conformanceTest(
+    'an unsolicited AUTH is refused with OK false and auth-required:',
+    async () => {
+      const auth = signed(generateSecretKey(), {
+        kind: 22242,
+        tags: [
+          ['relay', relay.readWsUrl],
+          ['challenge', 'not-a-challenge-this-relay-issued'],
+        ],
+        content: '',
+      });
+      await withClient(async (client) => {
+        client.send(['AUTH', auth]);
+        const frame = await client.next(
+          (f) => f[0] === 'OK' && f[1] === auth.id
+        );
+        expect(frame[2]).toBe(false);
+        expect(String(frame[3])).toMatch(/^auth-required:/);
+      });
+    },
+    { expectedFailureFor: ['typescript'] }
+  );
+});
+
 describe('read side: malformed input', () => {
   const notices: [string, unknown, ConformanceTestOptions?][] = [
     ['bad JSON', '{not json'],
@@ -402,7 +456,90 @@ describe('read side: malformed input', () => {
   }
 });
 
+describe('read side: malformed input names the problem', () => {
+  conformanceTest(
+    'the four kinds of malformed input get different NOTICEs',
+    async () => {
+      const texts: string[] = [];
+      for (const message of [
+        '{not json',
+        '{"a":1}',
+        ['BOGUS', 'x'],
+        ['REQ', 7, {}],
+      ]) {
+        await withClient(async (client) => {
+          client.send(message);
+          const frame = await client.next((f) => f[0] === 'NOTICE');
+          expect(typeof frame[1]).toBe('string');
+          texts.push(frame[1] as string);
+          // Exactly one NOTICE answers a message.
+          const rest = await client.quiet();
+          expect(rest.filter((f) => f[0] === 'NOTICE')).toEqual([]);
+        });
+      }
+      expect(new Set(texts).size).toBe(4);
+    }
+  );
+});
+
+describe('read side: a request by ids stays open', () => {
+  conformanceTest(
+    'is answered with its events and EOSE and never a CLOSED',
+    async () => {
+      const event = signed(generateSecretKey(), {
+        kind: 1,
+        created_at: 1_700_000_100,
+      });
+      await publish(relay.writeUrl, event);
+      await withClient(async (client) => {
+        for (const [sub, list, count] of [
+          ['found', [event.id], 1],
+          ['mixed', [event.id, 'abcd'], 1],
+          ['prefix', ['abcd'], 0],
+        ] as const) {
+          expect((await client.req(sub, { ids: [...list] })).length).toBe(
+            count
+          );
+        }
+        await client.quiet();
+        expect(client.frames.filter((f) => f[0] === 'CLOSED')).toEqual([]);
+        // A CLOSE for a subscription is accepted without a NOTICE.
+        client.send(['CLOSE', 'found']);
+        await client.quiet();
+        expect(client.frames.filter((f) => f[0] === 'NOTICE')).toEqual([]);
+      });
+    }
+  );
+});
+
 describe('read side: limits', () => {
+  conformanceTest(
+    'a filter is answered with the newest events up to the stated cap',
+    async () => {
+      const { max_limit, default_limit } = await limitation();
+      // Without a stated cap, store enough to catch an unstated one at 500.
+      const stored = Math.max(max_limit ?? 0, default_limit ?? 0, 500) + 20;
+      const key = generateSecretKey();
+      const author = getPublicKey(key);
+      const base = 1_700_100_000;
+      const events = Array.from({ length: stored }, (_, i) =>
+        signed(key, { kind: 1, created_at: base + i })
+      );
+      for (const e of events) await publish(relay.writeUrl, e);
+      const newest = (n: number) => ids(events.slice(stored - n));
+
+      await withClient(async (client) => {
+        const above = await client.req('above', {
+          authors: [author],
+          limit: stored + 1000,
+        });
+        expect(ids(above)).toEqual(newest(max_limit ?? stored));
+        const unlimited = await client.req('none', { authors: [author] });
+        expect(ids(unlimited)).toEqual(newest(default_limit ?? stored));
+      });
+    }
+  );
+
   conformanceTest('the subscription limit is enforced', async () => {
     const limit = (await limitation()).max_subscriptions;
     await withClient(async (client) => {
