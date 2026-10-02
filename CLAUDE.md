@@ -31,10 +31,11 @@ pnpm -r test
 
 ## The Rust relay
 
-The relay is being rebuilt in Rust as a drop-in replacement for the image
-(spec: #185). Until the cutover the TypeScript package is the deployed relay
-and the only image published; TypeScript feature work is frozen, bug fixes and
-deploy changes continue.
+The relay was rebuilt in Rust as a drop-in replacement for the image (spec:
+#185), and since the cutover (#205) the Rust relay is the deployed relay and
+the only image published. The TypeScript package stays until #206 removes it:
+its image is still built in CI for the conformance suite, its last published
+build is the rollback target, and work on it is frozen.
 
 The Rust relay is a Cargo workspace beside the package: `Cargo.toml`,
 `rust-toolchain.toml` (the one toolchain pin; rustup installs it) and
@@ -62,10 +63,12 @@ that builds a surface removes that surface's markers in the same change.
 
 `deploy/` is **the deployment of record** — the live devnet relay box runs it
 from this repo (Caddy → connector → relay). One image is published to GHCR on
-every green merge to `main`, with a moving `:release` tag the box's Watchtower
-follows and an immutable `:sha-*` tag for rollback:
+every green merge to `main`, with a moving `:release` tag a box follows and
+immutable `:rust-<handle>` and `:rust-sha-*` tags:
 
-- `ghcr.io/toon-protocol/relay` — the app (`packages/relay/Dockerfile`)
+- `ghcr.io/toon-protocol/relay` — the app (`crates/relay/Dockerfile`)
+
+The rollback to the last TypeScript build is in `deploy/README.md`.
 
 The connector is the **stock** `ghcr.io/toon-protocol/connector` image on an
 immutable pin, with `deploy/connector.toml` mounted read-only — the same shape

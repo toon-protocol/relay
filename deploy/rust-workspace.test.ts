@@ -15,9 +15,9 @@
  *   invariant types' fields private to their modules (#194);
  * - the Rust image's contract with a stack matching the TypeScript image's:
  *   ports, volume, environment defaults, healthcheck and user id;
- * - the TypeScript image owning `:release` and `:latest`, and the Rust image
- *   published (#202) only as a `rust-*` candidate with its release handle
- *   built in.
+ * - the Rust image owning `:release` and `:latest` (#205), published with its
+ *   release handle built in, and the TypeScript image built but never pushed;
+ * - the rollback to the last TypeScript image named as one tag.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -29,7 +29,7 @@ import { parse as parseYaml } from 'yaml';
 const REPO_ROOT = resolve(import.meta.dirname, '..');
 const TYPESCRIPT_DOCKERFILE = 'packages/relay/Dockerfile';
 const RUST_DOCKERFILE = 'crates/relay/Dockerfile';
-const CANDIDATE_WORKFLOW = 'publish-rust-candidate.yml';
+const PUBLISH_WORKFLOW = 'publish-relay-image.yml';
 
 function readFile(path: string): string {
   return readFileSync(resolve(REPO_ROOT, path), 'utf8');
@@ -368,7 +368,7 @@ describe('the Rust image is a drop-in for the TypeScript image', () => {
   });
 });
 
-describe('the TypeScript image owns :release; Rust publishes only a candidate', () => {
+describe('the Rust image owns :release; the TypeScript image is built and never pushed', () => {
   interface Workflow {
     jobs: Record<
       string,
@@ -377,45 +377,40 @@ describe('the TypeScript image owns :release; Rust publishes only a candidate', 
   }
 
   const workflowDir = '.github/workflows';
-  const builds = readdirSync(resolve(REPO_ROOT, workflowDir)).flatMap(
-    (name) => {
-      const workflow = parseYaml(
-        readFile(`${workflowDir}/${name}`)
-      ) as Workflow;
-      return Object.values(workflow.jobs)
-        .flatMap((job) => job.steps ?? [])
-        .filter((step) => step.uses?.startsWith('docker/build-push-action@'))
-        .map((step) => ({ workflow: name, with: step.with ?? {} }));
-    }
-  );
-
-  it('pushes the TypeScript image, and the Rust image only from the candidate workflow', () => {
-    const pushed = builds.filter((build) => build.with['push'] !== false);
-    expect(pushed.length).toBeGreaterThan(0);
-    for (const build of pushed) {
-      if (build.workflow === CANDIDATE_WORKFLOW) {
-        expect(build.with['file'], build.workflow).toBe(RUST_DOCKERFILE);
-      } else {
-        expect(build.with['file'], build.workflow).toBe(TYPESCRIPT_DOCKERFILE);
-      }
-    }
-    expect(
-      pushed.filter((build) => build.workflow === CANDIDATE_WORKFLOW)
-    ).toHaveLength(1);
+  const workflows = readdirSync(resolve(REPO_ROOT, workflowDir));
+  const builds = workflows.flatMap((name) => {
+    const workflow = parseYaml(readFile(`${workflowDir}/${name}`)) as Workflow;
+    return Object.values(workflow.jobs)
+      .flatMap((job) => job.steps ?? [])
+      .filter((step) => step.uses?.startsWith('docker/build-push-action@'))
+      .map((step) => ({ workflow: name, with: step.with ?? {} }));
   });
 
-  it('tags the candidate rust-candidate, rust-<handle> and rust-sha-*, never :release or :latest', () => {
-    const text = readFile(`${workflowDir}/${CANDIDATE_WORKFLOW}`);
-    const tagRules = [
-      ...text.matchAll(/^\s*type=(?:raw|sha|semver|ref|schedule)[^\n]*$/gm),
-    ].map((m) => m[0].trim());
+  it('pushes one image, the Rust one, from the publish workflow', () => {
+    const pushed = builds.filter((build) => build.with['push'] !== false);
+    expect(pushed.map((build) => [build.workflow, build.with['file']])).toEqual(
+      [[PUBLISH_WORKFLOW, RUST_DOCKERFILE]]
+    );
+  });
+
+  it('moves :release and :latest from main only, beside rust-<handle> and rust-sha-*', () => {
+    const text = readFile(`${workflowDir}/${PUBLISH_WORKFLOW}`);
+    const tagRules = [...text.matchAll(/^\s*type=\w+[^\n]*$/gm)].map((m) =>
+      m[0].trim()
+    );
+    // Every rule of any type, since this file moves `:release`.
+    // No unprefixed `sha-*`: those tags are the TypeScript builds, and the
+    // last of them is what a rollback names (below). No `rust-candidate`
+    // either: there is no candidate once every publish is the release.
     expect(tagRules).toEqual([
-      'type=raw,value=rust-candidate',
+      'type=raw,value=release,enable={{is_default_branch}}',
+      'type=raw,value=latest,enable={{is_default_branch}}',
       'type=raw,value=rust-${{ needs.handle.outputs.handle }}',
       'type=sha,prefix=rust-sha-',
     ]);
+    // metadata-action adds `latest` by itself on some rules; the rule above
+    // is the only thing that may.
     expect(text).toMatch(/flavor:\s*latest=false/);
-    expect(text).not.toMatch(/value=(release|latest)\b/);
     // The handle that names the tag is the one built into the binary, in the
     // image the suite runs against and in the one pushed.
     expect(
@@ -425,9 +420,9 @@ describe('the TypeScript image owns :release; Rust publishes only a candidate', 
     ).toHaveLength(2);
   });
 
-  it('publishes the candidate only after the suite passed against the Rust image with nothing expected to fail', () => {
+  it('publishes only after the suite passed against the Rust image with nothing expected to fail', () => {
     const workflow = parseYaml(
-      readFile(`${workflowDir}/${CANDIDATE_WORKFLOW}`)
+      readFile(`${workflowDir}/${PUBLISH_WORKFLOW}`)
     ) as {
       jobs: Record<
         string,
@@ -465,11 +460,11 @@ describe('the TypeScript image owns :release; Rust publishes only a candidate', 
     expect(manifest).toMatch(/^version\s*=\s*"0\.1\.0"/m);
   });
 
-  it('builds the Rust Dockerfile in CI without pushing it', () => {
+  it('builds both Dockerfiles in CI without pushing either', () => {
     const ci = builds.filter((build) => build.workflow === 'ci.yml');
     expect(ci.every((build) => build.with['push'] === false)).toBe(true);
-    // The conformance matrix is where it is built, under the suite's `rust`
-    // implementation and the image's own command; no other workflow names it.
+    // The conformance matrix is where both are built, each under the suite's
+    // name for it and the image's own command.
     const workflow = parseYaml(readFile(`${workflowDir}/ci.yml`)) as {
       jobs: {
         conformance: {
@@ -477,19 +472,64 @@ describe('the TypeScript image owns :release; Rust publishes only a candidate', 
         };
       };
     };
-    expect(workflow.jobs.conformance.strategy.matrix.include).toContainEqual(
+    const matrix = workflow.jobs.conformance.strategy.matrix.include;
+    expect(matrix).toContainEqual(
       expect.objectContaining({
         implementation: 'rust',
         dockerfile: RUST_DOCKERFILE,
         command: 'relay',
       })
     );
-    const elsewhere = readdirSync(resolve(REPO_ROOT, workflowDir)).filter(
-      (name) =>
-        name !== 'ci.yml' &&
-        name !== CANDIDATE_WORKFLOW &&
-        readFile(`${workflowDir}/${name}`).includes(RUST_DOCKERFILE)
+    expect(matrix).toContainEqual(
+      expect.objectContaining({
+        implementation: 'typescript',
+        dockerfile: TYPESCRIPT_DOCKERFILE,
+      })
     );
-    expect(elsewhere).toEqual([]);
+    // Outside CI the Rust Dockerfile is named by the publish workflow alone,
+    // and the TypeScript one by nothing: a workflow that named it could push
+    // it back over `:release`.
+    const naming = (dockerfile: string) =>
+      workflows.filter(
+        (name) =>
+          name !== 'ci.yml' &&
+          readFile(`${workflowDir}/${name}`).includes(dockerfile)
+      );
+    expect(naming(RUST_DOCKERFILE)).toEqual([PUBLISH_WORKFLOW]);
+    expect(naming(TYPESCRIPT_DOCKERFILE)).toEqual([]);
+  });
+});
+
+describe('a rollback to the TypeScript relay is written down in one tag', () => {
+  // The last TypeScript image stays in GHCR under its immutable `sha-*` tag,
+  // and pointing RELAY_IMAGE at it is the whole rollback (#205). The tag is
+  // the build `:release` pointed at when it flipped, stated here and not read
+  // back out of the documents: an operator meets it in several places, and a
+  // second spelling would be one of them naming a different build.
+  const LAST_TYPESCRIPT_TAG = 'sha-7b6bab5';
+  const ROLLBACK_DOCS = [
+    'README.md',
+    'deploy/README.md',
+    'deploy/.env.example',
+    'packages/conformance/soak/README.md',
+  ];
+  // Every `sha-<hex>` a document spells that is not a Rust build's
+  // `rust-sha-<hex>`, with or without the image name in front of it.
+  const typescriptTagsIn = (path: string) => [
+    ...new Set(readFile(path).match(/(?<!rust-)\bsha-[0-9a-f]{7,}\b/g) ?? []),
+  ];
+
+  it('names the same TypeScript build wherever an operator looks', () => {
+    for (const path of ROLLBACK_DOCS) {
+      expect(typescriptTagsIn(path), path).toEqual([LAST_TYPESCRIPT_TAG]);
+    }
+  });
+
+  it('gives the rollback as the one RELAY_IMAGE line and the one command', () => {
+    const runbook = readFile('deploy/README.md');
+    expect(runbook).toContain(
+      `RELAY_IMAGE=ghcr.io/toon-protocol/relay:${LAST_TYPESCRIPT_TAG}`
+    );
+    expect(runbook).toContain('docker compose up -d relay');
   });
 });

@@ -224,15 +224,17 @@ jobs:
           PR_CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
         run: .github/scripts/no-op-merge-guard.sh
 
-  # The relay image, built the way publish-relay-image.yml builds it.
+  # The TypeScript relay image. It was the published image until `:release`
+  # flipped to Rust (#205); nothing pushes it now, and it is built here for as
+  # long as the TypeScript source stays (#206), because the conformance job
+  # below still runs the suite against it and a rollback names its last
+  # published build.
   #
-  # It exists because that workflow only runs on push to main, so a Dockerfile
-  # that cannot build was always discovered AFTER merge, with `:release` left
-  # pointing at the previous build and the fleet quietly not updating. That is
-  # not hypothetical: packages/relay/Dockerfile copies an explicit file list
-  # rather than the whole package, so adding a build-time file at the package
-  # root (version-define.ts, #146) broke the image while every other gate
-  # stayed green.
+  # It exists because a Dockerfile that cannot build was otherwise discovered
+  # only after merge. That is not hypothetical: packages/relay/Dockerfile
+  # copies an explicit file list rather than the whole package, so adding a
+  # build-time file at the package root (version-define.ts, #146) broke the
+  # image while every other gate stayed green.
   #
   # Build only -- no registry login, no push. It is deliberately NOT part of
   # the `build` job, whose wall clock is measured against a frozen baseline.
@@ -272,13 +274,13 @@ jobs:
   # The black-box conformance suite (#187): a relay image is started as a
   # container with a stub connector beside it, and only its read and write
   # ports are spoken to. The same suite runs against both implementations
-  # until the TypeScript source is removed (#185).
+  # until the TypeScript source is removed (#206).
   #
-  # `typescript` is the image `image-build` builds and the only one published.
-  # `rust` (#192) is built here too and must pass every case: nothing is
-  # declared `expectedFailureFor: ['rust']` (#202), and this job is part of
-  # `CI OK`. It is published only as a candidate, by
-  # publish-rust-candidate.yml, after the same suite passes there.
+  # `rust` (#192) is the published image (#205) and must pass every case:
+  # nothing is declared `expectedFailureFor: ['rust']` (#202), and this job is
+  # part of `CI OK`. publish-relay-image.yml pushes it after the same suite
+  # passes there. `typescript` is the image `image-build` builds; it is no
+  # longer published.
   conformance:
     name: Conformance suite against the ${{ matrix.implementation }} relay image
     runs-on: ubuntu-latest
