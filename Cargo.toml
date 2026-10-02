@@ -34,7 +34,7 @@ hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
 # The protocol crate of the framework #185 names, on that framework's exact pin.
 nostr = { version = "=0.45.4", default-features = false, features = ["std", "nip06"] }
-# The framework: NIP-01 messages, subscriptions and fan-out (`local_relay`).
+# The framework: NIP-01 messages and stored answers (`local_relay`).
 # Its API is declared alpha, so the pin is exact and crates/relay/src/framework.rs
 # is the only module that imports it (deploy/rust-workspace.test.ts). The pin
 # does not reach its own framework crates (nostr-memory, async-wsocket), which

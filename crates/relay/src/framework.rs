@@ -1,5 +1,5 @@
 //! The adapter over the framework: `nostr-sdk`'s `local_relay`, which parses
-//! NIP-01 messages, keeps subscriptions and fans events out to them.
+//! NIP-01 messages and answers each `REQ` from the store.
 //!
 //! The framework's API is declared alpha, so this is the only module that
 //! imports it (`nostr_sdk`, and `nostr_database` for the trait it reads
@@ -20,6 +20,11 @@
 //!   refuses anyway, should one ever reach it.
 //! - It speaks to a connection through the gate, which also holds the limits
 //!   the framework would answer differently and the connection cap.
+//! - It is never told of a new event. It would deliver one to each
+//!   subscription through its own WebSocket endpoint and the pipe to the
+//!   gate; the gate delivers live events itself, from [`ReadSide::deliver`]
+//!   (#232), and the framework's subscriptions are only ever answered from
+//!   the store.
 //! - `AUTH` is neither required nor advertised: NIP-42 is left off.
 
 use std::collections::BTreeSet;
@@ -53,6 +58,8 @@ pub(crate) struct ReadSide {
     edge: EdgeSlot,
     write_carriage: Option<Carriage>,
     connections: Arc<Semaphore>,
+    /// What every connection's gate delivers live events from.
+    live: gate::LiveFeed,
 }
 
 impl ReadSide {
@@ -76,6 +83,7 @@ impl ReadSide {
             write_carriage,
             // More permits than a semaphore can hold is no cap at all.
             connections: Arc::new(Semaphore::new(max_connections.min(Semaphore::MAX_PERMITS))),
+            live: gate::LiveFeed::new(),
         }
     }
 
@@ -96,7 +104,7 @@ impl ReadSide {
             edge: self.edge.clone(),
             write_carriage: self.write_carriage,
         };
-        gate::through(stream, refusal, store, move |pipe| async move {
+        gate::through(stream, refusal, store, &self.live, move |pipe| async move {
             framework
                 .take_connection(pipe, peer)
                 .await
@@ -108,8 +116,7 @@ impl ReadSide {
     /// Deliver `event` to every open subscription it matches. Nothing is
     /// saved: the caller has saved it, or it is not to be kept.
     pub(crate) fn deliver(&self, event: &VerifiedEvent) {
-        // `false` only says nobody is connected.
-        self.framework.notify_event(event.event().clone());
+        self.live.publish(event.event());
     }
 }
 

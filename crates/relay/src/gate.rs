@@ -27,17 +27,33 @@
 //!   order, before the `EOSE` the framework sent;
 //! - a connection past the cap is closed with 1013.
 //!
+//! Live events do not cross the framework at all: the gate delivers them
+//! (#232). The framework hears every `REQ` and gives its stored answer; the
+//! gate keeps the same filters and matches each new event against them
+//! itself, from one feed every connection listens to ([`LiveFeed`]), with the
+//! event serialised once for all of them. Delivery through the framework
+//! costs each subscriber a wake of its connection task, a serialisation, a
+//! frame through the pipe and a read by a WebSocket endpoint whose read
+//! buffer the relay cannot size (see [`READ_BUFFER`]). The gate does with a
+//! live event what the framework does: a subscription begins when its stored
+//! answer ends, no connection hears a live event while the framework is
+//! answering it, and one that falls a whole feed behind has its subscriptions
+//! closed.
+//!
 //! This module imports nothing of the framework: it sees a stream to hand
 //! over, which is what keeps the framework behind its one adapter.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
+use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
 use nostr::event::Event;
 use nostr::filter::{Filter, MatchEventOptions};
+use nostr::message::ClientMessage;
 use serde_json::{Value, json};
 use tokio::io::{AsyncRead, AsyncWrite, DuplexStream};
+use tokio::sync::broadcast;
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
@@ -62,6 +78,21 @@ const FRAMEWORK_LIMIT: usize = 500;
 const MAX_MESSAGE: usize = 5 * 1024 * 1024;
 /// How much the pipe to the framework buffers each way.
 const PIPE_BUFFER: usize = 64 * 1024;
+/// The read buffer of each WebSocket endpoint the gate owns. The WebSocket
+/// layer zero-fills the whole buffer before every read, one that finds
+/// nothing included, and each endpoint is read whenever its connection's task
+/// wakes. At the layer's default of 128 KiB that filling is half the relay's
+/// CPU time during a fan-out (measured in #232), and the buffers are most of
+/// what an idle connection holds (#231). A frame larger than this is still
+/// read whole: the buffer grows to the frame.
+const READ_BUFFER: usize = 4 * 1024;
+/// How many live events may wait for a connection that is not taking them,
+/// before it has missed one. The framework's own figure.
+const LIVE_BUFFER: usize = 1024;
+/// What a subscription is closed with when its connection missed live events:
+/// the framework's words.
+const CLOSED_OVERFLOW: &str =
+    "error: live event buffer overflow; resubscribe to recover stored events";
 /// The reason a connection past the cap is closed with.
 const CLOSE_REASON_FULL: &str = "max connections reached";
 
@@ -95,39 +126,82 @@ pub(crate) enum Verdict {
     Answer(String),
 }
 
-/// One filter of a subscription the gate answers for: what the framework
-/// understands of it, and the tag keys it does not.
+/// An event on its way to every open subscription it matches.
+#[derive(Debug)]
+pub(crate) struct LiveEvent {
+    event: Event,
+    /// The event as a frame carries it, written once for every subscriber.
+    json: String,
+}
+
+impl LiveEvent {
+    fn new(event: &Event) -> Self {
+        Self {
+            event: event.clone(),
+            json: serde_json::to_string(event)
+                .expect("an event is strings, numbers and lists, which always serialize"),
+        }
+    }
+}
+
+/// The feed of live events: published to once per event, listened to by every
+/// connection. Cheap to clone; every clone is the same feed.
+#[derive(Debug, Clone)]
+pub(crate) struct LiveFeed(broadcast::Sender<Arc<LiveEvent>>);
+
+impl LiveFeed {
+    /// A feed nobody listens to yet.
+    pub(crate) fn new() -> Self {
+        Self(broadcast::channel(LIVE_BUFFER).0)
+    }
+
+    /// Hand `event` to every connection open now.
+    pub(crate) fn publish(&self, event: &Event) {
+        // An error only says nobody is connected.
+        let _ = self.0.send(Arc::new(LiveEvent::new(event)));
+    }
+
+    /// Every event published from now on.
+    fn listen(&self) -> broadcast::Receiver<Arc<LiveEvent>> {
+        self.0.subscribe()
+    }
+}
+
+/// The values a filter's `#ab`-style keys accept, by key without the `#`.
+type MultiLetterKeys = Vec<(String, HashSet<String>)>;
+
+/// Remove from `filter` the tag keys the framework ignores, and return them.
+/// `None` when one of them is not a list, or `filter` is not an object.
+fn take_multi_letter_keys(filter: &mut Value) -> Option<MultiLetterKeys> {
+    let object = filter.as_object_mut()?;
+    let keys: Vec<String> = object
+        .keys()
+        .filter(|key| key.starts_with('#') && key.chars().count() > 2)
+        .cloned()
+        .collect();
+    let mut multi = Vec::new();
+    for key in keys {
+        let values = object.remove(&key)?;
+        let values = values
+            .as_array()?
+            .iter()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect();
+        multi.push((key[1..].to_string(), values));
+    }
+    Some(multi)
+}
+
+/// One filter of a subscription: what the framework understands of it, and
+/// the tag keys it does not.
 #[derive(Debug)]
 struct Wanted {
     base: Filter,
     /// `#ab`-style keys with the values they accept.
-    multi: Vec<(String, HashSet<String>)>,
+    multi: MultiLetterKeys,
 }
 
 impl Wanted {
-    /// Split `filter`, removing the keys the framework ignores from it.
-    /// `None` when it is not a filter the framework would take either.
-    fn take(filter: &mut Value) -> Option<Self> {
-        let object = filter.as_object_mut()?;
-        let keys: Vec<String> = object
-            .keys()
-            .filter(|key| key.starts_with('#') && key.chars().count() > 2)
-            .cloned()
-            .collect();
-        let mut multi = Vec::new();
-        for key in keys {
-            let values = object.remove(&key)?;
-            let values = values
-                .as_array()?
-                .iter()
-                .filter_map(|value| value.as_str().map(str::to_string))
-                .collect();
-            multi.push((key[1..].to_string(), values));
-        }
-        let base = serde_json::from_value(filter.clone()).ok()?;
-        Some(Self { base, multi })
-    }
-
     fn matches(&self, event: &Event) -> bool {
         self.base.match_event(event, MatchEventOptions::new())
             && self.multi.iter().all(|(name, values)| {
@@ -150,15 +224,39 @@ impl Wanted {
     }
 }
 
-/// A subscription whose answer the gate shapes.
+/// A subscription the framework took: the gate delivers its live events.
 #[derive(Debug)]
-struct Watched {
+struct Subscription {
     filters: Vec<Wanted>,
-    /// The framework has not yet said `EOSE`: its stored events are held back.
-    stored_pending: bool,
-    /// Some filter has a key the framework ignores, so each event it sends
-    /// is checked.
-    post_filter: bool,
+    /// How each of its live frames begins: `["EVENT","<id>",`.
+    head: String,
+}
+
+/// A message the framework has heard and not finished answering. It answers
+/// one at a time, in the order it heard them, so what it sends belongs to
+/// the oldest of these.
+#[derive(Debug)]
+enum Asked {
+    /// A `REQ`: stored events, then `EOSE`; or `CLOSED` and a reason.
+    Request {
+        id: String,
+        /// What it becomes at `EOSE`, which is when the framework takes a
+        /// subscription. `None` once the client has closed it.
+        subscription: Option<Subscription>,
+        /// The gate gives its stored answer: the stored events the framework
+        /// sends are held back, and at its `EOSE` the store's are sent.
+        answered_here: bool,
+    },
+    /// A `COUNT`: a `COUNT`; or `CLOSED` and a reason.
+    Count { id: String },
+}
+
+impl Asked {
+    fn id(&self) -> &str {
+        match self {
+            Self::Request { id, .. } | Self::Count { id } => id,
+        }
+    }
 }
 
 /// What the gate does with one message from the framework.
@@ -181,7 +279,9 @@ pub(crate) struct Gate {
     /// Whether an expired event is still served, which the framework will
     /// not do for a stored answer.
     serves_expired: bool,
-    watched: HashMap<String, Watched>,
+    subscriptions: HashMap<String, Subscription>,
+    /// What the framework has heard and not finished answering, oldest first.
+    awaiting: VecDeque<Asked>,
 }
 
 impl Gate {
@@ -195,7 +295,32 @@ impl Gate {
             Some("CLOSE") => {
                 if let Some(id) = items.get(1).and_then(Value::as_str) {
                     self.open.remove(id);
-                    self.watched.remove(id);
+                    self.subscriptions.remove(id);
+                    // The framework still answers a request it has heard, and
+                    // closes it straight after: it is never live.
+                    for asked in &mut self.awaiting {
+                        if let Asked::Request {
+                            id: asked,
+                            subscription,
+                            answered_here,
+                        } = asked
+                            && asked == id
+                        {
+                            *subscription = None;
+                            *answered_here = false;
+                        }
+                    }
+                }
+                Verdict::Forward(text.to_string())
+            }
+            Some("COUNT") => {
+                if let Ok(ClientMessage::Count {
+                    subscription_id, ..
+                }) = ClientMessage::from_json(text)
+                {
+                    self.awaiting.push_back(Asked::Count {
+                        id: subscription_id.to_string(),
+                    });
                 }
                 Verdict::Forward(text.to_string())
             }
@@ -217,12 +342,12 @@ impl Gate {
                 for filter in items.iter_mut().skip(2) {
                     changed |= keep_whole_values(filter);
                 }
-                changed |= self.watch(&id, &mut items);
-                Verdict::Forward(if changed {
-                    Value::Array(items).to_string()
+                let whole = if changed {
+                    Value::Array(items.clone()).to_string()
                 } else {
                     text.to_string()
-                })
+                };
+                Verdict::Forward(self.ask(&id, items, whole))
             }
             Some("EVENT") => {
                 let id = items
@@ -236,84 +361,158 @@ impl Gate {
         }
     }
 
-    /// Start answering for `id` where the framework cannot: the filters in
-    /// `items` (after the id) lose the keys it ignores. Whether any did.
-    fn watch(&mut self, id: &str, items: &mut [Value]) -> bool {
-        self.watched.remove(id);
-        let before: Vec<Value> = items.iter().skip(2).cloned().collect();
-        let mut filters = Vec::new();
-        for filter in items.iter_mut().skip(2) {
-            match Wanted::take(filter) {
-                Some(wanted) => filters.push(wanted),
-                // The framework answers it in its own words, so it hears the
-                // whole request, every filter as the client sent it.
-                None => {
-                    for (filter, before) in items.iter_mut().skip(2).zip(before) {
-                        *filter = before;
-                    }
-                    return false;
-                }
-            }
-        }
-        let stripped = items.iter().skip(2).ne(before.iter());
-        let post_filter = filters.iter().any(|wanted| !wanted.multi.is_empty());
-        if post_filter || self.serves_expired {
-            self.watched.insert(
-                id.to_string(),
-                Watched {
-                    filters,
-                    stored_pending: true,
-                    post_filter,
-                },
-            );
-        }
-        stripped
+    /// Note the request `items` for `id`, and return what the framework is to
+    /// hear of it: `whole`, the request as the client sent it, or the same
+    /// without the tag keys the framework ignores, which the gate applies.
+    fn ask(&mut self, id: &str, mut items: Vec<Value>, whole: String) -> String {
+        let multi: Option<Vec<MultiLetterKeys>> = items
+            .iter_mut()
+            .skip(2)
+            .map(take_multi_letter_keys)
+            .collect();
+        // A key that is not a list is left for the framework to judge: it
+        // hears every filter as the client sent it, and gives the answer.
+        let (multi, shaped) = match multi {
+            Some(multi) => (multi, true),
+            None => (Vec::new(), false),
+        };
+        let post_filter = multi.iter().any(|keys| !keys.is_empty());
+        let heard = if post_filter {
+            Value::Array(items).to_string()
+        } else {
+            whole.clone()
+        };
+        // The framework's own parser, on the text it will read: what parses
+        // here it answers with `EOSE` or `CLOSED`, and what does not it
+        // refuses in its own words, hearing the whole request.
+        let Ok(ClientMessage::Req { filters, .. }) = ClientMessage::from_json(&heard) else {
+            return whole;
+        };
+        let mut multi = multi.into_iter();
+        let filters = filters
+            .into_iter()
+            .map(|base| Wanted {
+                base: base.into_owned(),
+                multi: multi.next().unwrap_or_default(),
+            })
+            .collect();
+        self.awaiting.push_back(Asked::Request {
+            id: id.to_string(),
+            subscription: Some(Subscription {
+                filters,
+                head: format!("[\"EVENT\",{},", Value::from(id)),
+            }),
+            answered_here: shaped && (post_filter || self.serves_expired),
+        });
+        heard
     }
 
     /// What to do with `text`, a message the framework sent. A subscription
     /// it closed is no longer open, whoever closed it.
     pub(crate) fn relay_sent(&mut self, text: &str) -> Relayed {
-        let closed = text.starts_with("[\"CLOSED\"");
-        if !closed && self.watched.is_empty() {
+        // The framework is told of no new event, so every event it sends is
+        // a stored one, in answer to the oldest request. Not parsed.
+        if text.starts_with("[\"EVENT\"") {
+            return match self.awaiting.front() {
+                Some(Asked::Request {
+                    answered_here: true,
+                    ..
+                }) => Relayed::Drop,
+                _ => Relayed::Pass,
+            };
+        }
+        if !["[\"EOSE\"", "[\"CLOSED\"", "[\"COUNT\""]
+            .iter()
+            .any(|head| text.starts_with(head))
+        {
             return Relayed::Pass;
         }
         let Ok(Value::Array(items)) = serde_json::from_str::<Value>(text) else {
             return Relayed::Pass;
         };
-        let id = items.get(1).and_then(Value::as_str);
-        if closed {
-            if let Some(id) = id {
-                self.open.remove(id);
-                self.watched.remove(id);
-            }
-            return Relayed::Pass;
-        }
-        let Some((id, watched)) = id.and_then(|id| self.watched.get_mut(id).map(|w| (id, w)))
-        else {
+        let (Some(kind), Some(id)) = (
+            items.first().and_then(Value::as_str),
+            items.get(1).and_then(Value::as_str),
+        ) else {
             return Relayed::Pass;
         };
-        match items.first().and_then(Value::as_str) {
-            Some("EOSE") if watched.stored_pending => {
-                watched.stored_pending = false;
-                Relayed::StoredDue(id.to_string())
+        let oldest = self.awaiting.front().filter(|asked| asked.id() == id);
+        match (kind, oldest) {
+            ("CLOSED", oldest) => {
+                self.open.remove(id);
+                let reason = items.get(2).and_then(Value::as_str).unwrap_or_default();
+                if reason.is_empty() {
+                    // Not a refusal: it follows the `EOSE` of a request that
+                    // named its events by id and was sent every one.
+                    self.subscriptions.remove(id);
+                } else if oldest.is_some() {
+                    // Refused. A subscription it would have replaced stands,
+                    // as it does in the framework.
+                    self.awaiting.pop_front();
+                }
+                Relayed::Pass
             }
-            Some("EVENT") if watched.stored_pending => Relayed::Drop,
-            Some("EVENT") if watched.post_filter => {
-                let wanted = items
-                    .get(2)
-                    .and_then(|event| serde_json::from_value::<Event>(event.clone()).ok())
-                    .is_some_and(|event| watched.filters.iter().any(|f| f.matches(&event)));
-                if wanted { Relayed::Pass } else { Relayed::Drop }
+            ("COUNT", Some(Asked::Count { .. })) => {
+                self.awaiting.pop_front();
+                Relayed::Pass
+            }
+            ("EOSE", Some(Asked::Request { .. })) => {
+                let Some(Asked::Request {
+                    id,
+                    subscription,
+                    answered_here,
+                }) = self.awaiting.pop_front()
+                else {
+                    return Relayed::Pass;
+                };
+                if let Some(subscription) = subscription {
+                    self.subscriptions.insert(id.clone(), subscription);
+                }
+                if answered_here {
+                    Relayed::StoredDue(id)
+                } else {
+                    Relayed::Pass
+                }
             }
             _ => Relayed::Pass,
         }
     }
 
+    /// Whether this connection takes live events now. It takes none while
+    /// the framework is still answering a request: an event that arrives
+    /// during a stored answer is delivered after it, never inside it.
+    pub(crate) fn hears_live(&self) -> bool {
+        self.awaiting.is_empty()
+    }
+
+    /// The frames `live` is to this connection: one for each open
+    /// subscription it matches.
+    pub(crate) fn live_frames<'a>(
+        &'a self,
+        live: &'a LiveEvent,
+    ) -> impl Iterator<Item = String> + 'a {
+        self.subscriptions
+            .values()
+            .filter(|subscription| subscription.filters.iter().any(|f| f.matches(&live.event)))
+            .map(|subscription| format!("{}{}]", subscription.head, live.json))
+    }
+
+    /// The connection missed live events, which cannot be matched any more:
+    /// every subscription ends rather than carry on with a gap in it. Their
+    /// ids, for the client and the framework to be told.
+    pub(crate) fn overflowed(&mut self) -> Vec<String> {
+        let ids: Vec<String> = self.subscriptions.drain().map(|(id, _)| id).collect();
+        for id in &ids {
+            self.open.remove(id);
+        }
+        ids
+    }
+
     /// The questions to put to the store for `id`'s stored answer.
     pub(crate) fn stored_queries(&self, id: &str) -> Vec<Filter> {
-        self.watched
+        self.subscriptions
             .get(id)
-            .map(|watched| watched.filters.iter().map(Wanted::query).collect())
+            .map(|subscription| subscription.filters.iter().map(Wanted::query).collect())
             .unwrap_or_default()
     }
 
@@ -325,9 +524,9 @@ impl Gate {
     pub(crate) fn stored_frames(&self, id: &str, found: Vec<Vec<Event>>) -> Vec<String> {
         let mut events: Vec<Event> = Vec::new();
         let mut seen = HashSet::new();
-        if let Some(watched) = self.watched.get(id) {
+        if let Some(subscription) = self.subscriptions.get(id) {
             for event in found.into_iter().flatten() {
-                if seen.insert(event.id) && watched.filters.iter().any(|f| f.matches(&event)) {
+                if seen.insert(event.id) && subscription.filters.iter().any(|f| f.matches(&event)) {
                     events.push(event);
                 }
             }
@@ -343,7 +542,7 @@ impl Gate {
     /// Stop shaping `id`: the store could not answer it.
     pub(crate) fn forget(&mut self, id: &str) {
         self.open.remove(id);
-        self.watched.remove(id);
+        self.subscriptions.remove(id);
     }
 }
 
@@ -399,13 +598,29 @@ async fn stored_answer(gate: &mut Gate, store: &Store, id: &str) -> Result<Vec<S
     Ok(gate.stored_frames(id, found))
 }
 
+/// Send each of `frames` to the client, in order, until one cannot be sent.
+async fn send_all<S>(
+    client: &mut WebSocketStream<S>,
+    frames: impl IntoIterator<Item = String>,
+) -> Result<(), tokio_tungstenite::tungstenite::Error>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    for frame in frames {
+        client.send(Message::text(frame)).await?;
+    }
+    Ok(())
+}
+
 /// Serve `client`, a connection already upgraded to WebSocket, until either
 /// side closes it. `framework` is handed the far end of the pipe the framework
-/// speaks on; `refusal` is what an `EVENT` is answered with.
+/// speaks on; `refusal` is what an `EVENT` is answered with, and `live` is
+/// the feed its subscriptions are delivered from.
 pub(crate) async fn through<S, F, Fut>(
     client: S,
     refusal: Refusal,
     store: Store,
+    live: &LiveFeed,
     framework: F,
 ) -> Result<(), RelayError>
 where
@@ -414,8 +629,11 @@ where
     Fut: Future<Output = Result<(), RelayError>> + Send + 'static,
 {
     let config = WebSocketConfig::default()
+        .read_buffer_size(READ_BUFFER)
         .max_message_size(Some(MAX_MESSAGE))
         .max_frame_size(Some(MAX_MESSAGE));
+    // Before anything is asked: no event published from here on is missed.
+    let mut live = live.listen();
     let mut client = WebSocketStream::from_raw_socket(client, Role::Server, Some(config)).await;
     let (near, far) = tokio::io::duplex(PIPE_BUFFER);
     let framework = tokio::spawn(framework(far));
@@ -437,12 +655,12 @@ where
                     }
                     Verdict::Refuse(notice) => {
                         let frame = json!(["NOTICE", notice]).to_string();
-                        if let Err(error) = client.send(Message::text(frame)).await {
+                        if let Err(error) = send_all(&mut client, [frame]).await {
                             break Err(error);
                         }
                     }
                     Verdict::Answer(frame) => {
-                        if let Err(error) = client.send(Message::text(frame)).await {
+                        if let Err(error) = send_all(&mut client, [frame]).await {
                             break Err(error);
                         }
                     }
@@ -465,7 +683,7 @@ where
                         Relayed::StoredDue(id) => match stored_answer(&mut gate, &store, &id).await {
                             Ok(frames) => frames,
                             // The client is told it is closed, so the framework
-                            // closes it too and sends no live events for it.
+                            // closes it too.
                             Err(closed) => {
                                 let close = json!(["CLOSE", id]).to_string();
                                 if inner.send(Message::text(close)).await.is_err() {
@@ -475,19 +693,41 @@ where
                             }
                         },
                     };
-                    let mut failed = None;
-                    for frame in frames {
-                        if let Err(error) = client.send(Message::text(frame)).await {
-                            failed = Some(error);
-                            break;
-                        }
-                    }
-                    if let Some(error) = failed {
+                    if let Err(error) = send_all(&mut client, frames).await {
                         break Err(error);
                     }
                 }
                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break Ok(()),
                 Some(Ok(_)) => {}
+            },
+            event = live.recv(), if gate.hears_live() => match event {
+                Ok(event) => {
+                    if let Err(error) = send_all(&mut client, gate.live_frames(&event)).await {
+                        break Err(error);
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    live = live.resubscribe();
+                    let ended = gate.overflowed();
+                    // The framework closes them too, as the client is told.
+                    let mut heard = true;
+                    for id in &ended {
+                        let close = json!(["CLOSE", id]).to_string();
+                        heard &= inner.send(Message::text(close)).await.is_ok();
+                    }
+                    if !heard {
+                        break Ok(());
+                    }
+                    let closed: Vec<String> = ended
+                        .iter()
+                        .map(|id| json!(["CLOSED", id, CLOSED_OVERFLOW]).to_string())
+                        .collect();
+                    if let Err(error) = send_all(&mut client, closed).await {
+                        break Err(error);
+                    }
+                }
+                // The relay is going: every clone of the feed is dropped.
+                Err(broadcast::error::RecvError::Closed) => break Ok(()),
             },
         }
     };
@@ -636,7 +876,7 @@ mod tests {
     }
 
     #[test]
-    fn a_request_the_framework_can_answer_whole_is_not_watched() {
+    fn a_request_the_framework_can_answer_whole_keeps_the_frameworks_answer() {
         let mut gate = Gate::default();
         let text = r##"["REQ","a",{"kinds":[1],"#t":["x"]}]"##;
         assert_eq!(gate.client_sent(text), forwarded(text));
@@ -699,6 +939,7 @@ mod tests {
             ..Gate::default()
         };
         gate.client_sent(r#"["REQ","a",{"kinds":[1]},{"limit":3},{"limit":9999}]"#);
+        gate.relay_sent(r#"["EOSE","a"]"#);
         let limits: Vec<_> = gate
             .stored_queries("a")
             .iter()
@@ -707,8 +948,330 @@ mod tests {
         assert_eq!(limits, vec![Some(500), Some(3), Some(500)]);
     }
 
+    /// A signed event of `kind` carrying `tags`.
+    fn event(kind: u16, tags: &[&[&str]]) -> Event {
+        use nostr::event::{EventBuilder, FinalizeEvent, Kind, Tag};
+        let tags = tags
+            .iter()
+            .map(|tag| Tag::parse(tag.iter().copied()).expect("a non-empty tag parses"));
+        EventBuilder::new(Kind::from(kind), "live")
+            .tags(tags)
+            .finalize(&nostr::key::Keys::generate())
+            .expect("a generated key signs an event")
+    }
+
+    /// A gate whose every request in `requests` the framework has answered.
+    fn subscribed(requests: &[&str]) -> Gate {
+        let mut gate = Gate::default();
+        for text in requests {
+            gate.client_sent(text);
+        }
+        while let Some(asked) = gate.awaiting.front() {
+            let eose = json!(["EOSE", asked.id()]).to_string();
+            gate.relay_sent(&eose);
+        }
+        gate
+    }
+
+    fn frames(gate: &Gate, event: &Event) -> Vec<String> {
+        let mut frames: Vec<String> = gate.live_frames(&LiveEvent::new(event)).collect();
+        frames.sort();
+        frames
+    }
+
     #[test]
-    fn a_closed_subscription_is_no_longer_watched() {
+    fn a_live_event_is_one_frame_for_each_subscription_it_matches() {
+        let gate = subscribed(&[
+            r#"["REQ","a",{"kinds":[1]}]"#,
+            r#"["REQ","b",{"kinds":[7]},{"kinds":[1]},{}]"#,
+            r#"["REQ","c",{"kinds":[7]}]"#,
+        ]);
+        let event = event(1, &[]);
+        let json = serde_json::to_string(&event).expect("JSON");
+        assert_eq!(
+            frames(&gate, &event),
+            vec![
+                format!(r#"["EVENT","a",{json}]"#),
+                format!(r#"["EVENT","b",{json}]"#)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_live_frame_quotes_its_subscription_id_as_json_does() {
+        let gate = subscribed(&[r#"["REQ","a\"\\b",{}]"#]);
+        let frame = frames(&gate, &event(1, &[])).remove(0);
+        let frame: Value = serde_json::from_str(&frame).expect("a live frame is JSON");
+        assert_eq!(frame[1], json!("a\"\\b"));
+    }
+
+    #[test]
+    fn no_live_event_is_heard_while_the_framework_is_answering_a_request() {
+        let mut gate = Gate::default();
+        assert!(gate.hears_live());
+        gate.client_sent(r#"["REQ","a",{}]"#);
+        gate.client_sent(r#"["REQ","b",{}]"#);
+        assert!(!gate.hears_live());
+        // A stored event is not the end of an answer; `EOSE` and `CLOSED` are.
+        gate.relay_sent(r#"["EVENT","a",{}]"#);
+        gate.relay_sent(r#"["EOSE","a"]"#);
+        assert!(!gate.hears_live(), "b is still being answered");
+        gate.relay_sent(r#"["CLOSED","b","rate-limited: too many queries"]"#);
+        assert!(gate.hears_live());
+        let frames = frames(&gate, &event(1, &[]));
+        assert_eq!(frames.len(), 1, "a is live and b was refused");
+        assert!(frames[0].starts_with(r#"["EVENT","a","#));
+    }
+
+    #[test]
+    fn a_request_the_framework_will_not_parse_is_no_subscription() {
+        let mut gate = Gate::default();
+        for text in [r#"["REQ","a"]"#, r#"["REQ","a",{"kinds":"x"}]"#] {
+            assert_eq!(gate.client_sent(text), forwarded(text));
+            assert!(gate.hears_live(), "nothing is awaited for {text}");
+            assert!(frames(&gate, &event(1, &[])).is_empty());
+        }
+    }
+
+    #[test]
+    fn a_refused_request_leaves_the_subscription_it_would_have_replaced() {
+        let mut gate = subscribed(&[r#"["REQ","a",{"kinds":[1]}]"#]);
+        gate.client_sent(r#"["REQ","a",{"kinds":"x"}]"#);
+        assert_eq!(frames(&gate, &event(1, &[])).len(), 1);
+    }
+
+    #[test]
+    fn a_request_refused_with_closed_leaves_the_subscription_it_would_have_replaced() {
+        let mut gate = subscribed(&[r#"["REQ","a",{"kinds":[1]}]"#]);
+        gate.client_sent(r#"["REQ","a",{"kinds":[7]}]"#);
+        gate.relay_sent(r#"["CLOSED","a","rate-limited: too many queries"]"#);
+        assert!(gate.hears_live());
+        assert_eq!(frames(&gate, &event(1, &[])).len(), 1);
+        assert!(frames(&gate, &event(7, &[])).is_empty());
+    }
+
+    #[test]
+    fn a_request_sent_behind_one_the_framework_closes_itself_is_still_live() {
+        // The first names its event by id and is sent it, so the framework
+        // ends it: `EOSE`, then `CLOSED` with no reason. The second, with
+        // the same id, was already on its way.
+        let mut gate = Gate::default();
+        gate.client_sent(&format!(r#"["REQ","a",{{"ids":["{}"]}}]"#, "ab".repeat(32)));
+        gate.client_sent(r#"["REQ","a",{"kinds":[1]}]"#);
+        gate.relay_sent(r#"["EVENT","a",{}]"#);
+        gate.relay_sent(r#"["EOSE","a"]"#);
+        gate.relay_sent(r#"["CLOSED","a",""]"#);
+        assert!(!gate.hears_live(), "the second is still being answered");
+        gate.relay_sent(r#"["EOSE","a"]"#);
+        assert!(gate.hears_live());
+        assert_eq!(frames(&gate, &event(1, &[])).len(), 1);
+    }
+
+    #[test]
+    fn a_request_closed_before_it_is_answered_never_becomes_live() {
+        let mut gate = Gate::default();
+        gate.client_sent(r##"["REQ","a",{"#ab":["x"]}]"##);
+        gate.client_sent(r#"["CLOSE","a"]"#);
+        // The framework answers what it had heard, and that is passed on.
+        assert_eq!(gate.relay_sent(r#"["EVENT","a",{}]"#), Relayed::Pass);
+        assert_eq!(gate.relay_sent(r#"["EOSE","a"]"#), Relayed::Pass);
+        assert!(gate.hears_live());
+        assert!(frames(&gate, &event(1, &[&["ab", "x"]])).is_empty());
+    }
+
+    #[test]
+    fn a_count_is_awaited_and_its_answer_ends_no_request() {
+        let mut gate = Gate::default();
+        gate.client_sent(r#"["COUNT","a",{}]"#);
+        gate.client_sent(r#"["REQ","a",{}]"#);
+        assert!(!gate.hears_live());
+        gate.relay_sent(r#"["CLOSED","a","rate-limited: too many queries"]"#);
+        assert!(!gate.hears_live(), "that refused the count");
+        gate.relay_sent(r#"["EOSE","a"]"#);
+        assert!(gate.hears_live());
+        assert_eq!(frames(&gate, &event(1, &[])).len(), 1);
+
+        gate.client_sent(r#"["COUNT","c",{}]"#);
+        gate.relay_sent(r#"["COUNT","c",{"count":0}]"#);
+        assert!(gate.hears_live());
+    }
+
+    #[test]
+    fn a_subscription_closed_by_either_side_hears_no_live_event() {
+        let mut gate = subscribed(&[r#"["REQ","a",{}]"#, r#"["REQ","b",{}]"#]);
+        gate.client_sent(r#"["CLOSE","a"]"#);
+        gate.relay_sent(r#"["CLOSED","b",""]"#);
+        assert!(frames(&gate, &event(1, &[])).is_empty());
+    }
+
+    #[test]
+    fn a_multi_letter_key_is_applied_to_live_events() {
+        let mut gate = Gate::default();
+        gate.client_sent(r##"["REQ","a",{"kinds":[1],"#ab":["x"]}]"##);
+        assert_eq!(
+            gate.relay_sent(r#"["EOSE","a"]"#),
+            Relayed::StoredDue("a".to_string())
+        );
+        assert_eq!(frames(&gate, &event(1, &[&["ab", "x"]])).len(), 1);
+        assert!(frames(&gate, &event(1, &[&["ab", "y"]])).is_empty());
+        assert!(frames(&gate, &event(7, &[&["ab", "x"]])).is_empty());
+    }
+
+    #[test]
+    fn a_multi_letter_key_that_is_not_a_list_is_left_to_the_framework() {
+        let mut gate = Gate::default();
+        let text = r##"["REQ","a",{"kinds":[1],"#ab":"x"}]"##;
+        assert_eq!(gate.client_sent(text), forwarded(text));
+        // The framework ignores the key, so the subscription is live without it.
+        assert_eq!(gate.relay_sent(r#"["EOSE","a"]"#), Relayed::Pass);
+        assert_eq!(frames(&gate, &event(1, &[])).len(), 1);
+
+        // And the stored answer stays the framework's, expired events or not.
+        let mut gate = Gate {
+            serves_expired: true,
+            ..Gate::default()
+        };
+        gate.client_sent(text);
+        assert_eq!(gate.relay_sent(r#"["EOSE","a"]"#), Relayed::Pass);
+    }
+
+    #[test]
+    fn a_connection_that_missed_live_events_loses_every_subscription() {
+        let mut gate = subscribed(&[r#"["REQ","a",{}]"#, r#"["REQ","b",{}]"#]);
+        let mut ended = gate.overflowed();
+        ended.sort();
+        assert_eq!(ended, vec!["a".to_string(), "b".to_string()]);
+        assert!(gate.open.is_empty());
+        assert!(frames(&gate, &event(1, &[])).is_empty());
+    }
+
+    /// A connection through the gate to a fake framework: one that hears
+    /// what the gate forwards and says `EOSE` only when the test lets it.
+    struct Connection {
+        client: WebSocketStream<DuplexStream>,
+        live: LiveFeed,
+        /// What the framework heard, frame by frame.
+        heard: tokio::sync::mpsc::UnboundedReceiver<String>,
+        /// Each id sent here is answered with `EOSE`.
+        eose: tokio::sync::mpsc::UnboundedSender<&'static str>,
+        _data: tempfile::TempDir,
+    }
+
+    impl Connection {
+        async fn open() -> Self {
+            let data = tempfile::tempdir().expect("a temp dir");
+            let store = Store::open(&data.path().join("events.db")).expect("a new database opens");
+            let live = LiveFeed::new();
+            let (ours, theirs) = tokio::io::duplex(PIPE_BUFFER);
+            let (hear, heard) = tokio::sync::mpsc::unbounded_channel();
+            let (eose, mut answers) = tokio::sync::mpsc::unbounded_channel::<&'static str>();
+            let feed = live.clone();
+            tokio::spawn(async move {
+                let framework = move |pipe| async move {
+                    let mut pipe = WebSocketStream::from_raw_socket(pipe, Role::Server, None).await;
+                    loop {
+                        tokio::select! {
+                            frame = pipe.next() => match frame {
+                                Some(Ok(Message::Text(text))) => {
+                                    let _ = hear.send(text.to_string());
+                                }
+                                _ => break,
+                            },
+                            Some(id) = answers.recv() => {
+                                let frame = json!(["EOSE", id]).to_string();
+                                if pipe.send(Message::text(frame)).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Ok(())
+                };
+                through(theirs, Refusal::default(), store, &feed, framework).await
+            });
+            let client = WebSocketStream::from_raw_socket(ours, Role::Client, None).await;
+            Self {
+                client,
+                live,
+                heard,
+                eose,
+                _data: data,
+            }
+        }
+
+        async fn send(&mut self, text: &str) {
+            self.client
+                .send(Message::text(text))
+                .await
+                .expect("the gate is listening");
+        }
+
+        /// The next frame the client is sent, or `None` after a second of
+        /// silence.
+        async fn next(&mut self) -> Option<Value> {
+            let wait = std::time::Duration::from_secs(1);
+            match tokio::time::timeout(wait, self.client.next()).await {
+                Ok(Some(Ok(Message::Text(text)))) => {
+                    Some(serde_json::from_str(&text).expect("a relay frame is JSON"))
+                }
+                _ => None,
+            }
+        }
+
+        /// The next frame the framework heard.
+        async fn framework_heard(&mut self) -> Option<Value> {
+            let wait = std::time::Duration::from_secs(1);
+            let text = tokio::time::timeout(wait, self.heard.recv()).await.ok()??;
+            Some(serde_json::from_str(&text).expect("the gate forwards JSON"))
+        }
+    }
+
+    #[tokio::test]
+    async fn an_event_that_arrives_during_a_stored_answer_is_delivered_after_it() {
+        let mut connection = Connection::open().await;
+        connection.send(r#"["REQ","a",{}]"#).await;
+        assert_eq!(
+            connection.framework_heard().await,
+            Some(json!(["REQ", "a", {}]))
+        );
+
+        let event = event(1, &[]);
+        connection.live.publish(&event);
+        assert_eq!(connection.next().await, None, "the answer is not over");
+
+        connection.eose.send("a").expect("the framework is there");
+        assert_eq!(connection.next().await, Some(json!(["EOSE", "a"])));
+        assert_eq!(connection.next().await, Some(json!(["EVENT", "a", event])));
+    }
+
+    #[tokio::test]
+    async fn a_connection_a_whole_feed_behind_is_told_its_subscriptions_are_closed() {
+        let mut connection = Connection::open().await;
+        connection.send(r#"["REQ","a",{}]"#).await;
+        connection.framework_heard().await;
+
+        // One more than the feed holds, while the connection takes none.
+        let event = event(1, &[]);
+        for _ in 0..=LIVE_BUFFER {
+            connection.live.publish(&event);
+        }
+        connection.eose.send("a").expect("the framework is there");
+
+        assert_eq!(connection.next().await, Some(json!(["EOSE", "a"])));
+        assert_eq!(
+            connection.next().await,
+            Some(json!(["CLOSED", "a", CLOSED_OVERFLOW]))
+        );
+        assert_eq!(connection.next().await, None, "and no event after it");
+        assert_eq!(
+            connection.framework_heard().await,
+            Some(json!(["CLOSE", "a"])),
+            "the framework is told too"
+        );
+    }
+
+    #[test]
+    fn a_closed_subscription_is_not_answered_from_the_store() {
         let mut gate = Gate {
             serves_expired: true,
             ..Gate::default()

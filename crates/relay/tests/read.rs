@@ -52,6 +52,78 @@ async fn a_paid_write_is_delivered_live_to_an_open_subscription() {
 }
 
 #[tokio::test]
+async fn a_live_event_reaches_every_subscription_it_matches_on_every_connection() {
+    let running = running().await;
+    let mut first = Client::connect(&running.read_url).await;
+    let mut second = Client::connect(&running.read_url).await;
+    assert!(first.req("a", json!({ "kinds": [7777] })).await.is_empty());
+    assert!(first.req("b", json!({})).await.is_empty());
+    assert!(first.req("c", json!({ "kinds": [1] })).await.is_empty());
+    assert!(second.req("a", json!({ "kinds": [7777] })).await.is_empty());
+
+    let event = signed(7777, 1_700_000_000, &[]);
+    let (status, _) = write(&running.relay, delivery(&event)).await;
+    assert_eq!(status, 200);
+
+    let mut heard = vec![first.next().await, first.next().await];
+    heard.sort_by_key(|frame| frame.as_ref().map(|frame| frame[1].to_string()));
+    assert_eq!(
+        heard,
+        vec![
+            Some(json!(["EVENT", "a", event])),
+            Some(json!(["EVENT", "b", event]))
+        ]
+    );
+    assert_eq!(
+        first.next().await,
+        None,
+        "the other subscription hears nothing"
+    );
+    assert_eq!(second.next().await, Some(json!(["EVENT", "a", event])));
+}
+
+#[tokio::test]
+async fn a_request_sent_behind_one_the_relay_closes_itself_is_still_live() {
+    let running = running().await;
+    let stored = signed(1, 1_700_000_000, &[]);
+    assert_eq!(write(&running.relay, delivery(&stored)).await.0, 200);
+
+    // The first names its one event by id and is sent it, so the relay ends
+    // it. The second, with the same id, is sent before that is known.
+    let mut client = Client::connect(&running.read_url).await;
+    client
+        .send(json!(["REQ", "a", { "ids": [stored.id.to_hex()] }]))
+        .await;
+    client.send(json!(["REQ", "a", { "kinds": [7777] }])).await;
+    for expected in [
+        json!(["EVENT", "a", stored]),
+        json!(["EOSE", "a"]),
+        json!(["CLOSED", "a", ""]),
+        json!(["EOSE", "a"]),
+    ] {
+        assert_eq!(client.next().await, Some(expected));
+    }
+
+    let live = signed(7777, 1_700_000_000, &[]);
+    assert_eq!(write(&running.relay, delivery(&live)).await.0, 200);
+    assert_eq!(client.next().await, Some(json!(["EVENT", "a", live])));
+}
+
+#[tokio::test]
+async fn a_closed_subscription_hears_no_live_event() {
+    let running = running().await;
+    let mut client = Client::connect(&running.read_url).await;
+    assert!(client.req("gone", json!({})).await.is_empty());
+    client.send(json!(["CLOSE", "gone"])).await;
+    // A round trip proves the CLOSE sent before it was heard.
+    assert!(client.req("kept", json!({ "kinds": [7] })).await.is_empty());
+
+    let (status, _) = write(&running.relay, delivery(&signed(1, 1_700_000_000, &[]))).await;
+    assert_eq!(status, 200);
+    assert_eq!(client.next().await, None);
+}
+
+#[tokio::test]
 async fn an_event_refused_on_the_write_port_reaches_no_subscriber() {
     let running = running().await;
     let mut client = Client::connect(&running.read_url).await;
