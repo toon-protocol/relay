@@ -22,12 +22,19 @@ CONFORMANCE_IMAGE=relay-rust:ci CONFORMANCE_IMPL=rust CONFORMANCE_COMMAND=relay 
 CI runs both on every pull request. The relay must be able to reach the stub
 connector on the host (`host.docker.internal`); a host firewall that drops
 traffic from the Docker bridge makes every case that needs the write edge fail.
+On such a host the suite can run inside a Docker-in-Docker daemon, which the
+firewall does not see: load the image into a `docker:dind` container, and run
+vitest in a `node` container started with `--network container:<dind>` and
+`DOCKER_HOST=tcp://127.0.0.1:2375`.
 
 | env                   | meaning                                               | default            |
 | --------------------- | ----------------------------------------------------- | ------------------ |
 | `CONFORMANCE_IMAGE`   | image reference under test (required)                 | —                  |
 | `CONFORMANCE_IMPL`    | name of the implementation, e.g. `typescript`, `rust` | `typescript`       |
 | `CONFORMANCE_COMMAND` | the image's command, for a run that passes flags      | `node dist/cli.js` |
+
+`soak/` holds what the suite does not cover: a run through the infra sandbox's
+paid path and a benchmark of two images (see `soak/README.md`).
 
 ## Expected failures
 
