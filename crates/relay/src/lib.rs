@@ -104,6 +104,7 @@ impl Relay {
             },
         )?;
         let edge = EdgeSlot::default();
+        let auth = config.auth_policy();
         Ok(Self {
             identity: config.identity,
             edge: edge.clone(),
@@ -114,14 +115,14 @@ impl Relay {
                 contact: config.relay_contact.clone(),
                 write_carriage: config.write_carriage,
                 enforce_expiration: config.enforce_expiration,
-                nip42: config.auth_policy().is_some(),
+                nip42: auth.is_some(),
             },
             read_side: ReadSide::new(
                 store.clone(),
                 edge.clone(),
                 config.write_carriage,
                 usize::try_from(config.max_connections).unwrap_or(usize::MAX),
-                config.auth_policy(),
+                auth,
             ),
             metrics: Metrics::new(config),
             ephemeral: Arc::new(write::Lane::new(config)),

@@ -9,6 +9,11 @@
 //! `auth-required:` until the connection has authenticated. Nothing else is
 //! restricted: writes are paid and arrive on the write port, not here.
 //!
+//! An `AUTH` must name a relay, but which one is not checked: the relay is
+//! not told the public URL it is reached at (it sits behind a proxy), so it
+//! has nothing to compare the tag with. The challenge, unique to the
+//! connection, is what ties an `AUTH` to this relay.
+//!
 //! This module holds the rules and no connection state. The session keeps the
 //! challenge and who has authenticated, and asks here whether an `AUTH` answers
 //! it and whether a filter needs it.
