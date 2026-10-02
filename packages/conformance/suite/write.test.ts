@@ -60,6 +60,29 @@ describe('relay image conformance: POST /write', () => {
   });
 
   conformanceTest(
+    '422 for an id that is not the hash of the event, naming the id',
+    async () => {
+      const event = signedEvent(1);
+      const other = event.id.startsWith('f') ? '0' : 'f';
+      const bad = { ...event, id: other.repeat(64) };
+      const response = await write({ event: bad });
+      expect(response.status).toBe(422);
+      expect(await response.json()).toEqual({ error: 'Invalid event id' });
+    },
+    { expectedFailureFor: ['typescript'] }
+  );
+
+  conformanceTest(
+    'GET /write is 405 with an Allow header naming POST',
+    async () => {
+      const response = await fetch(`${relay.writeUrl}/write`);
+      expect(response.status).toBe(405);
+      expect(response.headers.get('allow') ?? '').toMatch(/\bPOST\b/);
+    },
+    { expectedFailureFor: ['typescript'] }
+  );
+
+  conformanceTest(
     'a retired path returns 404: /publish and /handle-packet',
     async () => {
       const event = signedEvent(1);

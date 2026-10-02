@@ -379,6 +379,57 @@ describe('read side: EVENT over WebSocket', () => {
   );
 });
 
+describe('read side: invalid REQ and unsolicited AUTH', () => {
+  // Only the frame type of the NOTICE is asserted, not its text.
+  const invalid: [string, unknown][] = [
+    ['a REQ with no filter', ['REQ', 'nofilter']],
+    ['a REQ whose filter is a number', ['REQ', 'numfilter', 5]],
+    ['a filter with a negative limit', ['REQ', 'neglimit', { limit: -1 }]],
+    ['a filter with a non-numeric kind', ['REQ', 'badkind', { kinds: ['x'] }]],
+  ];
+  for (const [name, message] of invalid) {
+    conformanceTest(
+      `${name} gets a NOTICE and no EOSE`,
+      async () => {
+        await withClient(async (client) => {
+          client.send(message);
+          await client.next((f) => f[0] === 'NOTICE');
+          const subId = (message as unknown[])[1];
+          const rest = await client.quiet();
+          expect(rest.filter((f) => f[0] === 'EOSE' && f[1] === subId)).toEqual(
+            []
+          );
+          expect(client.frames.some((f) => f[0] === 'EOSE')).toBe(false);
+        });
+      },
+      { expectedFailureFor: ['typescript'] }
+    );
+  }
+
+  conformanceTest(
+    'an unsolicited AUTH is refused with OK false and auth-required:',
+    async () => {
+      const auth = signed(generateSecretKey(), {
+        kind: 22242,
+        tags: [
+          ['relay', relay.readWsUrl],
+          ['challenge', 'not-a-challenge-this-relay-issued'],
+        ],
+        content: '',
+      });
+      await withClient(async (client) => {
+        client.send(['AUTH', auth]);
+        const frame = await client.next(
+          (f) => f[0] === 'OK' && f[1] === auth.id
+        );
+        expect(frame[2]).toBe(false);
+        expect(String(frame[3])).toMatch(/^auth-required:/);
+      });
+    },
+    { expectedFailureFor: ['typescript'] }
+  );
+});
+
 describe('read side: malformed input', () => {
   const notices: [string, unknown, ConformanceTestOptions?][] = [
     ['bad JSON', '{not json'],
