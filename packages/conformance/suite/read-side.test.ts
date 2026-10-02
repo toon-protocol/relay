@@ -58,12 +58,14 @@ const ids = (events: { id: string }[]): string[] =>
 async function limitation(): Promise<{
   max_subscriptions: number;
   max_filters: number;
+  max_limit?: number;
+  default_limit?: number;
 }> {
   const response = await fetch(relay.readUrl, {
     headers: { accept: 'application/nostr+json' },
   });
   const document = (await response.json()) as {
-    limitation: { max_subscriptions: number; max_filters: number };
+    limitation: Awaited<ReturnType<typeof limitation>>;
   };
   return document.limitation;
 }
@@ -403,6 +405,33 @@ describe('read side: malformed input', () => {
 });
 
 describe('read side: limits', () => {
+  conformanceTest(
+    'a filter is answered with the newest events up to the stated cap',
+    async () => {
+      const { max_limit, default_limit } = await limitation();
+      // Without a stated cap, store enough to catch an unstated one at 500.
+      const stored = Math.max(max_limit ?? 0, default_limit ?? 0, 500) + 20;
+      const key = generateSecretKey();
+      const author = getPublicKey(key);
+      const base = 1_700_100_000;
+      const events = Array.from({ length: stored }, (_, i) =>
+        signed(key, { kind: 1, created_at: base + i })
+      );
+      for (const e of events) await publish(relay.writeUrl, e);
+      const newest = (n: number) => ids(events.slice(stored - n));
+
+      await withClient(async (client) => {
+        const above = await client.req('above', {
+          authors: [author],
+          limit: stored + 1000,
+        });
+        expect(ids(above)).toEqual(newest(max_limit ?? stored));
+        const unlimited = await client.req('none', { authors: [author] });
+        expect(ids(unlimited)).toEqual(newest(default_limit ?? stored));
+      });
+    }
+  );
+
   conformanceTest('the subscription limit is enforced', async () => {
     const limit = (await limitation()).max_subscriptions;
     await withClient(async (client) => {
