@@ -236,45 +236,36 @@ describe('read side: filters', () => {
           ids([...notes.slice(-1), ...reactions.slice(-2)])
         );
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
-  conformanceTest(
-    'ids are matched exactly, not as prefixes',
-    async () => {
-      const event = signed(generateSecretKey(), { created_at: 1_700_003_000 });
-      await publish(relay.writeUrl, event);
+  conformanceTest('ids are matched exactly, not as prefixes', async () => {
+    const event = signed(generateSecretKey(), { created_at: 1_700_003_000 });
+    await publish(relay.writeUrl, event);
 
-      await withClient(async (client) => {
-        expect(ids(await client.req('full', { ids: [event.id] }))).toEqual([
-          event.id,
-        ]);
-        expect(
-          await client.req('idp', { ids: [event.id.slice(0, 16)] })
-        ).toEqual([]);
-      });
-    },
-    { expectedFailureFor: ['typescript'] }
-  );
+    await withClient(async (client) => {
+      expect(ids(await client.req('full', { ids: [event.id] }))).toEqual([
+        event.id,
+      ]);
+      expect(await client.req('idp', { ids: [event.id.slice(0, 16)] })).toEqual(
+        []
+      );
+    });
+  });
 
-  conformanceTest(
-    'authors are matched exactly, not as prefixes',
-    async () => {
-      const event = signed(generateSecretKey(), { created_at: 1_700_003_001 });
-      await publish(relay.writeUrl, event);
+  conformanceTest('authors are matched exactly, not as prefixes', async () => {
+    const event = signed(generateSecretKey(), { created_at: 1_700_003_001 });
+    await publish(relay.writeUrl, event);
 
-      await withClient(async (client) => {
-        expect(
-          ids(await client.req('full', { authors: [event.pubkey] }))
-        ).toEqual([event.id]);
-        expect(
-          await client.req('aup', { authors: [event.pubkey.slice(0, 16)] })
-        ).toEqual([]);
-      });
-    },
-    { expectedFailureFor: ['typescript'] }
-  );
+    await withClient(async (client) => {
+      expect(
+        ids(await client.req('full', { authors: [event.pubkey] }))
+      ).toEqual([event.id]);
+      expect(
+        await client.req('aup', { authors: [event.pubkey.slice(0, 16)] })
+      ).toEqual([]);
+    });
+  });
 
   conformanceTest('event frames are plain NIP-01 JSON objects', async () => {
     const event = signed(generateSecretKey(), {
@@ -409,21 +400,17 @@ describe('read side: invalid REQ and unsolicited AUTH', () => {
     ['a filter with a non-numeric kind', ['REQ', 'badkind', { kinds: ['x'] }]],
   ];
   for (const [name, message] of invalid) {
-    conformanceTest(
-      `${name} gets a NOTICE and no EOSE`,
-      async () => {
-        await withClient(async (client) => {
-          client.send(message);
-          await client.next((f) => f[0] === 'NOTICE');
-          // Give a relay that NOTICEs and serves anyway time to send its EOSE.
-          await client.quiet();
-          expect(
-            client.frames.some((f) => f[0] === 'EOSE' && f[1] === message[1])
-          ).toBe(false);
-        });
-      },
-      { expectedFailureFor: ['typescript'] }
-    );
+    conformanceTest(`${name} gets a NOTICE and no EOSE`, async () => {
+      await withClient(async (client) => {
+        client.send(message);
+        await client.next((f) => f[0] === 'NOTICE');
+        // Give a relay that NOTICEs and serves anyway time to send its EOSE.
+        await client.quiet();
+        expect(
+          client.frames.some((f) => f[0] === 'EOSE' && f[1] === message[1])
+        ).toBe(false);
+      });
+    });
   }
 
   conformanceTest(
@@ -445,8 +432,7 @@ describe('read side: invalid REQ and unsolicited AUTH', () => {
         expect(frame[2]).toBe(false);
         expect(String(frame[3])).toMatch(/^auth-required:/);
       });
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 });
 

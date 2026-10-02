@@ -22,7 +22,7 @@ export const DEFAULT_SECRET_KEY = '1'.repeat(64);
  * (the image's `CMD` is replaced by anything after the image name).
  */
 function relayCommand(): string[] {
-  return (process.env['CONFORMANCE_COMMAND'] || 'node dist/cli.js').split(' ');
+  return (process.env['CONFORMANCE_COMMAND'] || 'relay').split(' ');
 }
 
 /** Environment overrides: a string sets a variable, `undefined` removes it. */

@@ -92,8 +92,7 @@ describe('relay image conformance: replaceable kinds', () => {
       expect(
         await storedIds(relay, { authors: [pubkey], kinds: [kind] })
       ).toEqual(ids(newer));
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 });
 
@@ -203,9 +202,7 @@ describe('relay image conformance: addressable kinds', () => {
       expect(
         await storedIds(relay, { authors: [pubkey], kinds: [30023] })
       ).toEqual(ids(plain, underscoreNew, percent));
-    },
-    // relay#160: the d-tag lookup is a SQL LIKE.
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -228,9 +225,7 @@ describe('relay image conformance: addressable kinds', () => {
       expect(
         await storedIds(relay, { authors: [pubkey], kinds: [30023] })
       ).toEqual(ids(lower, upper));
-    },
-    // relay#160: SQLite LIKE is case-insensitive for ASCII.
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 });
 
@@ -256,8 +251,7 @@ describe('relay image conformance: tag filters', () => {
           await storedIds(relay, { authors: [pubkey], '#t': [value] })
         ).toEqual([idOf[value] ?? '']);
       }
-    },
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 
   conformanceTest(
@@ -290,10 +284,7 @@ describe('relay image conformance: tag filters', () => {
       } finally {
         subscription.close();
       }
-    },
-    // Stored results apply the key; the live matcher ignores it and
-    // delivers every event of the author.
-    { expectedFailureFor: ['typescript'] }
+    }
   );
 });
 

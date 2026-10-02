@@ -357,8 +357,8 @@ switch, and it only recovers events still inside the reap grace window.
 ### Every setting the relay reads
 
 CLI flags override environment variables. `deploy/` sets these through
-`.env`; the [package README](packages/relay/README.md) documents the flag for
-each one.
+`.env`; each setting's flag is named beside it in
+[`crates/relay/src/config.rs`](crates/relay/src/config.rs).
 
 | Variable                                | Default   | What it does                                                        |
 | --------------------------------------- | --------- | ------------------------------------------------------------------- |
@@ -401,14 +401,13 @@ Node 22 and pnpm 8.15.9. [Devbox](https://www.jetify.com/devbox/docs/installing_
 pins both to the versions CI uses — `devbox shell`, then `devbox run build`,
 `devbox run test`, `devbox run lint`.
 
-The relay every stack runs is the Rust one (#185): the Cargo workspace beside
-the package (`Cargo.toml`, `crates/relay`), on the toolchain
+The relay is a Rust Cargo workspace (`Cargo.toml`, `crates/relay`), on the toolchain
 `rust-toolchain.toml` pins — rustup installs it on the first `cargo` call, and
 devbox provides rustup. It follows
 [`docs/rust-coding-standards.md`](docs/rust-coding-standards.md) and is gated
 by the [conformance suite](packages/conformance/README.md), which CI runs
-against both images. The TypeScript package is still here until #206 removes
-it; its image is built in CI and no longer published.
+against the image. The pnpm workspace holds only that suite, the soak tooling
+and the guards in `deploy/`.
 
 ```bash
 cargo fmt --all -- --check
@@ -417,9 +416,8 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-Merging to `main` publishes the Rust image and moves `:release`. A change to
-the TypeScript package still needs a changeset (`pnpm changeset`), and merging
-one publishes the npm package.
+Merging to `main` publishes the Rust image and moves `:release`. There is no
+npm package and no changeset.
 The agent factory that opens many of the PRs here is described in
 [`docs/agents/triage-labels.md`](docs/agents/triage-labels.md).
 
@@ -427,7 +425,7 @@ The agent factory that opens many of the PRs here is described in
 
 |                                                                       |                                                                       |
 | --------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| [`packages/relay/README.md`](packages/relay/README.md)                | the npm package: CLI, HTTP surface, programmatic API                  |
+| [`packages/conformance/README.md`](packages/conformance/README.md)    | the black-box suite a relay image must pass, and the soak tooling     |
 | [`deploy/README.md`](deploy/README.md)                                | the deployment files, one by one                                      |
 | [`docs/retention.md`](docs/retention.md)                              | what the relay stops serving, and how to stop it                      |
 | [toon-protocol/connector](https://github.com/toon-protocol/connector) | the payment proxy: config reference, operator surface, protocol specs |

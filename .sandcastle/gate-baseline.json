@@ -40,7 +40,7 @@
   "methodNarrative": "Two independent measurements against the same commit (2c9b3fa, HEAD of main at capture time, matching this branch's merge-base with origin/main). (1) CI: read actual GitHub Actions job/step timestamps for the 5 most recent push-to-main runs of ci.yml via `gh api repos/toon-protocol/relay/actions/runs/<id>/jobs` and `.../timing`, and grepped each run's `build`/`Devbox Environment Validation` job logs for 'Cache hit for:' vs 'Cache not found'. (2) Local: ran the 4 gate commands against a fresh `pnpm install --frozen-lockfile`, timing each with `time`. Reproduce locally with: `pnpm install --frozen-lockfile && pnpm -r run build && eslint . ; pnpm run typecheck ; vitest run` (build must run before typecheck \u2014 see reproducibilityNotes below).",
   "correctness": {
     "eslintErrors": 0,
-    "eslintWarnings": 16,
+    "eslintWarnings": 0,
     "typecheckErrors": 0
   },
   "speed": {
@@ -54,8 +54,7 @@
   "gateShape": {
     "packageManager": "pnpm@8.15.9",
     "workspaces": [
-      "packages/relay",
-      "packages/bls"
+      "packages/conformance"
     ],
     "commands": {
       "lint": "eslint .",
@@ -71,9 +70,9 @@
     }
   },
   "reproducibilityNotes": [
-    "`pnpm run typecheck` depends on `packages/relay` being built first. (Before the removal of `packages/bls`, this was because that package imported `@toon-protocol/relay` by its published entry point, which only exists once `packages/relay/dist/` has been generated. The build-before-typecheck ordering CI uses is unchanged.)",
+    "The build-before-typecheck ordering CI uses is kept, though nothing in the workspace now needs a build first (the TypeScript relay, which did, was removed in #206).",
     "CI's `build` job runs lint -> build -> test in that order; the typecheck number is sourced from a local run (see gateShape.ciWiring.typecheck for the CI wiring landed by relay#75).",
-    "correctness.eslintWarnings was recaptured at 16 (from 57) when `packages/bls` was removed: every warning it contributed went with it. The number is a ratchet, not an allowance \u2014 it may be lowered when warnings are genuinely fixed, and raising it needs the same justification any new warning would."
+    "correctness.eslintWarnings was recaptured at 16 (from 57) when `packages/bls` was removed, and at 0 when the TypeScript relay was removed (#206): every warning it contributed went with it. The number is a ratchet, not an allowance \u2014 it may be lowered when warnings are genuinely fixed, and raising it needs the same justification any new warning would."
   ],
   "environment": {
     "node": "v22.23.1",
