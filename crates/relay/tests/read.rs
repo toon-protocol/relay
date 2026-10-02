@@ -171,6 +171,67 @@ async fn an_empty_subscription_id_is_a_notice() {
 }
 
 #[tokio::test]
+async fn each_malformed_message_gets_one_notice_that_names_its_problem() {
+    let running = running().await;
+    let mut client = Client::connect(&running.read_url).await;
+    let mut texts = Vec::new();
+    for message in [
+        "{not json",
+        r#"{"a":1}"#,
+        r#"["BOGUS","x"]"#,
+        r#"["REQ",7,{}]"#,
+    ] {
+        client.send_text(message).await;
+        let frame = client.next().await.expect("a NOTICE arrives");
+        assert_eq!(frame[0], "NOTICE", "{message}");
+        texts.push(frame[1].as_str().expect("text").to_string());
+    }
+    assert_eq!(client.next().await, None, "one NOTICE each");
+    let mut distinct = texts.clone();
+    distinct.sort();
+    distinct.dedup();
+    assert_eq!(distinct.len(), 4, "{texts:?}");
+}
+
+#[tokio::test]
+async fn a_request_by_ids_is_never_closed_and_keeps_its_place() {
+    let running = running().await;
+    let event = signed(1, 1_700_000_000, &[]);
+    let (status, _) = write(&running.relay, delivery(&event)).await;
+    assert_eq!(status, 200);
+    let mut client = Client::connect(&running.read_url).await;
+
+    let id = event.id.to_hex();
+    for (sub, ids, found) in [
+        ("found", json!([id]), 1),
+        ("mixed", json!([id, "abcd"]), 1),
+        ("prefix", json!(["abcd"]), 0),
+    ] {
+        assert_eq!(client.req(sub, json!({ "ids": ids })).await.len(), found);
+        assert_eq!(client.next().await, None, "no CLOSED follows {sub}");
+    }
+
+    // The places stay taken: 3 are used, 17 more fit and no further.
+    for i in 0..17 {
+        assert!(
+            client
+                .req(&format!("s{i}"), json!({ "kinds": [9] }))
+                .await
+                .is_empty()
+        );
+    }
+    client.send(json!(["REQ", "one-too-many", {}])).await;
+    assert_eq!(
+        client.next().await,
+        Some(json!(["NOTICE", "error: too many subscriptions"]))
+    );
+    // Closing one is accepted without a NOTICE and frees its place.
+    client.send(json!(["CLOSE", "found"])).await;
+    assert_eq!(client.next().await, None);
+    assert!(client.req("fits", json!({ "kinds": [9] })).await.is_empty());
+}
+
+#[tokio::test]
 async fn an_id_that_is_only_a_prefix_matches_nothing() {
     let running = running().await;
     let event = signed(1, 1_700_000_000, &[]);
