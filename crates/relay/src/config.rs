@@ -85,6 +85,14 @@ const EPHEMERAL_MAX_BODY_BYTES: Setting = Setting {
     flag: "--ephemeral-max-body-bytes",
     env: "TOON_EPHEMERAL_MAX_BODY_BYTES",
 };
+const READ_RATE_LIMIT: Setting = Setting {
+    flag: "--read-rate-limit",
+    env: "TOON_READ_RATE_LIMIT",
+};
+const READ_SOURCE_RATE_LIMIT: Setting = Setting {
+    flag: "--read-source-rate-limit",
+    env: "TOON_READ_SOURCE_RATE_LIMIT",
+};
 const CONNECTOR_URL: Setting = Setting {
     flag: "--connector-url",
     env: "TOON_CONNECTOR_URL",
@@ -139,7 +147,7 @@ const BLOCKED_EVENT_IDS: Setting = Setting {
 };
 
 /// The flags that take a value, and the ones that stand alone.
-const VALUE_FLAGS: [&str; 22] = [
+const VALUE_FLAGS: [&str; 24] = [
     MNEMONIC.flag,
     SECRET_KEY.flag,
     READ_PORT.flag,
@@ -152,6 +160,8 @@ const VALUE_FLAGS: [&str; 22] = [
     EPHEMERAL_RATE_LIMIT.flag,
     EPHEMERAL_RATE_WINDOW_MS.flag,
     EPHEMERAL_MAX_BODY_BYTES.flag,
+    READ_RATE_LIMIT.flag,
+    READ_SOURCE_RATE_LIMIT.flag,
     CONNECTOR_URL.flag,
     WRITE_ILP_ADDRESS.flag,
     WRITE_CARRIAGE.flag,
@@ -180,6 +190,10 @@ const DEFAULT_MAX_CONNECTIONS: u32 = 4096;
 const DEFAULT_EPHEMERAL_RATE_LIMIT: u32 = 200;
 const DEFAULT_EPHEMERAL_RATE_WINDOW_MS: u64 = 10_000;
 const DEFAULT_EPHEMERAL_MAX_BODY_BYTES: u32 = 8192;
+/// REQs a minute one connection is answered.
+const DEFAULT_READ_RATE_LIMIT: u32 = 1_200;
+/// REQs a minute all the connections of one source address are answered.
+const DEFAULT_READ_SOURCE_RATE_LIMIT: u32 = 6_000;
 const DEFAULT_EXPIRATION_REAP_GRACE_SECONDS: u64 = 86_400;
 const DEFAULT_EXPIRATION_REAP_INTERVAL_SECONDS: u64 = 3600;
 /// The most workers the TypeScript relay accepts. The setting has no effect
@@ -208,6 +222,8 @@ Options (each flag beats its environment variable):
   --ephemeral-rate-limit <n>               TOON_EPHEMERAL_RATE_LIMIT (default 200)
   --ephemeral-rate-window-ms <n>           TOON_EPHEMERAL_RATE_WINDOW_MS (default 10000)
   --ephemeral-max-body-bytes <n>           TOON_EPHEMERAL_MAX_BODY_BYTES (default 8192)
+  --read-rate-limit <n>                    TOON_READ_RATE_LIMIT (REQs a minute per connection, default 1200)
+  --read-source-rate-limit <n>             TOON_READ_SOURCE_RATE_LIMIT (REQs a minute per source address, default 6000)
   --connector-url <url>                    TOON_CONNECTOR_URL
   --write-ilp-address <addr>               TOON_WRITE_ILP_ADDRESS
   --write-carriage <http|btp>              TOON_WRITE_CARRIAGE
@@ -274,6 +290,12 @@ pub struct Config {
     pub ephemeral_rate_window_ms: u64,
     /// The free ephemeral lane's body cap, in bytes.
     pub ephemeral_max_body_bytes: u32,
+    /// How many REQs a minute one read connection is answered
+    /// (`TOON_READ_RATE_LIMIT`).
+    pub read_rate_limit: u32,
+    /// How many REQs a minute all the read connections of one source address
+    /// are answered, together (`TOON_READ_SOURCE_RATE_LIMIT`).
+    pub read_source_rate_limit: u32,
     /// Where the relay's writes are paid for, if it was told.
     pub edge: Option<EdgeSettings>,
     /// The carriage the paid route pins, if one was named.
@@ -548,6 +570,9 @@ impl Config {
                 .positive(&EPHEMERAL_RATE_WINDOW_MS, DEFAULT_EPHEMERAL_RATE_WINDOW_MS)?,
             ephemeral_max_body_bytes: sources
                 .positive(&EPHEMERAL_MAX_BODY_BYTES, DEFAULT_EPHEMERAL_MAX_BODY_BYTES)?,
+            read_rate_limit: sources.positive(&READ_RATE_LIMIT, DEFAULT_READ_RATE_LIMIT)?,
+            read_source_rate_limit: sources
+                .positive(&READ_SOURCE_RATE_LIMIT, DEFAULT_READ_SOURCE_RATE_LIMIT)?,
             edge,
             write_carriage,
             relay_name: text(&RELAY_NAME),
@@ -828,6 +853,8 @@ mod tests {
         assert_eq!(config.ephemeral_rate_limit, 200);
         assert_eq!(config.ephemeral_rate_window_ms, 10_000);
         assert_eq!(config.ephemeral_max_body_bytes, 8192);
+        assert_eq!(config.read_rate_limit, 1200);
+        assert_eq!(config.read_source_rate_limit, 6000);
         assert_eq!(config.expiration_reap_grace_seconds, 86_400);
         assert_eq!(config.expiration_reap_interval_seconds, 3600);
         assert!(config.enforce_expiration);
@@ -960,6 +987,8 @@ mod tests {
             "TOON_EPHEMERAL_RATE_LIMIT",
             "TOON_EPHEMERAL_RATE_WINDOW_MS",
             "TOON_EPHEMERAL_MAX_BODY_BYTES",
+            "TOON_READ_RATE_LIMIT",
+            "TOON_READ_SOURCE_RATE_LIMIT",
         ] {
             for bad in ["0", "-1", "x"] {
                 let result = config(&[("TOON_SECRET_KEY", &key), (name, bad)]);

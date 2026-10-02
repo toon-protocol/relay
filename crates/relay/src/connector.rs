@@ -249,6 +249,8 @@ mod tests {
             contact: None,
             write_carriage: None,
             enforce_expiration: true,
+            read_rate_limit: 1_200,
+            read_source_rate_limit: 6_000,
             nip42: false,
         }
     }

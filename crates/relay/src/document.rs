@@ -43,6 +43,10 @@ pub(crate) struct Settings {
     pub(crate) contact: Option<String>,
     pub(crate) write_carriage: Option<Carriage>,
     pub(crate) enforce_expiration: bool,
+    /// REQs a minute one connection is answered.
+    pub(crate) read_rate_limit: u32,
+    /// REQs a minute all the connections of one source address are answered.
+    pub(crate) read_source_rate_limit: u32,
     /// NIP-42 is on: the relay challenges connections.
     pub(crate) nip42: bool,
 }
@@ -74,6 +78,10 @@ struct Limitation {
     max_filters: usize,
     max_limit: usize,
     default_limit: usize,
+    /// What a client polling free reads is held to. Past either, a REQ is
+    /// `CLOSED` with `rate-limited:`; a subscription is not counted again.
+    max_req_per_minute_per_connection: u32,
+    max_req_per_minute_per_source: u32,
     auth_required: bool,
 }
 
@@ -131,6 +139,8 @@ impl Document {
                 max_filters: MAX_FILTERS,
                 max_limit: MAX_LIMIT,
                 default_limit: MAX_LIMIT,
+                max_req_per_minute_per_connection: settings.read_rate_limit,
+                max_req_per_minute_per_source: settings.read_source_rate_limit,
                 auth_required: false,
             },
             // Omitted, not 0, for a relay that charges nothing:
