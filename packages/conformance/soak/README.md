@@ -2,8 +2,9 @@
 
 What the conformance suite cannot say about an image: that it works behind a
 real connector on the paid path, and how it compares with the image it is
-meant to replace. Six things, all run from this machine against published
-images (#203). Nothing here runs in CI.
+meant to replace. Five things run from this machine against published images
+(#203), and a sixth against a node that is already running (#204). Nothing
+here runs in CI.
 
 ## 1. The infra sandbox, on the image under test
 
@@ -114,8 +115,10 @@ exits 1 unless the read host answers `426`, the connector's `/ilp/identity`
 `200`, the document is the baseline's apart from `version` and the two limits
 of #233, an `EVENT` over WebSocket is refused with the write address, and every
 baseline event is still served as it was (or has expired, been replaced or
-been deleted since). The fleet's own verdict on the node is the connector
-repository's `fleet-health.yml`.
+been deleted since). Run it again through a soak as often as wanted: it reads
+the whole store in about a minute. It cannot see the container's own
+healthcheck; the fleet's verdict on the node, that row included, is the
+connector repository's `fleet-health.yml`.
 
 A rollback is the same three steps with `RELAY_IMAGE` on the last TypeScript
 `sha-<short>` tag and `EXPECT_VERSION` the package version. Take a new

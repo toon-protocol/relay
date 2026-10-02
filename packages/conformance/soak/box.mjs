@@ -28,6 +28,10 @@ const READ_URL =
 const EDGE_URL =
   process.env.EDGE_URL ?? 'https://proxy.relay.devnet.toonprotocol.dev';
 const SAMPLE = Number(process.env.SAMPLE ?? Infinity);
+if (!(SAMPLE >= 1)) {
+  console.error('SAMPLE must be a number of events, 1 or more');
+  process.exit(2);
+}
 // The Rust relay answers one filter with at most 500 events (#233).
 const PAGE = 500;
 const TIMEOUT_MS = 30_000;
@@ -53,6 +57,11 @@ function exchange(message, last) {
     ws.on('error', (error) => {
       clearTimeout(timer);
       reject(error);
+    });
+    // After the answer this rejects a promise already settled, which is nothing.
+    ws.on('close', () => {
+      clearTimeout(timer);
+      reject(new Error(`closed before an answer to ${message[0]}`));
     });
   });
 }
@@ -101,33 +110,44 @@ async function newest() {
 
 const tag = (event, name) => event.tags.find(([key]) => key === name)?.[1];
 
-/** The filter for whatever else may hold this event's address, if it has one. */
-function address(event) {
-  const { kind, pubkey } = event;
-  const own = { kinds: [kind], authors: [pubkey] };
-  // Addressable by `d`, and the TOON range the relay treats the same way.
-  if ((kind >= 30000 && kind < 40000) || (kind >= 10032 && kind <= 10099))
-    return { ...own, '#d': [tag(event, 'd') ?? ''] };
-  if (kind === 0 || kind === 3 || (kind >= 10000 && kind < 20000)) return own;
-  return undefined;
-}
+// The relay's own replacement rule (`rule` in crates/relay/src/store.rs):
+// addressable by `d`, the TOON range included, and one per author and kind.
+const addressable = ({ kind }) =>
+  (kind >= 30000 && kind < 40000) || (kind >= 10032 && kind <= 10099);
+const replaceable = (event) =>
+  addressable(event) ||
+  event.kind === 0 ||
+  event.kind === 3 ||
+  (event.kind >= 10000 && event.kind < 20000);
 
-/** Why an event the baseline holds is no longer served, if there is a reason. */
-async function gone(event) {
-  const expiration = Number(tag(event, 'expiration'));
-  if (expiration && expiration <= Date.now() / 1000) return 'expired';
-  const at = address(event);
-  if (at) {
-    const newer = (await stored(at)).some(
-      (other) => other.created_at >= event.created_at
+/**
+ * Why an event the baseline holds is no longer served, if there is a reason.
+ * `held` is the baseline's ids: an event the baseline already held replaced
+ * nothing since.
+ */
+async function gone(event, held) {
+  const { kind, pubkey } = event;
+  const expiration = tag(event, 'expiration');
+  if (/^\d+$/.test(expiration ?? '') && Number(expiration) <= Date.now() / 1000)
+    return 'expired';
+  const d = addressable(event) ? (tag(event, 'd') ?? '') : undefined;
+  if (replaceable(event)) {
+    const others = await stored({ kinds: [kind], authors: [pubkey] });
+    const newer = others.some(
+      (other) =>
+        !held.has(other.id) &&
+        other.created_at >= event.created_at &&
+        (d === undefined || (tag(other, 'd') ?? '') === d)
     );
     if (newer) return 'replaced';
   }
-  const deletions = await stored({
-    kinds: [5],
-    authors: [event.pubkey],
-    '#e': [event.id],
-  });
+  const deletion = { kinds: [5], authors: [pubkey] };
+  const deletions = [
+    ...(await stored({ ...deletion, '#e': [event.id] })),
+    ...(d === undefined
+      ? []
+      : await stored({ ...deletion, '#a': [`${kind}:${pubkey}:${d}`] })),
+  ];
   return deletions.length > 0 ? 'deleted' : undefined;
 }
 
@@ -190,9 +210,11 @@ async function check(path) {
     },
     generateSecretKey()
   );
-  const [refusal] = await exchange(['EVENT', unpaid], ([type]) =>
-    ['OK', 'NOTICE'].includes(type)
-  );
+  const refusal = (
+    await exchange(['EVENT', unpaid], ([type]) =>
+      ['OK', 'NOTICE'].includes(type)
+    )
+  ).at(-1);
   report(
     refusal[0] === 'OK' &&
       refusal[2] === false &&
@@ -208,6 +230,7 @@ async function check(path) {
     const ids = unreached.slice(i, i + PAGE).map((event) => event.id);
     for (const event of await stored({ ids })) served.set(event.id, event);
   }
+  const held = new Set(before.events.map((event) => event.id));
   const reasons = {};
   const lost = [];
   let unchanged = 0;
@@ -217,7 +240,7 @@ async function check(path) {
     } else if (served.has(event.id)) {
       lost.push(`${event.id} is served differently`);
     } else {
-      const reason = await gone(event);
+      const reason = await gone(event, held);
       if (reason) reasons[reason] = (reasons[reason] ?? 0) + 1;
       else lost.push(`${event.id} (kind ${event.kind}) is not served`);
     }
