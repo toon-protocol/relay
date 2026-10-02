@@ -1199,4 +1199,116 @@ mod tests {
         let result = config(&[("TOON_MNEMONIC", ABANDON), ("TOON_SECRET_KEY", &ones())]);
         assert!(matches!(result, Err(RelayError::BothIdentities)));
     }
+
+    #[test]
+    fn a_relay_sells_its_feed_only_when_told_the_address_the_price_and_its_own_url() {
+        let key = ones();
+        let edge = [
+            ("TOON_CONNECTOR_URL", "http://connector:3000/ilp"),
+            ("TOON_WRITE_ILP_ADDRESS", "g.toon.relay"),
+        ];
+        let selling = [
+            ("TOON_SUBSCRIBE_ILP_ADDRESS", "g.toon.relay.subscribe"),
+            ("TOON_BROADCAST_PRICE", "10"),
+            ("TOON_RELAY_URL", "wss://relay.example"),
+        ];
+        let with = |extra: &[(&str, &str)]| {
+            let mut env = vec![("TOON_SECRET_KEY", key.as_str())];
+            env.extend_from_slice(extra);
+            config(&env)
+        };
+
+        let free = with(&edge).expect("a free feed");
+        assert_eq!(free.subscribe, None);
+        assert!(free.operator_pubkeys.is_empty());
+
+        let all: Vec<_> = edge.iter().chain(selling.iter()).copied().collect();
+        let sold = with(&all)
+            .expect("a complete feed")
+            .subscribe
+            .expect("selling");
+        assert_eq!(sold.ilp_address, "g.toon.relay.subscribe");
+        assert_eq!(sold.broadcast_price, 10);
+        assert_eq!(sold.relay_url, "wss://relay.example");
+
+        // Any one or two of the three is an error naming the pair.
+        for left_out in 0..3 {
+            let some: Vec<_> = edge
+                .iter()
+                .copied()
+                .chain(
+                    selling
+                        .iter()
+                        .copied()
+                        .enumerate()
+                        .filter(|(at, _)| *at != left_out)
+                        .map(|(_, pair)| pair),
+                )
+                .collect();
+            assert!(
+                matches!(with(&some), Err(RelayError::EdgeIncomplete { .. })),
+                "without setting {left_out}"
+            );
+        }
+        // The feed is sold at a route of the connector.
+        let no_connector: Vec<_> = selling.to_vec();
+        assert!(matches!(
+            with(&no_connector),
+            Err(RelayError::EdgeIncomplete {
+                missing: "TOON_CONNECTOR_URL",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_broadcast_price_and_a_relay_url_that_cannot_be_used_stop_the_relay() {
+        let key = ones();
+        let base = [
+            ("TOON_SECRET_KEY", key.as_str()),
+            ("TOON_CONNECTOR_URL", "http://connector:3000/ilp"),
+            ("TOON_WRITE_ILP_ADDRESS", "g.toon.relay"),
+            ("TOON_SUBSCRIBE_ILP_ADDRESS", "g.toon.relay.subscribe"),
+        ];
+        for (price, url) in [
+            ("0", "wss://relay.example"),
+            ("-1", "wss://relay.example"),
+            ("1.5", "wss://relay.example"),
+            ("9007199254740992", "wss://relay.example"),
+            ("10", "relay.example"),
+            ("10", "ftp://relay.example"),
+            ("10", "not a url"),
+        ] {
+            let mut env = base.to_vec();
+            env.push(("TOON_BROADCAST_PRICE", price));
+            env.push(("TOON_RELAY_URL", url));
+            assert!(
+                matches!(config(&env), Err(RelayError::InvalidSetting { .. })),
+                "{price} {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn operator_keys_are_hex_public_keys_each_once() {
+        let key = ones();
+        let ok = config(&[
+            ("TOON_SECRET_KEY", &key),
+            (
+                "TOON_OPERATOR_PUBKEYS",
+                &format!("{PUBKEY_OF_ONES}, {PUBKEY_OF_TWOS} {PUBKEY_OF_ONES}"),
+            ),
+        ])
+        .expect("two keys");
+        assert_eq!(ok.operator_pubkeys.len(), 2);
+        for bad in ["abc", &"z".repeat(64), &format!("{PUBKEY_OF_ONES},abc")] {
+            assert!(matches!(
+                config(&[("TOON_SECRET_KEY", &key), ("TOON_OPERATOR_PUBKEYS", bad)]),
+                Err(RelayError::InvalidSetting {
+                    name: "TOON_OPERATOR_PUBKEYS",
+                    ..
+                })
+            ));
+        }
+    }
 }

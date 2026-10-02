@@ -5,8 +5,8 @@
 //!   packet paid at the subscribe route. It is the write port's, not the read
 //!   port's, for the reason `POST /write` is: nothing but the relay's own
 //!   connector can reach it, so a request here is already paid for. What a
-//!   packet credits is what the route charged: the connector's
-//!   `X-TOON-Amount`, else the route's flat price from its self-description.
+//!   packet credits is what the route charged: the amount the connector
+//!   states it charged, else the route's flat price from its self-description.
 //!   The payer the connector may state is not read.
 //! - `GET /` on the read port with `Accept: application/toon-subscription+json`
 //!   is the subscriber reading its own balance, free, under NIP-98.

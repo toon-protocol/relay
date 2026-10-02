@@ -583,4 +583,122 @@ mod tests {
         let rendered = serde_json::to_value(Document::render(&off, None)).expect("JSON");
         assert_eq!(rendered["supported_nips"], json!([1, 9, 11, 16]));
     }
+
+    fn selling_settings() -> Settings {
+        Settings {
+            broadcast_price: Some(10),
+            ..settings()
+        }
+    }
+
+    fn subscribing(address: &str) -> (Subscribing, OfferSlot) {
+        let slot = OfferSlot::default();
+        (
+            Subscribing {
+                address: address.to_string(),
+                slot: slot.clone(),
+            },
+            slot,
+        )
+    }
+
+    async fn watching_offer(
+        address: &str,
+        body: Value,
+    ) -> (Arc<WriteEdge>, Option<Arc<SubscribeOffer>>) {
+        let answer = Arc::new(Mutex::new((StatusCode::OK, body.to_string())));
+        let stub = stub(answer).await;
+        let slot = EdgeSlot::default();
+        let (subscribing, offers) = subscribing(address);
+        let task = tokio::spawn(watch_offering(
+            EdgeSettings {
+                connector_url: format!("http://{stub}/ilp"),
+                write_ilp_address: "g.toon.relay".to_string(),
+            },
+            quickly(),
+            slot.clone(),
+            Some(subscribing),
+        ));
+        let edge = eventually(&slot, true).await.expect("the edge is known");
+        // The offer is set in the same turn as the edge, before it.
+        let offer = offers.current();
+        task.abort();
+        (edge, offer)
+    }
+
+    #[tokio::test]
+    async fn the_subscribe_route_is_published_from_the_connector_and_beside_the_edge() {
+        let mut body = document();
+        body["routes"] = json!([
+            { "prefix": "g.toon.relay", "price": "1000" },
+            { "prefix": "g.toon.relay.subscribe", "price": "5000", "requiredTransport": "btp" }
+        ]);
+        let (edge, offer) = watching_offer("g.toon.relay.subscribe", body).await;
+        let offer = offer.expect("the connector terminates the subscribe route");
+        let rendered = serde_json::to_value(Document::render_offering(
+            &selling_settings(),
+            Some(&edge),
+            Some(&offer),
+        ))
+        .expect("JSON");
+        assert_eq!(
+            rendered["toon_subscription"],
+            json!({
+                "ilp_address": "g.toon.relay.subscribe",
+                "price": 5000,
+                "broadcast_price": 10,
+                "carriage": "btp"
+            })
+        );
+        assert_eq!(rendered["supported_nips"], json!([1, 9, 11, 16, 40, 42]));
+        assert!(rendered["toon"].is_object());
+    }
+
+    #[tokio::test]
+    async fn no_subscribe_route_is_published_while_the_connector_does_not_terminate_it() {
+        let (_, offer) = watching_offer("g.toon.relay.subscribe", document()).await;
+        assert!(offer.is_none());
+        let parsed = parse(document().to_string().as_bytes()).expect("a document");
+        let edge = WriteEdge::read("g.toon.relay", &parsed).expect("an edge");
+        let rendered = serde_json::to_value(Document::render_offering(
+            &selling_settings(),
+            Some(&edge),
+            None,
+        ))
+        .expect("JSON");
+        assert!(rendered.get("toon_subscription").is_none());
+        // NIP-42 is still claimed: the relay sells its feed.
+        assert!(
+            rendered["supported_nips"]
+                .as_array()
+                .expect("a list")
+                .contains(&json!(42))
+        );
+    }
+
+    #[test]
+    fn an_offer_is_never_rendered_without_the_edge_or_a_broadcast_price() {
+        let parsed = parse(document().to_string().as_bytes()).expect("a document");
+        let edge = WriteEdge::read("g.toon.relay", &parsed).expect("an edge");
+        let mut other = document();
+        other["routes"] = json!([{ "prefix": "g.toon.relay.subscribe", "price": "5" }]);
+        let described = parse(other.to_string().as_bytes()).expect("a document");
+        let offer = SubscribeOffer::read("g.toon.relay.subscribe", &described).expect("an offer");
+
+        let without_edge = serde_json::to_value(Document::render_offering(
+            &selling_settings(),
+            None,
+            Some(&offer),
+        ))
+        .expect("JSON");
+        assert!(without_edge.get("toon_subscription").is_none());
+        let not_selling = serde_json::to_value(Document::render_offering(
+            &settings(),
+            Some(&edge),
+            Some(&offer),
+        ))
+        .expect("JSON");
+        assert!(not_selling.get("toon_subscription").is_none());
+        assert_eq!(not_selling["supported_nips"], json!([1, 9, 11, 16, 40]));
+    }
 }

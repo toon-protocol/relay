@@ -35,7 +35,12 @@
 //! - an `EVENT` is answered `OK false` with the refusal that names the Write
 //!   Edge, whatever the event: writes are paid and arrive on the write port;
 //! - an `AUTH` is answered `OK false`: the relay issues no challenge (NIP-42
-//!   is left off);
+//!   is left off), unless it sells its live feed (#215), when it greets every
+//!   connection with a challenge and a valid answer is how a connection holds
+//!   a subscriber key. There a REQ is answered from the store, then `EOSE`,
+//!   and stays open only if its connection holds a subscription with a
+//!   balance (or is an operator's); otherwise it is `CLOSED` with
+//!   `auth-required:` or `payment-required:`;
 //! - a live event is one frame for each subscription it matches, serialised
 //!   once for every connection ([`LiveFeed`]), and a connection that falls a
 //!   whole feed behind has its subscriptions closed rather than carry on with

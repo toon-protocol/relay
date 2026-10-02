@@ -381,6 +381,10 @@ each one.
 | `TOON_CONNECTOR_URL`                    | —         | the connector's `GET /ilp` this relay reads its write edge from     |
 | `TOON_WRITE_ILP_ADDRESS`                | —         | which of that connector's routes reaches this relay's `POST /write` |
 | `TOON_WRITE_CARRIAGE`                   | —         | the carriage that route pins; fills silence only (TOON_Network#111) |
+| `TOON_SUBSCRIBE_ILP_ADDRESS`            | —         | sells the live feed: the connector route that reaches `POST /subscribe` ([docs/paid-feed.md](docs/paid-feed.md)) |
+| `TOON_BROADCAST_PRICE`                  | —         | what one broadcast event debits from a subscriber (with the two around it) |
+| `TOON_RELAY_URL`                        | —         | the URL clients reach this relay at: its host is checked in NIP-42 and NIP-98 |
+| `TOON_OPERATOR_PUBKEYS`                 | —         | comma-separated hex keys that follow the live feed without paying (the relay's own key always does) |
 | `TOON_RELAY_NAME` / `_DESCRIPTION` / `_CONTACT` | —  | NIP-11 free text; an empty value is left out of the document        |
 | `TOON_EPHEMERAL_RATE_LIMIT`             | `200`     | free-lane requests per key per window                               |
 | `TOON_EPHEMERAL_RATE_WINDOW_MS`         | `10000`   | free-lane rate-limit window                                         |

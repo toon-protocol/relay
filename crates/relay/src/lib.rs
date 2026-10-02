@@ -11,7 +11,9 @@
 //! `/metrics` is served, and the process stops cleanly on SIGINT and SIGTERM.
 //! The edge is read from the connector's `GET /ilp` in the background (#199)
 //! and rendered into the Relay Information Document on the read port, and
-//! into the refusal a WebSocket `EVENT` gets. Every other surface in #185's
+//! into the refusal a WebSocket `EVENT` gets. A relay can sell its live feed
+//! (#215, `docs/paid-feed.md`): `POST /subscribe` credits a balance per
+//! subscriber key and the feed is debited per event. Every other surface in #185's
 //! compatibility contract is a later slice, and until it lands the
 //! conformance suite lists it as an expected failure for this
 //! implementation.

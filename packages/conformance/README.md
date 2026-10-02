@@ -82,6 +82,11 @@ are expected to fail.
   replaceable, addressable, deleted and expiring events, in both directions.
   Needs both images (`CONFORMANCE_TYPESCRIPT_IMAGE`, `CONFORMANCE_RUST_IMAGE`)
   and is skipped without them; CI runs it in the `image-swap` job.
+- `paid-feed.test.ts`: the paid live feed (#215): the subscribe route and its
+  refusals, what a packet credits, the balance read, the operator's list, the
+  `toon_subscription` document, the NIP-42 challenge, debits per broadcast,
+  exhaustion, free reads and the operator following without paying. It is the
+  Rust relay's feature; every case is `expectedFailureFor: ['typescript']`.
 - `endpoints.test.ts`: `GET /health` and `GET /metrics`.
 - `startup.test.ts`: a connector that is down at start, settings the relay
   must refuse (exit non-zero with an `Error:` line), every documented env
