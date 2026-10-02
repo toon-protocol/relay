@@ -2,7 +2,7 @@
 
 What the conformance suite cannot say about an image: that it works behind a
 real connector on the paid path, and how it compares with the image it is
-meant to replace. Four things, all run from this machine against published
+meant to replace. Five things, all run from this machine against published
 images (#203). Nothing here runs in CI.
 
 ## 1. The infra sandbox, on the image under test
@@ -70,8 +70,11 @@ table. Each row is either a divergence that is written down (#185's
 compatibility contract, the suite's `expectedFailureFor: ['typescript']`
 cases) or a bug to file.
 
-The suite itself, against both images and with the image-swap case, on a host
-whose firewall keeps a relay from the stub connector:
+## 5. The suite on both images
+
+Against each image in turn, with the image-swap case, inside a
+Docker-in-Docker daemon: for a host whose firewall keeps a relay from the
+suite's stub connector.
 
 ```
 TYPESCRIPT_IMAGE=ghcr.io/toon-protocol/relay:release \

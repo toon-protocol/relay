@@ -11,17 +11,17 @@
 // list. The reads go to a second relay that holds only the stored events, so
 // what the write inputs left behind is not compared.
 //
-// An answer is the status, the headers named in HEADERS and the body, or the
-// frames received until the socket has been quiet for QUIET_MS. What is
-// expected to differ is taken out first:
+// An answer is the status, every header not named in UNCOMPARED and the
+// body, or the frames received until the socket has been quiet for QUIET_MS.
+// What is expected to differ is taken out first:
 //
-//   - the version an image reports becomes `<version>`, and the time a write
-//     was stored `<time>`
-//   - a JSON body marked `shape` is reduced to its keys: its values are
-//     counters
-//   - a frame's keys are sorted: their order is not part of the contract
-//   - `Connection` is not among HEADERS: the TypeScript relay sends it on
-//     every response and the Rust relay on none
+//   - the version an image reports becomes `<version>`, and the time of a
+//     write or of a /health answer `<time>`
+//   - /metrics is reduced to its keys: its values are counters
+//   - a JSON body's or frame's keys are sorted: their order is not part of
+//     the contract
+//   - `Connection` and `Keep-Alive` are not compared: the TypeScript relay
+//     sends them on every response and the Rust relay on none
 //
 // An input after which the relay no longer answers /health is marked `the
 // relay stopped`, and the inputs after it go to a new relay. Every differing
@@ -32,23 +32,27 @@ import { imagesFrom, remove, start } from './relay-image.mjs';
 
 const IMAGES = imagesFrom('PROBE_IMAGES');
 const QUIET_MS = Number(process.env.QUIET_MS ?? 400);
-const HEADERS = [
-  'content-type',
-  'allow',
-  'access-control-allow-origin',
-  'upgrade',
-];
+// Headers that say nothing about the answer, or differ on every response.
+const UNCOMPARED = new Set([
+  'date',
+  'content-length',
+  'transfer-encoding',
+  'connection',
+  'keep-alive',
+]);
 
 const SECRET_KEY = new Uint8Array(32).fill(7);
 const NOW = Math.floor(Date.now() / 1000);
 const event = (kind, content, tags = [], created_at = NOW) =>
   finalizeEvent({ kind, created_at, tags, content }, SECRET_KEY);
 
+// No two share a created_at: which of two such events comes first is a
+// difference the suite has a case for, and here it would move every answer.
 const STORED = [
   event(1, 'first', [['t', 'soak']], NOW - 30),
   event(1, 'second', [['t', 'Soak']], NOW - 20),
   event(1, 'third', [['long', 'value']], NOW - 10),
-  event(0, '{"name":"probe"}'),
+  event(0, '{"name":"probe"}', [], NOW - 5),
   event(30023, 'article', [['d', 'a_b']]),
 ];
 const [first] = STORED;
@@ -68,7 +72,7 @@ const write = (body, headers = {}, path = '/write') => ({
 
 /** [label, request] for the write port. */
 const WRITE_PORT = [
-  ['GET /health', { path: '/health', shape: true }],
+  ['GET /health', { path: '/health' }],
   ['GET /metrics', { path: '/metrics', shape: true }],
   ['GET /write', { path: '/write' }],
   ['PUT /write', { method: 'PUT', path: '/write', body: '{}', headers: json }],
@@ -141,7 +145,7 @@ const WRITE_PORT = [
 const nostrJson = { accept: 'application/nostr+json' };
 /** [label, request] for the read port. */
 const READ_PORT = [
-  ['document', { path: '/', headers: nostrJson, shape: true }],
+  ['document', { path: '/', headers: nostrJson }],
   ['GET / with no Accept', { path: '/' }],
   ['OPTIONS /', { method: 'OPTIONS', path: '/' }],
   [
@@ -149,10 +153,7 @@ const READ_PORT = [
     { method: 'HEAD', path: '/', headers: nostrJson },
   ],
   ['POST /', { method: 'POST', path: '/', headers: json, body: '{}' }],
-  [
-    'GET /unknown, document',
-    { path: '/unknown', headers: nostrJson, shape: true },
-  ],
+  ['GET /unknown, document', { path: '/unknown', headers: nostrJson }],
   ['GET /unknown', { path: '/unknown' }],
   ['GET /health on the read port', { path: '/health' }],
 ];
@@ -244,10 +245,11 @@ function shapeOf(value, path = '') {
 async function http(base, { method = 'GET', path, headers, body, shape }) {
   const response = await fetch(base + path, { method, headers, body });
   const text = await response.text();
-  const kept = HEADERS.filter((name) => response.headers.has(name)).map(
-    (name) => `${name}: ${response.headers.get(name)}`
-  );
-  let shown = text;
+  const kept = [...response.headers]
+    .filter(([name]) => !UNCOMPARED.has(name))
+    .map(([name, value]) => `${name}: ${value}`)
+    .sort();
+  let shown = keysSorted(text);
   if (shape) {
     try {
       shown = `keys: ${shapeOf(JSON.parse(text)).join(' ')}`;
@@ -258,8 +260,8 @@ async function http(base, { method = 'GET', path, headers, body, shape }) {
   return [String(response.status), ...kept, shown].filter(Boolean).join('\n');
 }
 
-/** A frame with its objects' keys in order: key order is not the contract. */
-function keysSorted(frame) {
+/** JSON text with its objects' keys in order; any other text as it is. */
+function keysSorted(text) {
   const sorted = (value) =>
     Array.isArray(value)
       ? value.map(sorted)
@@ -271,9 +273,9 @@ function keysSorted(frame) {
           )
         : value;
   try {
-    return JSON.stringify(sorted(JSON.parse(frame)));
+    return JSON.stringify(sorted(JSON.parse(text)));
   } catch {
-    return frame;
+    return text;
   }
 }
 
@@ -325,7 +327,9 @@ async function seeded(image) {
       if (response.status !== 200)
         throw new Error(`${image} refused a stored event: ${response.status}`);
     }
-    return { ...relay, version: String(health.version) };
+    if (typeof health.version !== 'string')
+      throw new Error(`${image} reports no version on /health`);
+    return { ...relay, version: health.version };
   } catch (error) {
     await remove(relay.container);
     throw error;
@@ -351,7 +355,7 @@ async function probe(image) {
       label,
       text
         .replaceAll(relay.version, '<version>')
-        .replace(/"(storedAt|broadcastAt)":\d+/g, '"$1":<time>')
+        .replace(/"(storedAt|broadcastAt|timestamp)":\d+/g, '"$1":<time>')
     );
   };
   try {
@@ -379,22 +383,48 @@ for (const { name, image } of IMAGES) {
   console.error(`probed ${name}`);
 }
 
-const cell = (text) => {
-  const cut =
-    text.length > 400 ? `${text.slice(0, 400)}… (${text.length})` : text;
-  return `\`${cut.replaceAll('|', '\\|').replaceAll('`', "'").replaceAll('\n', '`<br>`')}\``;
-};
 const labels = [...answers[0].keys()];
 const differing = labels.filter((label) =>
-  answers.some((of) => of.get(label) !== answers[0].get(label))
+  answers.some((image) => image.get(label) !== answers[0].get(label))
 );
+
+/** How many leading characters every one of `texts` shares. */
+function sharedPrefix(texts) {
+  let length = 0;
+  while (
+    texts.every(
+      (text) => length < text.length && text[length] === texts[0][length]
+    )
+  )
+    length++;
+  return length;
+}
+
+const CELL = 400;
+/** One answer as a table cell, cut to CELL characters from `from`. */
+function cell(text, from) {
+  const cut =
+    (from > 0 ? '…' : '') +
+    text.slice(from, from + CELL) +
+    (text.length > from + CELL ? `… (${text.length})` : '');
+  return cut
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => `\`${line.replaceAll('|', '\\|').replaceAll('`', "'")}\``)
+    .join('<br>');
+}
+
 console.log(
   `${labels.length} inputs, ${labels.length - differing.length} answered the same by every image, ${differing.length} not:\n`
 );
 console.log(`| input | ${IMAGES.map((i) => i.name).join(' | ')} |`);
 console.log(`| --- | ${IMAGES.map(() => '---').join(' | ')} |`);
 for (const label of differing) {
+  const texts = answers.map((image) => image.get(label));
+  // A long answer is shown from just before where the images part.
+  const shared = sharedPrefix(texts);
+  const from = shared > CELL / 2 ? shared - CELL / 4 : 0;
   console.log(
-    `| ${label} | ${answers.map((of) => cell(of.get(label))).join(' | ')} |`
+    `| ${label} | ${texts.map((text) => cell(text, from)).join(' | ')} |`
   );
 }

@@ -12,13 +12,21 @@
 set -uo pipefail
 : "${TYPESCRIPT_IMAGE:?the TypeScript relay image}" "${RUST_IMAGE:?the Rust relay image}"
 
-repo=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+repo=$(git -C "$(dirname "$0")" rev-parse --show-toplevel) || exit 1
 dind="soak-dind-$$"
-cli=$(mktemp -d)
+cli=$(mktemp -d) || exit 1
 trap 'docker rm -f -v "$dind" >/dev/null 2>&1; rm -rf "$cli"' EXIT
 
 docker run -d --privileged --name "$dind" -e DOCKER_TLS_CERTDIR= docker:dind >/dev/null || exit 1
-until docker exec "$dind" docker info >/dev/null 2>&1; do sleep 1; done
+waited=0
+until docker exec "$dind" docker info >/dev/null 2>&1; do
+  if [ $((waited += 1)) -gt 120 ]; then
+    echo "the inner Docker daemon did not start:" >&2
+    docker logs --tail 20 "$dind" >&2
+    exit 1
+  fi
+  sleep 1
+done
 docker save "$TYPESCRIPT_IMAGE" "$RUST_IMAGE" | docker exec -i "$dind" docker load || exit 1
 # The suite drives `docker`; the node image has none, and this one is static.
 docker cp -q "$dind:/usr/local/bin/docker" "$cli/docker" || exit 1
