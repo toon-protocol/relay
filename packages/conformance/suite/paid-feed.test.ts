@@ -492,8 +492,12 @@ describe('relay image conformance: the live feed', () => {
       }
       const live = kind1(author);
       await publishOk(relay, live);
-      await a.next((f) => f[0] === 'EVENT' && f[1] === 'one');
-      await a.next((f) => f[0] === 'EVENT' && f[1] === 'two');
+      // One connection's subscriptions hear an event in no set order.
+      const first = await a.next(
+        (f) => f[0] === 'EVENT' && (f[1] === 'one' || f[1] === 'two')
+      );
+      const second = first[1] === 'one' ? 'two' : 'one';
+      await a.next((f) => f[0] === 'EVENT' && f[1] === second);
       await b.next((f) => f[0] === 'EVENT' && f[1] === 'three');
       expect(await balanceOf(relay, key)).toBe(
         SUBSCRIBE_PRICE - BROADCAST_PRICE
