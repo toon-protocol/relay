@@ -178,10 +178,28 @@ impl Store {
     /// (kind 5) is stored and retracts what it names. An ephemeral kind is
     /// [`RelayError::KindNotStoredYet`] and nothing is written.
     pub async fn save(&self, event: &VerifiedEvent) -> Result<Saved, RelayError> {
+        self.save_then(event, |_| {}).await
+    }
+
+    /// [`Store::save`], and when the event is [`Saved::New`], `published`
+    /// runs with it before the store lets any query run. An event a later
+    /// query finds has therefore already been through `published`. It runs
+    /// on a blocking thread holding the store: it must not wait.
+    pub async fn save_then(
+        &self,
+        event: &VerifiedEvent,
+        published: impl FnOnce(&VerifiedEvent) + Send + 'static,
+    ) -> Result<Saved, RelayError> {
         let event = event.clone();
         let retention = Arc::clone(&self.retention);
-        self.blocking(move |connection| save(connection, &retention, event.event()))
-            .await
+        self.blocking(move |connection| {
+            let saved = save(connection, &retention, event.event())?;
+            if saved == Saved::New {
+                published(&event);
+            }
+            Ok(saved)
+        })
+        .await
     }
 
     /// Whether an expired event is left out of every answer.

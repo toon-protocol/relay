@@ -96,13 +96,17 @@ pub(crate) async fn write(State(relay): State<Relay>, headers: HeaderMap, body: 
     if event.event().kind.is_ephemeral() {
         relay.read_side.deliver(&event);
     } else {
-        match relay.store.save(&event).await {
-            Ok(Saved::New) => {
-                // Stored either way, as the row is; served only while live.
-                if relay.store.serves(event.event()) {
-                    relay.read_side.deliver(&event);
-                }
+        // A new event is delivered inside the store's exclusive section, so
+        // any query that finds it finds it already in the live feed. Stored
+        // either way, as the row is; served only while live.
+        let (store, read_side) = (relay.store.clone(), relay.read_side.clone());
+        let published = move |event: &VerifiedEvent| {
+            if store.serves(event.event()) {
+                read_side.deliver(event);
             }
+        };
+        match relay.store.save_then(&event, published).await {
+            Ok(Saved::New) => {}
             // Already held, so already delivered: the connector retried. Or
             // blocked, or retracted: dropped without a word to the writer, who
             // paid and is answered as for any stored event.
