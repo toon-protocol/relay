@@ -208,8 +208,8 @@ async fn a_request_by_ids_is_never_closed_and_keeps_its_place() {
         ("prefix", json!(["abcd"]), 0),
     ] {
         assert_eq!(client.req(sub, json!({ "ids": ids })).await.len(), found);
+        assert_eq!(client.next().await, None, "no CLOSED follows {sub}");
     }
-    assert_eq!(client.next().await, None, "no CLOSED follows");
 
     // The places stay taken: 3 are used, 17 more fit and no further.
     for i in 0..17 {

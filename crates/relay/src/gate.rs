@@ -10,9 +10,9 @@
 //!
 //! - a message that is not JSON, not an array, of an unknown type or a REQ
 //!   without a string subscription id is a `NOTICE` that names which;
-//! - a `CLOSED` with no reason, which the framework sends when a by-`ids`
-//!   subscription has found all it asked for, is not passed on: the
-//!   subscription stays open, as on the TypeScript relay;
+//! - a `CLOSED` with no reason is not passed on: the framework sends one when
+//!   a by-`ids` subscription has found all it asked for, and the subscription
+//!   stays open, as on the TypeScript relay;
 //! - an empty subscription id, a REQ past the subscription limit and a REQ
 //!   with more filters than the limit are each a `NOTICE`, and the REQ goes
 //!   no further;
@@ -287,7 +287,8 @@ impl Gate {
     }
 
     /// What to do with `text`, a message the framework sent. A subscription
-    /// it closed is no longer open, whoever closed it.
+    /// it closed with a reason is no longer open, whoever closed it; a
+    /// `CLOSED` with no reason is dropped and the subscription stays open.
     pub(crate) fn relay_sent(&mut self, text: &str) -> Relayed {
         let closed = text.starts_with("[\"CLOSED\"");
         if !closed && self.watched.is_empty() {
