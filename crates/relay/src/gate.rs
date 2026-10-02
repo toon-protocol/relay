@@ -419,6 +419,21 @@ fn socket_config() -> WebSocketConfig {
         .max_frame_size(Some(MAX_MESSAGE))
 }
 
+/// Build the gate's two endpoints for one connection from `socket_config`:
+/// the one facing `client` and the one on `near`, the near end of the pipe.
+async fn endpoints<S>(
+    client: S,
+    near: DuplexStream,
+) -> (WebSocketStream<S>, WebSocketStream<DuplexStream>)
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let config = socket_config();
+    let client = WebSocketStream::from_raw_socket(client, Role::Server, Some(config)).await;
+    let near = WebSocketStream::from_raw_socket(near, Role::Client, Some(config)).await;
+    (client, near)
+}
+
 /// Serve `client`, a connection already upgraded to WebSocket, until either
 /// side closes it. `framework` is handed the far end of the pipe the framework
 /// speaks on; `refusal` is what an `EVENT` is answered with.
@@ -433,11 +448,9 @@ where
     F: FnOnce(DuplexStream) -> Fut,
     Fut: Future<Output = Result<(), RelayError>> + Send + 'static,
 {
-    let config = socket_config();
-    let mut client = WebSocketStream::from_raw_socket(client, Role::Server, Some(config)).await;
     let (near, far) = tokio::io::duplex(PIPE_BUFFER);
     let framework = tokio::spawn(framework(far));
-    let mut inner = WebSocketStream::from_raw_socket(near, Role::Client, Some(config)).await;
+    let (mut client, mut inner) = endpoints(client, near).await;
     let mut gate = Gate {
         serves_expired: !store.enforces_expiration(),
         refusal,
@@ -530,13 +543,17 @@ where
 mod tests {
     use super::*;
 
-    #[test]
-    fn the_gates_endpoints_do_not_use_the_default_read_buffer() {
-        let config = socket_config();
-        assert_eq!(config.read_buffer_size, READ_BUFFER);
-        assert!(config.read_buffer_size < WebSocketConfig::default().read_buffer_size);
-        assert_eq!(config.max_message_size, Some(MAX_MESSAGE));
-        assert_eq!(config.max_frame_size, Some(MAX_MESSAGE));
+    #[tokio::test]
+    async fn the_gates_endpoints_do_not_use_the_default_read_buffer() {
+        let (client, _) = tokio::io::duplex(PIPE_BUFFER);
+        let (near, _) = tokio::io::duplex(PIPE_BUFFER);
+        let (client, near) = endpoints(client, near).await;
+        for config in [client.get_config(), near.get_config()] {
+            assert_eq!(config.read_buffer_size, READ_BUFFER);
+            assert!(config.read_buffer_size < WebSocketConfig::default().read_buffer_size);
+            assert_eq!(config.max_message_size, Some(MAX_MESSAGE));
+            assert_eq!(config.max_frame_size, Some(MAX_MESSAGE));
+        }
     }
 
     #[tokio::test]
@@ -550,10 +567,9 @@ mod tests {
             Refusal::default(),
             store,
             |pipe| async move {
-                // The framework end: send every text back as it came.
-                let mut socket =
-                    WebSocketStream::from_raw_socket(pipe, Role::Server, Some(socket_config()))
-                        .await;
+                // The framework end, on tungstenite's defaults like the real
+                // one: send every text back as it came.
+                let mut socket = WebSocketStream::from_raw_socket(pipe, Role::Server, None).await;
                 while let Some(Ok(message)) = socket.next().await {
                     if message.is_text() && socket.send(message).await.is_err() {
                         break;
