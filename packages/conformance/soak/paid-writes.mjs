@@ -1,7 +1,6 @@
 // Paid-write throughput through the whole paid path of a running infra
 // sandbox: client -> hub connector -> relay POST /write, each write a voucher
-// on the buyer's own x402 channel, then one free read of the last event
-// (#203). Run it once per relay image, on the same sandbox profile.
+// on the buyer's own x402 channel, then one free read of all of them (#203). Run it once per relay image, on the same sandbox profile.
 //
 //   SANDBOX=<path to infra/sandbox> node soak/paid-writes.mjs
 //
@@ -29,6 +28,12 @@ const { finalizeEvent, generateSecretKey } = await from(
 const { hostFetch } = await from('scripts/lib/sandbox-endpoints.mjs');
 
 const WRITES = Number(process.env.WRITES ?? 300);
+// The read-back is one answer, and the Rust relay serves at most 500 events
+// per filter: refused here, before anything is paid for.
+if (!(WRITES >= 1 && WRITES <= 500)) {
+  console.error('WRITES must be between 1 and 500');
+  process.exit(2);
+}
 const HUB = process.env.HUB_URL ?? 'http://localhost:3200';
 const RELAY_WS = process.env.RELAY_WS ?? 'ws://localhost:7100';
 
@@ -83,8 +88,7 @@ const at = (p) =>
     Math.min(latencies.length - 1, Math.floor((latencies.length * p) / 100))
   ];
 
-// Read-back: everything this run paid for is stored and served. One answer:
-// the Rust relay serves at most 500 events per filter, so keep WRITES under it.
+// Read-back: everything this run paid for is stored and served.
 const stored = await new Promise((done, fail) => {
   const socket = new WebSocket(RELAY_WS);
   const ids = new Set();
@@ -123,4 +127,5 @@ console.log(
     readBack: stored,
   })
 );
+// The client keeps its connections open; nothing is left to wait for.
 process.exit(0);

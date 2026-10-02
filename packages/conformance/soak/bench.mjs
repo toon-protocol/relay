@@ -1,25 +1,29 @@
 // One benchmark for a relay container image, black-box like the suite beside
-// it: it starts the image and talks only to its two ports (#203).
+// it: it starts the image and talks only to its two ports, and reads the
+// container's memory from its cgroup (#203).
 //
 //   BENCH_IMAGES="typescript=<image>,rust=<image>" node soak/bench.mjs
 //
-// Each round starts every image in turn on a fresh /data volume and measures:
+// Each round starts every image in turn on a fresh /data volume and measures,
+// in this order:
 //
-//   idle       resident memory once the relay has been healthy and untouched
-//              for IDLE_SECONDS
-//   writes     WRITES signed events delivered to POST /write the way the
-//              connector delivers a paid one (the X-TOON-* attribution triple
-//              on each), WRITE_CONCURRENCY at a time: events/s, and the
-//              latency of one delivery
-//   subscribed resident memory with SUBSCRIBERS live subscriptions open and
-//              nothing being written
+//   idle       memory once the relay has been healthy and untouched for
+//              IDLE_SECONDS
+//   subscribed memory with SUBSCRIBERS live subscriptions open and nothing
+//              being written, on the still-empty database
 //   fan-out    FANOUT_EVENTS stored writes, one at a time, each timed from
 //              its POST until the last subscriber has it
+//   writes     with the subscribers gone, WRITES signed events delivered to
+//              POST /write the way the connector delivers a paid one (the
+//              X-TOON-* attribution triple on each, echoed back by the
+//              relay), WRITE_CONCURRENCY at a time: events/s, and the latency
+//              of one delivery. Nothing is paid here: paid-writes.mjs is the
+//              run through a connector.
 //
-// Images are interleaved within a round (a, b, a, b …) so that drift on the
-// host lands on both, and the figure reported for each is the median of the
-// rounds. The numbers compare two images on one host; they are not a capacity
-// figure for either.
+// The order the images run in alternates from round to round, so that drift
+// on the host lands on both, and the figure reported for each is the median
+// of the rounds. The numbers compare images on one host; they are not a
+// capacity figure for any of them.
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { finalizeEvent, generateSecretKey } from 'nostr-tools/pure';
@@ -44,7 +48,7 @@ const IMAGES = (process.env.BENCH_IMAGES ?? '')
   .filter(Boolean)
   .map((pair) => {
     const at = pair.indexOf('=');
-    return { name: pair.slice(0, at), image: pair.slice(at + 1) };
+    return at < 1 ? {} : { name: pair.slice(0, at), image: pair.slice(at + 1) };
   });
 if (IMAGES.length === 0 || IMAGES.some((i) => !i.name || !i.image)) {
   console.error('BENCH_IMAGES="<name>=<image>[,<name>=<image>…]" is required');
@@ -91,22 +95,34 @@ async function start(image) {
     ...(CPUS ? ['--cpus', CPUS] : []),
     image
   );
-  const writeUrl = `http://127.0.0.1:${await hostPort(container, 3100)}`;
-  const readUrl = `ws://127.0.0.1:${await hostPort(container, 7100)}`;
-  const deadline = Date.now() + 60_000;
-  for (;;) {
-    const healthy = await fetch(`${writeUrl}/health`).then(
-      (r) => r.ok,
-      () => false
-    );
-    if (healthy) break;
-    if (Date.now() > deadline) throw new Error(`${image} never became healthy`);
-    await sleep(100);
+  try {
+    const writeUrl = `http://127.0.0.1:${await hostPort(container, 3100)}`;
+    const readUrl = `ws://127.0.0.1:${await hostPort(container, 7100)}`;
+    const deadline = Date.now() + 60_000;
+    for (;;) {
+      const healthy = await fetch(`${writeUrl}/health`).then(
+        (r) => r.ok,
+        () => false
+      );
+      if (healthy) break;
+      if (Date.now() > deadline)
+        throw new Error(`${image} never became healthy`);
+      await sleep(100);
+    }
+    return { container, writeUrl, readUrl };
+  } catch (error) {
+    await remove(container);
+    throw error;
   }
-  return { container, writeUrl, readUrl };
 }
 
-/** Resident memory in MiB: the cgroup's usage less its reclaimable file cache. */
+const remove = (container) =>
+  docker('rm', '-f', '-v', container).catch(() => undefined);
+
+/**
+ * The container's memory in MiB as `docker stats` counts it: its cgroup's
+ * usage less its inactive file cache.
+ */
 async function memoryMiB(container) {
   const read = (file) =>
     docker('exec', container, 'cat', `/sys/fs/cgroup/${file}`);
@@ -122,11 +138,12 @@ async function post(writeUrl, event) {
     headers: { 'content-type': 'application/json', ...ATTRIBUTION },
     body: JSON.stringify({ event }),
   });
-  await response.text();
-  if (response.status !== 200) {
-    throw new Error(`POST /write answered ${response.status}`);
+  const body = await response.text();
+  const elapsed = performance.now() - startedAt;
+  if (response.status !== 200 || !body.includes('"payment"')) {
+    throw new Error(`POST /write answered ${response.status} ${body}`);
   }
-  return performance.now() - startedAt;
+  return elapsed;
 }
 
 /** `task(item)` over `items`, `concurrency` at a time; resolves with results. */
@@ -166,47 +183,62 @@ async function writes({ writeUrl }, events) {
   };
 }
 
-/** One live subscription; `onEvent` runs for every EVENT after its EOSE. */
-function subscribe(readUrl, since, onEvent) {
+/** Open one live subscription into `sockets`; `onEvent` runs per EVENT. */
+function subscribe(readUrl, sockets, onEvent) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(readUrl);
+    sockets.push(ws);
     ws.on('error', reject);
-    ws.on('open', () =>
-      ws.send(JSON.stringify(['REQ', 'bench', { kinds: [KIND], since }]))
-    );
+    ws.on('open', () => ws.send(JSON.stringify(['REQ', 'bench', {}])));
     ws.on('message', (data) => {
       // Frames are told apart by their head, not parsed: with every
       // subscriber in this one process, parsing would be what is measured.
       const frame = String(data);
       if (frame.startsWith('["EVENT"')) onEvent();
-      else if (frame.startsWith('["EOSE"')) resolve(ws);
+      else if (frame.startsWith('["EOSE"')) resolve();
       else reject(new Error(`unexpected frame: ${frame.slice(0, 120)}`));
     });
   });
 }
 
 /**
- * One event at a time: POST it, and wait until every subscriber has it. The
- * time from the POST to the last delivery is that event's fan-out.
+ * One event at a time: POST it, and note when the last subscriber has it.
+ * That moment, counted from the POST, is the event's fan-out, whether it
+ * falls before or after the POST is answered.
  */
-async function fanOut({ writeUrl }, events, subscribers) {
+async function fanOut({ container, writeUrl, readUrl }, events, sockets) {
+  let pending = 0;
+  let reached = () => undefined;
+  await pooled(Array.from({ length: SUBSCRIBERS }), 50, () =>
+    subscribe(readUrl, sockets, () => {
+      if (--pending === 0) reached(performance.now());
+    })
+  );
+  await sleep(IDLE_SECONDS * 1000);
+  const subscribedMiB = await memoryMiB(container);
+
   const times = [];
-  const startedAt = performance.now();
   for (const event of events) {
-    const all = new Promise((resolve) => (subscribers.reached = resolve));
-    subscribers.pending = SUBSCRIBERS;
+    const lastDelivery = new Promise((resolve) => (reached = resolve));
+    pending = SUBSCRIBERS;
     const postedAt = performance.now();
-    await post(writeUrl, event);
-    const timeout = sleep(60_000).then(() => {
-      throw new Error(`fan-out: ${subscribers.pending} deliveries missing`);
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`fan-out: ${pending} deliveries missing`)),
+        60_000
+      );
     });
-    await Promise.race([all, timeout]);
-    times.push(performance.now() - postedAt);
+    const [reachedAt] = await Promise.race([
+      Promise.all([lastDelivery, post(writeUrl, event)]),
+      timeout,
+    ]);
+    clearTimeout(timer);
+    times.push(reachedAt - postedAt);
   }
-  const seconds = (performance.now() - startedAt) / 1000;
   times.sort((a, b) => a - b);
   return {
-    deliveriesPerSecond: (SUBSCRIBERS * events.length) / seconds,
+    subscribedMiB,
     fanOutP50Ms: percentile(times, 50),
     fanOutP99Ms: percentile(times, 99),
   };
@@ -214,50 +246,40 @@ async function fanOut({ writeUrl }, events, subscribers) {
 
 async function measure(image, writeEvents, fanOutEvents) {
   const relay = await start(image);
-  const subscribers = { sockets: [], pending: 0, reached: () => undefined };
+  const sockets = [];
   try {
     await sleep(IDLE_SECONDS * 1000);
     const idleMiB = await memoryMiB(relay.container);
+    const fanned = await fanOut(relay, fanOutEvents, sockets);
+    for (const ws of sockets) ws.terminate();
+    await sleep(1000);
     const written = await writes(relay, writeEvents);
-    // The writes before this are older than `since`, so every EVENT is live.
-    subscribers.sockets = await pooled(
-      Array.from({ length: SUBSCRIBERS }),
-      50,
-      () =>
-        subscribe(relay.readUrl, fanOutEvents[0].created_at, () => {
-          if (--subscribers.pending === 0) subscribers.reached();
-        })
-    );
-    await sleep(IDLE_SECONDS * 1000);
-    const subscribedMiB = await memoryMiB(relay.container);
-    const fanned = await fanOut(relay, fanOutEvents, subscribers);
-    return { idleMiB, ...written, subscribedMiB, ...fanned };
+    return { idleMiB, ...fanned, ...written };
   } finally {
-    for (const ws of subscribers.sockets) ws.terminate();
-    await docker('rm', '-f', '-v', relay.container).catch(() => undefined);
+    for (const ws of sockets) ws.terminate();
+    await remove(relay.container);
   }
 }
 
 const METRICS = [
   ['idleMiB', 'memory at idle, no connections (MiB)'],
-  ['writesPerSecond', 'paid writes per second'],
-  ['writeP50Ms', 'write latency p50 (ms)'],
-  ['writeP99Ms', 'write latency p99 (ms)'],
   ['subscribedMiB', `memory with ${SUBSCRIBERS} idle subscribers (MiB)`],
-  ['deliveriesPerSecond', 'fan-out deliveries per second'],
   ['fanOutP50Ms', 'one event to every subscriber p50 (ms)'],
   ['fanOutP99Ms', 'one event to every subscriber p99 (ms)'],
+  ['writesPerSecond', 'attributed writes per second'],
+  ['writeP50Ms', 'write latency p50 (ms)'],
+  ['writeP99Ms', 'write latency p99 (ms)'],
 ];
 
 const rounds = Object.fromEntries(IMAGES.map(({ name }) => [name, []]));
 for (let round = 1; round <= ROUNDS; round++) {
-  for (const { name, image } of IMAGES) {
+  const order = round % 2 ? IMAGES : [...IMAGES].reverse();
+  for (const { name, image } of order) {
     // Fresh events per run: a second delivery of a stored event is a
-    // duplicate, which is a different code path from a write. The fan-out
-    // events are dated a minute ahead so `since` can exclude the writes.
+    // duplicate, which is a different code path from a write.
     const now = Math.floor(Date.now() / 1000);
+    const fanOutEvents = signed(FANOUT_EVENTS, `fan-out ${round} ${name}`, now);
     const writeEvents = signed(WRITES, `write ${round} ${name}`, now);
-    const fanOutEvents = signed(FANOUT_EVENTS, `fan-out ${round}`, now + 60);
     const result = await measure(image, writeEvents, fanOutEvents);
     rounds[name].push(result);
     console.error(`round ${round} ${name}: ${JSON.stringify(result)}`);

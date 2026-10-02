@@ -9,10 +9,11 @@ images (#203). Nothing here runs in CI.
 
 The sandbox (`toon-protocol/infra`, `sandbox/`) pins its own relay image and
 does not tell it where its Write Edge is. `sandbox.override.yml` swaps the
-image and sets the two connector-edge variables, from outside the infra repo:
+image and sets the two connector-edge variables, from outside the infra repo.
+From the infra checkout's `sandbox/`, with `RELAY_REPO` the absolute path of
+this repo:
 
 ```
-cd ../infra/sandbox
 export COMPOSE_FILE=docker-compose.yml:$RELAY_REPO/packages/conformance/soak/sandbox.override.yml
 export RELAY_IMAGE=ghcr.io/toon-protocol/relay:rust-candidate
 make up-payments                 # PROVIDER_CONTEXT=… if ../../provider is not on client 4.x
@@ -23,21 +24,23 @@ make smoke-directory             # the provider's paid, replaceable directory ev
 `COMPOSE_FILE` has to stay exported for every later `make` or `docker compose`
 in that shell: the smokes drive compose themselves. To compare, repeat with
 `RELAY_IMAGE` set to the other image. `docker compose --profile payments up -d
-relay` swaps the relay alone, over the same `/data` volume, which is the
-cutover and the rollback. `make clean` afterwards leaves the infra checkout as
-it was.
+relay` swaps the relay alone, over the same `/data` volume, which is what a
+cutover or a rollback does. `make clean` afterwards removes the sandbox's
+volumes and state.
 
 ## 2. Paid writes through the hub
 
+From `packages/conformance`, with the sandbox up:
+
 ```
-SANDBOX=../infra/sandbox node soak/paid-writes.mjs
+SANDBOX=/path/to/infra/sandbox node soak/paid-writes.mjs
 ```
 
-`WRITES` (default 300) paid writes from the sandbox's funded buyer, one
-voucher each, then a read of all of them. It reports writes per second and the
-latency a payer sees. Nearly all of that is the connector and the client's
-signing, so it says whether the relay holds the paid path up, not how fast the
-relay is.
+`WRITES` (default 300, at most 500) paid writes from the sandbox's funded
+buyer, one voucher each, then a read of all of them. It reports writes per
+second and the latency a payer sees. Nearly all of that is the connector and
+the client's signing, so it says whether the relay holds the paid path up, not
+how fast the relay is.
 
 ## 3. The benchmark
 
@@ -46,16 +49,9 @@ BENCH_IMAGES="typescript=ghcr.io/toon-protocol/relay:release,rust=ghcr.io/toon-p
   pnpm --filter @toon-protocol/relay-conformance bench
 ```
 
-Starts each image alone and measures memory at idle, deliveries to `POST
-/write` carrying the connector's payment statement, and fan-out to live
-subscriptions; see the head of `bench.mjs` for the settings. Images are
-interleaved within a round and the medians are reported, as a Markdown table
-on stdout. `BENCH_CPUS=1` gives every image the same single core.
-
-## The suite on a firewalled host
-
-The suite's stub connector listens on the host, and a host firewall that drops
-traffic from the Docker bridge fails every case that needs the Write Edge. A
-Docker-in-Docker daemon has no such firewall: load both images into a
-`docker:dind` container, and run the suite in a `node` container that shares
-its network namespace with `DOCKER_HOST=tcp://127.0.0.1:2375`.
+Starts each image alone and measures memory at idle, memory with live
+subscriptions open, fan-out of one stored write to all of them, and deliveries
+to `POST /write` carrying the connector's payment statement; see the head of
+`bench.mjs` for the settings. The images alternate from round to round and the
+medians are reported, as a Markdown table on stdout. `BENCH_CPUS=1` gives
+every image the same single core.
