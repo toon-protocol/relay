@@ -93,6 +93,24 @@ pub(crate) async fn write(State(relay): State<Relay>, headers: HeaderMap, body: 
         Err(refusal) => return refusal.into_response(),
     };
 
+    // NIP-29: a group event waits its turn, so it is judged against the
+    // groups as the one before it left them, and must be allowed by them.
+    let groups = relay
+        .groups
+        .as_ref()
+        .filter(|groups| groups.concerns(event.event()));
+    let _turn = match groups {
+        Some(groups) => Some(groups.turn().await),
+        None => None,
+    };
+    // An event already held was judged when it first arrived: a retry is
+    // answered as for any stored event, not judged against what it changed.
+    if let Some(Err(denied)) = groups.map(|groups| groups.permit(event.event()))
+        && !matches!(relay.store.holds(event.event().id.to_hex()).await, Ok(true))
+    {
+        return refused(denied.status, denied.reason);
+    }
+
     // An ephemeral event is paid for like any other, and delivered, never kept.
     if event.event().kind.is_ephemeral() {
         relay.read_side.deliver(&event);
@@ -107,7 +125,13 @@ pub(crate) async fn write(State(relay): State<Relay>, headers: HeaderMap, body: 
             }
         };
         match relay.store.save_then(&event, published).await {
-            Ok(Saved::New) => {}
+            Ok(Saved::New) => {
+                if let Some(groups) = groups {
+                    groups
+                        .accepted(&relay.store, &relay.read_side, event.event())
+                        .await;
+                }
+            }
             // Already held, so already delivered: the connector retried. Or
             // blocked, or retracted: dropped without a word to the writer, who
             // paid and is answered as for any stored event.

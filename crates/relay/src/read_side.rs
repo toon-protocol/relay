@@ -37,6 +37,7 @@ use tokio_tungstenite::tungstenite::{Error as SocketError, Message};
 
 use crate::auth::AuthPolicy;
 use crate::connector::EdgeSlot;
+use crate::groups::GroupView;
 use crate::ledger::Charged;
 use crate::session::{
     LiveEvent, LiveFeed, NOTICE_BINARY, Refusal, Reply, Request, Session, Sources,
@@ -68,6 +69,8 @@ pub(crate) struct ReadSide {
     refusal: Refusal,
     /// How connections are challenged, while NIP-42 is on.
     auth: Option<AuthPolicy>,
+    /// Who may read which group, while NIP-29 is on.
+    groups: Option<GroupView>,
     connections: Arc<Semaphore>,
     /// What every connection delivers live events from.
     live: LiveFeed,
@@ -99,9 +102,11 @@ impl ReadSide {
         max_connections: usize,
         limits: ReadLimits,
         auth: Option<AuthPolicy>,
+        groups: Option<GroupView>,
     ) -> Self {
         Self {
             auth,
+            groups,
             store,
             refusal: Refusal {
                 edge,
@@ -140,6 +145,7 @@ impl ReadSide {
         let session = Session::new(
             self.refusal.clone(),
             self.auth.clone(),
+            self.groups.clone(),
             self.queries_per_minute,
             self.sources.of(peer.ip()),
         );
@@ -357,7 +363,7 @@ mod tests {
         async fn open() -> Self {
             let data = tempfile::tempdir().expect("a temp dir");
             let store = Store::open(&data.path().join("events.db")).expect("a new database opens");
-            let read_side = ReadSide::new(store, EdgeSlot::default(), None, 1, LIMITS, None);
+            let read_side = ReadSide::new(store, EdgeSlot::default(), None, 1, LIMITS, None, None);
             let (ours, theirs) = tokio::io::duplex(64 * 1024);
             let serving = read_side.clone();
             tokio::spawn(async move {
@@ -456,10 +462,11 @@ mod tests {
         async fn open(open: &[&str]) -> Self {
             let data = tempfile::tempdir().expect("a temp dir");
             let store = Store::open(&data.path().join("events.db")).expect("a new database opens");
-            let read_side = ReadSide::new(store, EdgeSlot::default(), None, 1, LIMITS, None);
+            let read_side = ReadSide::new(store, EdgeSlot::default(), None, 1, LIMITS, None, None);
             let feed = read_side.live.listen();
             let session = Session::new(
                 Refusal::default(),
+                None,
                 None,
                 LIMITS.per_connection,
                 read_side.sources.of(peer_ip()),

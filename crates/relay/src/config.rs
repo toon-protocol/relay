@@ -157,6 +157,10 @@ const AUTH_REQUIRED_KINDS: Setting = Setting {
     flag: "--auth-required-kinds",
     env: "TOON_AUTH_REQUIRED_KINDS",
 };
+const NIP29_GROUPS: Setting = Setting {
+    flag: "--nip29-groups",
+    env: "TOON_NIP29_GROUPS",
+};
 const BLOCKED_EVENT_IDS: Setting = Setting {
     flag: "--blocked-event-ids",
     env: "TOON_BLOCKED_EVENT_IDS",
@@ -193,12 +197,13 @@ const VALUE_FLAGS: [&str; 28] = [
     OPERATOR_PUBKEYS.flag,
     AUTH_REQUIRED_KINDS.flag,
 ];
-const SWITCH_FLAGS: [&str; 6] = [
+const SWITCH_FLAGS: [&str; 7] = [
     DEV_MODE.flag,
     VERIFY_EPHEMERAL.flag,
     LOG_WRITES.flag,
     ENFORCE_EXPIRATION.flag,
     NIP42_AUTH.flag,
+    NIP29_GROUPS.flag,
     "--help",
 ];
 
@@ -265,6 +270,8 @@ Options (each flag beats its environment variable):
   --nip42-auth                             TOON_NIP42_AUTH=true: challenge connections (NIP-42)
   --auth-required-kinds <kinds>            TOON_AUTH_REQUIRED_KINDS (comma-separated; implies
                                            --nip42-auth; a REQ for these kinds needs AUTH)
+  --nip29-groups                           TOON_NIP29_GROUPS=true: relay groups (NIP-29; implies
+                                           --nip42-auth)
   --help                                   show this message
 
 Prefer the environment variables to --mnemonic and --secret-key: arguments
@@ -366,6 +373,11 @@ pub struct Config {
     /// NIP-42 is switched on: connections are challenged. Off unless asked
     /// for, and on whenever `auth_required_kinds` names a kind.
     pub nip42_auth: bool,
+    /// NIP-29 relay groups are switched on. Off unless asked for; turning it
+    /// on turns `nip42_auth` on, since closed groups are read by key.
+    pub nip29_groups: bool,
+    /// The relay's key, which signs the group metadata events.
+    pub(crate) signer: crate::groups::Signer,
     /// The kinds a connection must authenticate to read, once each, in order.
     pub auth_required_kinds: Vec<u16>,
 }
@@ -526,7 +538,8 @@ impl Config {
             return Err(RelayError::DevModeRefused);
         }
 
-        let identity = sources.identity()?;
+        let keys = sources.identity()?;
+        let identity = keys.public_key();
         let verify_workers = sources
             .integer(
                 &VERIFY_WORKERS,
@@ -598,12 +611,14 @@ impl Config {
                 .unwrap_or_default(),
         )?;
 
+        let nip29_groups = sources.on(&NIP29_GROUPS);
         let text = |setting: &Setting| sources.text(setting).map(|(_, value)| value);
         let enforce_expiration = !(sources.flags.switches.contains(ENFORCE_EXPIRATION.flag)
             || lookup(ENFORCE_EXPIRATION.env).is_some_and(|value| value == "false"));
 
         Ok(Invocation::Run(Box::new(Self {
             identity,
+            signer: crate::groups::Signer::new(keys),
             write_host: sources.host(&WRITE_HOST),
             write_port: sources.port(&WRITE_PORT, DEFAULT_WRITE_PORT)?,
             read_host: sources.host(&READ_HOST),
@@ -641,7 +656,8 @@ impl Config {
             blocked_event_ids,
             subscribe,
             operator_pubkeys,
-            nip42_auth: sources.on(&NIP42_AUTH) || !auth_required_kinds.is_empty(),
+            nip42_auth: sources.on(&NIP42_AUTH) || !auth_required_kinds.is_empty() || nip29_groups,
+            nip29_groups,
             auth_required_kinds,
         })))
     }
@@ -746,7 +762,7 @@ impl Sources<'_> {
     ///
     /// The secret key is the flag, else `TOON_SECRET_KEY`, else its alias; an
     /// empty one that was chosen is no key at all.
-    fn identity(&self) -> Result<PublicKey, RelayError> {
+    fn identity(&self) -> Result<Keys, RelayError> {
         let secret_key = self
             .raw(&SECRET_KEY)
             .or_else(|| (self.lookup)(SECRET_KEY_ALIAS).map(|value| (SECRET_KEY_ALIAS, value)));
@@ -757,11 +773,11 @@ impl Sources<'_> {
             (Some(_), Some(_)) => Err(RelayError::BothIdentities),
             (None, None) => Err(RelayError::MissingIdentity),
             (None, Some((name, hex))) => {
-                public_key(&hex).ok_or(RelayError::InvalidSecretKey { name })
+                secret_keys(&hex).ok_or(RelayError::InvalidSecretKey { name })
             }
-            (Some((name, words)), None) => Keys::from_mnemonic(words, None)
-                .map(|keys| keys.public_key())
-                .map_err(|_| RelayError::InvalidMnemonic { name }),
+            (Some((name, words)), None) => {
+                Keys::from_mnemonic(words, None).map_err(|_| RelayError::InvalidMnemonic { name })
+            }
         }
     }
 }
@@ -809,14 +825,14 @@ fn kind_list(raw: &str) -> Result<Vec<u16>, RelayError> {
     }
 }
 
-/// The x-only public key of a hex secret key, or `None` if `hex` is not one.
+/// The keys of a hex secret key, or `None` if `hex` is not one.
 /// Hex only: the TypeScript relay does not accept an `nsec`.
-fn public_key(hex: &str) -> Option<PublicKey> {
+fn secret_keys(hex: &str) -> Option<Keys> {
     if hex.len() != 64 {
         return None;
     }
     let secret_key = SecretKey::from_hex(hex).ok()?;
-    Some(Keys::new(secret_key).public_key())
+    Some(Keys::new(secret_key))
 }
 
 #[cfg(test)]

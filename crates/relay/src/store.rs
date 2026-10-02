@@ -239,6 +239,48 @@ impl Store {
             .await
     }
 
+    /// Every stored event of a kind in `kinds`, in the order the store took
+    /// them in, expired or not: the record a state built from events is
+    /// replayed from when the relay opens, before anything is served. The
+    /// order is the file's, not the `created_at` a writer chose.
+    pub(crate) fn in_arrival_order(
+        &self,
+        kinds: std::ops::RangeInclusive<u16>,
+    ) -> Result<Vec<Event>, RelayError> {
+        let connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let mut statement = connection.prepare(&format!(
+            "{SELECT} WHERE kind BETWEEN ? AND ? ORDER BY rowid ASC"
+        ))?;
+        let rows = statement.query(params![kinds.start(), kinds.end()])?;
+        events_of(rows)
+    }
+
+    /// Whether an event with this id is held.
+    pub(crate) async fn holds(&self, id: String) -> Result<bool, RelayError> {
+        self.blocking(move |connection| {
+            Ok(connection
+                .query_row("SELECT 1 FROM events WHERE id = ?", [id], |_| Ok(()))
+                .optional()?
+                .is_some())
+        })
+        .await
+    }
+
+    /// Delete the events with these ids, and say how many were held.
+    pub(crate) async fn remove(&self, ids: Vec<String>) -> Result<usize, RelayError> {
+        self.blocking(move |connection| {
+            let mut removed = 0;
+            for id in ids {
+                removed += connection.execute("DELETE FROM events WHERE id = ?", [id])?;
+            }
+            Ok(removed)
+        })
+        .await
+    }
+
     /// Run `work` on the connection, off the async worker threads: SQLite
     /// calls block.
     async fn blocking<T, F>(&self, work: F) -> Result<T, RelayError>
@@ -644,7 +686,12 @@ fn run_query(
     ));
 
     let mut statement = connection.prepare_cached(&sql)?;
-    let mut rows = statement.query(params_from_iter(parameters))?;
+    let rows = statement.query(params_from_iter(parameters))?;
+    events_of(rows)
+}
+
+/// The events of rows selected with [`SELECT`]'s columns.
+fn events_of(mut rows: rusqlite::Rows<'_>) -> Result<Vec<Event>, RelayError> {
     let mut events = Vec::new();
     while let Some(row) = rows.next()? {
         let id: String = row.get(0)?;

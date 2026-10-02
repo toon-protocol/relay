@@ -333,6 +333,7 @@ mod tests {
             read_rate_limit: 1_200,
             read_source_rate_limit: 6_000,
             nip42: false,
+            nip29: false,
         }
     }
 

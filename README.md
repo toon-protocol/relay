@@ -380,6 +380,7 @@ CLI flags override environment variables. `deploy/` sets these through
 | `TOON_BLOCKED_EVENT_IDS`                        | —         | comma-separated 64-hex event ids to refuse. Ids only, never pubkeys |
 | `TOON_NIP42_AUTH`                               | `false`   | Rust relay: `true` sends every connection a NIP-42 challenge and lists 42 in `supported_nips` |
 | `TOON_AUTH_REQUIRED_KINDS`                      | —         | Rust relay: comma-separated kinds a connection must `AUTH` to read (a `REQ` that could return one is closed `auth-required:`); implies `TOON_NIP42_AUTH` |
+| `TOON_NIP29_GROUPS`                             | `false`   | Rust relay: `true` keeps NIP-29 relay groups (membership and roles enforced on writes, metadata kinds 39000–39003 published, closed/private groups read only by an authenticated member), lists 29 in `supported_nips` and implies `TOON_NIP42_AUTH` |
 | `TOON_CONNECTOR_URL`                            | —         | the connector's `GET /ilp` this relay reads its write edge from     |
 | `TOON_WRITE_ILP_ADDRESS`                        | —         | which of that connector's routes reaches this relay's `POST /write` |
 | `TOON_WRITE_CARRIAGE`                           | —         | the carriage that route pins; fills silence only (TOON_Network#111) |

@@ -65,6 +65,7 @@ use crate::auth::{self, AuthPolicy, CLOSED_AUTH_REQUIRED};
 use crate::clock::unix_seconds;
 use crate::connector::EdgeSlot;
 use crate::document::write_refusal;
+use crate::groups::GroupView;
 use crate::ledger::{Charged, ConnectionId};
 use crate::proof::client_authentication;
 use crate::store::Query;
@@ -489,6 +490,8 @@ pub(crate) struct Session {
     refusal: Refusal,
     /// `None` while NIP-42 is off for reads: nothing restricted.
     auth: Option<Authentication>,
+    /// `None` while NIP-29 is off: no group restricts a read.
+    groups: Option<GroupView>,
     subscriptions: HashMap<String, Subscription>,
     queries: Allowance,
     /// The allowance of the address the connection came from.
@@ -514,12 +517,13 @@ impl Drop for Session {
 }
 
 impl Session {
-    /// A connection that has said nothing yet, under `auth` if NIP-42 is on,
-    /// that is answered `queries_per_minute` REQs a minute and whatever its
-    /// `source` has left. Its live feed is free.
+    /// A connection that has said nothing yet, under `auth` if NIP-42 is on
+    /// and `groups` if NIP-29 is, that is answered `queries_per_minute` REQs a
+    /// minute and whatever its `source` has left. Its live feed is free.
     pub(crate) fn new(
         refusal: Refusal,
         auth: Option<AuthPolicy>,
+        groups: Option<GroupView>,
         queries_per_minute: u32,
         source: SourceAllowance,
     ) -> Self {
@@ -527,6 +531,7 @@ impl Session {
         let challenge = auth.is_some().then(auth::new_challenge);
         Self {
             refusal,
+            groups,
             auth: auth.map(|policy| Authentication {
                 policy,
                 proven: HashSet::new(),
@@ -631,6 +636,9 @@ impl Session {
                 return self.refuse(&id, CLOSED_AUTH_REQUIRED);
             }
         }
+        if let Some(reason) = self.group_refusal(&filters) {
+            return self.refuse(&id, reason);
+        }
         if id.len() > MAX_SUBSCRIPTION_ID {
             return self.refuse(
                 &id,
@@ -674,6 +682,28 @@ impl Session {
             },
             id,
         })
+    }
+
+    /// Why a REQ of `filters` is closed for the groups it names, if it is.
+    fn group_refusal(&self, filters: &[Wanted]) -> Option<&'static str> {
+        let groups = self.groups.as_ref()?;
+        let keys = self.proven_keys();
+        filters.iter().find_map(|f| groups.refuse(&f.base, keys))
+    }
+
+    /// The keys this connection has proven it holds.
+    fn proven_keys(&self) -> &HashSet<PublicKey> {
+        static NONE: std::sync::LazyLock<HashSet<PublicKey>> =
+            std::sync::LazyLock::new(HashSet::new);
+        self.auth.as_ref().map_or(&NONE, |auth| &auth.proven)
+    }
+
+    /// Whether `event` may be shown on this connection, given the groups it
+    /// belongs to and the keys the connection has proven.
+    fn may_read(&self, event: &Event) -> bool {
+        self.groups
+            .as_ref()
+            .is_none_or(|groups| groups.may_read(event, self.proven_keys()))
     }
 
     /// End `id` with `reason`. A `CLOSED` says the subscription of that id is
@@ -780,6 +810,9 @@ impl Session {
         let mut events: Vec<Event> = Vec::new();
         for found in found {
             for event in found {
+                if !self.may_read(&event) {
+                    continue;
+                }
                 if seen.insert(event.id) {
                     events.push(event);
                 }
@@ -809,6 +842,7 @@ impl Session {
         for live in waiting {
             frames.extend(self.live_frames(live));
             if !seen.contains(&live.event.id)
+                && self.may_read(&live.event)
                 && subscription.feed.admits(live)
                 && subscription.filters.iter().any(|f| f.matches(&live.event))
             {
@@ -842,8 +876,10 @@ impl Session {
         &'a self,
         live: &'a LiveEvent,
     ) -> impl Iterator<Item = String> + 'a {
+        let readable = self.may_read(&live.event);
         self.subscriptions
             .values()
+            .filter(move |_| readable)
             .filter(|subscription| {
                 subscription.feed.admits(live)
                     && subscription.filters.iter().any(|f| f.matches(&live.event))
@@ -925,6 +961,7 @@ mod tests {
     fn session() -> Session {
         Session::new(
             Refusal::default(),
+            None,
             None,
             QUERIES_PER_MINUTE,
             Arc::new(Mutex::new(Allowance::new(u32::MAX))),
@@ -1404,6 +1441,7 @@ mod tests {
         let connect = |last: u8| {
             Session::new(
                 Refusal::default(),
+                None,
                 None,
                 QUERIES_PER_MINUTE,
                 sources.of(ip(last)),
