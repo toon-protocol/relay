@@ -1,6 +1,10 @@
 import { generateSecretKey } from 'nostr-tools/pure';
 import { afterAll, beforeAll, describe, expect } from 'vitest';
-import { startRelay, type RunningRelay } from './harness/relay-container.js';
+import {
+  removeVolume,
+  startRelay,
+  type RunningRelay,
+} from './harness/relay-container.js';
 import {
   now,
   pubkeyOf,
@@ -477,6 +481,91 @@ describe('relay image conformance: expiration enforced', () => {
         expect(subscription.delivered.map((e) => e.id)).toEqual([live.id]);
       } finally {
         subscription.close();
+      }
+    }
+  );
+});
+
+describe('relay image conformance: an unexpiring event is never reaped', () => {
+  const reaping = {
+    TOON_EXPIRATION_REAP_INTERVAL_SECONDS: '1',
+    TOON_EXPIRATION_REAP_GRACE_SECONDS: '0',
+  };
+
+  conformanceTest(
+    'survives sweeps and a restart over the same volume',
+    async () => {
+      const volume = `conformance-reaper-${process.pid}-${Date.now()}`;
+      const { secretKey, pubkey } = author();
+      const t = now();
+      const keep = (d: string, created_at: number, tags: string[][] = []) =>
+        sign(secretKey, {
+          kind: 30078,
+          created_at,
+          content: d,
+          tags: [['d', d], ...tags],
+        });
+      // No expiration tag at all, including very old ones (#160).
+      const unexpiring = [
+        keep('recent', t - 10),
+        keep('y2020', 1_600_000_000),
+        keep('y1970', 1_000),
+      ];
+      // Parsing fails open: none of these is a plain non-negative integer.
+      const malformed = ['abc', '-5', '1.5', '', '1e3', '+5', ' 12'].map(
+        (value, i) => keep(`malformed-${i}`, t - 10, [['expiration', value]])
+      );
+      const kept = ids(...unexpiring, ...malformed);
+      const expired = keep('expired', t - 200, [
+        ['expiration', String(t - 100)],
+      ]);
+      const stored = () => storedIds(current(), { authors: [pubkey] });
+      let relay0: RunningRelay | undefined;
+      const start = async (env: Record<string, string>) => {
+        relay0 = await startRelay(imageUnderTest(), { volume, env });
+        return relay0;
+      };
+      const current = (): RunningRelay => {
+        if (!relay0) throw new Error('no relay running');
+        return relay0;
+      };
+      const stop = async () => {
+        const running = relay0;
+        relay0 = undefined;
+        await running?.stop();
+      };
+      try {
+        // Not enforcing, so the expired event is accepted and can be seen.
+        let relay = await start({ TOON_ENFORCE_EXPIRATION: 'false' });
+        for (const event of [...unexpiring, ...malformed, expired]) {
+          await publishOk(relay, event);
+        }
+        expect(await stored()).toEqual(
+          ids(expired, ...unexpiring, ...malformed)
+        );
+        await stop();
+
+        // Enforcing, and sweeping every second with no grace: let several run.
+        relay = await start(reaping);
+        await settle(4_000);
+        expect(await stored()).toEqual(kept);
+        await stop();
+
+        // Look again with the reaper off and expiry no longer hiding: the
+        // expired event is gone from disk, so a sweep really ran, and nothing
+        // else went with it.
+        relay = await start({ TOON_ENFORCE_EXPIRATION: 'false' });
+        expect(await stored()).toEqual(kept);
+        await stop();
+
+        // A restart with the reaper running: the boot sweep included.
+        relay = await start(reaping);
+        await settle(2_500);
+        expect(await stored()).toEqual(kept);
+        await stop();
+      } finally {
+        await stop();
+        await removeVolume(volume);
       }
     }
   );
