@@ -411,12 +411,13 @@ describe('the Rust image owns :release and is the only image built', () => {
     // is the only thing that may.
     expect(text).toMatch(/flavor:\s*latest=false/);
     // The handle that names the tag is the one built into the binary, in the
-    // image the suite runs against and in the one pushed.
+    // image the suite runs against, in the one each platform starts and in
+    // the one it pushes.
     expect(
       text.match(
         /TOON_RELEASE_HANDLE=\$\{\{ needs\.handle\.outputs\.handle \}\}/g
       )
-    ).toHaveLength(2);
+    ).toHaveLength(3);
   });
 
   it('publishes only after the suite passed against the Rust image with nothing expected to fail', () => {
@@ -428,10 +429,18 @@ describe('the Rust image owns :release and is the only image built', () => {
         {
           needs?: string | string[];
           steps?: { env?: Record<string, string> }[];
+          strategy?: { matrix?: { include?: { platform?: string }[] } };
         }
       >;
     };
     expect(workflow.jobs['publish']?.needs).toContain('conformance');
+    expect(workflow.jobs['index']?.needs).toContain('publish');
+    // Every tag names one index of these two images (#262).
+    expect(
+      workflow.jobs['publish']?.strategy?.matrix?.include?.map(
+        (p) => p.platform
+      )
+    ).toEqual(['linux/amd64', 'linux/arm64']);
     const env = Object.assign(
       {},
       ...(workflow.jobs['conformance']?.steps ?? []).map((s) => s.env ?? {})
