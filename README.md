@@ -38,7 +38,7 @@ connector.
 | Where a write is paid for | `curl -H 'Accept: application/nostr+json' https://relay-ws.devnet.toonprotocol.dev/` |
 
 To _use_ the network rather than run a node, start with the
-[toon-client rig](https://github.com/toon-protocol/toon-client/blob/main/packages/rig/README.md).
+[rig](https://github.com/toon-protocol/rig/blob/main/packages/rig/README.md).
 
 ---
 
@@ -153,7 +153,7 @@ edge is up but nothing about payment. A well-formed _unpaid_ packet is what
 gets the `402` payment terms back.
 
 For the real round trip — open a channel, sign a claim, write an event — use
-the [toon-client rig](https://github.com/toon-protocol/toon-client/blob/main/packages/rig/README.md).
+the [rig](https://github.com/toon-protocol/rig/blob/main/packages/rig/README.md).
 That is the client side of this protocol, and it is not in this repo.
 
 ### On your own machine, without TLS
