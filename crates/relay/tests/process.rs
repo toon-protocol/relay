@@ -5,7 +5,7 @@
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
@@ -13,19 +13,19 @@ use tempfile::TempDir;
 const SECRET_KEY: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 
 /// A port nothing listens on at the moment of asking, and not one this test
-/// binary has handed out before: the OS may give a just-freed port again, which
-/// would put two relays (or two of one relay's listeners) on the same port.
+/// binary has handed out before. Ports come from below the OS's ephemeral range
+/// (32768 and up), counting up from a start that depends on the process: a port
+/// taken from the ephemeral range could be seized as the source port of another
+/// test's client connection before the relay bound it, and a just-freed one could
+/// be given again, putting two listeners on the same port.
 fn free_port() -> u16 {
-    static GIVEN: Mutex<Vec<u16>> = Mutex::new(Vec::new());
+    static NEXT: AtomicU16 = AtomicU16::new(0);
+    const LOW: u16 = 10_000;
+    const SPAN: u16 = 20_000;
     loop {
-        let port = TcpListener::bind("127.0.0.1:0")
-            .expect("the OS gives out a port")
-            .local_addr()
-            .expect("a bound listener has an address")
-            .port();
-        let mut given = GIVEN.lock().expect("the port list is not poisoned");
-        if !given.contains(&port) {
-            given.push(port);
+        let step = NEXT.fetch_add(1, Ordering::Relaxed);
+        let port = LOW + (step.wrapping_add(std::process::id() as u16 % SPAN)) % SPAN;
+        if TcpListener::bind(("127.0.0.1", port)).is_ok() {
             return port;
         }
     }
