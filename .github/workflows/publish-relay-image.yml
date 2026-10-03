@@ -86,8 +86,8 @@ jobs:
           echo "handle=$HANDLE" >> "$GITHUB_OUTPUT"
 
   # The suite runs against the image built with the handle, and that build
-  # fills the cache the amd64 `publish` build reads, so what is pushed is the build the
-  # suite accepted, reporting the version it is tagged with.
+  # fills the cache the amd64 `publish` build reads, so the amd64 image pushed
+  # is the build the suite accepted, reporting the version it is tagged with.
   conformance:
     name: Conformance suite against the image
     needs: handle
@@ -171,12 +171,14 @@ jobs:
           cache-to: type=gha,mode=max,scope=relay-rust-${{ matrix.arch }}
 
       # The runner is native, so this is the image running as a stack runs it.
+      # The relay will not start without an identity; a throwaway key is one.
       - name: Start the image and check /health
         env:
           HANDLE: ${{ needs.handle.outputs.handle }}
         run: |
           set -euo pipefail
-          docker run -d --name relay-smoke -p 3100:3100 relay:smoke
+          docker run -d --name relay-smoke -p 3100:3100 \
+            -e TOON_SECRET_KEY="$(openssl rand -hex 32)" relay:smoke
           for _ in $(seq 1 30); do
             if BODY=$(curl -fsS http://127.0.0.1:3100/health); then
               echo "$BODY"
@@ -229,7 +231,8 @@ jobs:
           if-no-files-found: error
 
   # Joins the two digests into one index and names it with every tag, so all
-  # four tags of a publish are the same index digest. The tags and the moment
+  # four tags of a publish are the same index digest. The index carries the
+  # OCI annotations the single-platform push carried as labels. The tags and the moment
   # they are pushed are unchanged: after the suite, and `release` and `latest`
   # from main only.
   index:
@@ -258,6 +261,8 @@ jobs:
       - name: Derive tags
         id: meta
         uses: docker/metadata-action@v5
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: index
         with:
           images: ghcr.io/${{ github.repository_owner }}/relay
           flavor: latest=false
@@ -274,16 +279,18 @@ jobs:
         run: |
           set -euo pipefail
           test "$(ls | wc -l)" -eq 2
-          TAGS=$(jq -cr '.tags | map("-t " + .) | join(" ")' <<<"$DOCKER_METADATA_OUTPUT_JSON")
-          # shellcheck disable=SC2046,SC2086
-          docker buildx imagetools create $TAGS $(printf "$IMAGE@sha256:%s " *)
+          mapfile -t ARGS < <(jq -r '(.tags[] | "-t", .),
+            (.annotations[] | "--annotation", .)' <<<"$DOCKER_METADATA_OUTPUT_JSON")
+          for DIGEST in *; do ARGS+=("$IMAGE@sha256:$DIGEST"); done
+          docker buildx imagetools create "${ARGS[@]}"
 
       - name: Inspect the index
         env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/relay
           TAG: rust-${{ needs.handle.outputs.handle }}
         run: |
           set -euo pipefail
-          docker buildx imagetools inspect "ghcr.io/${{ github.repository_owner }}/relay:$TAG"
+          docker buildx imagetools inspect "$IMAGE:$TAG"
 
   # The same relay as a bare binary (#217), for a host with no container
   # runtime: static musl, one per architecture, each on a native runner so

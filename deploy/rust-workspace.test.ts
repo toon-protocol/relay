@@ -429,11 +429,18 @@ describe('the Rust image owns :release and is the only image built', () => {
         {
           needs?: string | string[];
           steps?: { env?: Record<string, string> }[];
+          strategy?: { matrix?: { include?: { platform?: string }[] } };
         }
       >;
     };
     expect(workflow.jobs['publish']?.needs).toContain('conformance');
     expect(workflow.jobs['index']?.needs).toContain('publish');
+    // Every tag names one index of these two images (#262).
+    expect(
+      workflow.jobs['publish']?.strategy?.matrix?.include?.map(
+        (p) => p.platform
+      )
+    ).toEqual(['linux/amd64', 'linux/arm64']);
     const env = Object.assign(
       {},
       ...(workflow.jobs['conformance']?.steps ?? []).map((s) => s.env ?? {})
