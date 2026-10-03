@@ -709,7 +709,8 @@ impl Session {
     }
 
     /// Whether `event` may be shown on this connection, given the groups it
-    /// belongs to and the keys the connection has proven.
+    /// belongs to, the keys the connection has proven and, for a gift wrap,
+    /// whether one of those keys is a recipient.
     fn may_read(&self, event: &Event) -> bool {
         let keys = self.proven_keys();
         self.auth
@@ -718,7 +719,7 @@ impl Session {
             && self
                 .groups
                 .as_ref()
-                .is_none_or(|groups| groups.may_read(event, self.proven_keys()))
+                .is_none_or(|groups| groups.may_read(event, keys))
     }
 
     /// End `id` with `reason`. A `CLOSED` says the subscription of that id is
