@@ -310,6 +310,10 @@ pub struct Query {
     /// Tag name (without `#`) and the values it may have. A key with no
     /// values matches nothing.
     pub multi_letter_tags: Vec<(String, HashSet<String>)>,
+    /// `Some(keys)`: a kind 1059 gift wrap is a candidate only if one of its
+    /// `p` tags names one of `keys` (hex); no key at all admits none. Other
+    /// kinds are unaffected. A condition, so `limit` counts only what is kept.
+    pub wrap_recipients: Option<Vec<String>>,
 }
 
 impl From<Filter> for Query {
@@ -317,6 +321,7 @@ impl From<Filter> for Query {
         Self {
             filter,
             multi_letter_tags: Vec::new(),
+            wrap_recipients: None,
         }
     }
 }
@@ -669,6 +674,22 @@ fn run_query(
     // one is a condition of the same kind, so `limit` counts what it admits.
     for (name, values) in &query.multi_letter_tags {
         has_tag(name.clone(), values.iter().cloned().collect());
+    }
+
+    if let Some(keys) = &query.wrap_recipients {
+        let wrap = i64::from(nostr::event::Kind::GiftWrap.as_u16());
+        if keys.is_empty() {
+            conditions.push("kind != ?".to_string());
+            parameters.push(wrap.into());
+        } else {
+            conditions.push(format!(
+                "(kind != ? OR {HAS_TAG} ({})) ELSE 0 END)",
+                placeholders(keys.len())
+            ));
+            parameters.push(wrap.into());
+            parameters.push("p".to_string().into());
+            parameters.extend(keys.iter().cloned().map(Value::from));
+        }
     }
 
     let mut sql = SELECT.to_string();

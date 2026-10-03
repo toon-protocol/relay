@@ -653,6 +653,7 @@ async fn dissolve(store: &Store, group: &str) -> Result<(), crate::RelayError> {
     let metadata = Query {
         filter: Filter::new().kinds(METADATA_KINDS.map(Kind::from)),
         multi_letter_tags: vec![("d".to_string(), HashSet::from([group.to_string()]))],
+        wrap_recipients: None,
     };
     doomed.extend(store.query(metadata).await?.iter().map(|e| e.id.to_hex()));
     store.remove(doomed).await?;
@@ -664,6 +665,7 @@ fn in_group(group: &str) -> Query {
     Query {
         filter: Filter::new(),
         multi_letter_tags: vec![("h".to_string(), HashSet::from([group.to_string()]))],
+        wrap_recipients: None,
     }
 }
 

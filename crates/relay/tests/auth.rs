@@ -181,3 +181,51 @@ async fn authenticating_on_one_connection_opens_nothing_on_another() {
     let frame = second.next().await.expect("a CLOSED arrives");
     assert_eq!(frame[0], "CLOSED", "{frame}");
 }
+
+#[tokio::test]
+async fn recipient_only_serves_a_wrap_only_to_a_key_its_p_tags_name() {
+    let running = with_auth("TOON_NIP17_RECIPIENT_ONLY", "true").await;
+    assert_eq!(
+        supported_nips(&running).await,
+        json!([1, 9, 11, 16, 40, 42])
+    );
+    let (reader, other) = (Keys::generate(), Keys::generate());
+    let at = unix_now();
+    let tag = reader.public_key().to_hex();
+    let mine = signed(1059, at - 100, &[&["p", &tag]]);
+    let note = signed(1, at - 100, &[]);
+    for event in [&mine, &note] {
+        assert_eq!(write(&running.relay, delivery(event)).await.0, 200);
+    }
+    // Newer wraps for someone else must not use up the reader's limit.
+    for i in 0..3 {
+        let theirs = signed(1059, at - 10 + i, &[&["p", &other.public_key().to_hex()]]);
+        assert_eq!(write(&running.relay, delivery(&theirs)).await.0, 200);
+    }
+    let mine_json = serde_json::to_value(&mine).expect("JSON");
+
+    let mut client = Client::connect(&running.read_url).await;
+    let c = challenge(&mut client).await;
+    client.send(json!(["REQ", "w", { "kinds": [1059] }])).await;
+    let closed = client.next().await.expect("a CLOSED");
+    assert_eq!(closed[0], "CLOSED", "{closed}");
+    assert!(closed[2].as_str().unwrap().starts_with("auth-required:"));
+    let all = client.req("all", json!({})).await;
+    assert_eq!(all.len(), 1, "wraps are left out: {all:?}");
+
+    client.send(json!(["AUTH", answer(&other, &c, at)])).await;
+    assert_eq!(client.next().await.expect("an OK")[2], true);
+    let none = client
+        .req("p", json!({ "kinds": [1059], "#p": [tag.clone()] }))
+        .await;
+    assert!(none.is_empty(), "{none:?}");
+
+    let mut reading = Client::connect(&running.read_url).await;
+    let c = challenge(&mut reading).await;
+    reading.send(json!(["AUTH", answer(&reader, &c, at)])).await;
+    assert_eq!(reading.next().await.expect("an OK")[2], true);
+    let found = reading
+        .req("l", json!({ "kinds": [1059], "limit": 2 }))
+        .await;
+    assert_eq!(found, vec![mine_json]);
+}
