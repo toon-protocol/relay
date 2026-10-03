@@ -10,6 +10,11 @@
 # moves the `:release` tag deploy/docker-compose.yml pulls by default (#205).
 # CI builds it too and runs the conformance suite against it.
 #
+# The tags name a two-platform index, linux/amd64 and linux/arm64. The
+# Dockerfile is not platform-specific: each image is built from it on a native
+# runner of its own architecture (Alpine's rust image and the musl target are
+# native on both), so no Rust is compiled under emulation.
+#
 # Build from repo root:
 #   docker build -f crates/relay/Dockerfile -t relay-rust:ci .
 #

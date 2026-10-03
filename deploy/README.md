@@ -121,7 +121,7 @@ surface, and it must never be reachable except from the connector beside it.
 
 | Image                             | Built by                  | Contents                                                                            |
 | --------------------------------- | ------------------------- | ----------------------------------------------------------------------------------- |
-| `ghcr.io/toon-protocol/relay`     | `publish-relay-image.yml` | the relay app (`crates/relay`, the Rust relay)                                      |
+| `ghcr.io/toon-protocol/relay`     | `publish-relay-image.yml` | the relay app (`crates/relay`, the Rust relay), `linux/amd64` and `linux/arm64`     |
 | `ghcr.io/toon-protocol/connector` | the connector repo        | the stock TOON connector — this repo publishes no connector image and only pins one |
 
 On every green merge to `main`, once the conformance suite has passed against

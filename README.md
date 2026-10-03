@@ -432,7 +432,8 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-Merging to `main` publishes the Rust image and moves `:release`. There is no
+Merging to `main` publishes the Rust image, one index of a `linux/amd64` and a
+`linux/arm64` image each built natively, and moves `:release`. There is no
 npm package and no changeset.
 The agent factory that opens many of the PRs here is described in
 [`docs/agents/triage-labels.md`](docs/agents/triage-labels.md).
