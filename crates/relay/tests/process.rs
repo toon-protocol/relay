@@ -96,7 +96,7 @@ impl Drop for Running {
 }
 
 fn start(command: &mut Command, write_port: u16) -> Running {
-    let child = Running(Some(
+    let mut child = Running(Some(
         command
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -105,6 +105,12 @@ fn start(command: &mut Command, write_port: u16) -> Running {
     ));
     let deadline = Instant::now() + Duration::from_secs(20);
     while get(write_port, "/health").is_none() {
+        let exited = child.0.as_mut().and_then(|c| c.try_wait().ok().flatten());
+        if let Some(status) = exited {
+            let output = child.0.take().and_then(|c| c.wait_with_output().ok());
+            let stderr = output.map(|o| String::from_utf8_lossy(&o.stderr).into_owned());
+            panic!("the relay exited ({status}) before answering: {stderr:?}");
+        }
         assert!(Instant::now() < deadline, "the relay never answered");
         std::thread::sleep(Duration::from_millis(50));
     }
