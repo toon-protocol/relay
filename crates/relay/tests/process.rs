@@ -5,19 +5,30 @@
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
 const SECRET_KEY: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 
-/// A port nothing listens on at the moment of asking.
+/// A port nothing listens on at the moment of asking, and not one this test
+/// binary has handed out before. Ports come from below the OS's ephemeral range
+/// (32768 and up), counting up from a start that depends on the process: a port
+/// taken from the ephemeral range could be seized as the source port of another
+/// test's client connection before the relay bound it, and a just-freed one could
+/// be given again, putting two listeners on the same port.
 fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("the OS gives out a port")
-        .local_addr()
-        .expect("a bound listener has an address")
-        .port()
+    static NEXT: AtomicU16 = AtomicU16::new(0);
+    const LOW: u16 = 10_000;
+    const SPAN: u16 = 20_000;
+    loop {
+        let step = NEXT.fetch_add(1, Ordering::Relaxed);
+        let port = LOW + (step.wrapping_add(std::process::id() as u16 % SPAN)) % SPAN;
+        if TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return port;
+        }
+    }
 }
 
 fn command(data: &TempDir) -> Command {
@@ -85,7 +96,7 @@ impl Drop for Running {
 }
 
 fn start(command: &mut Command, write_port: u16) -> Running {
-    let child = Running(Some(
+    let mut child = Running(Some(
         command
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -94,6 +105,12 @@ fn start(command: &mut Command, write_port: u16) -> Running {
     ));
     let deadline = Instant::now() + Duration::from_secs(20);
     while get(write_port, "/health").is_none() {
+        let exited = child.0.as_mut().and_then(|c| c.try_wait().ok().flatten());
+        if let Some(status) = exited {
+            let output = child.0.take().and_then(|c| c.wait_with_output().ok());
+            let stderr = output.map(|o| String::from_utf8_lossy(&o.stderr).into_owned());
+            panic!("the relay exited ({status}) before answering: {stderr:?}");
+        }
         assert!(Instant::now() < deadline, "the relay never answered");
         std::thread::sleep(Duration::from_millis(50));
     }
