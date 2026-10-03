@@ -1,6 +1,10 @@
 import { generateSecretKey } from 'nostr-tools/pure';
 import { afterAll, beforeAll, describe, expect } from 'vitest';
-import { startRelay, type RunningRelay } from './harness/relay-container.js';
+import {
+  removeVolume,
+  startRelay,
+  type RunningRelay,
+} from './harness/relay-container.js';
 import {
   now,
   pubkeyOf,
@@ -477,6 +481,93 @@ describe('relay image conformance: expiration enforced', () => {
         expect(subscription.delivered.map((e) => e.id)).toEqual([live.id]);
       } finally {
         subscription.close();
+      }
+    }
+  );
+});
+
+describe('relay image conformance: an unexpiring event is never reaped', () => {
+  const lax = { TOON_ENFORCE_EXPIRATION: 'false' };
+  const reaping = {
+    TOON_ENFORCE_EXPIRATION: 'true',
+    TOON_EXPIRATION_REAP_INTERVAL_SECONDS: '1',
+    TOON_EXPIRATION_REAP_GRACE_SECONDS: '0',
+  };
+
+  conformanceTest(
+    'survives sweeps and a restart over the same volume',
+    async () => {
+      const volume = `conformance-reaper-${process.pid}-${Date.now()}`;
+      const { secretKey, pubkey } = author();
+      const t = now();
+      const event = (d: string, created_at: number, tags: string[][] = []) =>
+        sign(secretKey, {
+          kind: 30078,
+          created_at,
+          content: d,
+          tags: [['d', d], ...tags],
+        });
+      // No expiration tag at all, including very old ones (#160).
+      const unexpiring = [
+        event('recent', t - 10),
+        event('y2020', 1_600_000_000),
+        event('y1970', 1_000),
+      ];
+      // Parsing fails open: none of these is a plain non-negative integer.
+      const malformed = ['abc', '-5', '1.5', '', '1e3', '+5', ' 12'].map(
+        (value, i) => event(`malformed-${i}`, t - 10, [['expiration', value]])
+      );
+      const kept = ids(...unexpiring, ...malformed);
+      const expiredBeforeBoot = event('expired-before-boot', t - 200, [
+        ['expiration', String(t - 100)],
+      ]);
+      const expiredWhileSweeping = event('expired-while-sweeping', t - 200, [
+        ['expiration', String(t - 100)],
+      ]);
+
+      let running: RunningRelay | undefined;
+      const stored = () => {
+        if (!running) throw new Error('no relay running');
+        return storedIds(running, { authors: [pubkey] });
+      };
+      // One relay at a time over the volume, stopped before the next starts.
+      const restart = async (env: Record<string, string>) => {
+        const previous = running;
+        running = undefined;
+        await previous?.stop();
+        running = await startRelay(imageUnderTest(), { volume, env });
+        return running;
+      };
+      try {
+        // Not enforcing, so an expired event is still held and returned.
+        let current = await restart(lax);
+        await publishOk(current, expiredBeforeBoot);
+        expect(await stored()).toEqual(ids(expiredBeforeBoot));
+
+        // Enforcing, and sweeping every second with no grace. Everything is
+        // written after the boot sweep, while the interval sweeps run.
+        current = await restart(reaping);
+        await settle(1_500);
+        for (const e of [...unexpiring, ...malformed, expiredWhileSweeping]) {
+          await publishOk(current, e);
+        }
+        await settle(4_000);
+        expect(await stored()).toEqual(kept);
+
+        // Look again with the reaper off and expiry no longer hiding: both
+        // expired events are gone from disk, the one written after boot
+        // included, so the interval sweeps really ran, and nothing else went
+        // with them.
+        await restart(lax);
+        expect(await stored()).toEqual(kept);
+
+        // A restart with the reaper running: the boot sweep included.
+        await restart(reaping);
+        await settle(2_500);
+        expect(await stored()).toEqual(kept);
+      } finally {
+        await running?.stop();
+        await removeVolume(volume);
       }
     }
   );
