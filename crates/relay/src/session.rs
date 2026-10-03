@@ -380,7 +380,7 @@ impl Wanted {
 
     /// The filter as the store is asked: with the limit it is answered to,
     /// and the tag keys the protocol crate does not read.
-    fn query(&self) -> Query {
+    fn query(&self, wrap_recipients: Option<&[String]>) -> Query {
         let mut filter = self.base.clone();
         let requested = filter
             .limit
@@ -389,6 +389,7 @@ impl Wanted {
         Query {
             filter,
             multi_letter_tags: self.multi.clone(),
+            wrap_recipients: wrap_recipients.map(<[String]>::to_vec),
         }
     }
 }
@@ -441,6 +442,9 @@ impl Subscription {
 #[derive(Debug)]
 pub(crate) struct Request {
     id: String,
+    /// The keys the connection had proven when it asked, when gift wraps are
+    /// served only to their recipients.
+    wrap_recipients: Option<Vec<String>>,
     subscription: Subscription,
 }
 
@@ -455,7 +459,7 @@ impl Request {
         self.subscription
             .filters
             .iter()
-            .map(Wanted::query)
+            .map(|wanted| wanted.query(self.wrap_recipients.as_deref()))
             .collect()
     }
 }
@@ -673,7 +677,13 @@ impl Session {
         }
         let filters: Arc<[Wanted]> = filters.into();
         let feed = self.feed_for(&id, &filters);
+        let wrap_recipients = self
+            .auth
+            .as_ref()
+            .filter(|auth| auth.policy.is_recipient_only())
+            .map(|auth| auth.proven.iter().map(PublicKey::to_hex).collect());
         Reply::Ask(Request {
+            wrap_recipients,
             subscription: Subscription {
                 filters,
                 feed,
@@ -701,9 +711,14 @@ impl Session {
     /// Whether `event` may be shown on this connection, given the groups it
     /// belongs to and the keys the connection has proven.
     fn may_read(&self, event: &Event) -> bool {
-        self.groups
+        let keys = self.proven_keys();
+        self.auth
             .as_ref()
-            .is_none_or(|groups| groups.may_read(event, self.proven_keys()))
+            .is_none_or(|auth| auth.policy.may_read(event, keys))
+            && self
+                .groups
+                .as_ref()
+                .is_none_or(|groups| groups.may_read(event, self.proven_keys()))
     }
 
     /// End `id` with `reason`. A `CLOSED` says the subscription of that id is
@@ -805,7 +820,9 @@ impl Session {
         found: Vec<Vec<Event>>,
         waiting: &[Arc<LiveEvent>],
     ) -> Vec<String> {
-        let Request { id, subscription } = request;
+        let Request {
+            id, subscription, ..
+        } = request;
         let mut seen = HashSet::new();
         let mut events: Vec<Event> = Vec::new();
         for found in found {
@@ -860,7 +877,9 @@ impl Session {
     /// The connection fell behind the feed while `request` was being
     /// answered: it is closed with every open subscription.
     pub(crate) fn overflowed_during(&mut self, request: Request) -> Vec<String> {
-        let Request { id, subscription } = request;
+        let Request {
+            id, subscription, ..
+        } = request;
         self.subscriptions.insert(id, subscription);
         self.overflowed()
     }

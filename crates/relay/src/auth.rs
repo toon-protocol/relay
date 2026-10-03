@@ -23,7 +23,7 @@
 //! challenge and who has authenticated, and asks here whether an `AUTH` answers
 //! it and whether a filter needs it.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 use nostr::event::{Event, Kind};
 use nostr::filter::Filter;
@@ -44,6 +44,9 @@ pub(crate) const CLOSED_AUTH_REQUIRED: &str =
 pub(crate) struct AuthPolicy {
     /// The kinds a connection must authenticate to read. Empty: none.
     required_kinds: BTreeSet<Kind>,
+    /// A gift wrap (kind 1059) is readable only by a connection that has
+    /// proven a key its `p` tags name.
+    recipient_only: bool,
 }
 
 impl AuthPolicy {
@@ -51,19 +54,43 @@ impl AuthPolicy {
     pub(crate) fn requiring(kinds: impl IntoIterator<Item = u16>) -> Self {
         Self {
             required_kinds: kinds.into_iter().map(Kind::from).collect(),
+            recipient_only: false,
         }
+    }
+
+    /// This policy, with gift wraps served only to the keys they address.
+    pub(crate) fn recipient_only(mut self, on: bool) -> Self {
+        self.recipient_only = on;
+        self
+    }
+
+    /// Whether gift wraps are served only to the keys they address.
+    pub(crate) fn is_recipient_only(&self) -> bool {
+        self.recipient_only
+    }
+
+    /// Whether `event` may be shown to a connection that has proven `keys`,
+    /// as far as this policy goes: a gift wrap needs one of its recipients.
+    pub(crate) fn may_read(&self, event: &Event, keys: &HashSet<PublicKey>) -> bool {
+        if !self.recipient_only || event.kind != Kind::GiftWrap {
+            return true;
+        }
+        event
+            .tags
+            .public_keys()
+            .any(|recipient| keys.contains(&recipient))
     }
 
     /// Whether a connection that has not authenticated may not be answered
     /// `filter`: it names no kind, so it may return a restricted one, or it
     /// names one.
     pub(crate) fn restricts(&self, filter: &Filter) -> bool {
-        if self.required_kinds.is_empty() {
-            return false;
-        }
         match &filter.kinds {
-            None => true,
-            Some(kinds) => kinds.iter().any(|kind| self.required_kinds.contains(kind)),
+            None => !self.required_kinds.is_empty(),
+            Some(kinds) => kinds.iter().any(|kind| {
+                self.required_kinds.contains(kind)
+                    || (self.recipient_only && *kind == Kind::GiftWrap)
+            }),
         }
     }
 }
@@ -176,6 +203,33 @@ mod tests {
         let policy = AuthPolicy::default();
         assert!(!policy.restricts(&filter("{}")));
         assert!(!policy.restricts(&filter(r#"{"kinds":[4]}"#)));
+    }
+
+    #[test]
+    fn recipient_only_restricts_a_filter_naming_1059_but_not_one_naming_no_kind() {
+        let policy = AuthPolicy::default().recipient_only(true);
+        assert!(policy.restricts(&filter(r#"{"kinds":[1059]}"#)));
+        assert!(!policy.restricts(&filter("{}")));
+        assert!(!policy.restricts(&filter(r#"{"kinds":[1]}"#)));
+    }
+
+    #[test]
+    fn a_wrap_is_readable_by_any_key_its_p_tags_name_when_recipient_only() {
+        let (a, b) = (Keys::generate(), Keys::generate());
+        let wrap = EventBuilder::new(Kind::GiftWrap, "")
+            .tags([Tag::public_key(a.public_key())])
+            .finalize(&Keys::generate())
+            .expect("signs");
+        let note = EventBuilder::new(Kind::TextNote, "")
+            .finalize(&Keys::generate())
+            .expect("signs");
+        let on = AuthPolicy::default().recipient_only(true);
+        let keys = |ks: &[&Keys]| ks.iter().map(|k| k.public_key()).collect::<HashSet<_>>();
+        assert!(on.may_read(&wrap, &keys(&[&b, &a])));
+        assert!(!on.may_read(&wrap, &keys(&[&b])));
+        assert!(!on.may_read(&wrap, &keys(&[])));
+        assert!(on.may_read(&note, &keys(&[])));
+        assert!(AuthPolicy::default().may_read(&wrap, &keys(&[])));
     }
 
     #[test]

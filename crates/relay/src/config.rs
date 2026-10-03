@@ -157,6 +157,10 @@ const AUTH_REQUIRED_KINDS: Setting = Setting {
     flag: "--auth-required-kinds",
     env: "TOON_AUTH_REQUIRED_KINDS",
 };
+const NIP17_RECIPIENT_ONLY: Setting = Setting {
+    flag: "--nip17-recipient-only",
+    env: "TOON_NIP17_RECIPIENT_ONLY",
+};
 const NIP29_GROUPS: Setting = Setting {
     flag: "--nip29-groups",
     env: "TOON_NIP29_GROUPS",
@@ -197,12 +201,13 @@ const VALUE_FLAGS: [&str; 28] = [
     OPERATOR_PUBKEYS.flag,
     AUTH_REQUIRED_KINDS.flag,
 ];
-const SWITCH_FLAGS: [&str; 7] = [
+const SWITCH_FLAGS: [&str; 8] = [
     DEV_MODE.flag,
     VERIFY_EPHEMERAL.flag,
     LOG_WRITES.flag,
     ENFORCE_EXPIRATION.flag,
     NIP42_AUTH.flag,
+    NIP17_RECIPIENT_ONLY.flag,
     NIP29_GROUPS.flag,
     "--help",
 ];
@@ -271,6 +276,9 @@ Options (each flag beats its environment variable):
   --auth-required-kinds <kinds>            TOON_AUTH_REQUIRED_KINDS (comma-separated; implies
                                            --nip42-auth; a REQ for these kinds needs AUTH)
   --nip29-groups                           TOON_NIP29_GROUPS=true: relay groups (NIP-29; implies
+                                           --nip42-auth)
+  --nip17-recipient-only                   TOON_NIP17_RECIPIENT_ONLY=true: a gift wrap (kind 1059)
+                                           is read only by a key its p tags name (implies
                                            --nip42-auth)
   --help                                   show this message
 
@@ -376,6 +384,9 @@ pub struct Config {
     /// NIP-29 relay groups are switched on. Off unless asked for; turning it
     /// on turns `nip42_auth` on, since closed groups are read by key.
     pub nip29_groups: bool,
+    /// Whether a kind 1059 gift wrap is served only to a connection that has
+    /// proven a key its `p` tags name. On turns `nip42_auth` on.
+    pub nip17_recipient_only: bool,
     /// The relay's key, which signs the group metadata events.
     pub(crate) signer: crate::groups::Signer,
     /// The kinds a connection must authenticate to read, once each, in order.
@@ -612,6 +623,7 @@ impl Config {
         )?;
 
         let nip29_groups = sources.on(&NIP29_GROUPS);
+        let nip17_recipient_only = sources.on(&NIP17_RECIPIENT_ONLY);
         let text = |setting: &Setting| sources.text(setting).map(|(_, value)| value);
         let enforce_expiration = !(sources.flags.switches.contains(ENFORCE_EXPIRATION.flag)
             || lookup(ENFORCE_EXPIRATION.env).is_some_and(|value| value == "false"));
@@ -656,7 +668,11 @@ impl Config {
             blocked_event_ids,
             subscribe,
             operator_pubkeys,
-            nip42_auth: sources.on(&NIP42_AUTH) || !auth_required_kinds.is_empty() || nip29_groups,
+            nip42_auth: sources.on(&NIP42_AUTH)
+                || !auth_required_kinds.is_empty()
+                || nip29_groups
+                || nip17_recipient_only,
+            nip17_recipient_only,
             nip29_groups,
             auth_required_kinds,
         })))
@@ -664,8 +680,10 @@ impl Config {
 
     /// How connections are treated under NIP-42, or `None` while it is off.
     pub(crate) fn auth_policy(&self) -> Option<crate::auth::AuthPolicy> {
-        self.nip42_auth
-            .then(|| crate::auth::AuthPolicy::requiring(self.auth_required_kinds.iter().copied()))
+        self.nip42_auth.then(|| {
+            crate::auth::AuthPolicy::requiring(self.auth_required_kinds.iter().copied())
+                .recipient_only(self.nip17_recipient_only)
+        })
     }
 
     /// Where the database is: `events.db` in the data directory.
