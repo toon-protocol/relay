@@ -21,8 +21,18 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { resolve } from 'node:path';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { parse } from 'smol-toml';
 import { parse as parseYaml } from 'yaml';
 
@@ -777,6 +787,33 @@ describe('the anon sidecar the connector dials hidden services through', () => {
     expect(anonrc).toMatch(/^ClientOnly 1$/m);
     expect(anonrc).toMatch(/^ORPort 0$/m);
     expect(anonrc).not.toMatch(/^HiddenService/m);
+  });
+});
+
+describe('runtime-peerings.sh', () => {
+  it('sends both deletes for `remove`, although a DELETE answers with an empty body', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'runtime-peerings-'));
+    const calls = join(dir, 'calls');
+    const stub = join(dir, 'sign-write.sh');
+    // Records each write and answers with nothing, as the connector does to a DELETE.
+    writeFileSync(stub, `#!/bin/sh\nshift 2; echo "$2 $4" >> ${calls}\n`);
+    chmodSync(stub, 0o755);
+    writeFileSync(join(dir, 'key'), '00'.repeat(32));
+    execFileSync(
+      resolve(REPO_ROOT, 'deploy/runtime-peerings.sh'),
+      ['remove', 'demo', 'g.toon.0123456789abcdef.echo'],
+      {
+        env: {
+          ...process.env,
+          SIGN_WRITE: stub,
+          OPERATOR_WRITE_KEY: join(dir, 'key'),
+        },
+      }
+    );
+    expect(readFileSync(calls, 'utf8').trim().split('\n')).toEqual([
+      'DELETE /routes/peers/g.toon.0123456789abcdef.echo',
+      'DELETE /peers/demo',
+    ]);
   });
 });
 

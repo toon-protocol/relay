@@ -48,7 +48,10 @@ SIGN_WRITE=${SIGN_WRITE:-./sign-write.sh}
 [ -r "$KEY" ] || { echo "runtime-peerings: needs the operator write key at $KEY (OPERATOR_WRITE_KEY)" >&2; exit 2; }
 
 write() { # METHOD PATH [BODY]
-    "$SIGN_WRITE" -k "$KEY" -X "$1" -p "$2" ${3:+-b "$3"} -u "$URL" | grep -v -E '^(Signature|Signature-Input|Content-Digest):'
+    # A DELETE answers with an empty body, and grep -v over no lines exits 1,
+    # which pipefail turns into this script's exit: `remove` used to stop after
+    # its first write, leaving the peering in place.
+    "$SIGN_WRITE" -k "$KEY" -X "$1" -p "$2" ${3:+-b "$3"} -u "$URL" | { grep -v -E '^(Signature|Signature-Input|Content-Digest):' || true; }
     echo
 }
 
