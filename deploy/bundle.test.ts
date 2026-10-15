@@ -71,6 +71,8 @@ interface DockerCompose {
       profiles?: string[];
       mem_limit?: string;
       networks?: Record<string, { aliases?: string[] } | null>;
+      depends_on?: Record<string, { condition?: string; restart?: boolean }>;
+      pull_policy?: string;
     }
   >;
   networks?: Record<string, { external?: boolean } | null>;
@@ -722,6 +724,62 @@ describe('deploy bundle', () => {
 // This suite reads the overlay file directly, the same way the tests above
 // read `docker-compose.yml` directly: literals declared here, never read
 // back out of the file under test.
+describe('the anon sidecar the connector dials hidden services through', () => {
+  const ANON_PIN = 'v0.4.10.2';
+
+  it('names socks_proxy at the root of connector.toml, before the first table', () => {
+    const toml = readFile('deploy/connector.toml');
+    const root = toml.slice(0, toml.search(/^\[/m));
+    expect(
+      root,
+      'connector.toml: `socks_proxy` must be a root-level key, above the first [table], or TOML puts it inside that table'
+    ).toMatch(/^socks_proxy = "socks5h:\/\/anon:9050"$/m);
+  });
+
+  it('publishes no port for anon: it is a SOCKS client on the compose network only', () => {
+    const anon = readDockerCompose().services['anon'];
+    expect(anon, 'docker-compose.yml: no `anon` service').toBeDefined();
+    expect(
+      anon?.ports ?? [],
+      'docker-compose.yml: anon must publish nothing'
+    ).toEqual([]);
+  });
+
+  it('builds the anon release toon-client pins, checked by sha256 before it runs', () => {
+    const dockerfile = readFile('deploy/anon/Dockerfile');
+    expect(dockerfile).toContain(`ARG ANON_VERSION=${ANON_PIN}`);
+    expect(dockerfile).toMatch(/ARG ANON_SHA256=[0-9a-f]{64}/);
+    expect(dockerfile).toContain('sha256sum -c -');
+    expect(readDockerCompose().services['anon']?.image).toBe(
+      `toon-relay-anon:${ANON_PIN}`
+    );
+  });
+
+  it('starts the connector after anon, and restarts it when anon is recreated', () => {
+    // The connector resolves its socks_proxy host once, at boot, and keeps a
+    // failed lookup for the life of the process.
+    const dependsOn = readDockerCompose().services['connector']?.depends_on;
+    expect(dependsOn?.['anon']).toEqual({
+      condition: 'service_started',
+      restart: true,
+    });
+  });
+
+  it('builds anon on the box and never pulls it, since auto-apply.sh runs `docker compose pull`', () => {
+    // No registry publishes toon-relay-anon; without this, `pull` fails with
+    // "pull access denied" and auto-apply stops before `up -d`.
+    expect(readDockerCompose().services['anon']?.pull_policy).toBe('build');
+  });
+
+  it('runs anon as a client only: terms agreed, no relaying, no hidden service', () => {
+    const anonrc = readFile('deploy/anonrc');
+    expect(anonrc).toMatch(/^AgreeToTerms 1$/m);
+    expect(anonrc).toMatch(/^ClientOnly 1$/m);
+    expect(anonrc).toMatch(/^ORPort 0$/m);
+    expect(anonrc).not.toMatch(/^HiddenService/m);
+  });
+});
+
 describe('the shared-edge overlay (docker-compose.shared-edge.yml, toon-protocol/relay#166)', () => {
   // The external, per-node network the host-level edge (infra#24) creates
   // and this node's overlay alone joins. This repo does not own it — it only
@@ -862,8 +920,8 @@ describe('the shared-edge overlay (docker-compose.shared-edge.yml, toon-protocol
 
     expect(
       active.map((service) => service.name).sort(),
-      "expected caddy and watchtower to be filtered out by `profiles: ['never']`, leaving only connector and relay active"
-    ).toEqual(['connector', 'relay']);
+      "expected caddy and watchtower to be filtered out by `profiles: ['never']`, leaving only anon, connector and relay active"
+    ).toEqual(['anon', 'connector', 'relay']);
 
     for (const service of active) {
       const published = (service.ports ?? []).map(resolveComposeDefaults);

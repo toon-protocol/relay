@@ -113,6 +113,11 @@ services:
         aliases:
           - relay-proxy # proxy.relay.devnet — the connector's client edge
 
+  anon:
+    # Provisional: anon as a SOCKS client idles at roughly 20 to 40 MB. Replace
+    # with a docker stats measurement on the devnet host once it has run.
+    mem_limit: 96m
+
   relay:
     # Measured, not guessed (toon-protocol/infra#25 step 2): idle docker stats
     # on 2026-09-25 showed this service at 46 MB on the real 1 GB devnet

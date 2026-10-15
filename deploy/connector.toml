@@ -27,6 +27,15 @@
 # docker-compose.yml's privacy invariant).
 client_edge_addr = "0.0.0.0:3000"
 
+# Dial hidden services through the `anon` sidecar (docker-compose.yml). A
+# ROOT-LEVEL key, so it sits above the first [table]. The connector sends a
+# dial through it only when the endpoint's host ends in .anyone or .onion
+# (connector ADR 0070); everything else, the settlement RPC included, is dialed
+# direct as before. Without it, `POST /peers` toward a hidden-service agent node
+# is refused by name, so the hub can forward to no node that joins it from
+# behind NAT: every new TOON app is a hidden service (toon_cli ADR 0003).
+socks_proxy = "socks5h://anon:9050"
+
 # Durable claim state, on a named volume.
 #
 # The append-only claim journals live here, and replaying them is what makes a

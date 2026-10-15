@@ -157,6 +157,44 @@ services:
     depends_on:
       relay:
         condition: service_healthy
+      # The connector resolves `anon` (its socks_proxy host) ONCE, when it
+      # builds its hidden-service client at boot, and keeps a failed lookup for
+      # the life of the process: started before anon exists, every .anyone dial
+      # then fails at once with "failed to lookup address information". So it
+      # starts after anon has started (not after it bootstraps: nothing else on
+      # this node needs a circuit), and compose restarts it when anon is
+      # recreated, which may give anon a new address (toon-protocol/connector#1505).
+      anon:
+        condition: service_started
+        restart: true
+    restart: unless-stopped
+
+  # ── The Anyone daemon the connector dials hidden services through ─────────
+  # A SOCKS5 client only (./anonrc): it publishes no hidden service, relays for
+  # nobody, and has no `ports:`. The connector reaches it on the compose network
+  # as anon:9050 (connector.toml's `socks_proxy`) and uses it only for a dial
+  # to a .anyone or .onion host. If it is down, a dial to a hidden service fails
+  # and every other route is untouched. The connector starts after it, though:
+  # see the connector's `depends_on`.
+  anon:
+    build:
+      context: ./anon
+    image: toon-relay-anon:v0.4.10.2
+    # Built here, from ./anon, never pulled: no registry publishes it, and
+    # auto-apply.sh runs `docker compose pull` before `up -d`.
+    pull_policy: build
+    init: true
+    volumes:
+      - ./anonrc:/etc/anon/anonrc:ro
+      # Circuit and consensus cache only; this daemon holds no hidden-service
+      # key, so losing the volume costs a slower first dial and nothing else.
+      - anon_data:/var/lib/anon
+    healthcheck:
+      test: ['CMD-SHELL', "grep -q 'Bootstrapped 100%' /var/lib/anon/notice.log"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
     restart: unless-stopped
 
   # ── The relay ──────────────────────────────────────────────────────────────
@@ -263,3 +301,4 @@ volumes:
   caddy_config:
   connector_state:
   relay_data:
+  anon_data:
