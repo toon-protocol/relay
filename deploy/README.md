@@ -301,6 +301,51 @@ The same comparison runs on every timer tick, not just when there is a commit
 to apply, so a key or operator file changed by hand on the box (gitignored,
 so it never arrives in a merge) is loaded on the next run too.
 
+## Forwarded legs, and peering toward a node behind NAT
+
+The relay forwards to three nodes: the gas station (`g.toon.relay.gas`), the
+store (`g.toon.relay.store`) and the Echo Merchant (`g.toon.echo`). Each leg is
+a runtime peering plus a route over it, made with `POST /peers` and
+`POST /routes/peers` on the operator surface. It lives in
+`runtime-peers.json` in the `connector_state` volume, and in no committed
+config, by design (connector ADR 0034, `docs/devnet-pricing.md` there).
+[`runtime-peerings.sh`](runtime-peerings.sh) is the record of those legs and
+replays them, idempotently, on a relay whose state volume is new:
+
+```sh
+SIGN_WRITE=./sign-write.sh ./runtime-peerings.sh devnet
+```
+
+`toon join devnet` makes a peering one way, from the node to this relay. The
+connector learns no routes, so the relay forwards to a node that joined it
+only if this relay's operator peers back toward that node. Every new TOON app
+is a hidden service at a `.anyone` address (toon_cli ADR 0003), so peering
+back means dialing that address. That is what the `anon` service and
+`connector.toml`'s `socks_proxy` are for: a SOCKS5 client on the compose
+network, used only for a `.anyone` or `.onion` host. Without them, `POST
+/peers` toward a hidden service is refused by name. To route payments to a
+joined node's app:
+
+```sh
+SIGN_WRITE=./sign-write.sh ./runtime-peerings.sh node <id> http://<56 chars>.anyone/ilp \
+  g.toon.<segment>.<app> <deposit> <app price + 1>
+SIGN_WRITE=./sign-write.sh ./runtime-peerings.sh remove <id> g.toon.<segment>.<app>
+```
+
+The opening deposit and its gas come from this node's EVM settlement key. Keep
+that key holding Base Sepolia ETH: the same key lands what the relay is paid,
+every ten minutes, and when it runs dry nothing lands.
+
+Two things about `anon` that a restart will show you:
+
+- The connector resolves `anon` once, when it starts, and keeps a failed
+  lookup until it restarts. So `docker-compose.yml` starts it after `anon` and
+  restarts it when `anon` is recreated.
+- No registry publishes the `anon` image this bundle runs (v0.4.10.2, the
+  release `toon-client` pins). `anon/Dockerfile` builds it on the box, and
+  `pull_policy: build` keeps `auto-apply.sh`'s `docker compose pull` from
+  failing on it.
+
 ## Secrets
 
 `.env`, `*.key`, `*.secret`, `operator-bearer.token` and `operator-write.keys`

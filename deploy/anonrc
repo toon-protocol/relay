@@ -1,0 +1,38 @@
+##========= /etc/anon/anonrc: the relay connector's way onto the Anyone network ======##
+#
+# A SOCKS5 proxy and nothing else. The connector names it as
+# socks_proxy = "socks5h://anon:9050" (connector.toml) and sends through it
+# ONLY the dials whose host ends in .anyone or .onion (connector ADR 0070):
+# a peering toward an agent node that is a hidden service, which is every new
+# TOON app (toon_cli ADR 0003). Every other dial, the settlement RPC included,
+# goes direct as before.
+#
+# It publishes no hidden service and relays for nobody. Its SOCKS port is on
+# the compose network only: docker-compose.yml publishes no port for it.
+# Mounted READ-ONLY at /etc/anon/anonrc.
+
+# Without this the daemon exits at once, in a container, with no prompt.
+AgreeToTerms 1
+
+User anond
+DataDirectory /var/lib/anon
+
+# Explicit: the mount is read-only, and the image's entrypoint would otherwise
+# try to append one.
+Nickname toondevnetrelay
+
+# A client, not a relay.
+ClientOnly 1
+ORPort 0
+DirPort 0
+ControlSocket 0
+
+SocksPort 0.0.0.0:9050
+SocksPolicy accept 10.0.0.0/8
+SocksPolicy accept 172.16.0.0/12
+SocksPolicy accept 192.168.0.0/16
+SocksPolicy accept 127.0.0.0/8
+SocksPolicy reject *
+
+Log notice stdout
+Log notice file /var/lib/anon/notice.log
