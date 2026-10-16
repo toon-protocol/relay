@@ -181,21 +181,62 @@ const BUNDLE_DIR = resolve(REPO_ROOT, 'deploy');
 // file that holds the pin.
 const RETIRED_MINT_SCAN_EXEMPT = ['bundle.test.ts'];
 
+// A route's price: a flat amount, or a base plus a per-KiB rate.
+type RoutePrice = number | { base: number; per_kib: number };
+
 // `g.toon.relay` is 1 micro-USDC per write (owner decision, 2026-08-04).
 // `g.toon.relay.ephemeral` is deliberately, explicitly 0 — the free lane.
-const EXPECTED_ROUTE_PRICES: Record<string, number> = {
+//
+// The rest are the devnet's other apps, which this connector terminates now
+// that the devnet runs one connector. Each price is the one that app's own
+// connector charged (its repo's deploy/connector.toml.template), so moving
+// the route here changes nothing a payer pays but the relay hop's fee.
+const EXPECTED_ROUTE_PRICES: Record<string, RoutePrice> = {
   'g.toon.relay': 1,
   'g.toon.relay.ephemeral': 0,
+  'g.toon.store': { base: 1000, per_kib: 10 },
+  'g.toon.relay.store': { base: 1000, per_kib: 10 },
+  'g.toon.gas.quote': 1000,
+  'g.toon.gas': 1000,
+  'g.toon.relay.gas': 1000,
+  'g.toon.echo': { base: 1, per_kib: 1 },
+  'g.toon.workload-gateway.handover': 0,
 };
 
 // Each route must terminate at the relay endpoint that enforces that route's
 // semantics: a route pointed at the wrong handler carries the wrong price's
 // guarantees, and a free route pointed at `/write` is a free ride around
 // pay-to-write.
+//
+// The app handlers are the aliases each app's own shared-edge overlay gives it
+// on its own edge network, which this connector joins
+// (docker-compose.shared-edge.yml).
 const EXPECTED_ROUTE_HANDLER_URLS: Record<string, string> = {
   'g.toon.relay': 'http://relay:3100/write',
   'g.toon.relay.ephemeral': 'http://relay:3100/write-ephemeral',
+  'g.toon.store': 'http://store-dvm:3300/store',
+  'g.toon.relay.store': 'http://store-dvm:3300/store',
+  'g.toon.gas.quote': 'http://gas-web:3300/gas/quote',
+  'g.toon.gas': 'http://gas-web:3300/gas/execute',
+  'g.toon.relay.gas': 'http://gas-web:3300/gas/execute',
+  'g.toon.echo': 'http://echo-app:3000',
+  'g.toon.workload-gateway.handover': 'http://gateway-gw:8081/handover',
 };
+
+// What [node] says about this node: the devnet's one connector, at the apex
+// name, answering for every app it terminates. `g.toon.relay` first: the
+// first address is the primary one.
+const EXPECTED_NODE_ADDRESSES = [
+  'g.toon.relay',
+  'g.toon.relay.ephemeral',
+  'g.toon.store',
+  'g.toon.gas',
+  'g.toon.gas.quote',
+  'g.toon.echo',
+  'g.toon.workload-gateway',
+];
+const EXPECTED_HTTP_ENDPOINT = 'https://toonprotocol.dev/ilp';
+const EXPECTED_BTP_ENDPOINT = 'wss://toonprotocol.dev/ilp/btp';
 
 // The pin of record. `rust-sha-c714551` is the first build this bundle has
 // shipped on which a peering established over the operator surface can pay
@@ -250,7 +291,7 @@ interface ConnectorToml {
   };
   routes: {
     prefix: string;
-    price: number;
+    price: RoutePrice;
     handler_url: string;
     transport?: string;
   }[];
@@ -366,8 +407,8 @@ describe('deploy bundle', () => {
       const expectedPrice = EXPECTED_ROUTE_PRICES[route.prefix];
       expect(
         route.price,
-        `route ${route.prefix}: expected price ${expectedPrice}, found ${route.price}`
-      ).toBe(expectedPrice);
+        `route ${route.prefix}: expected price ${JSON.stringify(expectedPrice)}, found ${JSON.stringify(route.price)}`
+      ).toEqual(expectedPrice);
     }
   });
 
@@ -385,25 +426,56 @@ describe('deploy bundle', () => {
     // The free lane and the paid lane must never collapse onto one
     // handler_url: the connector refuses a handler reachable at two prices,
     // because the cheaper door would take every packet.
-    const handlerUrls = routes.map((route) => route.handler_url);
-    expect(new Set(handlerUrls).size).toBe(handlerUrls.length);
+    const relayHandlers = routes
+      .filter((route) => route.handler_url.startsWith('http://relay:'))
+      .map((route) => route.handler_url);
+    expect(new Set(relayHandlers).size).toBe(relayHandlers.length);
+
+    // Two prefixes MAY share an app's handler (`g.toon.store` and
+    // `g.toon.relay.store`), but only at one price — the connector refuses
+    // the config otherwise (ConflictingHandlerPrice).
+    const priceByHandler = new Map<string, RoutePrice>();
+    for (const route of routes) {
+      const seen = priceByHandler.get(route.handler_url);
+      if (seen === undefined) {
+        priceByHandler.set(route.handler_url, route.price);
+        continue;
+      }
+      expect(
+        route.price,
+        `route ${route.prefix}: handler ${route.handler_url} is already priced ${JSON.stringify(seen)} by another route`
+      ).toEqual(seen);
+    }
   });
 
   it('publishes every route it terminates in its node self-description', () => {
     const { node, routes } = readConnectorToml();
 
-    // A prefix this node terminates but never advertises is a route no
-    // client can discover — which is how a free lane ships invisible.
     expect(
-      node.addresses.slice().sort(),
-      `[node].addresses must list every terminated prefix; found ${JSON.stringify(node.addresses)}`
-    ).toEqual(routes.map((route) => route.prefix).sort());
+      node.addresses,
+      `[node].addresses: expected ${JSON.stringify(EXPECTED_NODE_ADDRESSES)}`
+    ).toEqual(EXPECTED_NODE_ADDRESSES);
 
-    // These are the facts a node cannot introspect, so they are worth
-    // asserting the SHAPE of: a container-internal address here would
-    // advertise an unreachable node to the whole network.
-    expect(node.http_endpoint).toMatch(/^https:\/\/[^/]+\/ilp$/);
-    expect(node.btp_endpoint).toMatch(/^wss:\/\/[^/]+\/ilp\/btp$/);
+    // A prefix this node terminates but never advertises is a route no
+    // client can discover — which is how a free lane ships invisible. A
+    // prefix BENEATH an advertised address (`g.toon.relay.store` under
+    // `g.toon.relay`, `g.toon.workload-gateway.handover` under
+    // `g.toon.workload-gateway`) is reached through that address.
+    for (const route of routes) {
+      expect(
+        node.addresses.some(
+          (address) =>
+            route.prefix === address || route.prefix.startsWith(`${address}.`)
+        ),
+        `route ${route.prefix}: neither listed in [node].addresses nor beneath an address there; found ${JSON.stringify(node.addresses)}`
+      ).toBe(true);
+    }
+
+    // These are the facts a node cannot introspect: a container-internal
+    // address here would advertise an unreachable node to the whole network.
+    // The devnet's one connector is at the apex name, like mainnet.
+    expect(node.http_endpoint).toBe(EXPECTED_HTTP_ENDPOINT);
+    expect(node.btp_endpoint).toBe(EXPECTED_BTP_ENDPOINT);
   });
 
   it('points the relay at the very route that reaches its own POST /write', () => {
@@ -791,6 +863,42 @@ describe('the anon sidecar the connector dials hidden services through', () => {
 });
 
 describe('runtime-peerings.sh', () => {
+  it('opens no leg for `devnet` any more: those routes are config routes now', () => {
+    // A runtime route at a prefix connector.toml owns is refused at write
+    // time and, already present at boot, is shadowed and undeletable
+    // (connector ADR 0034), so `devnet` must write nothing at all.
+    const dir = mkdtempSync(join(tmpdir(), 'runtime-peerings-'));
+    const calls = join(dir, 'calls');
+    const stub = join(dir, 'sign-write.sh');
+    writeFileSync(stub, `#!/bin/sh\nshift 2; echo "$2 $4" >> ${calls}\n`);
+    chmodSync(stub, 0o755);
+    writeFileSync(join(dir, 'key'), '00'.repeat(32));
+    let stderr = '';
+    try {
+      execFileSync(
+        resolve(REPO_ROOT, 'deploy/runtime-peerings.sh'),
+        ['devnet'],
+        {
+          env: {
+            ...process.env,
+            SIGN_WRITE: stub,
+            OPERATOR_WRITE_KEY: join(dir, 'key'),
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }
+      );
+    } catch (error) {
+      stderr = String((error as { stderr?: Buffer }).stderr ?? '');
+    }
+    expect(existsSync(calls), 'runtime-peerings.sh devnet made a write').toBe(
+      false
+    );
+    // It prints the cutover instead.
+    expect(stderr).toContain('remove gas   g.toon.relay.gas');
+    expect(stderr).toContain('remove store g.toon.relay.store');
+    expect(stderr).toContain('remove echo  g.toon.echo');
+  });
+
   it('sends both deletes for `remove`, although a DELETE answers with an empty body', () => {
     const dir = mkdtempSync(join(tmpdir(), 'runtime-peerings-'));
     const calls = join(dir, 'calls');
@@ -824,9 +932,12 @@ describe('the shared-edge overlay (docker-compose.shared-edge.yml, toon-protocol
   const EDGE_NETWORK = 'edge-relay';
   // infra#24's contract: which alias serves which of this node's hostnames.
   const EDGE_ALIASES: Record<string, string> = {
-    connector: 'relay-proxy', // proxy.relay.devnet — the connector's client edge
-    relay: 'relay-ws', // relay-ws.devnet — the relay's free WS reads
+    connector: 'relay-proxy', // toonprotocol.dev/ilp (and proxy.relay.devnet) — the connector's client edge
+    relay: 'relay-ws', // relay.toonprotocol.dev (and relay-ws.devnet) — the relay's free WS reads
   };
+  // The devnet's one connector delivers to the other apps on their own edge
+  // networks, as each app's own connector did before.
+  const APP_NETWORKS = ['edge-store', 'edge-gas', 'edge-gateway', 'edge-echo'];
 
   it('disables caddy, so the box never binds a host TLS port of its own once the shared edge fronts it', () => {
     const overlay = readSharedEdgeOverlay();
@@ -858,6 +969,36 @@ describe('the shared-edge overlay (docker-compose.shared-edge.yml, toon-protocol
       `docker-compose.shared-edge.yml: \`networks.${EDGE_NETWORK}\` must be \`external: true\` — this bundle joins it, it does not create it`
     ).toBe(true);
   });
+
+  it.each(APP_NETWORKS)(
+    'joins the connector, and only the connector, to the external app network %s',
+    (network) => {
+      const overlay = readSharedEdgeOverlay();
+
+      expect(
+        overlay.networks?.[network]?.external,
+        `docker-compose.shared-edge.yml: \`networks.${network}\` must be declared \`external: true\` — infra owns it, this bundle only joins it`
+      ).toBe(true);
+      expect(
+        Object.keys(overlay.services['connector']?.networks ?? {}),
+        `docker-compose.shared-edge.yml connector: must join \`${network}\` to reach the app routes connector.toml terminates there`
+      ).toContain(network);
+
+      // The connector is a client there: no alias, so nothing on that
+      // network can mistake it for the app. And nothing else of this node
+      // joins it.
+      expect(
+        overlay.services['connector']?.networks?.[network]?.aliases ?? []
+      ).toEqual([]);
+      for (const [serviceName, service] of Object.entries(overlay.services)) {
+        if (serviceName === 'connector') continue;
+        expect(
+          Object.keys(service.networks ?? {}),
+          `docker-compose.shared-edge.yml ${serviceName}: only the connector joins \`${network}\``
+        ).not.toContain(network);
+      }
+    }
+  );
 
   it('never names the old flat `edge` network (shared contract v2, point 1)', () => {
     const overlay = readSharedEdgeOverlay();

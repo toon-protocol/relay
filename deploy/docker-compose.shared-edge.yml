@@ -23,26 +23,43 @@
 #               this line is inert (docker-compose.shared-edge.yml § "why a
 #               profile is safe to name unconditionally").
 #   connector   Joins the external `edge-relay` network under the
-#               `relay-proxy` alias — infra#24's upstream for
-#               `proxy.relay.devnet`, the connector's client edge. Stays on
-#               the default network too: it still dials `relay:3100` for
-#               every write, exactly as it does today.
-#   relay       Joins `edge-relay` under the `relay-ws` alias — infra#24's
-#               upstream for `relay-ws.devnet` (WebSocket). Stays on the
-#               default network too: the connector still reaches it there,
-#               and it still reads the connector's self-description from it.
+#               `relay-proxy` alias — the shared edge's upstream for
+#               `toonprotocol.dev/ilp` (and, while the old names are kept as
+#               aliases, `proxy.relay.devnet`), the connector's client edge.
+#               It is the devnet's ONE connector, so it also joins
+#               `edge-store`, `edge-gas`, `edge-gateway` and `edge-echo` —
+#               no alias, it is only a client there — to deliver to the
+#               store (`store-dvm`), gas station (`gas-web`), workload
+#               gateway (`gateway-gw`) and Echo Merchant (`echo-app`)
+#               routes connector.toml terminates. Stays on the default
+#               network too: it still dials `relay:3100` for every write,
+#               exactly as it does today.
+#   relay       Joins `edge-relay` under the `relay-ws` alias — the shared
+#               edge's upstream for `relay.toonprotocol.dev` (and, while it
+#               is kept as an alias, `relay-ws.devnet`) (WebSocket). Stays on
+#               the default network too: the connector still reaches it
+#               there, and it still reads the connector's self-description
+#               from it.
 #   every service  Gets a `mem_limit`. See the comment on each one below for
 #               why the number is what it is.
 #
 # ── One network per node, not one flat network (shared contract v2, point 1) ─
 # `edge-relay` is THIS node's own network, not a network every node on the
 # host shares. infra#24 creates one such network per node — `edge-relay`,
-# `edge-store`, `edge-gas`, `edge-gateway`, `edge-faucet` — and Caddy alone
-# joins all five; each node's own overlay joins only its own. On one flat
-# network every node's containers could reach every other node's connector
+# `edge-store`, `edge-gas`, `edge-gateway`, `edge-echo` and the rest — and
+# Caddy joins them all; each node's own overlay joins only its own. On one
+# flat network every node's containers could reach every other node's
 # operator surface and the gateway's handover port; per-node networks mean
 # only the edge itself can reach a node. There is no bare `edge` network
 # anywhere any more — bundle.test.ts holds that.
+#
+# The ONE exception is this node's connector: as the devnet's only connector
+# it is the payment proxy in front of the store, gas station, gateway and
+# Echo Merchant too, so it joins their four networks as well — exactly as
+# each of their own connectors did before, and nothing else of this node
+# does. Those apps publish no connector of their own any more, so what the
+# connector can reach there is each app's handler, which is what it was
+# already the only proxy for.
 #
 # ── Why a profile is safe to name unconditionally ────────────────────────────
 # `services.watchtower.profiles` above names a service this file does not
@@ -88,6 +105,16 @@
 networks:
   edge-relay:
     external: true
+  # The four app networks the connector delivers to (see the header). Owned
+  # by toon-protocol/infra, like edge-relay; joined here, never created.
+  edge-store:
+    external: true
+  edge-gas:
+    external: true
+  edge-gateway:
+    external: true
+  edge-echo:
+    external: true
 
 services:
   caddy:
@@ -111,7 +138,13 @@ services:
       default: {}
       edge-relay:
         aliases:
-          - relay-proxy # proxy.relay.devnet — the connector's client edge
+          - relay-proxy # toonprotocol.dev/ilp (and proxy.relay.devnet) — the connector's client edge
+      # The devnet's apps, which this connector terminates routes for. No
+      # alias: the connector only dials out on these.
+      edge-store: {} # store-dvm:3300 — g.toon.store, g.toon.relay.store
+      edge-gas: {} # gas-web:3300 — g.toon.gas, g.toon.gas.quote, g.toon.relay.gas
+      edge-gateway: {} # gateway-gw:8081 — g.toon.workload-gateway.handover
+      edge-echo: {} # echo-app:3000 — g.toon.echo
 
   anon:
     # Provisional: anon as a SOCKS client idles at roughly 20 to 40 MB. Replace
@@ -127,4 +160,4 @@ services:
       default: {}
       edge-relay:
         aliases:
-          - relay-ws # relay-ws.devnet — the relay's free NIP-01 WS reads
+          - relay-ws # relay.toonprotocol.dev (and relay-ws.devnet) — the relay's free NIP-01 WS reads

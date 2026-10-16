@@ -30,12 +30,18 @@ connector.
 
 **Live on the TOON devnet:**
 
-|                           |                                                                                      |
-| ------------------------- | ------------------------------------------------------------------------------------ |
-| Free reads                | `wss://relay-ws.devnet.toonprotocol.dev`                                             |
-| Paid writes               | `https://proxy.relay.devnet.toonprotocol.dev/ilp`                                    |
-| What that node is         | `curl https://proxy.relay.devnet.toonprotocol.dev/ilp`                               |
-| Where a write is paid for | `curl -H 'Accept: application/nostr+json' https://relay-ws.devnet.toonprotocol.dev/` |
+|                           |                                                                         |
+| ------------------------- | ----------------------------------------------------------------------- |
+| Free reads                | `wss://relay.toonprotocol.dev`                                          |
+| Paid writes               | `https://toonprotocol.dev/ilp` (BTP: `wss://toonprotocol.dev/ilp/btp`)  |
+| What that node is         | `curl https://toonprotocol.dev/ilp`                                     |
+| Where a write is paid for | `curl -H 'Accept: application/nostr+json' https://relay.toonprotocol.dev/` |
+
+That connector is the devnet's only one: it also takes the payments for the
+devnet's store, gas station, workload gateway and Echo Merchant
+(`deploy/connector.toml`). The old names, `proxy.relay.devnet.toonprotocol.dev`
+and `relay-ws.devnet.toonprotocol.dev`, still reach the same two services for
+now.
 
 To _use_ the network rather than run a node, start with the
 [rig](https://github.com/toon-protocol/rig/blob/main/packages/rig/README.md).
@@ -298,9 +304,9 @@ does the RFC 9421 signing:
 
 ```bash
 sign-write.sh -k operator-write.key -X POST -p /peers -u https://proxy.relay.<domain> \
-  -b '{"id":"store","url":"https://proxy.ario.<domain>/ilp","fee":1,"max_packet_amount":100000,"chain":"solana"}'
+  -b '{"id":"other","url":"https://proxy.other.<domain>/ilp","fee":1,"max_packet_amount":100000,"chain":"evm"}'
 sign-write.sh -k operator-write.key -X POST -p /routes/peers -u https://proxy.relay.<domain> \
-  -b '{"prefix":"g.toon.relay.store","peer_id":"store","price":1010}'
+  -b '{"prefix":"g.toon.relay.other","peer_id":"other","price":1001}'
 ```
 
 The first reads the counterparty's self-description, derives the payment
