@@ -87,7 +87,7 @@ Before enabling on a fleet, confirm the publishers you care about are actually
 refreshing — compare `created_at` on two reads a few minutes apart:
 
 ```bash
-websocat wss://relay-ws.devnet.toonprotocol.dev <<< '["REQ","a",{"kinds":[10032]}]'
+websocat wss://relay.toonprotocol.dev <<< '["REQ","a",{"kinds":[10032]}]'
 ```
 
 (kind:10032 is a convenient probe because it is the kind most likely to carry

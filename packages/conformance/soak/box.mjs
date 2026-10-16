@@ -23,10 +23,8 @@ import { isDeepStrictEqual } from 'node:util';
 import { finalizeEvent, generateSecretKey } from 'nostr-tools/pure';
 import WebSocket from 'ws';
 
-const READ_URL =
-  process.env.READ_URL ?? 'https://relay-ws.devnet.toonprotocol.dev';
-const EDGE_URL =
-  process.env.EDGE_URL ?? 'https://proxy.relay.devnet.toonprotocol.dev';
+const READ_URL = process.env.READ_URL ?? 'https://relay.toonprotocol.dev';
+const EDGE_URL = process.env.EDGE_URL ?? 'https://toonprotocol.dev';
 const SAMPLE = Number(process.env.SAMPLE ?? Infinity);
 if (!(SAMPLE >= 1)) {
   console.error('SAMPLE must be a number of events, 1 or more');
