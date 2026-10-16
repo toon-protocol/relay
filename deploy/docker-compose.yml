@@ -98,12 +98,16 @@ services:
   # `asset_transfer_method` and the asset's EIP-712 domain against the token
   # at boot (connector#1425).
   #
+  # `rust-2026.10.16.1` names the devnet deployment's treasury owner, so a
+  # sealed devnet Solana channel can be `distribute`d -- and a withdrawal
+  # finished -- instead of failing `TreasuryAccountMismatch` (connector#1520).
+  #
   # Because the pin is IMMUTABLE, this container does not auto-deploy: there
   # is no moving tag for Watchtower to follow, so a connector or config change
   # needs `git pull && docker compose up -d` on the box. The label below stays
   # for shape-parity with the other two bundles, and is inert here.
   connector:
-    image: ghcr.io/toon-protocol/connector:rust-2026.09.29.1
+    image: ghcr.io/toon-protocol/connector:rust-2026.10.16.1
     # No `environment:` block, deliberately: the connector has no
     # environment-variable layer at all. Every value comes from the mounted
     # ./connector.toml, so there is exactly one place any value comes from.

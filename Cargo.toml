@@ -26,8 +26,8 @@ base64 = "0.22"
 # pins was built from; deploy/bundle.test.ts holds the two together (#199):
 # the release named on the next line is the image tag's release handle, and
 # `rev` is the commit that release is tagged at.
-# connector-release: 2026.09.29.1
-connector-domain = { git = "https://github.com/toon-protocol/connector", rev = "c5f0bc359228beb760429971650290b606f472c7" }
+# connector-release: 2026.10.16.1
+connector-domain = { git = "https://github.com/toon-protocol/connector", rev = "de8469c40952f1a8f0d2abbf9507b3d286ea0031" }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 http-body-util = "0.1"
 hyper = { version = "1", features = ["client", "http1"] }
