@@ -7,10 +7,11 @@ first `docker compose up`. This page is the reference for what each file is.
 | File                 | What it is                                                                                                                                                                             |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `docker-compose.yml` | The node: Caddy (TLS) → connector (payments) → relay (Nostr). Caddy is the only service reachable off-box, and the connector's `image:` is the only place a connector build is pinned. |
-| `connector.toml`     | The connector's whole configuration — routes, prices, settlement, and what this node says about itself. Mounted read-only into the stock connector image.                              |
+| `connector.toml`     | The connector's whole configuration — routes, prices, settlement, and what this node says about itself. Mounted read-only into the stock connector image. On the devnet it is the one connector, and terminates the store, gas station, workload gateway and Echo Merchant routes too. |
 | `Caddyfile`          | TLS for the two public hostnames. Two lines of actual routing.                                                                                                                         |
 | `.env.example`       | Copy to `.env`. Four required values; the rest have defaults.                                                                                                                          |
 | `docker-compose.shared-edge.yml` | Overlay: this node behind the devnet host's shared edge instead of its own Caddy. See "The shared-edge overlay" below.                                                     |
+| `runtime-peerings.sh` | Signed operator writes that peer this hub toward a node that joined it, and take a peering away. See "Forwarded legs" below. |
 | `bundle.test.ts`     | Fails the build if the privacy invariant, the prices, the settlement deployment, the pin, or the shared-edge overlay's own properties ever drift.                                      |
 
 ## Overlays
@@ -31,11 +32,14 @@ because `auto-apply.sh` needs to see it too (see the next section).
 
 ### The shared-edge overlay (toon-protocol/relay#166, infra ADR 0001)
 
-The devnet is moving onto one host behind one shared Caddy edge
+The devnet runs on one host behind one shared Caddy edge
 (`toon-protocol/infra#24`): the relay, store, gas station, workload gateway
-and faucet nodes all share it. **Every node keeps its own connector, keys and
-hostnames — only its own TLS front goes away.** This node's own `caddy` is the
-one thing this overlay removes.
+and Echo Merchant nodes all share it. **It runs one connector, like mainnet:
+this one**, at `https://toonprotocol.dev/ilp` (BTP at
+`wss://toonprotocol.dev/ilp/btp`), with the relay's reads at
+`wss://relay.toonprotocol.dev`. The other nodes run their app behind it and no
+connector of their own. This node's own `caddy` is the one service this
+overlay removes.
 
 Turn it on in `.env`, not on the command line — `auto-apply.sh` (and an
 operator's own `docker compose ps`) need to see it too:
@@ -69,13 +73,29 @@ What the overlay does:
 - **Joins `connector` and `relay` to the external `edge-relay` network** —
   ONE network per node, not a flat network every node on the host shares
   (infra#24 creates one such network per node: `edge-relay`, `edge-store`,
-  `edge-gas`, `edge-gateway`, `edge-faucet`; only Caddy itself joins all
-  five). This limits reachability to the edge alone — on a flat network any
-  node's containers could otherwise reach any other node's connector
+  `edge-gas`, `edge-gateway`, `edge-echo` and the rest; Caddy joins them all).
+  This limits reachability to the edge alone — on a flat network any
+  node's containers could otherwise reach any other node's
   operator surface. `connector` and `relay` join under the stable aliases
   infra#24's edge config expects — see the table below — and both keep the
   bundle's own default network too (`networks: {default: {}, edge-relay:
   {...}}`), so they still reach each other exactly as they do today.
+- **Joins `connector` to `edge-store`, `edge-gas`, `edge-gateway` and
+  `edge-echo` too**, with no alias: it only dials out there, to the apps
+  whose routes `connector.toml` terminates. The apps' own overlays put them
+  on those networks under these aliases:
+
+  | Prefix(es) | Network | Handler | Price |
+  | --- | --- | --- | --- |
+  | `g.toon.store`, `g.toon.relay.store` | `edge-store` | `http://store-dvm:3300/store` | `{ base = 1000, per_kib = 10 }` |
+  | `g.toon.gas.quote` | `edge-gas` | `http://gas-web:3300/gas/quote` | `1000` |
+  | `g.toon.gas`, `g.toon.relay.gas` | `edge-gas` | `http://gas-web:3300/gas/execute` | `1000` |
+  | `g.toon.echo` | `edge-echo` | `http://echo-app:3000` | `{ base = 1, per_kib = 1 }` |
+  | `g.toon.workload-gateway.handover` | `edge-gateway` | `http://gateway-gw:8081/handover` | `0` |
+
+  Handlers and prices are copied from each app's own
+  `deploy/connector.toml.template`, so a payer pays what it paid that app's
+  connector, less the hop fee of 1 the relay used to add.
 - **Adds a `mem_limit` to every service**, including the now-disabled `caddy`.
   The `connector` (`64m`) and `relay` (`192m`) numbers are **measured**, not
   guessed: the devnet host turned out to be a 1 GB Linode nanode, not the 2 GB
@@ -92,8 +112,14 @@ and still routes both hostnames identically once the shared edge replaces it:
 
 | Hostname | `edge-relay` alias | Container | Port | What's there |
 | --- | --- | --- | --- | --- |
-| `proxy.relay.devnet` (`EDGE_HOST`) | `relay-proxy` | `connector` | `3000` | The connector's client edge — paid writes, the x402 greeting, and the free `GET /ilp` self-description. |
-| `relay-ws.devnet` (`READ_HOST`, WebSocket) | `relay-ws` | `relay` | `7100` | The relay's free NIP-01 WebSocket reads, and on the same port its NIP-11 information document (`GET` with `Accept: application/nostr+json`). |
+| `toonprotocol.dev`, paths `/ilp*` (`EDGE_HOST`) | `relay-proxy` | `connector` | `3000` | The devnet's one connector's client edge — paid writes and every app's paid requests, the x402 greeting, and the free `GET /ilp` self-description. |
+| `relay.toonprotocol.dev` (`READ_HOST`, WebSocket) | `relay-ws` | `relay` | `7100` | The relay's free NIP-01 WebSocket reads, and on the same port its NIP-11 information document (`GET` with `Accept: application/nostr+json`). |
+
+During the transition the old names are served too, as aliases to the same two
+upstreams: `proxy.relay.devnet`, `proxy.ario.devnet`, `proxy.gas.devnet`,
+`proxy.gateway.devnet` and `proxy.echo.devnet` all reach `relay-proxy`, and
+`relay-ws.devnet` reaches `relay-ws`. A later change removes them.
+`connector.toml`'s `[node]` advertises only the new name.
 
 **What Caddy does beyond plain reverse proxying, that the edge must replicate:**
 
@@ -303,18 +329,75 @@ so it never arrives in a merge) is loaded on the next run too.
 
 ## Forwarded legs, and peering toward a node behind NAT
 
-The relay forwards to three nodes: the gas station (`g.toon.relay.gas`), the
-store (`g.toon.relay.store`) and the Echo Merchant (`g.toon.echo`). Each leg is
-a runtime peering plus a route over it, made with `POST /peers` and
-`POST /routes/peers` on the operator surface. It lives in
+A forwarded leg is a runtime peering plus a route over it, made with
+`POST /peers` and `POST /routes/peers` on the operator surface. It lives in
 `runtime-peers.json` in the `connector_state` volume, and in no committed
 config, by design (connector ADR 0034, `docs/devnet-pricing.md` there).
-[`runtime-peerings.sh`](runtime-peerings.sh) is the record of those legs and
-replays them, idempotently, on a relay whose state volume is new:
+[`runtime-peerings.sh`](runtime-peerings.sh) makes and removes them.
+
+The devnet relay used to forward to three other connectors this way: the gas
+station (`g.toon.relay.gas`), the store (`g.toon.relay.store`) and the Echo
+Merchant (`g.toon.echo`), replayed by `runtime-peerings.sh devnet`. **Those
+connectors are gone**: `connector.toml` terminates those apps' prefixes
+itself (see the shared-edge overlay above), and `runtime-peerings.sh devnet`
+now opens nothing and prints the cutover below.
+
+### A config route and a runtime route at the same prefix (the cutover)
+
+They cannot both be live, and the connector does **not** refuse to boot over
+it. What the pinned connector (`rust-2026.09.29.1`) does, from its source:
+
+- **At write time, config wins by refusal.** `POST /routes/peers` and
+  `DELETE /routes/peers/:prefix` for a prefix that `connector.toml` names, as
+  an app route or a peer route, answer `OwnedByConfig`. So does
+  `POST`/`DELETE /peers` for a config peer id.
+- **At boot, a runtime row already in `runtime-peers.json` loads as it is.**
+  It is not checked against the config. Routing picks the longest matching
+  prefix, and at equal length ranks `Leased < RuntimePeer < Peer (config) <
+  App (config)`, so the config route wins every packet and the runtime route
+  sits there unused.
+- **That unused row can't be removed through the API.** Its `DELETE` is
+  `OwnedByConfig`, and the peering it points at can't be deleted either
+  (`PeerInUse`), so the old peering stays registered with its outbound channel
+  still bound. If a later config ever drops the prefix, the old route starts
+  forwarding again on that restart. Connector ADR 0034's #1059 update decided
+  that boot should delete such a row with a warning, but neither the pinned
+  build nor connector `main` does that yet.
+
+So **take the old legs off before the connector restarts on the new
+`connector.toml`**. `auto-apply.sh` restarts it within one timer tick of the
+merge (see "A merged config change restarts the connector"), so do this on
+the box just before merging:
 
 ```sh
-SIGN_WRITE=./sign-write.sh ./runtime-peerings.sh devnet
+cd /root/relay/deploy
+SIGN_WRITE=./sign-write.sh ./runtime-peerings.sh remove gas   g.toon.relay.gas
+SIGN_WRITE=./sign-write.sh ./runtime-peerings.sh remove store g.toon.relay.store
+SIGN_WRITE=./sign-write.sh ./runtime-peerings.sh remove echo  g.toon.echo
+curl -s -H "Authorization: Bearer $(cat operator-bearer.token)" \
+  http://127.0.0.1:3000/routes/peers     # no `source: "runtime"` row left
 ```
+
+Those three prefixes can't be reached through the relay from then until the
+connector restarts on the merge (one timer tick, up to five minutes).
+
+If the connector has already restarted with the old rows in place, the only
+way out is by hand: stop the connector, delete the `gas`, `store` and `echo`
+peers and their routes from `runtime-peers.json` in the `connector_state`
+volume, and start it again.
+
+**Then get the deposits back.** Removing a peering stops this node signing on
+its outbound channel, but the channel stays open and journaled (connector
+ADR 0075 decision 4). The relay put 10 USDC into the gas channel, 10 into the
+store channel (Solana) and 1 into the echo channel. Find each channel's id in
+`GET /channels` and withdraw it with a signed `POST /channels/<id>/withdraw`
+(no body). Run it once to start the withdrawal (EVM `initiateWithdraw`, Solana
+`request_close`), and again after the channel's delay, a day by default, to
+finish it (EVM `finalizeWithdraw`, Solana `distribute`). Called too early, the
+second one answers `409` with the seconds left. Start these withdrawals while
+the store, gas station and Echo Merchant connectors are still running and
+their state volumes are intact: in that window each one lands the latest
+voucher this relay paid it.
 
 `toon join devnet` makes a peering one way, from the node to this relay. The
 connector learns no routes, so the relay forwards to a node that joined it

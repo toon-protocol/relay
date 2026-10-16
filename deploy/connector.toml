@@ -6,9 +6,11 @@
 # that image's connector build is pinned — so the build and the config it was
 # validated against live at one commit and reach a box in one `git pull`.
 #
-# This is the config the live TOON devnet relay runs. To run your own node,
-# change [node] to your hostnames and the prices to yours; everything else
-# can stay as it is.
+# This is the config the live TOON devnet's one connector runs: the relay's,
+# which also terminates the devnet's store, gas station, workload gateway and
+# Echo Merchant routes. To run your own relay node, change [node] to your
+# hostnames and the prices to yours, and drop the routes to apps you do not
+# run; everything else can stay as it is.
 #
 # Three things to know before editing:
 #   1. There is NO environment-variable layer. Every value comes from this
@@ -65,10 +67,28 @@ key_file = "/app/data/signer.key"
 # needs nothing else to transact with it.
 #
 # Replace all three with your own hostnames.
+#
+# The devnet runs ONE connector, like mainnet: this one, at toonprotocol.dev,
+# terminating every devnet app's prefix itself (the routes below). The store,
+# gas station, workload gateway and Echo Merchant run no connector of their
+# own any more. `g.toon.relay` stays first: it is the primary address.
+#
+# The old name, proxy.relay.devnet.toonprotocol.dev, still reaches this same
+# connector through the shared edge for now (and so do proxy.ario.devnet,
+# proxy.gas.devnet, proxy.gateway.devnet and proxy.echo.devnet); they are
+# aliases, removed in a later change. This file advertises only the new one.
 [node]
-addresses = ["g.toon.relay", "g.toon.relay.ephemeral"]
-http_endpoint = "https://proxy.relay.devnet.toonprotocol.dev/ilp"
-btp_endpoint = "wss://proxy.relay.devnet.toonprotocol.dev/ilp/btp"
+addresses = [
+  "g.toon.relay",
+  "g.toon.relay.ephemeral",
+  "g.toon.store",
+  "g.toon.gas",
+  "g.toon.gas.quote",
+  "g.toon.echo",
+  "g.toon.workload-gateway",
+]
+http_endpoint = "https://toonprotocol.dev/ilp"
+btp_endpoint = "wss://toonprotocol.dev/ilp/btp"
 
 # ── Paid writes ──────────────────────────────────────────────────────────────
 [[routes]]
@@ -106,6 +126,76 @@ handler_url = "http://relay:3100/write-ephemeral"
 # never persists, so charging per write was never the design. `price = 0`
 # states that rather than leaving it implicit — the parser requires a price
 # either way.
+price = 0
+
+# ── The devnet's other apps, terminated here ─────────────────────────────────
+# Each of these used to be a connector of its own (proxy.ario.devnet,
+# proxy.gas.devnet, proxy.gateway.devnet, proxy.echo.devnet); this relay
+# reached the store, gas station and Echo Merchant over runtime peerings
+# (runtime-peerings.sh `devnet`, now gone — see deploy/README.md). Now this
+# connector delivers to each app directly, over that app's own edge network
+# (docker-compose.shared-edge.yml joins edge-store, edge-gas, edge-gateway and
+# edge-echo), at the price that app's own connector charged — same
+# handler_url, same price, same shape — so nothing a payer pays changes but
+# the hop that used to add 1 to it.
+#
+# A handler shared by two prefixes carries ONE price: the connector refuses
+# a handler_url reachable at two prices (ConflictingHandlerPrice), because the
+# cheaper door would take every packet. `g.toon.relay.store` and
+# `g.toon.relay.gas` are the names those apps have always also answered to
+# under the relay's prefix; they are kept so a client that learned them
+# still lands.
+#
+# None of these sets `transport`: each app's own connector accepted either
+# carriage, and so does this one for them. Only the relay's paid write route
+# above pins BTP.
+
+# The store (Arweave uploads), from toon-protocol/store's
+# deploy/connector.toml.template: 1000 plus 10 per KiB.
+[[routes]]
+prefix = "g.toon.store"
+handler_url = "http://store-dvm:3300/store"
+price = { base = 1000, per_kib = 10 }
+
+[[routes]]
+prefix = "g.toon.relay.store"
+handler_url = "http://store-dvm:3300/store"
+price = { base = 1000, per_kib = 10 }
+
+# The gas station, from toon-protocol/gas-station's template. The quote is
+# its own, longer prefix with its own handler, so it wins over g.toon.gas by
+# longest match.
+[[routes]]
+prefix = "g.toon.gas.quote"
+handler_url = "http://gas-web:3300/gas/quote"
+price = 1000
+
+[[routes]]
+prefix = "g.toon.gas"
+handler_url = "http://gas-web:3300/gas/execute"
+price = 1000
+
+[[routes]]
+prefix = "g.toon.relay.gas"
+handler_url = "http://gas-web:3300/gas/execute"
+price = 1000
+
+# The Echo Merchant (infra#55), from toon-protocol/echo_merchant's template:
+# 1 plus 1 per KiB. The handler is the bare origin, as it was there.
+[[routes]]
+prefix = "g.toon.echo"
+handler_url = "http://echo-app:3000"
+price = { base = 1, per_kib = 1 }
+
+# The workload gateway's handover door, from toon-protocol/gateway's template
+# (ILP_ADDRESS = g.toon.workload-gateway on the devnet). Free: pricing a
+# gateway's service is still deferred there, and `price = 0` is written
+# because a terminated route is never silently free. THE PATH IS
+# LOAD-BEARING: the gateway answers POST /handover and 404s every other path.
+# Port 8081 is the gateway's GATEWAY_HANDOVER_PORT, published on no host port.
+[[routes]]
+prefix = "g.toon.workload-gateway.handover"
+handler_url = "http://gateway-gw:8081/handover"
 price = 0
 
 # ── Getting paid ─────────────────────────────────────────────────────────────
