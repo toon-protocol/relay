@@ -309,6 +309,7 @@ describe('an invariant type keeps its fields to its own module', () => {
     'crates/relay/src/write/payment.rs',
     'crates/relay/src/edge.rs',
     'crates/relay/src/route.rs',
+    'crates/relay-ui/src/lib.rs',
   ];
 
   it('declares no field with a visibility', () => {

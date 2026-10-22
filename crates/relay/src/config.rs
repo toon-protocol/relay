@@ -218,11 +218,13 @@ const SWITCH_FLAGS: [&str; 8] = [
     "--help",
 ];
 
-/// The app UIs this build can serve, by the name `TOON_UI_APPS` gives them.
-/// Each is behind a Cargo feature of the same name with `ui-` before it.
-pub(crate) const UI_APP_NAMES: [&str; 1] = ["repo"];
-/// The app UIs on unless `TOON_UI_APPS` says otherwise.
-const DEFAULT_UI_APPS: &str = "repo";
+/// The app UIs this build includes, by the name `TOON_UI_APPS` gives them,
+/// and so the ones on unless it says otherwise. Each is behind a Cargo
+/// feature of the same name with `ui-` before it.
+const UI_APP_NAMES: &[&str] = &[
+    #[cfg(feature = "ui-repo")]
+    "repo",
+];
 
 const DEFAULT_WRITE_PORT: u16 = 3100;
 const DEFAULT_READ_PORT: u16 = 7100;
@@ -713,12 +715,13 @@ impl Config {
 
 impl Sources<'_> {
     /// The app UIs that are on: the comma-separated names, in order and once
-    /// each. Unset means the default; set and empty means none, and a name no
-    /// app has is refused rather than quietly serving nothing.
+    /// each. Unset means every app this build includes; set and empty means
+    /// none, and a name this build has no app for is refused rather than
+    /// quietly serving nothing.
     fn ui_apps(&self) -> Result<Vec<String>, RelayError> {
-        let (name, value) = self
-            .raw(&UI_APPS)
-            .unwrap_or((UI_APPS.env, DEFAULT_UI_APPS.to_string()));
+        let Some((name, value)) = self.raw(&UI_APPS) else {
+            return Ok(UI_APP_NAMES.iter().map(ToString::to_string).collect());
+        };
         let mut apps: Vec<String> = Vec::new();
         for app in value
             .split(',')
@@ -728,7 +731,7 @@ impl Sources<'_> {
             if !UI_APP_NAMES.contains(&app) {
                 return Err(RelayError::InvalidSetting {
                     name,
-                    expected: "a comma-separated list of app UI names (repo)",
+                    expected: "a comma-separated list of the app UIs this build includes",
                     value,
                 });
             }

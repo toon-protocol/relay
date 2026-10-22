@@ -1,5 +1,6 @@
 //! The app UIs on the read port (#276), driven through the router with no
 //! socket: what reaches an app, and what must still be the relay's own.
+#![cfg(feature = "ui-repo")]
 
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
@@ -88,6 +89,41 @@ async fn the_document_and_the_preflight_are_the_relays_on_a_ui_path() {
         ask(None, Method::OPTIONS, "/repo", None).await.status(),
         StatusCode::NO_CONTENT
     );
+}
+
+#[tokio::test]
+async fn the_balance_asked_of_a_relay_selling_no_feed_is_still_426_on_a_ui_path() {
+    assert_eq!(
+        ask(
+            None,
+            Method::GET,
+            "/repo",
+            Some("application/toon-subscription+json")
+        )
+        .await
+        .status(),
+        StatusCode::UPGRADE_REQUIRED
+    );
+}
+
+#[tokio::test]
+async fn a_handshake_the_relay_refuses_is_still_426_on_a_ui_path() {
+    let data = tempfile::tempdir().expect("a temp dir");
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/repo")
+        .header("connection", "Upgrade")
+        .header("upgrade", "websocket")
+        .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+        .header("sec-websocket-version", "8")
+        .body(Body::empty())
+        .expect("a request");
+    let response = relay(&data, None)
+        .read_router()
+        .oneshot(request)
+        .await
+        .expect("the router is infallible");
+    assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED);
 }
 
 #[tokio::test]

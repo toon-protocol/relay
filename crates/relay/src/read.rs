@@ -38,8 +38,10 @@ pub(crate) async fn read(State(relay): State<Relay>, mut request: Request) -> Re
         return match http_request(&relay, request.method(), request.headers()) {
             Some(answer) => answer,
             None => match relay.ui_for(&request) {
-                Some(ui) => ui.respond(request).await,
-                None => upgrade_required(),
+                // A handshake this relay refuses is still the relay's: `426`,
+                // as on any other path.
+                Some(ui) if !upgrade_asked(request.headers()) => ui.respond(request).await,
+                _ => upgrade_required(),
             },
         };
     };
@@ -96,11 +98,10 @@ fn http_request(relay: &Relay, method: &Method, headers: &HeaderMap) -> Option<R
     if method == Method::OPTIONS {
         return Some((StatusCode::NO_CONTENT, cors).into_response());
     }
-    // A subscriber reading its own balance, under NIP-98.
-    if method == Method::GET
-        && asks_for(headers, BALANCE_MEDIA)
-        && let Some(mut answer) = subscribe::balance(relay, headers)
-    {
+    // A subscriber reading its own balance, under NIP-98. Asked for on a
+    // relay that sells no feed, it is still the relay's to refuse.
+    let balance_asked = method == Method::GET && asks_for(headers, BALANCE_MEDIA);
+    if balance_asked && let Some(mut answer) = subscribe::balance(relay, headers) {
         answer
             .headers_mut()
             .insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
@@ -134,7 +135,7 @@ fn http_request(relay: &Relay, method: &Method, headers: &HeaderMap) -> Option<R
                 .into_response(),
         );
     }
-    None
+    balance_asked.then(upgrade_required)
 }
 
 /// Whether `Accept` names `media`, among others, in any case.
@@ -174,6 +175,12 @@ fn websocket_accept(method: &Method, headers: &HeaderMap) -> Option<String> {
         hash.update(WEBSOCKET_GUID);
         STANDARD.encode(hash.finalize())
     })
+}
+
+/// Whether the request asks for a WebSocket at all, whether or not it is a
+/// handshake the relay accepts.
+fn upgrade_asked(headers: &HeaderMap) -> bool {
+    headers.contains_key(SEC_WEBSOCKET_KEY) || has_token(headers, &UPGRADE, "websocket")
 }
 
 /// Whether the comma-separated header `name` lists `token`, in any case.
