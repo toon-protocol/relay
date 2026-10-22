@@ -21,8 +21,8 @@ after the runner returns. The `Runner.onLog(jobId, chunk)` seam exists and
 streaming seam was built and wired to nothing.
 
 NIP-C1 defines no live-log event. It is also not rig's specification: it
-is published by the ngit-ci project and was vendored into `docs/nips/` by
-#125. Every relay event costs a flat `feePerEvent` regardless of event
+is published by the ngit-ci project and was vendored into `docs/specs/` by
+toon-protocol/rig#125. Every relay event costs a flat `feePerEvent` regardless of event
 size, and the coordinator's affordability check exists so that it "must
 never start a run it may not be able to finish publishing".
 
@@ -59,7 +59,7 @@ never start a run it may not be able to finish publishing".
    clear — holds unchanged, with no chunk-boundary case to reason about.
 
 7. **Ship under a rig-chosen kind, propose upstream in parallel.** The
-   extension is documented in `docs/nips/` as rig's, and offered to
+   extension is documented in `docs/specs/` as rig's, and offered to
    ngit-ci.
 
 ## Considered options
