@@ -1,0 +1,5 @@
+error[E0616]: field `source` of struct `ReadOnlyStore` is private
+ --> tests/compile_fail/read_only_store_reaches_its_source.rs:4:19
+  |
+4 |     let _ = store.source;
+  |                   ^^^^^^ private field

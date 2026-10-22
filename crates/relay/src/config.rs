@@ -170,8 +170,13 @@ const BLOCKED_EVENT_IDS: Setting = Setting {
     env: "TOON_BLOCKED_EVENT_IDS",
 };
 
+const UI_APPS: Setting = Setting {
+    flag: "--ui-apps",
+    env: "TOON_UI_APPS",
+};
+
 /// The flags that take a value, and the ones that stand alone.
-const VALUE_FLAGS: [&str; 28] = [
+const VALUE_FLAGS: [&str; 29] = [
     MNEMONIC.flag,
     SECRET_KEY.flag,
     READ_PORT.flag,
@@ -200,6 +205,7 @@ const VALUE_FLAGS: [&str; 28] = [
     RELAY_URL.flag,
     OPERATOR_PUBKEYS.flag,
     AUTH_REQUIRED_KINDS.flag,
+    UI_APPS.flag,
 ];
 const SWITCH_FLAGS: [&str; 8] = [
     DEV_MODE.flag,
@@ -210,6 +216,14 @@ const SWITCH_FLAGS: [&str; 8] = [
     NIP17_RECIPIENT_ONLY.flag,
     NIP29_GROUPS.flag,
     "--help",
+];
+
+/// The app UIs this build includes, by the name `TOON_UI_APPS` gives them,
+/// and so the ones on unless it says otherwise. Each is behind a Cargo
+/// feature of the same name with `ui-` before it.
+const UI_APP_NAMES: &[&str] = &[
+    #[cfg(feature = "ui-repo")]
+    "repo",
 ];
 
 const DEFAULT_WRITE_PORT: u16 = 3100;
@@ -267,6 +281,8 @@ Options (each flag beats its environment variable):
   --no-enforce-expiration                  TOON_ENFORCE_EXPIRATION=false
   --expiration-reap-grace-seconds <n>      TOON_EXPIRATION_REAP_GRACE_SECONDS (default 86400)
   --expiration-reap-interval-seconds <n>   TOON_EXPIRATION_REAP_INTERVAL_SECONDS (default 3600)
+  --ui-apps <names>                        TOON_UI_APPS (comma-separated app UIs served on the read port, default repo;
+                                           empty serves none)
   --blocked-event-ids <ids>                TOON_BLOCKED_EVENT_IDS (comma-separated)
   --subscribe-ilp-address <addr>           TOON_SUBSCRIBE_ILP_ADDRESS (sells the live feed)
   --broadcast-price <n>                    TOON_BROADCAST_PRICE (what one broadcast event costs)
@@ -391,6 +407,9 @@ pub struct Config {
     pub(crate) signer: crate::groups::Signer,
     /// The kinds a connection must authenticate to read, once each, in order.
     pub auth_required_kinds: Vec<u16>,
+    /// The app UIs served on the read port (`TOON_UI_APPS`), by name, once
+    /// each. Empty serves none.
+    pub ui_apps: Vec<String>,
 }
 
 /// The command line split into the flags that were given.
@@ -622,6 +641,7 @@ impl Config {
                 .unwrap_or_default(),
         )?;
 
+        let ui_apps = sources.ui_apps()?;
         let nip29_groups = sources.on(&NIP29_GROUPS);
         let nip17_recipient_only = sources.on(&NIP17_RECIPIENT_ONLY);
         let text = |setting: &Setting| sources.text(setting).map(|(_, value)| value);
@@ -675,6 +695,7 @@ impl Config {
             nip17_recipient_only,
             nip29_groups,
             auth_required_kinds,
+            ui_apps,
         })))
     }
 
@@ -693,6 +714,34 @@ impl Config {
 }
 
 impl Sources<'_> {
+    /// The app UIs that are on: the comma-separated names, in order and once
+    /// each. Unset means every app this build includes; set and empty means
+    /// none, and a name this build has no app for is refused rather than
+    /// quietly serving nothing.
+    fn ui_apps(&self) -> Result<Vec<String>, RelayError> {
+        let Some((name, value)) = self.raw(&UI_APPS) else {
+            return Ok(UI_APP_NAMES.iter().map(ToString::to_string).collect());
+        };
+        let mut apps: Vec<String> = Vec::new();
+        for app in value
+            .split(',')
+            .map(str::trim)
+            .filter(|app| !app.is_empty())
+        {
+            if !UI_APP_NAMES.contains(&app) {
+                return Err(RelayError::InvalidSetting {
+                    name,
+                    expected: "a comma-separated list of the app UIs this build includes",
+                    value,
+                });
+            }
+            if !apps.iter().any(|listed| listed == app) {
+                apps.push(app.to_string());
+            }
+        }
+        Ok(apps)
+    }
+
     /// The paid live feed's settings: the three of them, or none. The feed is
     /// sold at a route of the relay's connector, so it needs the connector.
     fn subscribe(&self, has_connector: bool) -> Result<Option<SubscribeSettings>, RelayError> {

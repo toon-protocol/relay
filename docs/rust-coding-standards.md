@@ -61,12 +61,14 @@ unit tests are for logic worth testing in isolation.
   construction does not compile.** Each invariant in #185 is a type with one
   constructor: `VerifiedEvent::verify`, `PaymentStatement::stated_on` (visible
   to the paid-write handler alone), `WriteEdge::read`, `SubscribeOffer::read` and
-  `TerminatedRoute::confirm`. Its forbidden constructions live in `crates/relay/tests/compile_fail/`, one file each,
+  `TerminatedRoute::confirm`; an app UI's store is `ReadOnlyStore::new`
+  (`crates/relay-ui`, #278), which queries and nothing else. Its forbidden
+  constructions live in the crate's `tests/compile_fail/`, one file each,
   beside the compiler's reason for refusing it, and `trybuild` fails the test
   if one of them builds or fails for a different reason. A `compile_fail`
   doctest would pass on any error, including a renamed import. Regenerate the
   reasons after a deliberate change or a toolchain bump with
-  `TRYBUILD=overwrite cargo test -p relay --test compile_fail`.
+  `TRYBUILD=overwrite cargo test -p <crate> --test compile_fail`.
 - **NIP-01 handling is the relay's own.** The relay was built on
   `nostr-sdk`'s `local_relay` behind one adapter module. That framework wraps
   every stream in a WebSocket endpoint whose 128 KiB read buffer it gives no
