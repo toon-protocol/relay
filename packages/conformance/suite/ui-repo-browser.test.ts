@@ -83,7 +83,7 @@ async function stubGateway(objects: Map<string, Buffer>) {
       response.end(body);
     }
   );
-  server.on('connection', (socket) => {
+  server.on('secureConnection', (socket) => {
     connectedFrom.push(socket.remoteAddress ?? '');
   });
   server.listen(0, '0.0.0.0');
