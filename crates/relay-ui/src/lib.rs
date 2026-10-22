@@ -6,6 +6,10 @@
 //! it cannot see how events are kept. The relay decides which apps are on and
 //! hands each its handle; this crate holds no relay code.
 
+mod assets;
+
+pub use assets::{Assets, CACHE_CONTROL_VALUE, MANIFEST_FILE};
+
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
@@ -22,7 +26,10 @@ use tower::ServiceExt;
 
 /// What an app's pages may load: only their own origin, and no inline script
 /// (an inline script is not `'self'`).
-pub const CONTENT_SECURITY_POLICY_VALUE: &str = "default-src 'self'";
+/// `'wasm-unsafe-eval'` lets the page compile its own WebAssembly, which a
+/// bare `default-src` forbids; it does not allow `eval` of script text.
+pub const CONTENT_SECURITY_POLICY_VALUE: &str =
+    "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'";
 
 /// What a store can be asked, and nothing else. The relay implements it for
 /// its store; it has no method that writes.
@@ -149,7 +156,7 @@ mod tests {
             let response = app.respond(request).await;
             assert_eq!(
                 response.headers()[CONTENT_SECURITY_POLICY],
-                "default-src 'self'",
+                CONTENT_SECURITY_POLICY_VALUE,
                 "{path}"
             );
         }

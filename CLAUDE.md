@@ -29,6 +29,7 @@ cargo fmt --all -- --check
 cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
+cargo xtask ui-assets   # the app UIs' WebAssembly -> target/ui-assets (needs wasm-bindgen-cli, see Dockerfile)
 pnpm install
 pnpm -r build
 pnpm -r test
