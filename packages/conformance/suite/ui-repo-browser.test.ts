@@ -3,7 +3,6 @@ import { once } from 'node:events';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:https';
 import type { AddressInfo } from 'node:net';
-import type { TLSSocket } from 'node:tls';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -68,6 +67,7 @@ async function stubGateway(objects: Map<string, Buffer>) {
       cert: await readFile(join(directory, 'cert.pem')),
     },
     (request, response) => {
+      connectedFrom.push(request.socket.remoteAddress ?? '');
       const path = request.url ?? '';
       received.push({
         path,
@@ -84,9 +84,6 @@ async function stubGateway(objects: Map<string, Buffer>) {
       response.end(body);
     }
   );
-  server.on('secureConnection', (socket: TLSSocket) => {
-    connectedFrom.push(socket.remoteAddress ?? '');
-  });
   server.listen(0, '0.0.0.0');
   await once(server, 'listening');
   const { port } = server.address() as AddressInfo;
