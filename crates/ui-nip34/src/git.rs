@@ -23,9 +23,11 @@ use crate::{
 };
 
 /// What a git page may load: its own origin, its own WebAssembly, and `https`
-/// anywhere to fetch objects from. Still no inline script.
+/// anywhere to fetch objects from. `connect-src` replaces `default-src` for
+/// `fetch`, so it names `'self'` again: the loader fetches the module from the
+/// relay, which may be plain `http`. Still no inline script.
 pub const CONTENT_SECURITY_POLICY_VALUE: &str =
-    "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src https:";
+    "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https:";
 
 /// The operator's default places for objects (`TOON_UI_ARWEAVE_GATEWAYS`,
 /// `TOON_UI_BLOB_SERVERS`), tried after those the repo's events name.

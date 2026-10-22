@@ -503,7 +503,7 @@ describe('relay image conformance: the /repo app UI', () => {
           expect(response.status).toBe(200);
           const policy = response.headers.get('content-security-policy') ?? '';
           expect(policy).toContain("default-src 'self'");
-          expect(policy).toContain('connect-src https:');
+          expect(policy).toContain("connect-src 'self' https:");
           expect(policy).not.toContain('unsafe-inline');
           const html = await response.text();
           // One script, loaded from the manifest, and no inline code.
