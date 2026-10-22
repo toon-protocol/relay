@@ -5,7 +5,8 @@ image) — a NIP-01 WebSocket read surface, an HTTP `POST /write` surface and a
 NIP-11 relay information document on the read port.
 
 Part of the **TOON Protocol** — pay-to-write Nostr over Interledger (ILP),
-split into per-team repos. The relay is a plain HTTP/WebSocket app: it speaks
+split into per-team repos. The relay also serves read-only app UIs on its read
+port (`docs/adr/0001-*`). It is a plain HTTP/WebSocket app: it speaks
 **no** ILP and contains no connector, settlement, or pricing logic. Payment is
 enforced upstream by the connector; a request reaching `POST /write` is already
 proven paid, so the relay verifies the event signature, stores it, and serves
@@ -112,5 +113,6 @@ See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-Single-context: this file and `README.md`, with decisions in the connector repo's `docs/adr/`.
-See `docs/agents/domain.md`.
+Single-context: this file and `README.md`. Nostr decisions (what the relay serves, how readers
+interpret events, app UIs) live in this repo's `docs/adr/`; ILP and payment decisions stay in the
+connector repo's `docs/adr/`. See `docs/agents/domain.md`.
