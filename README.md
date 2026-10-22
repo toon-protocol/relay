@@ -11,6 +11,11 @@ separation is the whole design, and it is what makes this repo a reference for
 putting **any** app behind the connector: everything below the dashed line is
 the same for a relay, a file store, or an inference endpoint.
 
+The relay also serves read-only app UIs on its read port (for example `/repo` for
+NIP-34 git repos), built from its own store; it still speaks no ILP. Nostr decisions
+are recorded in this repo's [`docs/adr/`](docs/adr/README.md); ILP and payment
+decisions stay in the connector's `docs/adr/`.
+
 ```
                           ╔═══════════════════════════════════╗
   payer ──── POST /ilp ──▶║  Caddy  ──▶  connector            ║  pays, verifies
