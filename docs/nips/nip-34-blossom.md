@@ -1,5 +1,8 @@
-NIP-34 extension: git objects on Blossom
-========================================
+NIP-XX
+======
+
+Git objects on Blossom
+----------------------
 
 `draft` `optional`
 
@@ -27,8 +30,8 @@ Blossom differs from Arweave in three ways that shape this draft:
 - **Content addressing.** A blob is addressed by the sha256 of its bytes
   (BUD-01), not by git's sha1. The two ids have to be mapped.
 - **Size.** A TOON Blossom server (`toon-protocol/blossom`) cannot hold a blob
-  over about 1.9 MiB. Call this the *blob limit*. Servers MAY advertise a
-  different limit; clients MUST NOT assume one larger than 1.9 MiB.
+  over about 1.9 MiB. Call this the *blob limit*. Clients MUST NOT assume a
+  larger one.
 - **Retention.** A blob is kept for 30 days per payment, then may be dropped.
   Arweave storage is permanent.
 
@@ -63,16 +66,17 @@ A `30618` event MAY carry, for each object it wants readers to find, a tag:
 
 The `30618` event is replaceable and relays and clients cap event size, so it
 cannot list every object of a large repository. The tag list is therefore a
-**hint, not an index**. A reader that needs an object with no `blossom` tag:
+**hint, not an index**.
 
-A reader can learn an unlisted object's id by walking from a listed object
-(a commit names its tree, a tree names its entries), but it cannot compute the
-blob id from the object id. An unlisted object is therefore **not retrievable**
+A reader that needs an object with no `blossom` tag can learn its id by
+walking from a listed object (a commit names its tree, a tree names its
+entries), but it cannot compute the blob id from the object id. An unlisted object is therefore **not retrievable**
 unless the blob id is published somewhere.
 
-To make unlisted objects retrievable, a writer MUST publish an **object index**
-as a blob. The index is the bytes of lines `<object id> <blob id>\n`, sorted by
-object id, and its own blob id is named in a tag on the `30618` event:
+To make unlisted objects retrievable, this draft proposes that a writer
+publish an **object index** as a blob (whether to have one at all is open
+question 1). The index is the bytes of lines `<object id> <blob id>\n`,
+sorted by object id, and its own blob id is named in a tag on the `30618` event:
 
 ```
 ["blossom-index", <blob id>]
@@ -107,8 +111,7 @@ The **object bytes**, with the header, uncompressed. Reasons:
   without knowing the object's type in advance.
 - The type and size are in the bytes, so a reader can reject an object of an
   unexpected type before parsing it.
-- Blossom serves the bytes with `Content-Type: application/octet-stream`
-  unless the uploader says otherwise; nothing depends on it.
+- Nothing depends on the `Content-Type` a server returns.
 
 The header is not stripped and the body is not zlib-compressed. Compression
 is left to the transport (`Content-Encoding`) and the server. If `rig`'s
@@ -153,7 +156,8 @@ the same way:
   `arweave` tag for the same object (see [Coexistence](#coexistence-with-arweave-tags)).
 - **Writers extend retention** by paying for the same blob again, that is by
   re-uploading identical bytes (same blob id) or by asking a server to mirror
-  it (BUD-04), whichever the server's payment rules treat as a renewal. The
+  it (BUD-04), whichever the server's payment rules treat as a renewal, if
+  either does (open question 6). The
   tag in the `30618` event does not change, because the blob id does not.
   Whether a renewal extends the *remaining* time or restarts the 30 days is a
   server behaviour this draft does not state (open question 6).
@@ -166,7 +170,8 @@ the same way:
 ## Finding servers
 
 The tag names a blob, not a server. A reader builds its list of candidate
-servers, in this order, and tries them until one returns bytes that verify:
+servers and tries them until one returns bytes that verify. The order below
+is a proposal (open question 8):
 
 1. the URLs in the repository announcement's `blossoms` tag (below);
 2. the Blossom servers in the author's BUD-03 server list (kind `10063`);
@@ -185,8 +190,8 @@ ngit puts a tag on the `30617` announcement:
 
 Under this draft it keeps its meaning: *these Blossom servers may hold this
 repository's blobs*. It is a list of servers, not of blobs, so it needs no
-change. The tag is optional, so a repository that sets it names where
-objects are; one that does not still works through steps 2 and 3.
+change. The tag is optional: a repository that sets it names where its
+objects are, and one that does not still works through steps 2 and 3.
 
 ## Verification
 
@@ -206,18 +211,18 @@ without expiry.
 
 - A `30618` event MAY carry both `arweave` and `blossom` tags, even for the
   same object id. Readers that do not know `blossom` ignore it.
-- For an object with both, a reader tries Blossom first, because it is
-  cheaper to fetch, and falls back to Arweave when the blob has expired or
+- For an object with both, a reader tries Blossom first and falls back to Arweave when the blob has expired or
   is over the limit. The Arweave copy is the durable one.
 - A writer MAY stop uploading to Arweave for new objects. It MUST NOT remove
   `arweave` tags it published earlier: older refs still depend on them.
 - Existing repositories need no migration. The first push after a writer
-  adopts this draft adds `blossom` tags for the objects it uploads, and the
-  event it replaces keeps its `arweave` tags.
+  adopts this draft adds `blossom` tags for the objects it uploads, and
+  carries the `arweave` tags of the event it replaces into the new event.
+  Those tags still count against the event-size cap.
 
 ## Examples
 
-A repository state event, with refs, one object on Blossom, one only on
+A repository state event, with refs, two objects on Blossom, one only on
 Arweave because it is over the blob limit, and an index:
 
 ```json
@@ -231,8 +236,8 @@ Arweave because it is over the blob limit, and an index:
     ["HEAD", "ref: refs/heads/main"],
     ["blossom", "9f3a1c6e0d2b4a7c8e5f1b3d6a9c0e2f4b7d8a1c",
       "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"],
-    ["blossom", "2c7b0e4d9a1f3c5e8b6a0d2f4c7e9b1a3d5f8c0e",
-      "7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"],
+    ["blossom", "ce013625030ba8dba906f756967f9e9ca394464a",
+      "2cf8d83d9ee29543b34a87727421fdecb7e3f3a183d337639025de576db9ebb4"],
     ["arweave", "e1a4c8b2d6f09375a1c3e5b7d9f20486ac1e3b5d",
       "Zk3q8vWm0N1xY5tA7rB9cD2eF4gH6iJ8kL0mN2oP4qR"],
     ["blossom-index",
@@ -263,7 +268,7 @@ The announcement naming the servers (ngit's existing tag, unchanged):
 }
 ```
 
-A blob `7f83b165…` is the bytes of a git object, for example a blob object
+The blob `2cf8d83d…` is the bytes of a git object, for example a blob object
 with the body `hello\n`:
 
 ```
@@ -277,11 +282,12 @@ its sha256 is the blob id the tag maps it to. A reader that fetches
 The object index blob, one pair per line:
 
 ```
-2c7b0e4d9a1f3c5e8b6a0d2f4c7e9b1a3d5f8c0e 7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069
 9f3a1c6e0d2b4a7c8e5f1b3d6a9c0e2f4b7d8a1c b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
+ce013625030ba8dba906f756967f9e9ca394464a 2cf8d83d9ee29543b34a87727421fdecb7e3f3a183d337639025de576db9ebb4
 ```
 
-Hashes in the examples are placeholders, except the sha1 of `blob 6\0hello\n`.
+Hashes in the examples are placeholders, except the object id `ce013625…`
+and blob id `2cf8d83d…`, which are the sha1 and sha256 of `blob 6\0hello\n`.
 
 ## Open questions
 
@@ -307,8 +313,9 @@ For the maintainer. None is settled by this draft.
    chunk, with a tag such as `["blossom-chunks", <object id>, <manifest
    blob id>]`), or is "Arweave only" acceptable?
 6. **Renewal semantics.** Does re-uploading or mirroring an existing blob
-   extend its remaining 30 days or restart them, and does the server charge
-   the full price either way? This is a `toon-protocol/blossom` behaviour the
+   renew it at all on `toon-protocol/blossom`? If so, does it extend the
+   remaining 30 days or restart them, and does the server charge the full
+   price either way? This is a `toon-protocol/blossom` behaviour the
    NIP should cite once it is fixed.
 7. **Renewal discovery.** Should the repository announce when it last renewed
    (a tag with a timestamp) so readers can estimate what is still held? The
