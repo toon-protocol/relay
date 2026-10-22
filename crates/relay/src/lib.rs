@@ -161,7 +161,11 @@ impl Relay {
             auth.clone(),
             groups.as_ref().map(groups::GroupRules::view),
         );
-        let uis = ui::enabled(&config.ui_apps, &store)?;
+        let uis = ui::enabled(
+            &config.ui_apps,
+            &store,
+            ui::assets(config.ui_assets_dir.as_deref()).as_ref(),
+        )?;
         Ok(Self {
             identity: config.identity,
             uis,

@@ -3,7 +3,9 @@
 //! Server-rendered pages over this relay's repository events, with no
 //! JavaScript: the list of repositories, a repository's home, and the
 //! redirects from an `naddr` or an event id to the canonical
-//! `/repo/<npub>/<d-tag>`.
+//! `/repo/<npub>/<d-tag>`. The list also loads the browser half
+//! (`ui-nip34-web`, built by `cargo xtask ui-assets`) from `/repo/assets/`
+//! when the relay has its assets.
 
 use std::collections::HashMap;
 
@@ -16,7 +18,7 @@ use nostr::event::{Event, EventId, Kind};
 use nostr::filter::Filter;
 use nostr::key::PublicKey;
 use nostr::nips::nip19::{FromBech32, Nip19Coordinate, ToBech32};
-use relay_ui::{AppUi, ReadOnlyStore};
+use relay_ui::{AppUi, Assets, ReadOnlyStore};
 
 /// The mount prefix.
 pub const PREFIX: &str = "/repo";
@@ -28,15 +30,36 @@ const STATE: u16 = 30_618;
 /// The most announcements the list reads.
 const LIST_LIMIT: usize = 500;
 
-/// The app UI over `store`.
-pub fn app(store: ReadOnlyStore) -> AppUi {
+/// The manifest's name for the list page's script.
+const SCRIPT: &str = "ui-nip34-web.js";
+
+/// What the list says when there are no assets to browse with.
+pub const UNAVAILABLE: &str = "git browsing unavailable";
+
+/// What the pages read: the store, and the built assets if the relay has them.
+#[derive(Clone)]
+struct Pages {
+    store: ReadOnlyStore,
+    assets: Option<Assets>,
+}
+
+/// The app UI over `store`, with the built `assets` if the relay has them.
+pub fn app(store: ReadOnlyStore, assets: Option<Assets>) -> AppUi {
     let router = Router::new()
         .route(PREFIX, get(list))
+        .route(&format!("{PREFIX}/assets/{{name}}"), get(asset))
         .route("/repo/{target}", get(redirect))
         .route("/repo/{npub}/{d}", get(home))
         .fallback(not_found)
-        .with_state(store);
+        .with_state(Pages { store, assets });
     AppUi::new(PREFIX, router)
+}
+
+async fn asset(State(pages): State<Pages>, Path(name): Path<String>) -> Response {
+    match pages.assets {
+        Some(assets) => assets.respond(&name),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 /// The values of the first tag called `name`, after the name.
@@ -223,7 +246,7 @@ fn repo_name(announcement: &Event) -> &str {
         .unwrap_or_else(|| d_tag(announcement))
 }
 
-async fn list(State(store): State<ReadOnlyStore>) -> Response {
+async fn list(State(Pages { store, assets }): State<Pages>) -> Response {
     let events = store
         .query(
             Filter::new()
@@ -253,11 +276,18 @@ async fn list(State(store): State<ReadOnlyStore>) -> Response {
         }
         body.push_str("</ul>");
     }
+    match assets.and_then(|assets| assets.url(PREFIX, SCRIPT)) {
+        Some(script) => body.push_str(&format!(
+            "<p id=\"app\"></p><script type=\"module\" src=\"{}\"></script>",
+            escape(&script)
+        )),
+        None => body.push_str(&format!("<p>{UNAVAILABLE}</p>")),
+    }
     html(StatusCode::OK, "Repositories", &body)
 }
 
 async fn home(
-    State(store): State<ReadOnlyStore>,
+    State(Pages { store, .. }): State<Pages>,
     Path((owner, d)): Path<(String, String)>,
 ) -> Response {
     let Ok(owner) = PublicKey::from_bech32(&owner) else {
@@ -350,7 +380,10 @@ fn moved(path: &str) -> Response {
 
 /// `/repo/<naddr>` and `/repo/<event-id>`: a redirect to the repo's canonical
 /// path.
-async fn redirect(State(store): State<ReadOnlyStore>, Path(target): Path<String>) -> Response {
+async fn redirect(
+    State(Pages { store, .. }): State<Pages>,
+    Path(target): Path<String>,
+) -> Response {
     if let Ok(address) = Nip19Coordinate::from_bech32(&target) {
         if address.kind == Kind::from(ANNOUNCEMENT) {
             return moved(&repo_path(&address.public_key, &address.identifier));

@@ -62,15 +62,35 @@ ARG TOON_RELEASE_HANDLE=
 # binary with nothing to install beside it.
 RUN cargo build --release --locked -p relay
 
+# ── Stage 1d: UI assets (#283) ───────────────────────────────
+# The app UIs' WebAssembly, built by `cargo xtask ui-assets` into content-hashed
+# files and a manifest.json. The wasm-bindgen CLI must be the version of the
+# `wasm-bindgen` crate pinned in Cargo.toml (deploy/rust-workspace.test.ts
+# fails the build if the two drift). Built from `chef`, not `builder`, so the
+# tools are a layer a source-only commit reuses and the stage does not wait on
+# the relay's build.
+FROM chef AS ui-assets
+
+RUN rustup target add wasm32-unknown-unknown
+RUN cargo install wasm-bindgen-cli --locked --version 0.2.129
+
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+
+RUN cargo run --release --locked -p xtask -- ui-assets --out /ui-assets
+
 # ── Stage 2: Production ──────────────────────────────────────
 FROM alpine:3.22
 
 COPY --from=builder /workspace/target/release/relay /usr/local/bin/relay
+COPY --from=ui-assets /ui-assets /usr/local/share/relay/ui-assets
 
 # The defaults the TypeScript image had, name for name.
 ENV TOON_BLS_PORT=3100
 ENV TOON_RELAY_PORT=7100
 ENV TOON_DATA_DIR=/data
+# The built UI assets, served under /repo/assets/ (#283).
+ENV TOON_UI_ASSETS_DIR=/usr/local/share/relay/ui-assets
 
 # 3100 = paid-write HTTP store (POST /write, GET /health); 7100 = free Nostr WS reads
 EXPOSE 3100 7100

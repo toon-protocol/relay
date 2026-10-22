@@ -50,7 +50,7 @@ async fn repo_is_a_page_with_the_policy_by_default() {
     );
     assert_eq!(
         response.headers()["content-security-policy"],
-        "default-src 'self'"
+        "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'"
     );
     assert_eq!(
         ask(None, Method::HEAD, "/repo", None).await.status(),
@@ -152,4 +152,110 @@ fn an_app_no_one_wrote_is_refused() {
         _ => None,
     });
     assert!(refused.is_err());
+}
+
+async fn body_text(response: axum::http::Response<Body>) -> String {
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("a body");
+    String::from_utf8(bytes.to_vec()).expect("text")
+}
+
+#[tokio::test]
+async fn with_no_assets_the_page_says_browsing_is_unavailable() {
+    let response = ask(None, Method::GET, "/repo", None).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        body_text(response)
+            .await
+            .contains("git browsing unavailable")
+    );
+    assert_eq!(
+        ask(None, Method::GET, "/repo/assets/x.wasm", None)
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn assets_in_the_configured_folder_are_served_hashed_and_immutable() {
+    let data = tempfile::tempdir().expect("a temp dir");
+    let assets = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(
+        assets.path().join("manifest.json"),
+        r#"{"ui-nip34-web.js":"boot.abc.js","ui-nip34-web.wasm":"m.abc.wasm"}"#,
+    )
+    .expect("manifest");
+    std::fs::write(assets.path().join("boot.abc.js"), "//").expect("js");
+    std::fs::write(assets.path().join("m.abc.wasm"), b"\0asm").expect("wasm");
+    let data_dir = data.path().to_string_lossy().into_owned();
+    let assets_dir = assets.path().to_string_lossy().into_owned();
+    let config = Config::from_env(|name| match name {
+        "TOON_SECRET_KEY" => Some("1".repeat(64)),
+        "TOON_DATA_DIR" => Some(data_dir.clone()),
+        "TOON_UI_ASSETS_DIR" => Some(assets_dir.clone()),
+        _ => None,
+    })
+    .expect("a complete configuration");
+    let router = Relay::open(&config).expect("opens").read_router();
+    let get = |path: &'static str| {
+        let router = router.clone();
+        async move {
+            router
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .body(Body::empty())
+                        .expect("a request"),
+                )
+                .await
+                .expect("infallible")
+        }
+    };
+
+    let page = body_text(get("/repo").await).await;
+    assert!(page.contains("/repo/assets/boot.abc.js"), "{page}");
+    assert!(!page.contains("unavailable"));
+
+    let wasm = get("/repo/assets/m.abc.wasm").await;
+    assert_eq!(wasm.status(), StatusCode::OK);
+    assert_eq!(wasm.headers()["content-type"], "application/wasm");
+    assert_eq!(
+        wasm.headers()["cache-control"],
+        "public, max-age=31536000, immutable"
+    );
+    assert_eq!(
+        get("/repo/assets/manifest.json").await.status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn a_folder_without_a_manifest_still_starts_the_relay() {
+    let data = tempfile::tempdir().expect("a temp dir");
+    let data_dir = data.path().to_string_lossy().into_owned();
+    let config = Config::from_env(|name| match name {
+        "TOON_SECRET_KEY" => Some("1".repeat(64)),
+        "TOON_DATA_DIR" => Some(data_dir.clone()),
+        "TOON_UI_ASSETS_DIR" => Some("/nonexistent".to_string()),
+        _ => None,
+    })
+    .expect("a complete configuration");
+    let response = Relay::open(&config)
+        .expect("opens")
+        .read_router()
+        .oneshot(
+            Request::builder()
+                .uri("/repo")
+                .body(Body::empty())
+                .expect("a request"),
+        )
+        .await
+        .expect("infallible");
+    assert!(
+        body_text(response)
+            .await
+            .contains("git browsing unavailable")
+    );
 }
