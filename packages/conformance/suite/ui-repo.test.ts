@@ -347,7 +347,7 @@ describe('relay image conformance: the /repo app UI', () => {
       const get = async (path: string) => {
         const response = await fetch(`${base}${path}`);
         expect(response.headers.get('content-security-policy')).toBe(
-          "default-src 'self'"
+          "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'"
         );
         const text = await response.text();
         expect(text).not.toContain('<script');
