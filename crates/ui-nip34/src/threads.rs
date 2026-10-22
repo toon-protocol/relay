@@ -84,11 +84,7 @@ fn coordinate(owner: &PublicKey, d: &str) -> String {
 
 /// Whether `event` names the repo `coordinate` in an `a` tag.
 fn belongs_to(event: &Event, coordinate: &str) -> bool {
-    event
-        .tags
-        .iter()
-        .map(|tag| tag.as_slice())
-        .any(|tag| matches!(tag, [name, value, ..] if name == "a" && value == coordinate))
+    has_tag_value(event, "a", coordinate)
 }
 
 fn has_tag_value(event: &Event, name: &str, value: &str) -> bool {
@@ -99,14 +95,15 @@ fn has_tag_value(event: &Event, name: &str, value: &str) -> bool {
         .any(|tag| matches!(tag, [n, v, ..] if n == name && v == value))
 }
 
-/// A patch that starts a series: tagged `t: root`, or replying to no patch.
-fn is_root_patch(patch: &Event) -> bool {
+/// A patch that starts a series: tagged `t: root`, or whose `e` tags name
+/// none of `patches` (the repo's patch ids), whatever their marker.
+fn is_root_patch(patch: &Event, patches: &[String]) -> bool {
     has_tag_value(patch, "t", "root")
         || !patch
             .tags
             .iter()
             .map(|tag| tag.as_slice())
-            .any(|tag| matches!(tag, [name, _, _, marker, ..] if name == "e" && marker == "reply"))
+            .any(|tag| matches!(tag, [name, id, ..] if name == "e" && patches.contains(id)))
 }
 
 /// The status of each of `targets`, from the statuses stored for them.
@@ -118,6 +115,14 @@ async fn statuses_of(
     if targets.is_empty() {
         return Vec::new();
     }
+    // Only honoured keys are read, so a stranger's statuses cannot crowd an
+    // honoured one out of the query's limit.
+    let mut authors = authorized.to_vec();
+    for target in targets {
+        if !authors.contains(&target.pubkey) {
+            authors.push(target.pubkey);
+        }
+    }
     let events = store
         .query(
             Filter::new()
@@ -128,6 +133,7 @@ async fn statuses_of(
                     Kind::from(STATUS_DRAFT),
                 ])
                 .events(targets.iter().map(|target| target.id))
+                .authors(authors)
                 .limit(LIMIT * 4),
         )
         .await;
@@ -267,11 +273,16 @@ pub(super) async fn pulls(
         return not_found().await;
     };
     let events = repo.events(&store, &[PATCH, PULL_REQUEST]).await;
+    let patches: Vec<String> = events
+        .iter()
+        .filter(|event| event.kind == Kind::from(PATCH))
+        .map(|event| event.id.to_hex())
+        .collect();
     let mut pulls: Vec<&Event> = events
         .iter()
         .filter(|event| {
             event.kind == Kind::from(PULL_REQUEST)
-                || (event.kind == Kind::from(PATCH) && is_root_patch(event))
+                || (event.kind == Kind::from(PATCH) && is_root_patch(event, &patches))
         })
         .collect();
     sort_newest_first(&mut pulls);
@@ -470,6 +481,7 @@ mod tests {
     use nostr::types::Timestamp;
 
     use super::*;
+    use crate::owner_announcement;
 
     fn tag(parts: &[&str]) -> Tag {
         Tag::parse(parts.iter().map(|p| (*p).to_owned()).collect::<Vec<_>>()).unwrap()
@@ -605,9 +617,13 @@ mod tests {
                 tag(&["maintainers", &f.stranger.public_key().to_hex()]),
             ],
         );
-        // The owner's announcement alone decides who is honoured.
-        let authorized = authorized_authors(&sign(&f.owner, ANNOUNCEMENT, 1, &[tag(&["d", "r"])]));
-        assert!(authorized_authors(&rogue).contains(&f.stranger.public_key()));
+        let own = sign(&f.owner, ANNOUNCEMENT, 1, &[tag(&["d", "r"])]);
+        // The rogue announcement is newer, names the same `d`, and lists the
+        // stranger; the owner's own announcement alone decides who is honoured.
+        let announcements = [own, rogue];
+        let announcement = owner_announcement(&f.owner.public_key(), "r", &announcements).unwrap();
+        assert_eq!(announcement.pubkey, f.owner.public_key());
+        let authorized = authorized_authors(announcement);
         let events = [status(&f.stranger, STATUS_CLOSED, 10, &f.issue)];
         assert_eq!(resolve_status(&authorized, &f.issue, &events), Status::Open);
     }
@@ -616,19 +632,32 @@ mod tests {
     fn root_patches_are_the_series_starts() {
         let keys = Keys::generate();
         let id = "a".repeat(64);
-        assert!(is_root_patch(&sign(&keys, PATCH, 1, &[])));
-        assert!(is_root_patch(&sign(
-            &keys,
-            PATCH,
-            1,
-            &[tag(&["t", "root"]), tag(&["e", &id, "", "reply"])]
-        )));
-        assert!(!is_root_patch(&sign(
-            &keys,
-            PATCH,
-            1,
-            &[tag(&["e", &id, "", "reply"])]
-        )));
+        let patches = [id.clone()];
+        assert!(is_root_patch(&sign(&keys, PATCH, 1, &[]), &patches));
+        assert!(is_root_patch(
+            &sign(
+                &keys,
+                PATCH,
+                1,
+                &[tag(&["t", "root"]), tag(&["e", &id, "", "reply"])]
+            ),
+            &patches
+        ));
+        assert!(!is_root_patch(
+            &sign(&keys, PATCH, 1, &[tag(&["e", &id, "", "reply"])]),
+            &patches
+        ));
+        // An unmarked `e` to a patch is still a reply to it.
+        assert!(!is_root_patch(
+            &sign(&keys, PATCH, 1, &[tag(&["e", &id])]),
+            &patches
+        ));
+        // Replying to something that is not a patch (an issue) is a root.
+        let issue = "b".repeat(64);
+        assert!(is_root_patch(
+            &sign(&keys, PATCH, 1, &[tag(&["e", &issue, "", "reply"])]),
+            &patches
+        ));
     }
 
     #[test]

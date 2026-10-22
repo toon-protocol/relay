@@ -275,12 +275,24 @@ async fn resolve_repo(store: &ReadOnlyStore, npub: &str, d: &str) -> Option<(Pub
                 .identifier(d),
         )
         .await;
-    let announcement = newest(
+    let announcement = owner_announcement(&owner, d, &announcements)?;
+    Some((owner, announcement.clone()))
+}
+
+/// The repo's announcement among `announcements`: the newest `owner` signed
+/// for `d`. Another key's announcement for the same `d` never stands in for
+/// it, so its `maintainers` are never honoured (ADR 0002). A pure function.
+fn owner_announcement<'a>(
+    owner: &PublicKey,
+    d: &str,
+    announcements: &'a [Event],
+) -> Option<&'a Event> {
+    newest(
         announcements
             .iter()
-            .filter(|event| event.pubkey == owner && d_tag(event) == d),
-    )?;
-    Some((owner, announcement.clone()))
+            .filter(|event| event.kind == Kind::from(ANNOUNCEMENT))
+            .filter(|event| event.pubkey == *owner && d_tag(event) == d),
+    )
 }
 
 async fn home(

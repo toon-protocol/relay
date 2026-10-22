@@ -361,10 +361,21 @@ describe('relay image conformance: the /repo app UI', () => {
       ]) {
         expect((await get(path)).status).toBe(404);
       }
-      // A thread never resolves under another repo.
-      const elsewhere = await fetch(
-        `${relay.readUrl}/repo/${nip19.npubEncode(pubkeyOf(stranger))}/threads/issues/${issue.id}`
+      // A thread never resolves under another repo, even one that exists.
+      await publishOk(
+        relay,
+        sign(stranger, {
+          kind: 30617,
+          created_at: 80,
+          tags: [
+            ['d', 'threads'],
+            ['name', 'Elsewhere'],
+          ],
+        })
       );
+      const elsewhereBase = `${relay.readUrl}/repo/${nip19.npubEncode(pubkeyOf(stranger))}/threads`;
+      expect((await fetch(`${elsewhereBase}/issues`)).status).toBe(200);
+      const elsewhere = await fetch(`${elsewhereBase}/issues/${issue.id}`);
       expect(elsewhere.status).toBe(404);
     }
   );
