@@ -10,7 +10,8 @@ deploy guards (`deploy/*.test.ts`).
 - **`CLAUDE.md`** at the repo root: what the relay is and is not, how it is deployed, and where
   payment validation lives (only in the connector).
 - **`README.md`**: the operator's guide to running the relay.
-- **`docs/`**: the ADRs (`docs/adr/`), the retention policy (`docs/retention.md`), the Rust coding standards
+- **`docs/`**: the ADRs (`docs/adr/`), the NIP drafts (`docs/nips/`), the app guides
+  (`docs/apps/`), the retention policy (`docs/retention.md`), the Rust coding standards
   (`docs/rust-coding-standards.md`) and this directory.
 
 This repo has no `CONTEXT.md` and no `CONTEXT-MAP.md`. Nostr decisions (what the relay serves,

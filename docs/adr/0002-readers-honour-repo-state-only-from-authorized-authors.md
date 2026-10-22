@@ -1,6 +1,6 @@
 # Readers honour repo state only from authorized authors
 
-**Status:** Accepted (owner decision, 2026-10-22, #276). Recorded in #277. Carries over [`toon-protocol/rig` ADR 0005](https://github.com/toon-protocol/rig/blob/main/docs/adr/0005-readers-honor-repo-state-from-authorized-authors.md) (accepted 2026-10-16, rig#225, built in rig#226); the rule is unchanged. Not built here yet: the `/repo` UI is.
+**Status:** Accepted (owner decision, 2026-10-22, #276). Recorded in #277. Carries over [`toon-protocol/rig` ADR 0005](https://github.com/toon-protocol/rig/blob/main/docs/adr/0005-readers-honor-repo-state-from-authorized-authors.md) (accepted 2026-10-16, rig#225, built in rig#226); the rule is unchanged. Not built here yet: the `/repo` UI, when it lands, is what applies it.
 
 **Scope:** relay architecture — internal to this codebase. See the [ADR index](README.md).
 
