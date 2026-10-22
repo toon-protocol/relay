@@ -1,0 +1,5 @@
+error[E0599]: no method named `save` found for struct `ReadOnlyStore` in the current scope
+ --> tests/compile_fail/read_only_store_saves_an_event.rs:4:11
+  |
+4 |     store.save(&event).await;
+  |           ^^^^ method not found in `ReadOnlyStore`
