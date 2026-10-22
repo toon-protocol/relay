@@ -173,8 +173,19 @@ describe('relay image conformance: /repo git pages in a browser', () => {
       expect(gateway.connectedFrom).toEqual([]);
 
       const context = await browser.newContext({ ignoreHTTPSErrors: true });
+      // What the browser saw, reported if the case fails: a page that never
+      // renders says why only in its console.
+      const seen: string[] = [];
       try {
         const page = await context.newPage();
+        page.on('console', (m) =>
+          seen.push(`console ${m.type()}: ${m.text()}`)
+        );
+        page.on('pageerror', (e) => seen.push(`page error: ${e.message}`));
+        page.on('requestfailed', (r) =>
+          seen.push(`failed: ${r.url()} ${r.failure()?.errorText ?? ''}`)
+        );
+        page.on('response', (r) => seen.push(`${r.status()} ${r.url()}`));
         const asked: string[] = [];
         page.on('request', (request) => {
           if (request.url().startsWith(gateway.url)) asked.push(request.url());
@@ -217,6 +228,10 @@ describe('relay image conformance: /repo git pages in a browser', () => {
         expect(
           new Set(gateway.received.map((r) => `${gateway.url}${r.path}`))
         ).toEqual(new Set(asked));
+      } catch (error) {
+        throw new Error(
+          `${String(error)}\nthe browser saw:\n${seen.join('\n')}`
+        );
       } finally {
         await context.close();
       }
