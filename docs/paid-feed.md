@@ -47,7 +47,16 @@ feed adds the route above and the three variables to their own `.env`.
 ## What a subscriber does
 
 1. Read the NIP-11 document: `toon_subscription` holds the route's address and
-   price, and the broadcast price. `supported_nips` lists 42.
+   price, and the broadcast price. `supported_nips` lists 42. A
+   `toon_subscription` object means the live feed needs NIP-42 `AUTH` with the
+   subscriber key (the key that signed the NIP-98 authorization on the subscribe
+   packet). `limitation.auth_required` stays `false` all the same: NIP-11
+   defines it as `AUTH` before *any* action, and stored reads are free and need
+   no `AUTH`. The same goes for kinds the operator gates with
+   `TOON_AUTH_REQUIRED_KINDS`: reads of every other kind still need no `AUTH`,
+   so the flag stays `false`; the document lists 42 but names no kinds, and a
+   client learns them when a `REQ` that needs `AUTH` is `CLOSED` with
+   `auth-required:`.
 2. Pay the subscribe route with a packet carrying `POST /` with a NIP-98
    `Authorization` signed by the subscriber key and a body `{ "filter": … }`.
    Every packet credits the route's price to that key, whoever paid and whichever
