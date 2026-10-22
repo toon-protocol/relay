@@ -52,7 +52,7 @@ fn every_fixture_verifies_both_as_loose_and_as_a_headerless_body() {
         )
         .unwrap();
         assert_eq!(loose, body, "{hex}");
-        kinds.push(loose.kind);
+        kinds.push(loose.kind());
     }
     for kind in [
         ObjectKind::Blob,
@@ -259,6 +259,36 @@ fn walking_a_merge_visits_every_commit_once_newest_first() {
     let ids: Vec<_> = walked.iter().map(|w| w.id).collect();
     assert_eq!(ids, [id(MERGE), id(MAIN_CHANGE), id(SIDE), id(FIRST)]);
     assert!(walked.iter().all(|w| w.commit.is_ok()));
+}
+
+/// A commit body at `time` with `parents`, verified under its own id.
+fn synthetic_commit(time: i64, parents: &[ObjectId]) -> (ObjectId, RawObject) {
+    let mut body = format!("tree {FIRST_TREE}\n");
+    for parent in parents {
+        body.push_str(&format!("parent {parent}\n"));
+    }
+    body.push_str(&format!(
+        "author A <a@b> {time} +0000\ncommitter A <a@b> {time} +0000\n\nt{time}\n"
+    ));
+    let id = hash_object(ObjectKind::Commit, body.as_bytes());
+    let object = verify_body(id, ObjectKind::Commit, body.into_bytes(), Limits::default()).unwrap();
+    (id, object)
+}
+
+#[test]
+fn a_walk_orders_each_commit_by_its_own_time_not_its_childs() {
+    // merge(10) has parents a(9) and b(5); a's parent a0(8) is older than a
+    // but newer than b, so it comes before b.
+    let (b, b_obj) = synthetic_commit(5, &[]);
+    let (a0, a0_obj) = synthetic_commit(8, &[]);
+    let (a, a_obj) = synthetic_commit(9, &[a0]);
+    let (merge, merge_obj) = synthetic_commit(10, &[a, b]);
+    let store: HashMap<_, _> = [(b, b_obj), (a0, a0_obj), (a, a_obj), (merge, merge_obj)].into();
+    let walked = walk_history(merge, 100, |i| {
+        store.get(i).cloned().ok_or(ObjectError::Missing(*i))
+    });
+    let ids: Vec<_> = walked.iter().map(|w| w.id).collect();
+    assert_eq!(ids, [merge, a, a0, b]);
 }
 
 #[test]

@@ -1,16 +1,37 @@
-//! Parsing verified object bodies into typed values.
+//! Typed git objects, so the `/repo` module reads a tree, commit or tag as
+//! values rather than as git's text and binary formats.
 
 use crate::{ObjectError, ObjectId, ObjectKind};
 
-/// An object's kind and its body (no header). A blob's body is its content.
+/// An object whose bytes hashed to the id it was asked for: its kind and its
+/// body (no header). A blob's body is its content.
+///
+/// The fields are private and the only constructors are
+/// [`verify_body`](crate::verify_body) and [`read_loose`](crate::read_loose),
+/// so a value of this type is proof the hash was checked.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RawObject {
-    pub kind: ObjectKind,
-    pub body: Vec<u8>,
+    kind: ObjectKind,
+    body: Vec<u8>,
 }
 
 impl RawObject {
-    fn expect(&self, expected: ObjectKind) -> Result<&[u8], ObjectError> {
+    /// Built by `verify` alone, after the hash matched.
+    pub(crate) fn verified(kind: ObjectKind, body: Vec<u8>) -> Self {
+        Self { kind, body }
+    }
+
+    pub fn kind(&self) -> ObjectKind {
+        self.kind
+    }
+
+    /// The bytes after the header.
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    /// The body, or `WrongKind` if this object is not of `expected` kind.
+    fn body_of(&self, expected: ObjectKind) -> Result<&[u8], ObjectError> {
         if self.kind == expected {
             Ok(&self.body)
         } else {
@@ -21,21 +42,24 @@ impl RawObject {
         }
     }
 
+    /// Parses a tree, or `WrongKind`.
     pub fn parse_tree(&self) -> Result<Tree, ObjectError> {
-        Tree::parse(self.expect(ObjectKind::Tree)?)
+        Tree::parse(self.body_of(ObjectKind::Tree)?)
     }
 
+    /// Parses a commit, or `WrongKind`.
     pub fn parse_commit(&self) -> Result<Commit, ObjectError> {
-        Commit::parse(self.expect(ObjectKind::Commit)?)
+        Commit::parse(self.body_of(ObjectKind::Commit)?)
     }
 
+    /// Parses a tag, or `WrongKind`.
     pub fn parse_tag(&self) -> Result<Tag, ObjectError> {
-        Tag::parse(self.expect(ObjectKind::Tag)?)
+        Tag::parse(self.body_of(ObjectKind::Tag)?)
     }
 
     /// A blob's content.
     pub fn blob(&self) -> Result<&[u8], ObjectError> {
-        self.expect(ObjectKind::Blob)
+        self.body_of(ObjectKind::Blob)
     }
 }
 
@@ -49,16 +73,19 @@ pub struct TreeEntry {
 }
 
 impl TreeEntry {
+    /// A subtree. Leading zeros are ignored: git writes `40000`, but some
+    /// tools have written `040000`.
     pub fn is_tree(&self) -> bool {
-        self.mode == "40000"
+        self.mode.trim_start_matches('0') == "40000"
     }
 
     /// A submodule commit, which no store here holds.
     pub fn is_gitlink(&self) -> bool {
-        self.mode == "160000"
+        self.mode.trim_start_matches('0') == "160000"
     }
 }
 
+/// A directory listing, entries in the order the object holds them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tree {
     pub entries: Vec<TreeEntry>,
@@ -69,6 +96,7 @@ fn malformed(kind: ObjectKind, reason: &'static str) -> ObjectError {
 }
 
 impl Tree {
+    /// Parses a tree body. Names that are not UTF-8 are read lossily.
     pub fn parse(mut body: &[u8]) -> Result<Self, ObjectError> {
         const KIND: ObjectKind = ObjectKind::Tree;
         let mut entries = Vec::new();
@@ -136,6 +164,7 @@ impl Person {
     }
 }
 
+/// A commit: its snapshot, its parents and who made it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Commit {
     pub tree: ObjectId,
@@ -188,6 +217,8 @@ fn id_header(
 }
 
 impl Commit {
+    /// Parses a commit body. Headers it does not model (`gpgsig`,
+    /// `encoding`, ...) are skipped.
     pub fn parse(body: &[u8]) -> Result<Self, ObjectError> {
         const KIND: ObjectKind = ObjectKind::Commit;
         let (headers, message) = split_headers(body);
@@ -212,11 +243,13 @@ impl Commit {
         })
     }
 
+    /// Two or more parents.
     pub fn is_merge(&self) -> bool {
         self.parents.len() > 1
     }
 }
 
+/// An annotated tag: a name bound to an object, with a message.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tag {
     pub object: ObjectId,
@@ -228,6 +261,7 @@ pub struct Tag {
 }
 
 impl Tag {
+    /// Parses a tag body.
     pub fn parse(body: &[u8]) -> Result<Self, ObjectError> {
         const KIND: ObjectKind = ObjectKind::Tag;
         let (headers, message) = split_headers(body);

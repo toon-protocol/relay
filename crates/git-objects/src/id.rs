@@ -1,4 +1,4 @@
-//! Object ids and kinds.
+//! Object ids and kinds: what a store is asked for, and what it must return.
 
 use core::fmt;
 
@@ -9,10 +9,12 @@ use crate::ObjectError;
 pub struct ObjectId([u8; 20]);
 
 impl ObjectId {
+    /// The id from its 20 raw bytes, as a tree entry holds it.
     pub fn from_bytes(bytes: [u8; 20]) -> Self {
         Self(bytes)
     }
 
+    /// The 20 raw bytes.
     pub fn as_bytes(&self) -> &[u8; 20] {
         &self.0
     }
@@ -72,6 +74,7 @@ impl ObjectKind {
         }
     }
 
+    /// The kind a header name stands for, or `None` for any other name.
     pub fn from_name(name: &[u8]) -> Option<Self> {
         match name {
             b"blob" => Some(Self::Blob),

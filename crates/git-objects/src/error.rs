@@ -1,8 +1,10 @@
-//! The one error enum: every way an object can fail to be usable.
+//! The one error enum: every way an object can fail to be usable, as values
+//! the UI can show rather than panics.
 
 use crate::{ObjectId, ObjectKind};
 
-/// Why an object could not be used. Each variant is a distinct UI state.
+/// Why an object could not be used. Each variant is a distinct cause, which
+/// the UI shows as "no longer held".
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ObjectError {
     /// The store has no object for this id (or the fetch callback said so).

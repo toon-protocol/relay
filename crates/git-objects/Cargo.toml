@@ -16,3 +16,6 @@ flate2.workspace = true
 sha1.workspace = true
 similar.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+trybuild.workspace = true

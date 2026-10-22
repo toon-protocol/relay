@@ -1,4 +1,4 @@
-//! Diffing trees and blobs.
+//! Diffing trees and blobs, for the `/repo` view of what a commit changed.
 
 use similar::{ChangeTag, TextDiff};
 
@@ -7,15 +7,15 @@ use crate::{Tree, TreeEntry};
 /// What happened to one name between two trees.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Change {
+    /// Only in the new tree.
     Added(TreeEntry),
+    /// Only in the old tree.
     Removed(TreeEntry),
     /// Same name, different id or mode.
-    Modified {
-        old: TreeEntry,
-        new: TreeEntry,
-    },
+    Modified { old: TreeEntry, new: TreeEntry },
 }
 
+/// A change to the entry called `name`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TreeChange {
     pub name: String,
@@ -75,6 +75,7 @@ pub fn diff_trees(old: &Tree, new: &Tree) -> Vec<TreeChange> {
     out
 }
 
+/// Whether a line is in both blobs, only the old one, or only the new one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LineOp {
     Equal,

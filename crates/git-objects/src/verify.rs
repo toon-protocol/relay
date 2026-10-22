@@ -1,4 +1,5 @@
-//! Hashing an object against the id it was asked for.
+//! Hashing an object against the id it was asked for. The stores hold objects
+//! without a trust relationship, so this is the only way to a [`RawObject`].
 
 use std::io::Read;
 
@@ -51,7 +52,7 @@ pub fn verify_body(
     if actual != expected {
         return Err(ObjectError::Mismatch { expected, actual });
     }
-    Ok(RawObject { kind, body })
+    Ok(RawObject::verified(kind, body))
 }
 
 /// Inflates a zlib-compressed loose object (`<kind> <size>\0<body>`) and
