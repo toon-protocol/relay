@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:https';
 import type { AddressInfo } from 'node:net';
+import type { TLSSocket } from 'node:tls';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -83,7 +84,7 @@ async function stubGateway(objects: Map<string, Buffer>) {
       response.end(body);
     }
   );
-  server.on('secureConnection', (socket) => {
+  server.on('secureConnection', (socket: TLSSocket) => {
     connectedFrom.push(socket.remoteAddress ?? '');
   });
   server.listen(0, '0.0.0.0');
