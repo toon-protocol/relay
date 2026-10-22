@@ -53,7 +53,8 @@ feed adds the route above and the three variables to their own `.env`.
    packet). `limitation.auth_required` stays `false` all the same: NIP-11
    defines it as `AUTH` before *any* action, and stored reads are free and need
    no `AUTH`. The same goes for kinds the operator gates with
-   `TOON_AUTH_REQUIRED_KINDS`: the document lists 42 but names no kinds, and a
+   `TOON_AUTH_REQUIRED_KINDS`: reads of every other kind still need no `AUTH`,
+   so the flag stays `false`; the document lists 42 but names no kinds, and a
    client learns them when a `REQ` that needs `AUTH` is `CLOSED` with
    `auth-required:`.
 2. Pay the subscribe route with a packet carrying `POST /` with a NIP-98

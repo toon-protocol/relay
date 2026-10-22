@@ -191,8 +191,9 @@ impl Document {
                 max_req_per_minute_per_source: settings.read_source_rate_limit,
                 // Always `false`, even when the relay sells its feed
                 // (`toon_subscription`) or gates kinds
-                // (`TOON_AUTH_REQUIRED_KINDS`): NIP-11 defines the flag as AUTH
-                // before *any* action, and stored reads are free and need none.
+                // (`TOON_AUTH_REQUIRED_KINDS`): NIP-11 defines the flag as
+                // `AUTH` before any action, and a read of ungated stored
+                // events is free and needs no `AUTH`.
                 auth_required: false,
             },
             // Omitted, not 0, for a relay that charges nothing:
