@@ -1,0 +1,77 @@
+//! The app UIs on the read port (#276): which are on, the read-only handle
+//! each is built from, and which one a request belongs to.
+
+#[cfg(feature = "ui-repo")]
+use std::future::Future;
+#[cfg(feature = "ui-repo")]
+use std::pin::Pin;
+use std::sync::Arc;
+
+use axum::extract::Request;
+use axum::http::Method;
+#[cfg(feature = "ui-repo")]
+use nostr::event::Event;
+#[cfg(feature = "ui-repo")]
+use nostr::filter::Filter;
+use relay_ui::AppUi;
+#[cfg(feature = "ui-repo")]
+use relay_ui::{EventSource, ReadOnlyStore};
+
+use crate::{Relay, RelayError, Store};
+
+/// The store as an app UI sees it: queries, and nothing else.
+#[cfg(feature = "ui-repo")]
+struct Reading(Store);
+
+#[cfg(feature = "ui-repo")]
+impl EventSource for Reading {
+    fn query(&self, filter: Filter) -> Pin<Box<dyn Future<Output = Vec<Event>> + Send + '_>> {
+        Box::pin(async move {
+            self.0.query(filter).await.unwrap_or_else(|error| {
+                eprintln!("ui: query failed: {error}");
+                Vec::new()
+            })
+        })
+    }
+}
+
+/// The app UIs named in `apps` (`TOON_UI_APPS`), each over a read-only handle
+/// to `store`. A name this build has no app for is refused: the feature that
+/// holds it was left out.
+pub(crate) fn enabled(apps: &[String], store: &Store) -> Result<Arc<[AppUi]>, RelayError> {
+    let mut uis = Vec::new();
+    for app in apps {
+        match built(app, store) {
+            Some(ui) => uis.push(ui),
+            None => {
+                return Err(RelayError::InvalidSetting {
+                    name: "TOON_UI_APPS",
+                    expected: "app UIs this build includes",
+                    value: app.clone(),
+                });
+            }
+        }
+    }
+    Ok(uis.into())
+}
+
+/// The app UI called `name`, if this build includes it.
+#[cfg_attr(not(feature = "ui-repo"), allow(unused_variables))]
+fn built(name: &str, store: &Store) -> Option<AppUi> {
+    #[cfg(feature = "ui-repo")]
+    if name == "repo" {
+        return Some(ui_nip34::app(ReadOnlyStore::new(Reading(store.clone()))));
+    }
+    None
+}
+
+impl Relay {
+    /// The app UI that answers `request`: a `GET` or `HEAD` under the prefix
+    /// of one that is on.
+    pub(crate) fn ui_for(&self, request: &Request) -> Option<&AppUi> {
+        if request.method() != Method::GET && request.method() != Method::HEAD {
+            return None;
+        }
+        self.uis.iter().find(|ui| ui.serves(request.uri().path()))
+    }
+}

@@ -35,7 +35,15 @@ const WEBSOCKET_GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 /// for a WebSocket handshake, `426` for anything else.
 pub(crate) async fn read(State(relay): State<Relay>, mut request: Request) -> Response {
     let Some(accept) = websocket_accept(request.method(), request.headers()) else {
-        return http_request(&relay, request.method(), request.headers());
+        return match http_request(&relay, request.method(), request.headers()) {
+            Some(answer) => answer,
+            None => match relay.ui_for(&request) {
+                // A handshake this relay refuses is still the relay's: `426`,
+                // as on any other path.
+                Some(ui) if !upgrade_asked(request.headers()) => ui.respond(request).await,
+                _ => upgrade_required(),
+            },
+        };
     };
     // Present whenever the server driving this router supports upgrades;
     // absent when the router is called with no connection behind it.
@@ -72,9 +80,11 @@ pub(crate) async fn read(State(relay): State<Relay>, mut request: Request) -> Re
         .into_response()
 }
 
-/// Answer a request that is not a WebSocket handshake. The only one whose
-/// answer is not `426` is the one that asks for the document by name.
-fn http_request(relay: &Relay, method: &Method, headers: &HeaderMap) -> Response {
+/// Answer a request that is not a WebSocket handshake, or `None` if it is
+/// none of the relay's own: the caller then tries the app UIs and last
+/// answers `426`. The document, the balance and the preflight are the relay's
+/// on every path, an app UI's included.
+fn http_request(relay: &Relay, method: &Method, headers: &HeaderMap) -> Option<Response> {
     // The document is free, public and the same for everyone, and browser
     // clients read it, so there is nothing for an origin check to protect.
     let cors = [
@@ -86,17 +96,16 @@ fn http_request(relay: &Relay, method: &Method, headers: &HeaderMap) -> Response
         (ACCESS_CONTROL_ALLOW_METHODS, "GET, HEAD, OPTIONS"),
     ];
     if method == Method::OPTIONS {
-        return (StatusCode::NO_CONTENT, cors).into_response();
+        return Some((StatusCode::NO_CONTENT, cors).into_response());
     }
-    // A subscriber reading its own balance, under NIP-98.
-    if method == Method::GET
-        && asks_for(headers, BALANCE_MEDIA)
-        && let Some(mut answer) = subscribe::balance(relay, headers)
-    {
+    // A subscriber reading its own balance, under NIP-98. Asked for on a
+    // relay that sells no feed, it is still the relay's to refuse.
+    let balance_asked = method == Method::GET && asks_for(headers, BALANCE_MEDIA);
+    if balance_asked && let Some(mut answer) = subscribe::balance(relay, headers) {
         answer
             .headers_mut()
             .insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
-        return answer;
+        return Some(answer);
     }
     if (method == Method::GET || method == Method::HEAD) && asks_for(headers, CONTENT_TYPE_NOSTR) {
         let edge = relay.edge.current();
@@ -113,18 +122,20 @@ fn http_request(relay: &Relay, method: &Method, headers: &HeaderMap) -> Response
         } else {
             body
         };
-        return (
-            StatusCode::OK,
-            cors,
-            [
-                (CONTENT_TYPE, CONTENT_TYPE_NOSTR.to_string()),
-                (CONTENT_LENGTH, length),
-            ],
-            body,
-        )
-            .into_response();
+        return Some(
+            (
+                StatusCode::OK,
+                cors,
+                [
+                    (CONTENT_TYPE, CONTENT_TYPE_NOSTR.to_string()),
+                    (CONTENT_LENGTH, length),
+                ],
+                body,
+            )
+                .into_response(),
+        );
     }
-    upgrade_required()
+    balance_asked.then(upgrade_required)
 }
 
 /// Whether `Accept` names `media`, among others, in any case.
@@ -164,6 +175,12 @@ fn websocket_accept(method: &Method, headers: &HeaderMap) -> Option<String> {
         hash.update(WEBSOCKET_GUID);
         STANDARD.encode(hash.finalize())
     })
+}
+
+/// Whether the request asks for a WebSocket at all, whether or not it is a
+/// handshake the relay accepts.
+fn upgrade_asked(headers: &HeaderMap) -> bool {
+    headers.contains_key(SEC_WEBSOCKET_KEY) || has_token(headers, &UPGRADE, "websocket")
 }
 
 /// Whether the comma-separated header `name` lists `token`, in any case.
