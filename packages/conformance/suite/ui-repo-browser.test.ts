@@ -27,9 +27,18 @@ interface Received {
 }
 
 /**
+ * The host the relay container reaches the host at; the browser is pointed at
+ * loopback for the same name, so one URL serves both and a request from the
+ * relay could land.
+ */
+const ALIAS = 'host.docker.internal';
+
+/**
  * An https server standing in for an Arweave gateway, serving `objects` by
  * path. It allows any origin (the browser fetches cross-origin) and records
- * every request, so a case can tell who asked.
+ * every request, and the address of every connection, so a case can tell who
+ * asked: the browser connects from loopback, the relay container from the
+ * Docker bridge, even when its TLS handshake fails before any request.
  */
 async function stubGateway(objects: Map<string, Buffer>) {
   const directory = await mkdtemp(join(tmpdir(), 'stub-gateway-'));
@@ -48,9 +57,10 @@ async function stubGateway(objects: Map<string, Buffer>) {
     '-subj',
     '/CN=127.0.0.1',
     '-addext',
-    'subjectAltName=IP:127.0.0.1',
+    `subjectAltName=IP:127.0.0.1,DNS:${ALIAS}`,
   ]);
   const received: Received[] = [];
+  const connectedFrom: string[] = [];
   const server: Server = createServer(
     {
       key: await readFile(join(directory, 'key.pem')),
@@ -73,12 +83,16 @@ async function stubGateway(objects: Map<string, Buffer>) {
       response.end(body);
     }
   );
-  server.listen(0, '127.0.0.1');
+  server.on('connection', (socket) => {
+    connectedFrom.push(socket.remoteAddress ?? '');
+  });
+  server.listen(0, '0.0.0.0');
   await once(server, 'listening');
   const { port } = server.address() as AddressInfo;
   return {
-    url: `https://127.0.0.1:${port}`,
+    url: `https://${ALIAS}:${port}`,
     received,
+    connectedFrom,
     stop: async () => {
       server.close();
       await rm(directory, { recursive: true, force: true });
@@ -139,7 +153,9 @@ beforeAll(async () => {
     })
   );
   repo = `${relay.readUrl}/repo/${nip19.npubEncode(pubkeyOf(owner))}/smoke`;
-  browser = await chromium.launch();
+  browser = await chromium.launch({
+    args: [`--host-resolver-rules=MAP ${ALIAS} 127.0.0.1`],
+  });
 });
 
 afterAll(async () => {
@@ -156,7 +172,7 @@ describe('relay image conformance: /repo git pages in a browser', () => {
       for (const path of ['tree/main', 'blob/main/hello.txt']) {
         expect((await fetch(`${repo}/${path}`)).status).toBe(200);
       }
-      expect(gateway.received).toEqual([]);
+      expect(gateway.connectedFrom).toEqual([]);
 
       const context = await browser.newContext({ ignoreHTTPSErrors: true });
       try {
@@ -192,8 +208,10 @@ describe('relay image conformance: /repo git pages in a browser', () => {
         ]);
 
         // Everything the stub received came from the browser, which the
-        // browser itself saw and which carries the page's origin.
+        // browser itself saw and which carries the page's origin; no
+        // connection came from the relay's container.
         expect(gateway.received.length).toBeGreaterThan(0);
+        expect(new Set(gateway.connectedFrom)).toEqual(new Set(['127.0.0.1']));
         for (const request of gateway.received) {
           expect(request.origin).toBe(relay.readUrl);
           expect(request.userAgent).toMatch(/Chrome/);

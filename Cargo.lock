@@ -1730,6 +1730,7 @@ dependencies = [
  "js-sys",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
  "wasm-bindgen",
  "wasm-bindgen-futures",

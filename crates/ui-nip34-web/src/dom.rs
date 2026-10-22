@@ -8,10 +8,9 @@ use crate::object::NO_LONGER_HELD;
 use crate::{Content, Row};
 
 fn element(document: &Document, name: &str, text: Option<&str>) -> Element {
-    // A fixed tag name never fails to create.
     let element = document
         .create_element(name)
-        .unwrap_or_else(|_| unreachable!("{name} is a valid element name"));
+        .expect("every caller passes a fixed, valid tag name");
     if let Some(text) = text {
         element.set_text_content(Some(text));
     }

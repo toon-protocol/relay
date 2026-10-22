@@ -19,7 +19,7 @@ mod testing;
 mod view;
 
 pub use layout::{Layout, PageKind};
-pub use object::{Fetch, FetchError, MAX_OBJECT, NO_LONGER_HELD, Unheld, load};
+pub use object::{Error, Fetch, MAX_OBJECT, NO_LONGER_HELD, load};
 pub use view::{Content, Row, build};
 
 use wasm_bindgen::prelude::wasm_bindgen;

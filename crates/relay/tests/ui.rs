@@ -173,6 +173,7 @@ fn object_sources_must_be_https_urls() {
             "a.test",
             "https://",
             "https://a.test,ftp://b",
+            "https://a.test/\u{7}",
         ] {
             assert!(with(setting, bad).is_err(), "{setting}={bad}");
         }

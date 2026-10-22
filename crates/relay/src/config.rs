@@ -795,7 +795,9 @@ impl Sources<'_> {
             .filter(|url| !url.is_empty())
         {
             let valid = url.strip_prefix("https://").is_some_and(|rest| {
-                !rest.is_empty() && !rest.starts_with('/') && !url.contains(char::is_whitespace)
+                !rest.is_empty()
+                    && !rest.starts_with('/')
+                    && !url.chars().any(|c| c.is_whitespace() || c.is_control())
             });
             if !valid {
                 return Err(RelayError::InvalidSetting {

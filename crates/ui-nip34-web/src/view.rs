@@ -3,7 +3,7 @@
 
 use git_objects::{ObjectId, ObjectKind, TreeEntry};
 
-use crate::object::{Fetch, Unheld, load};
+use crate::object::{Error, Fetch, load};
 use crate::{Layout, PageKind};
 
 /// One line of a directory listing.
@@ -86,17 +86,17 @@ pub async fn build(fetch: &impl Fetch, layout: &Layout) -> Content {
     walk(fetch, layout).await.unwrap_or(Content::Unheld)
 }
 
-async fn walk(fetch: &impl Fetch, layout: &Layout) -> Result<Content, Unheld> {
-    let id = |text: &str| ObjectId::from_hex(text).map_err(|_| Unheld);
+async fn walk(fetch: &impl Fetch, layout: &Layout) -> Result<Content, Error> {
+    let id = |text: &str| ObjectId::from_hex(text).map_err(|_| Error::Unheld);
     let commit = load(fetch, layout, id(&layout.commit)?, ObjectKind::Commit).await?;
-    let mut tree_id = commit.parse_commit().map_err(|_| Unheld)?.tree;
+    let mut tree_id = commit.parse_commit().map_err(|_| Error::Unheld)?.tree;
     let (last, directories) = match (layout.kind, layout.path.split_last()) {
         (PageKind::Blob, Some((last, directories))) => (Some(last), directories),
         _ => (None, layout.path.as_slice()),
     };
     for segment in directories {
         let tree = load(fetch, layout, tree_id, ObjectKind::Tree).await?;
-        let entries = tree.parse_tree().map_err(|_| Unheld)?.entries;
+        let entries = tree.parse_tree().map_err(|_| Error::Unheld)?.entries;
         match entries
             .iter()
             .find(|entry| entry.name == *segment && entry.is_tree())
@@ -106,7 +106,7 @@ async fn walk(fetch: &impl Fetch, layout: &Layout) -> Result<Content, Unheld> {
         }
     }
     let tree = load(fetch, layout, tree_id, ObjectKind::Tree).await?;
-    let entries = tree.parse_tree().map_err(|_| Unheld)?.entries;
+    let entries = tree.parse_tree().map_err(|_| Error::Unheld)?.entries;
     let Some(last) = last else {
         return Ok(Content::Tree(rows(layout, &entries)));
     };
@@ -117,7 +117,7 @@ async fn walk(fetch: &impl Fetch, layout: &Layout) -> Result<Content, Unheld> {
         return Ok(Content::NoSuchPath);
     };
     let blob = load(fetch, layout, entry.id, ObjectKind::Blob).await?;
-    Ok(file(blob.blob().map_err(|_| Unheld)?))
+    Ok(file(blob.blob().map_err(|_| Error::Unheld)?))
 }
 
 #[cfg(test)]

@@ -12,34 +12,36 @@ pub const MAX_OBJECT: u64 = 2 * 1024 * 1024;
 /// What a page says in place of an object it could not get.
 pub const NO_LONGER_HELD: &str = "this object is no longer held";
 
-/// Why one URL gave no bytes.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum FetchError {
-    /// Not an `https` URL.
-    NotHttps,
-    /// Over the size limit.
+/// Why a URL gave no bytes, or an object could not be had.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum Error {
+    /// One URL answered with more than the size limit.
+    #[error("the object is over the 2 MiB limit")]
     Oversized,
-    /// Not found, refused, timed out or unreachable.
+    /// One URL was not found, refused, timed out or unreachable.
+    #[error("the object could not be fetched")]
     Failed,
+    /// The object is missing, oversized or not what its id says, from every
+    /// place it was looked for.
+    #[error("{NO_LONGER_HELD}")]
+    Unheld,
 }
 
-/// Getting bytes from a URL: `https` only, at most `limit` bytes, with a
-/// timeout. The browser implements it with `fetch`; tests with a table.
+/// Getting bytes from an `https` URL: at most `limit` bytes, with a timeout.
+/// [`load`] only ever asks for `https` URLs. The browser implements it with
+/// `fetch`; tests with a table.
 pub trait Fetch {
-    fn get(&self, url: &str, limit: u64) -> impl Future<Output = Result<Vec<u8>, FetchError>>;
+    /// The bytes at `url`, or [`Error::Oversized`] past `limit`, or
+    /// [`Error::Failed`].
+    fn get(&self, url: &str, limit: u64) -> impl Future<Output = Result<Vec<u8>, Error>>;
 }
-
-/// An object that is missing, oversized or not what its id says, from every
-/// place it was looked for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Unheld;
 
 const LIMITS: Limits = Limits {
     max_body: MAX_OBJECT,
 };
 
-/// The object `id` of `kind` from the first candidate whose bytes hash to
-/// `id`. The bytes may be the object's body (Arweave), the body behind its
+/// The object `id` of `kind` from the first `https` candidate whose bytes
+/// hash to `id`; any other URL is never fetched. The bytes may be the object's body (Arweave), the body behind its
 /// `<kind> <size>\0` header (Blossom) or the zlib-compressed loose object;
 /// the hash decides which, never the server.
 pub async fn load(
@@ -47,16 +49,16 @@ pub async fn load(
     layout: &Layout,
     id: ObjectId,
     kind: ObjectKind,
-) -> Result<RawObject, Unheld> {
-    let candidates = layout.objects.get(&id.to_string()).ok_or(Unheld)?;
-    for url in candidates {
+) -> Result<RawObject, Error> {
+    let candidates = layout.objects.get(&id.to_string()).ok_or(Error::Unheld)?;
+    for url in candidates.iter().filter(|url| url.starts_with("https://")) {
         if let Ok(bytes) = fetch.get(url, MAX_OBJECT).await
             && let Some(object) = verified(id, kind, bytes)
         {
             return Ok(object);
         }
     }
-    Err(Unheld)
+    Err(Error::Unheld)
 }
 
 fn verified(id: ObjectId, kind: ObjectKind, bytes: Vec<u8>) -> Option<RawObject> {
@@ -179,7 +181,7 @@ mod tests {
             (id(), "https://a.test/missing"),
         ] {
             let result = load(&fetch, &layout(id, &[url]), id, ObjectKind::Blob).await;
-            assert_eq!(result.unwrap_err(), Unheld, "{url}");
+            assert_eq!(result.unwrap_err(), Error::Unheld, "{url}");
         }
         // An object the page lists no candidates for.
         let unlisted = layout(id(), &[]);
@@ -187,8 +189,21 @@ mod tests {
             load(&fetch, &unlisted, big_id, ObjectKind::Blob)
                 .await
                 .unwrap_err(),
-            Unheld
+            Error::Unheld
         );
+    }
+
+    #[tokio::test]
+    async fn an_object_held_only_over_plain_http_is_unheld() {
+        let fetch = table(&[("http://insecure.test/x", BODY.to_vec())]);
+        let result = load(
+            &fetch,
+            &layout(id(), &["http://insecure.test/x"]),
+            id(),
+            ObjectKind::Blob,
+        )
+        .await;
+        assert_eq!(result.unwrap_err(), Error::Unheld);
     }
 
     #[tokio::test]
@@ -201,6 +216,6 @@ mod tests {
             ObjectKind::Tree,
         )
         .await;
-        assert_eq!(result.unwrap_err(), Unheld);
+        assert_eq!(result.unwrap_err(), Error::Unheld);
     }
 }
