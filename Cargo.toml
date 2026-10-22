@@ -2,7 +2,7 @@
 # Standards: docs/rust-coding-standards.md.
 [workspace]
 resolver = "3"
-members = ["crates/relay"]
+members = ["crates/git-objects", "crates/relay"]
 
 [workspace.package]
 edition = "2024"
@@ -28,6 +28,8 @@ base64 = "0.22"
 # `rev` is the commit that release is tagged at.
 # connector-release: 2026.10.16.1
 connector-domain = { git = "https://github.com/toon-protocol/connector", rev = "de8469c40952f1a8f0d2abbf9507b3d286ea0031" }
+# Pure Rust (miniz_oxide) so crates/git-objects builds for wasm32.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 http-body-util = "0.1"
 hyper = { version = "1", features = ["client", "http1"] }
@@ -44,6 +46,7 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha1 = "0.10"
+similar = { version = "2", default-features = false, features = ["text"] }
 sha2 = "0.10"
 tempfile = "3"
 thiserror = "2"

@@ -1,0 +1,6 @@
+object 06eda202e7f8a2dacb5c42fd4c3ae5a2d006accd
+type commit
+tag v1
+tagger Fixture <f@example.com> 1767571200 +0000
+
+release one
