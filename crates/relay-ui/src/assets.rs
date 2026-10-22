@@ -9,9 +9,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 use axum::http::{HeaderValue, Response, StatusCode};
+use axum::response::IntoResponse;
 
 /// The manifest's file name inside the assets folder.
 pub const MANIFEST_FILE: &str = "manifest.json";
@@ -25,7 +26,7 @@ pub struct Assets {
     /// Logical name to hashed file name.
     manifest: Arc<BTreeMap<String, String>>,
     /// Hashed file name to its bytes.
-    files: Arc<BTreeMap<String, Arc<[u8]>>>,
+    files: Arc<BTreeMap<String, Bytes>>,
 }
 
 impl Assets {
@@ -42,7 +43,7 @@ impl Assets {
                 return None;
             }
             let bytes = std::fs::read(dir.join(hashed)).ok()?;
-            files.insert(hashed.clone(), Arc::from(bytes));
+            files.insert(hashed.clone(), Bytes::from(bytes));
         }
         Some(Self {
             manifest: Arc::new(manifest),
@@ -61,12 +62,9 @@ impl Assets {
     /// The immutable answer for the hashed file `name`, if there is one.
     pub fn respond(&self, name: &str) -> Response<Body> {
         let Some(bytes) = self.files.get(name) else {
-            return Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .body(Body::empty())
-                .unwrap_or_default();
+            return StatusCode::NOT_FOUND.into_response();
         };
-        let mut response = Response::new(Body::from(bytes.to_vec()));
+        let mut response = Response::new(Body::from(bytes.clone()));
         let headers = response.headers_mut();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static(content_type(name)));
         headers.insert(CACHE_CONTROL, HeaderValue::from_static(CACHE_CONTROL_VALUE));

@@ -7,6 +7,7 @@
 
 use axum::Router;
 use axum::extract::{Path, State};
+use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use relay_ui::{AppUi, Assets, ReadOnlyStore};
@@ -27,7 +28,7 @@ pub fn app(store: ReadOnlyStore, assets: Option<Assets>) -> AppUi {
     let _ = store;
     let router = Router::new()
         .route(PREFIX, get(index))
-        .route("/repo/assets/{name}", get(asset))
+        .route(&format!("{PREFIX}/assets/{{name}}"), get(asset))
         .with_state(assets);
     AppUi::new(PREFIX, router)
 }
@@ -50,6 +51,6 @@ async fn index(State(assets): State<Option<Assets>>) -> Html<String> {
 async fn asset(State(assets): State<Option<Assets>>, Path(name): Path<String>) -> Response {
     match assets {
         Some(assets) => assets.respond(&name),
-        None => axum::http::StatusCode::NOT_FOUND.into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
     }
 }

@@ -16,7 +16,7 @@ fn main() -> ExitCode {
     match args.next().as_deref() {
         Some("ui-assets") => {
             let out = match (args.next().as_deref(), args.next(), args.next()) {
-                (None, _, _) => PathBuf::from("target/ui-assets"),
+                (None, _, _) => ui_assets::workspace_root().join("target/ui-assets"),
                 (Some("--out"), Some(dir), None) => PathBuf::from(dir),
                 _ => {
                     eprintln!("{USAGE}");

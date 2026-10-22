@@ -18,6 +18,45 @@ use std::process::Command;
 
 use sha2::{Digest, Sha256};
 
+/// Why `ui-assets` stopped.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum UiAssetsError {
+    #[error("running {what}: {source}")]
+    Spawn {
+        what: &'static str,
+        source: std::io::Error,
+    },
+    #[error("{what} failed: {status}")]
+    Failed {
+        what: &'static str,
+        status: std::process::ExitStatus,
+    },
+    #[error("{action} {}: {source}", path.display())]
+    Io {
+        action: &'static str,
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("{name} is not text: {source}")]
+    NotText {
+        name: String,
+        source: std::string::FromUtf8Error,
+    },
+    #[error("the loader does not name {original}; wasm-bindgen changed its output")]
+    LoaderChanged { original: String },
+    #[error("writing the manifest: {0}")]
+    Manifest(#[from] serde_json::Error),
+}
+
+fn io(action: &'static str, path: &Path) -> impl FnOnce(std::io::Error) -> UiAssetsError {
+    let path = path.to_path_buf();
+    move |source| UiAssetsError::Io {
+        action,
+        path,
+        source,
+    }
+}
+
 /// The WebAssembly crates, by package name.
 const WEB_CRATES: &[&str] = &["ui-nip34-web"];
 
@@ -26,9 +65,15 @@ const TARGET: &str = "wasm32-unknown-unknown";
 /// Hex digits of the digest in a file name.
 const HASH_LEN: usize = 16;
 
-pub(crate) fn run(out: &Path) -> Result<BTreeMap<String, String>, String> {
+/// The workspace root: `cargo xtask` may be run from any directory in it.
+pub(crate) fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+pub(crate) fn run(out: &Path) -> Result<BTreeMap<String, String>, UiAssetsError> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let target_dir = PathBuf::from(std::env::var("CARGO_TARGET_DIR").unwrap_or("target".into()));
+    let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+        .map_or_else(|| workspace_root().join("target"), PathBuf::from);
     let bindgen_dir = target_dir.join("ui-assets-bindgen");
 
     let mut build = Command::new(&cargo);
@@ -39,10 +84,9 @@ pub(crate) fn run(out: &Path) -> Result<BTreeMap<String, String>, String> {
     status(&mut build, "cargo build")?;
 
     if out.exists() {
-        std::fs::remove_dir_all(out)
-            .map_err(|error| format!("clearing {}: {error}", out.display()))?;
+        std::fs::remove_dir_all(out).map_err(io("clearing", out))?;
     }
-    std::fs::create_dir_all(out).map_err(|error| format!("creating {}: {error}", out.display()))?;
+    std::fs::create_dir_all(out).map_err(io("creating", out))?;
 
     let mut manifest = BTreeMap::new();
     for package in WEB_CRATES {
@@ -66,8 +110,12 @@ pub(crate) fn run(out: &Path) -> Result<BTreeMap<String, String>, String> {
         status(&mut bindgen, "wasm-bindgen")?;
 
         let wasm = read(&bindgen_dir.join(format!("{module}_bg.wasm")))?;
-        let glue = String::from_utf8(read(&bindgen_dir.join(format!("{module}.js")))?)
-            .map_err(|error| format!("{module}.js is not text: {error}"))?;
+        let glue = String::from_utf8(read(&bindgen_dir.join(format!("{module}.js")))?).map_err(
+            |source| UiAssetsError::NotText {
+                name: format!("{module}.js"),
+                source,
+            },
+        )?;
 
         let wasm_name = write_hashed(out, &module, "wasm", &wasm)?;
         let glue = point_glue_at(&glue, &format!("{module}_bg.wasm"), &wasm_name)?;
@@ -82,18 +130,18 @@ pub(crate) fn run(out: &Path) -> Result<BTreeMap<String, String>, String> {
     Ok(manifest)
 }
 
-fn status(command: &mut Command, what: &str) -> Result<(), String> {
+fn status(command: &mut Command, what: &'static str) -> Result<(), UiAssetsError> {
     let status = command
         .status()
-        .map_err(|error| format!("running {what}: {error}"))?;
+        .map_err(|source| UiAssetsError::Spawn { what, source })?;
     status
         .success()
         .then_some(())
-        .ok_or_else(|| format!("{what} failed: {status}"))
+        .ok_or(UiAssetsError::Failed { what, status })
 }
 
-fn read(path: &Path) -> Result<Vec<u8>, String> {
-    std::fs::read(path).map_err(|error| format!("reading {}: {error}", path.display()))
+fn read(path: &Path) -> Result<Vec<u8>, UiAssetsError> {
+    std::fs::read(path).map_err(io("reading", path))
 }
 
 /// The file name `stem.<hash>.ext`, the hash being the SHA-256 of `bytes`.
@@ -106,21 +154,30 @@ pub(crate) fn hashed_name(stem: &str, extension: &str, bytes: &[u8]) -> String {
     format!("{stem}.{hash}.{extension}")
 }
 
-fn write_hashed(out: &Path, stem: &str, extension: &str, bytes: &[u8]) -> Result<String, String> {
+fn write_hashed(
+    out: &Path,
+    stem: &str,
+    extension: &str,
+    bytes: &[u8],
+) -> Result<String, UiAssetsError> {
     let name = hashed_name(stem, extension, bytes);
     let path = out.join(&name);
-    std::fs::write(&path, bytes).map_err(|error| format!("writing {}: {error}", path.display()))?;
+    std::fs::write(&path, bytes).map_err(io("writing", &path))?;
     Ok(name)
 }
 
 /// wasm-bindgen's loader names its module by a literal relative URL; the
 /// module was renamed by its hash, so the literal must follow. The loader
 /// not naming it is an error: it would fetch a file that is not there.
-pub(crate) fn point_glue_at(glue: &str, original: &str, hashed: &str) -> Result<String, String> {
+pub(crate) fn point_glue_at(
+    glue: &str,
+    original: &str,
+    hashed: &str,
+) -> Result<String, UiAssetsError> {
     if !glue.contains(original) {
-        return Err(format!(
-            "the loader does not name {original}; wasm-bindgen changed its output"
-        ));
+        return Err(UiAssetsError::LoaderChanged {
+            original: original.to_string(),
+        });
     }
     Ok(glue.replace(original, hashed))
 }
@@ -130,11 +187,10 @@ pub(crate) fn boot(glue_name: &str) -> String {
     format!("import init from './{glue_name}';\nawait init();\n")
 }
 
-fn write_manifest(out: &Path, manifest: &BTreeMap<String, String>) -> Result<(), String> {
-    let json = serde_json::to_string_pretty(manifest).map_err(|error| error.to_string())?;
+fn write_manifest(out: &Path, manifest: &BTreeMap<String, String>) -> Result<(), UiAssetsError> {
+    let json = serde_json::to_string_pretty(manifest)?;
     let path = out.join("manifest.json");
-    std::fs::write(&path, json + "\n")
-        .map_err(|error| format!("writing {}: {error}", path.display()))
+    std::fs::write(&path, json + "\n").map_err(io("writing", &path))
 }
 
 #[cfg(test)]

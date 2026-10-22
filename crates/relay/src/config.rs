@@ -421,7 +421,7 @@ pub struct Config {
     /// The folder of built UI assets (`TOON_UI_ASSETS_DIR`), if given. The
     /// relay starts without it; pages that need assets say they are
     /// unavailable.
-    pub ui_assets_dir: Option<std::path::PathBuf>,
+    pub ui_assets_dir: Option<PathBuf>,
 }
 
 /// The command line split into the flags that were given.

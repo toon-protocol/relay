@@ -66,11 +66,17 @@ RUN cargo build --release --locked -p relay
 # The app UIs' WebAssembly, built by `cargo xtask ui-assets` into content-hashed
 # files and a manifest.json. The wasm-bindgen CLI must be the version of the
 # `wasm-bindgen` crate pinned in Cargo.toml (deploy/rust-workspace.test.ts
-# fails the build if the two drift).
-FROM builder AS ui-assets
+# fails the build if the two drift). Built from `chef`, not `builder`, so the
+# tools are a layer a source-only commit reuses and the stage does not wait on
+# the relay's build.
+FROM chef AS ui-assets
 
 RUN rustup target add wasm32-unknown-unknown
 RUN cargo install wasm-bindgen-cli --locked --version 0.2.129
+
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+
 RUN cargo run --release --locked -p xtask -- ui-assets --out /ui-assets
 
 # ── Stage 2: Production ──────────────────────────────────────
