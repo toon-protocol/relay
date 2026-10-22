@@ -137,7 +137,8 @@ fn percent_encode(text: &str) -> String {
 }
 
 fn npub(key: &PublicKey) -> String {
-    key.to_bech32().unwrap_or_else(|_| key.to_hex())
+    let Ok(npub) = key.to_bech32();
+    npub
 }
 
 fn repo_path(owner: &PublicKey, d: &str) -> String {
@@ -312,7 +313,7 @@ async fn home(
             body.push_str("</ul>");
         }
     }
-    body.push_str("<h2>Branches</h2>");
+    body.push_str("<h2>Refs</h2>");
     match state {
         Some(state) => {
             if let Some(head) = first_tag(state, "HEAD") {
@@ -337,7 +338,7 @@ async fn home(
             }
             body.push_str("</ul>");
         }
-        None => body.push_str("<p>No branches published.</p>"),
+        None => body.push_str("<p>No refs published.</p>"),
     }
     body.push_str("<p><a href=\"/repo\">All repositories</a></p>");
     html(StatusCode::OK, repo_name(announcement), &body)
@@ -382,7 +383,7 @@ async fn redirect(State(store): State<ReadOnlyStore>, Path(target): Path<String>
         }
         let mut parts = address.splitn(3, ':');
         if let (Some(kind), Some(owner), Some(d)) = (parts.next(), parts.next(), parts.next())
-            && kind == ANNOUNCEMENT.to_string()
+            && kind.parse() == Ok(ANNOUNCEMENT)
             && let Ok(owner) = PublicKey::from_hex(owner)
         {
             return moved(&repo_path(&owner, d));

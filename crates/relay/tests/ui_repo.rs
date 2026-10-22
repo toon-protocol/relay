@@ -42,7 +42,7 @@ async fn store(relay: &relay::Relay, event: &Event) {
 }
 
 #[tokio::test]
-async fn the_list_the_home_and_the_redirects() {
+async fn the_pages_read_written_events_and_ignore_a_strangers_refs() {
     let running = running().await;
     let relay = &running.relay;
     let owner = Keys::generate();
@@ -56,9 +56,13 @@ async fn the_list_the_home_and_the_redirects() {
         &[
             &["d", "proj"],
             &["name", "Project <b>"],
-            &["description", "A repo"],
+            &["description", "A <script>alert(1)</script> repo"],
             &["maintainers", &maintainer.public_key().to_hex()],
-            &["clone", "https://example.test/proj.git"],
+            &[
+                "clone",
+                "https://example.test/proj.git",
+                "javascript:alert(1)",
+            ],
         ],
     );
     store(relay, &announcement).await;
@@ -97,13 +101,18 @@ async fn the_list_the_home_and_the_redirects() {
     let (status, _, list) = get(relay, "/repo").await;
     assert_eq!(status, StatusCode::OK);
     assert!(list.contains("Project &lt;b&gt;"), "{list}");
+    assert!(!list.contains("<script"), "{list}");
 
     let home = format!("/repo/{}/proj", owner.public_key().to_bech32().unwrap());
     let (status, _, page) = get(relay, &home).await;
     assert_eq!(status, StatusCode::OK);
     assert!(page.contains("refs/heads/main"), "{page}");
+    assert!(page.contains("Default branch: <code>main</code>"), "{page}");
+    assert!(page.contains(&maintainer.public_key().to_bech32().unwrap()));
+    assert!(page.contains("<a href=\"https://example.test/proj.git\""));
+    assert!(!page.contains("href=\"javascript:"), "{page}");
     assert!(!page.contains("evil"), "{page}");
-    assert!(!page.contains("<script"));
+    assert!(!page.contains("<script"), "{page}");
 
     let naddr = Nip19Coordinate::new(
         nostr::nips::nip01::Coordinate::new(nostr::event::Kind::from(30_617), owner.public_key())
@@ -117,7 +126,13 @@ async fn the_list_the_home_and_the_redirects() {
         assert_eq!(status, StatusCode::MOVED_PERMANENTLY, "{target}");
         assert_eq!(location.as_deref(), Some(home.as_str()));
     }
+}
 
+#[tokio::test]
+async fn an_unknown_repo_or_id_is_a_404_page() {
+    let running = running().await;
+    let relay = &running.relay;
+    let owner = Keys::generate();
     for path in [
         format!("/repo/{}", "0".repeat(64)),
         format!("/repo/{}/nope", owner.public_key().to_bech32().unwrap()),
@@ -125,6 +140,7 @@ async fn the_list_the_home_and_the_redirects() {
     ] {
         let (status, _, page) = get(relay, &path).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
-        assert!(page.starts_with("<!doctype html>"));
+        assert!(page.starts_with("<!doctype html>"), "{path}");
+        assert!(!page.contains("<script"), "{path}");
     }
 }

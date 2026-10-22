@@ -84,7 +84,9 @@ describe('relay image conformance: the /repo app UI', () => {
         tags: [
           ['d', 'proj'],
           ['name', 'Seeded <b>'],
+          ['description', 'A <script>alert(1)</script> repo'],
           ['maintainers', pubkeyOf(maintainer)],
+          ['clone', 'https://example.test/proj.git', 'javascript:alert(1)'],
         ],
       });
       await publishOk(relay, announcement);
@@ -133,6 +135,12 @@ describe('relay image conformance: the /repo app UI', () => {
       const page = await fetch(`${relay.readUrl}${home}`);
       expect(page.status).toBe(200);
       const html = await page.text();
+      expect(html).toContain('A &lt;script&gt;alert(1)&lt;/script&gt; repo');
+      expect(html).toContain('Ada Owner');
+      expect(html).toContain(nip19.npubEncode(pubkeyOf(maintainer)));
+      expect(html).toContain('<a href="https://example.test/proj.git"');
+      expect(html).not.toContain('href="javascript:');
+      expect(html).toContain('Default branch: <code>main</code>');
       expect(html).toContain('refs/heads/main');
       expect(html).not.toContain('evil');
       expect(html).not.toContain('<script');
@@ -162,6 +170,7 @@ describe('relay image conformance: the /repo app UI', () => {
         const response = await fetch(`${relay.readUrl}${path}`);
         expect(response.status).toBe(404);
         expect(response.headers.get('content-type')).toMatch(/^text\/html/);
+        expect(await response.text()).not.toContain('<script');
       }
     }
   );
