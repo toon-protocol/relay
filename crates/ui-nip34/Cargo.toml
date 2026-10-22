@@ -1,0 +1,14 @@
+[package]
+name = "ui-nip34"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "The NIP-34 (git) app UI, mounted at /repo"
+
+[lints]
+workspace = true
+
+[dependencies]
+axum.workspace = true
+relay-ui.workspace = true

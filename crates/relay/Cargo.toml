@@ -9,6 +9,11 @@ description = "TOON Protocol Nostr relay: free NIP-01 WebSocket reads and an HTT
 [lints]
 workspace = true
 
+[features]
+default = ["ui-repo"]
+# The /repo app UI (#276); TOON_UI_APPS switches it on and off at run time.
+ui-repo = ["dep:ui-nip34"]
+
 [dependencies]
 axum.workspace = true
 base64.workspace = true
@@ -19,6 +24,7 @@ hyper.workspace = true
 hyper-util.workspace = true
 # `os-rng`: the NIP-42 challenge is drawn from the operating system.
 nostr = { workspace = true, features = ["os-rng"] }
+relay-ui.workspace = true
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -27,6 +33,7 @@ sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
+ui-nip34 = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true

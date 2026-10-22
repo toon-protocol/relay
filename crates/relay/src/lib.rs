@@ -42,6 +42,7 @@ mod route;
 mod session;
 mod store;
 mod subscribe;
+mod ui;
 mod verified;
 mod version;
 mod write;
@@ -92,6 +93,8 @@ pub struct Relay {
     reaper: Reaper,
     /// NIP-29, while it is on.
     groups: Option<groups::GroupRules>,
+    /// The app UIs that are on (`TOON_UI_APPS`), served on the read port.
+    uis: Arc<[relay_ui::AppUi]>,
 }
 
 /// Whether the reaper runs, when, and how long it lets an expired event stay.
@@ -158,8 +161,10 @@ impl Relay {
             auth.clone(),
             groups.as_ref().map(groups::GroupRules::view),
         );
+        let uis = ui::enabled(&config.ui_apps, &store)?;
         Ok(Self {
             identity: config.identity,
+            uis,
             edge: edge.clone(),
             document: Settings {
                 pubkey: config.identity.to_hex(),
@@ -276,8 +281,9 @@ impl Relay {
     }
 
     /// Everything served on the read port: the NIP-01 WebSocket, the Relay
-    /// Information Document for a request that asks for it, and `426` for any
-    /// other request that is not an upgrade.
+    /// Information Document for a request that asks for it, the app UIs that
+    /// are on (`GET` and `HEAD` under their prefix), and `426` for any other
+    /// request that is not an upgrade.
     ///
     /// Serve it with upgrades enabled (`axum::serve` does) and with connection
     /// info, so the read side knows its peers.

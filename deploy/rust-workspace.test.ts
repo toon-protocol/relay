@@ -212,8 +212,15 @@ describe("the connector's crate is read for its self-description only", () => {
         (table) =>
           Object.entries((manifest[table] ?? {}) as Record<string, Dependency>)
       );
+    // A path into crates/ is this workspace's own crate (the app UIs, #276),
+    // not something from elsewhere.
     const sourced = (dependency: Dependency) =>
       typeof dependency === 'object' &&
+      !(
+        typeof dependency['path'] === 'string' &&
+        /^crates\/[\w-]+$/.test(dependency['path']) &&
+        ['git', 'package', 'registry'].every((key) => !(key in dependency))
+      ) &&
       ['git', 'path', 'package', 'registry'].some((key) => key in dependency);
 
     const fromElsewhere = tables(
@@ -302,6 +309,7 @@ describe('an invariant type keeps its fields to its own module', () => {
     'crates/relay/src/write/payment.rs',
     'crates/relay/src/edge.rs',
     'crates/relay/src/route.rs',
+    'crates/relay-ui/src/lib.rs',
   ];
 
   it('declares no field with a visibility', () => {
