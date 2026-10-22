@@ -40,8 +40,51 @@ describe('relay image conformance: the /repo app UI', () => {
       expect(response.status).toBe(200);
       expect(response.headers.get('content-type')).toMatch(/^text\/html/);
       expect(response.headers.get('content-security-policy')).toBe(
-        "default-src 'self'"
+        "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'"
       );
+    }
+  );
+
+  conformanceTest(
+    'the page loads a hashed .wasm served as application/wasm, immutable',
+    async () => {
+      const page = await (await fetch(`${relay.readUrl}/repo`)).text();
+      const script = /src="(\/repo\/assets\/[^"]+\.js)"/.exec(page)?.[1];
+      expect(script, 'the page names its script').toBeDefined();
+      const boot = await fetch(`${relay.readUrl}${script}`);
+      expect(boot.status).toBe(200);
+      expect(boot.headers.get('content-type')).toMatch(/javascript/);
+      const glue = /'\.\/([^']+\.js)'/.exec(await boot.text())?.[1];
+      expect(glue, 'the boot module names the loader').toBeDefined();
+      const loader = await (
+        await fetch(`${relay.readUrl}/repo/assets/${glue}`)
+      ).text();
+      const wasmName = /[\w.-]+\.[0-9a-f]{16}\.wasm/.exec(loader)?.[0];
+      expect(wasmName, 'the loader names the hashed module').toBeDefined();
+      const wasm = await fetch(`${relay.readUrl}/repo/assets/${wasmName}`);
+      expect(wasm.status).toBe(200);
+      expect(wasm.headers.get('content-type')).toBe('application/wasm');
+      expect(wasm.headers.get('cache-control')).toBe(
+        'public, max-age=31536000, immutable'
+      );
+    }
+  );
+
+  conformanceTest(
+    'with TOON_UI_ASSETS_DIR unset, event pages work and /repo says browsing is unavailable',
+    async () => {
+      const bare = await startRelay(imageUnderTest(), {
+        env: { TOON_UI_ASSETS_DIR: '' },
+      });
+      try {
+        const page = await fetch(`${bare.readUrl}/repo`);
+        expect(page.status).toBe(200);
+        expect(await page.text()).toContain('git browsing unavailable');
+        const document = await getDocument(`${bare.readUrl}/`);
+        expect(document.status).toBe(200);
+      } finally {
+        await bare.stop();
+      }
     }
   );
 
@@ -129,7 +172,9 @@ describe('relay image conformance: the /repo app UI', () => {
       const list = await (await fetch(`${relay.readUrl}/repo`)).text();
       expect(list).toContain('Seeded &lt;b&gt;');
       expect(list).toContain('Ada Owner');
-      expect(list).not.toContain('<script');
+      // The list loads its own script from /repo/assets/; the seeded one is
+      // escaped.
+      expect(list).not.toContain('<script>alert');
 
       const home = `/repo/${nip19.npubEncode(ownerKey)}/proj`;
       const page = await fetch(`${relay.readUrl}${home}`);

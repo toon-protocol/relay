@@ -36,7 +36,7 @@ function readFile(path: string): string {
 }
 
 interface Toolchain {
-  toolchain: { channel: string; components: string[] };
+  toolchain: { channel: string; components: string[]; targets?: string[] };
 }
 
 interface WorkspaceManifest {
@@ -104,6 +104,24 @@ describe('the Rust toolchain is pinned once', () => {
     expect(toolchain.toolchain.channel).toMatch(/^\d+\.\d+\.\d+$/);
     expect(toolchain.toolchain.components).toEqual(
       expect.arrayContaining(['clippy', 'rustfmt'])
+    );
+  });
+
+  it('adds the one extra target the app UIs build for (#283)', () => {
+    expect(toolchain.toolchain.targets).toEqual(['wasm32-unknown-unknown']);
+  });
+
+  it('installs the wasm-bindgen CLI at the version of the crate it pins (#283)', () => {
+    const dependency = workspace.workspace.dependencies['wasm-bindgen'];
+    const pinned = typeof dependency === 'string' ? dependency : undefined;
+    expect(pinned).toMatch(/^=\d+\.\d+\.\d+$/);
+    const installs = instructions(RUST_DOCKERFILE).filter((line) =>
+      line.includes('cargo install wasm-bindgen-cli')
+    );
+    expect(installs).toHaveLength(1);
+    expect(installs[0]).toContain(`--version ${pinned?.slice(1)}`);
+    expect(instructions(RUST_DOCKERFILE)).toContain(
+      'RUN rustup target add wasm32-unknown-unknown'
     );
   });
 
@@ -344,6 +362,7 @@ describe("the Rust image keeps the TypeScript image's contract with a stack", ()
     expect(rust[0]).toMatch(/^FROM alpine:\d+\.\d+$/);
     expect(instructionsOf(rust, 'COPY')).toEqual([
       'COPY --from=builder /workspace/target/release/relay /usr/local/bin/relay',
+      'COPY --from=ui-assets /ui-assets /usr/local/share/relay/ui-assets',
     ]);
   });
 
@@ -361,6 +380,7 @@ describe("the Rust image keeps the TypeScript image's contract with a stack", ()
       'ENV TOON_BLS_PORT=3100',
       'ENV TOON_DATA_DIR=/data',
       'ENV TOON_RELAY_PORT=7100',
+      'ENV TOON_UI_ASSETS_DIR=/usr/local/share/relay/ui-assets',
     ]);
   });
 

@@ -7,4 +7,6 @@
 channel = "1.98.0"
 profile = "minimal"
 components = ["clippy", "rustfmt"]
+# The browser halves of the app UIs (#283) are WebAssembly; `cargo xtask
+# ui-assets` builds them for this target.
 targets = ["wasm32-unknown-unknown"]

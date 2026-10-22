@@ -175,8 +175,13 @@ const UI_APPS: Setting = Setting {
     env: "TOON_UI_APPS",
 };
 
+const UI_ASSETS_DIR: Setting = Setting {
+    flag: "--ui-assets-dir",
+    env: "TOON_UI_ASSETS_DIR",
+};
+
 /// The flags that take a value, and the ones that stand alone.
-const VALUE_FLAGS: [&str; 29] = [
+const VALUE_FLAGS: [&str; 30] = [
     MNEMONIC.flag,
     SECRET_KEY.flag,
     READ_PORT.flag,
@@ -206,6 +211,7 @@ const VALUE_FLAGS: [&str; 29] = [
     OPERATOR_PUBKEYS.flag,
     AUTH_REQUIRED_KINDS.flag,
     UI_APPS.flag,
+    UI_ASSETS_DIR.flag,
 ];
 const SWITCH_FLAGS: [&str; 8] = [
     DEV_MODE.flag,
@@ -283,6 +289,8 @@ Options (each flag beats its environment variable):
   --expiration-reap-interval-seconds <n>   TOON_EXPIRATION_REAP_INTERVAL_SECONDS (default 3600)
   --ui-apps <names>                        TOON_UI_APPS (comma-separated app UIs served on the read port, default repo;
                                            empty serves none)
+  --ui-assets-dir <dir>                    TOON_UI_ASSETS_DIR (built UI assets, served under /repo/assets/;
+                                           unset or unusable: git browsing is unavailable)
   --blocked-event-ids <ids>                TOON_BLOCKED_EVENT_IDS (comma-separated)
   --subscribe-ilp-address <addr>           TOON_SUBSCRIBE_ILP_ADDRESS (sells the live feed)
   --broadcast-price <n>                    TOON_BROADCAST_PRICE (what one broadcast event costs)
@@ -410,6 +418,10 @@ pub struct Config {
     /// The app UIs served on the read port (`TOON_UI_APPS`), by name, once
     /// each. Empty serves none.
     pub ui_apps: Vec<String>,
+    /// The folder of built UI assets (`TOON_UI_ASSETS_DIR`), if given. The
+    /// relay starts without it; pages that need assets say they are
+    /// unavailable.
+    pub ui_assets_dir: Option<PathBuf>,
 }
 
 /// The command line split into the flags that were given.
@@ -642,6 +654,7 @@ impl Config {
         )?;
 
         let ui_apps = sources.ui_apps()?;
+        let ui_assets_dir = sources.text(&UI_ASSETS_DIR).map(|(_, dir)| dir.into());
         let nip29_groups = sources.on(&NIP29_GROUPS);
         let nip17_recipient_only = sources.on(&NIP17_RECIPIENT_ONLY);
         let text = |setting: &Setting| sources.text(setting).map(|(_, value)| value);
@@ -696,6 +709,7 @@ impl Config {
             nip29_groups,
             auth_required_kinds,
             ui_apps,
+            ui_assets_dir,
         })))
     }
 

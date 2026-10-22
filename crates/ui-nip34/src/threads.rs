@@ -247,7 +247,7 @@ fn thread_list(
 }
 
 pub(super) async fn issues(
-    State(store): State<ReadOnlyStore>,
+    State(super::Pages { store, .. }): State<super::Pages>,
     Path((npub, d)): Path<(String, String)>,
 ) -> Response {
     let Some(repo) = Repo::resolve(&store, &npub, &d).await else {
@@ -266,7 +266,7 @@ pub(super) async fn issues(
 }
 
 pub(super) async fn pulls(
-    State(store): State<ReadOnlyStore>,
+    State(super::Pages { store, .. }): State<super::Pages>,
     Path((npub, d)): Path<(String, String)>,
 ) -> Response {
     let Some(repo) = Repo::resolve(&store, &npub, &d).await else {
@@ -381,7 +381,7 @@ fn thread_body(
 }
 
 pub(super) async fn issue(
-    State(store): State<ReadOnlyStore>,
+    State(super::Pages { store, .. }): State<super::Pages>,
     Path((npub, d, id)): Path<(String, String, String)>,
 ) -> Response {
     let Some(repo) = Repo::resolve(&store, &npub, &d).await else {
@@ -399,7 +399,7 @@ pub(super) async fn issue(
 }
 
 pub(super) async fn pull(
-    State(store): State<ReadOnlyStore>,
+    State(super::Pages { store, .. }): State<super::Pages>,
     Path((npub, d, id)): Path<(String, String, String)>,
 ) -> Response {
     let Some(repo) = Repo::resolve(&store, &npub, &d).await else {

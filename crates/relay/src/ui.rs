@@ -3,6 +3,7 @@
 
 #[cfg(feature = "ui-repo")]
 use std::future::Future;
+use std::path::Path;
 #[cfg(feature = "ui-repo")]
 use std::pin::Pin;
 use std::sync::Arc;
@@ -13,7 +14,7 @@ use axum::http::Method;
 use nostr::event::Event;
 #[cfg(feature = "ui-repo")]
 use nostr::filter::Filter;
-use relay_ui::AppUi;
+use relay_ui::{AppUi, Assets};
 #[cfg(feature = "ui-repo")]
 use relay_ui::{EventSource, ReadOnlyStore};
 
@@ -38,10 +39,14 @@ impl EventSource for Reading {
 /// The app UIs named in `apps` (`TOON_UI_APPS`), each over a read-only handle
 /// to `store`. A name this build has no app for is refused: the feature that
 /// holds it was left out.
-pub(crate) fn enabled(apps: &[String], store: &Store) -> Result<Arc<[AppUi]>, RelayError> {
+pub(crate) fn enabled(
+    apps: &[String],
+    store: &Store,
+    assets: Option<&Assets>,
+) -> Result<Arc<[AppUi]>, RelayError> {
     let mut uis = Vec::new();
     for app in apps {
-        match built(app, store) {
+        match built(app, store, assets) {
             Some(ui) => uis.push(ui),
             None => {
                 return Err(RelayError::InvalidSetting {
@@ -57,12 +62,30 @@ pub(crate) fn enabled(apps: &[String], store: &Store) -> Result<Arc<[AppUi]>, Re
 
 /// The app UI called `name`, if this build includes it.
 #[cfg_attr(not(feature = "ui-repo"), allow(unused_variables))]
-fn built(name: &str, store: &Store) -> Option<AppUi> {
+fn built(name: &str, store: &Store, assets: Option<&Assets>) -> Option<AppUi> {
     #[cfg(feature = "ui-repo")]
     if name == "repo" {
-        return Some(ui_nip34::app(ReadOnlyStore::new(Reading(store.clone()))));
+        return Some(ui_nip34::app(
+            ReadOnlyStore::new(Reading(store.clone())),
+            assets.cloned(),
+        ));
     }
     None
+}
+
+/// The built assets in `dir` (`TOON_UI_ASSETS_DIR`). Unset, or a folder
+/// without a readable manifest and the files it names, is none: the relay
+/// still starts and the pages that need assets say so.
+pub(crate) fn assets(dir: Option<&Path>) -> Option<Assets> {
+    let dir = dir?;
+    let assets = Assets::load(dir);
+    if assets.is_none() {
+        eprintln!(
+            "ui: no usable assets in {} (TOON_UI_ASSETS_DIR); browsing pages are unavailable",
+            dir.display()
+        );
+    }
+    assets
 }
 
 impl Relay {
