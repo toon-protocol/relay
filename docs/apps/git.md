@@ -17,8 +17,9 @@ Sources, in order of authority:
 - [ADR 0001](../adr/0001-app-uis-live-on-the-relay.md) — the relay's `/repo` UI
   reads these events and the browser fetches objects itself.
 
-Placeholders in `<angle brackets>` stand for values you compute. Hashes written
-out in full are real: they are the ids of the git blob object `hello\n`.
+Placeholders in `<angle brackets>` stand for values you compute. Other hashes
+are placeholders too, except the object id `ce013625…` and blob id `2cf8d83d…`,
+which are the ids of the git blob object `hello\n`.
 
 ## How writes work
 
@@ -57,7 +58,7 @@ name and is a short, stable identifier.
     ["d", "my-repo"],
     ["name", "my-repo"],
     ["description", "A small example repository"],
-    ["web", "https://relay.example.com/repo/<owner npub>/my-repo"],
+    ["web", "https://example.com/my-repo"],
     ["clone", "https://example.com/my-repo.git"],
     ["relays", "wss://relay.example.com"],
     ["r", "<earliest unique commit id>", "euc"],
@@ -123,14 +124,15 @@ carry several `x` tags to authorize several blobs.
 ### 2.3 Upload (BUD-02)
 
 Optionally check first: `HEAD /<blob id>` on the server (BUD-01). A `200`
-means it already holds the blob, and you skip the upload.
+means it already holds the blob, and you skip the upload (unless you are
+renewing it, see [Extending retention](#expiry-and-retention)).
 
 Otherwise:
 
 ```
 PUT /upload HTTP/1.1
 Host: blossom.example.com
-Authorization: Nostr <base64 of the kind 24242 event JSON>
+Authorization: Nostr <base64url, unpadded, of the kind 24242 event JSON>
 Content-Type: application/octet-stream
 Content-Length: <length of the object bytes>
 X-SHA-256: 2cf8d83d9ee29543b34a87727421fdecb7e3f3a183d337639025de576db9ebb4
@@ -142,9 +144,9 @@ A success returns a blob descriptor:
 
 ```json
 {
-  "url": "https://blossom.example.com/2cf8d83d9ee29543b34a87727421fdecb7e3f3a183d337639025de576db9ebb4",
+  "url": "https://blossom.example.com/2cf8d83d9ee29543b34a87727421fdecb7e3f3a183d337639025de576db9ebb4.bin",
   "sha256": "2cf8d83d9ee29543b34a87727421fdecb7e3f3a183d337639025de576db9ebb4",
-  "size": 15,
+  "size": 13,
   "type": "application/octet-stream",
   "uploaded": 1790000001
 }
@@ -167,7 +169,7 @@ It holds the refs and the object mapping.
     ["d", "my-repo"],
     ["refs/heads/main", "9f3a1c6e0d2b4a7c8e5f1b3d6a9c0e2f4b7d8a1c"],
     ["HEAD", "ref: refs/heads/main"],
-    ["blossom", "9f3a1c6e0d2b4a7c8e5f1b3d6a9c0e2f4b7d8a1c", "<blob id of that commit>"],
+    ["blossom", "9f3a1c6e0d2b4a7c8e5f1b3d6a9c0e2f4b7d8a1c", "<blob id of that commit's object bytes>"],
     ["blossom", "ce013625030ba8dba906f756967f9e9ca394464a",
       "2cf8d83d9ee29543b34a87727421fdecb7e3f3a183d337639025de576db9ebb4"],
     ["arweave", "e1a4c8b2d6f09375a1c3e5b7d9f20486ac1e3b5d",
@@ -201,8 +203,9 @@ It holds the refs and the object mapping.
    Take the newest by `created_at`; on a tie, the lowest event id (ADR 0002).
 3. Resolve refs from that event's `refs/...` tags and `HEAD`.
 4. Walk from the tip commit. For each object id you need, find its blob id in a
-   `blossom` tag; if there is none, look in the `blossom-index` blob; if there
-   is none there either, the object is not retrievable (see [Expiry](#expiry-and-retention)).
+   `blossom` tag; if there is none, look in the `blossom-index` blob, then in
+   an `arweave` tag; if none of those has it, the object is not retrievable
+   (see [Expiry](#expiry-and-retention)).
 5. For each blob id, try candidate servers (below) until one returns bytes that
    verify.
 
@@ -230,8 +233,9 @@ follow that tag's format, which is not interchangeable with this one.
 
 ## 4. Issues, patches, pull requests, comments and status
 
-All of these reference the repository by an `a` tag, `30617:<owner pubkey>:<d>`,
-and tag the owner with `p` so they reach the owner's notifications.
+Issues, patches, pull requests and status events reference the repository by
+an `a` tag, `30617:<owner pubkey>:<d>`, and tag the owner with `p` so they reach
+the owner's notifications. Comments follow NIP-22 instead (below).
 
 ### Issue (kind 1621)
 
@@ -246,7 +250,7 @@ and tag the owner with `p` so they reach the owner's notifications.
     ["subject", "Crash when the config file is empty"],
     ["t", "bug"]
   ],
-  "content": "Running `tool run` with an empty config file panics.\n\nExpected: a clear error.",
+  "content": "Loading an empty config file panics.\n\nExpected: a clear error.",
   "id": "<event id>",
   "sig": "<signature>"
 }
@@ -281,7 +285,8 @@ tag with marker `reply` pointing at the previous patch.
 }
 ```
 
-A revision of a patch uses `t` `root-revision` instead of `root`.
+A revision of a patch uses `t` `root-revision` instead of `root`, and its first
+patch carries an `e` tag with marker `reply` pointing at the original root patch.
 
 ### Pull request (kind 1618)
 
@@ -312,8 +317,7 @@ objects reachable in the Blossom store; the event names the tip.
 
 ### Pull request update (kind 1619)
 
-Moves the tip of an existing pull request. Only the PR's author (or a
-maintainer) should publish it.
+Moves the tip of an existing pull request.
 
 ```json
 {
@@ -366,12 +370,12 @@ and leave `E`/`K`/`P` on the root.
 
 ### Status (kinds 1630–1633)
 
-| Kind | Meaning              |
-| ---- | -------------------- |
-| 1630 | Open                 |
+| Kind | Meaning                     |
+| ---- | --------------------------- |
+| 1630 | Open                        |
 | 1631 | Applied / merged / resolved |
-| 1632 | Closed               |
-| 1633 | Draft                |
+| 1632 | Closed                      |
+| 1633 | Draft                       |
 
 The newest status event by an honoured author is the current status. Honoured
 authors are the authorized authors plus the author of the target issue, patch
@@ -396,8 +400,9 @@ or pull request (ADR 0002). Content is an optional Markdown note.
 ```
 
 Marking a patch applied (1631) adds, beside the root `e` tag, an `e` tag with
-marker `mention` for each applied patch, a `q` tag for the merge commit, and the
-commits that were applied:
+marker `reply` naming the accepted revision root (when a revision was applied),
+a `q` tag for each applied patch event, and the commits that were applied, each
+also as an `r` tag:
 
 ```json
 {
@@ -406,14 +411,16 @@ commits that were applied:
   "created_at": 1790006000,
   "tags": [
     ["e", "<kind 1617 root patch event id>", "wss://relay.example.com", "root"],
-    ["e", "<kind 1617 applied patch event id>", "wss://relay.example.com", "mention"],
+    ["e", "<kind 1617 accepted revision root event id>", "wss://relay.example.com", "reply"],
     ["p", "<owner pubkey>"],
     ["p", "<patch author pubkey>"],
+    ["p", "<revision author pubkey>"],
     ["a", "30617:<owner pubkey>:my-repo", "wss://relay.example.com"],
     ["r", "<earliest unique commit id>"],
-    ["q", "<merge commit id>", "wss://relay.example.com", "<owner pubkey>"],
-    ["merge-commit", "<merge commit id>"],
-    ["applied-as-commits", "<commit id>", "<commit id>"]
+    ["q", "<kind 1617 applied patch event id>", "wss://relay.example.com", "<patch author pubkey>"],
+    ["applied-as-commits", "<applied commit id>", "<applied commit id 2>"],
+    ["r", "<applied commit id>"],
+    ["r", "<applied commit id 2>"]
   ],
   "content": "Applied, thanks.",
   "id": "<event id>",
@@ -421,8 +428,9 @@ commits that were applied:
 }
 ```
 
-For a pull request (1618), the root `e` tag names the 1618 event; a merge status
-adds `merge-commit` and `applied-as-commits` the same way.
+A merge instead of an apply carries `["merge-commit", <merge commit id>]` and
+`["r", <merge commit id>]` in place of `applied-as-commits`. For a pull request
+(1618), the root `e` tag names the 1618 event.
 
 ## Expiry and retention
 
