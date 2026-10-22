@@ -161,6 +161,215 @@ describe('relay image conformance: the /repo app UI', () => {
   );
 
   conformanceTest(
+    'issue and pull pages show threads and the honoured status',
+    async () => {
+      const owner = generateSecretKey();
+      const author = generateSecretKey();
+      const stranger = generateSecretKey();
+      const ownerKey = pubkeyOf(owner);
+      const coordinate = `30617:${ownerKey}:threads`;
+      await publishOk(
+        relay,
+        sign(owner, {
+          kind: 30617,
+          created_at: 10,
+          tags: [
+            ['d', 'threads'],
+            ['name', 'Threads'],
+          ],
+        })
+      );
+      const issue = sign(author, {
+        kind: 1621,
+        created_at: 20,
+        content: 'Broken <script>alert(1)</script> thing',
+        tags: [
+          ['a', coordinate],
+          ['subject', 'Crash <b>on start</b>'],
+        ],
+      });
+      await publishOk(relay, issue);
+      const other = sign(author, {
+        kind: 1621,
+        created_at: 21,
+        content: 'Second issue',
+        tags: [['a', coordinate]],
+      });
+      await publishOk(relay, other);
+      await publishOk(
+        relay,
+        sign(author, {
+          kind: 1111,
+          created_at: 30,
+          content: 'nip22 comment',
+          tags: [
+            ['E', issue.id],
+            ['K', '1621'],
+          ],
+        })
+      );
+      await publishOk(
+        relay,
+        sign(author, {
+          kind: 1622,
+          created_at: 31,
+          content: 'legacy comment',
+          tags: [
+            ['a', coordinate],
+            ['e', issue.id, '', 'root'],
+          ],
+        })
+      );
+      await publishOk(
+        relay,
+        sign(owner, {
+          kind: 1631,
+          created_at: 40,
+          tags: [['e', issue.id]],
+        })
+      );
+      // A stranger's status is ignored; the target's own author is honoured.
+      await publishOk(
+        relay,
+        sign(stranger, {
+          kind: 1632,
+          created_at: 50,
+          tags: [['e', issue.id]],
+        })
+      );
+      await publishOk(
+        relay,
+        sign(stranger, {
+          kind: 1632,
+          created_at: 50,
+          tags: [['e', other.id]],
+        })
+      );
+
+      const patch = sign(author, {
+        kind: 1617,
+        created_at: 60,
+        content: 'diff --git a/x b/x\n+<script>evil()</script>',
+        tags: [
+          ['a', coordinate],
+          ['t', 'root'],
+        ],
+      });
+      await publishOk(relay, patch);
+      const reply = sign(author, {
+        kind: 1617,
+        created_at: 61,
+        content: 'follow-up patch',
+        tags: [
+          ['a', coordinate],
+          ['e', patch.id, '', 'reply'],
+        ],
+      });
+      await publishOk(relay, reply);
+      const pr = sign(author, {
+        kind: 1618,
+        created_at: 62,
+        content: 'Please pull',
+        tags: [
+          ['a', coordinate],
+          ['subject', 'A pull request'],
+          ['c', 'c'.repeat(40)],
+        ],
+      });
+      await publishOk(relay, pr);
+      await publishOk(
+        relay,
+        sign(author, {
+          kind: 1619,
+          created_at: 70,
+          tags: [
+            ['a', coordinate],
+            ['E', pr.id],
+            ['c', 'd'.repeat(40)],
+          ],
+        })
+      );
+      await publishOk(
+        relay,
+        sign(author, {
+          kind: 1632,
+          created_at: 71,
+          tags: [['e', patch.id]],
+        })
+      );
+
+      const base = `${relay.readUrl}/repo/${nip19.npubEncode(ownerKey)}/threads`;
+      const get = async (path: string) => {
+        const response = await fetch(`${base}${path}`);
+        expect(response.headers.get('content-security-policy')).toBe(
+          "default-src 'self'"
+        );
+        const text = await response.text();
+        expect(text).not.toContain('<script');
+        return { status: response.status, text };
+      };
+
+      const home = await get('');
+      expect(home.text).toContain('/issues"');
+      expect(home.text).toContain('/pulls"');
+
+      const issues = await get('/issues');
+      expect(issues.status).toBe(200);
+      expect(issues.text).toContain(`/issues/${issue.id}"`);
+      expect(issues.text).toContain('Crash &lt;b&gt;on start&lt;/b&gt;');
+      expect(issues.text).toContain('[resolved]');
+      expect(issues.text).toContain(`/issues/${other.id}"`);
+      expect(issues.text).toContain('[open]');
+
+      const thread = await get(`/issues/${issue.id}`);
+      expect(thread.status).toBe(200);
+      expect(thread.text).toContain('Status: <strong>resolved</strong>');
+      expect(thread.text).toContain('Broken &lt;script&gt;');
+      expect(thread.text).toContain(nip19.npubEncode(pubkeyOf(author)));
+      expect(thread.text.indexOf('nip22 comment')).toBeGreaterThan(0);
+      expect(thread.text.indexOf('legacy comment')).toBeGreaterThan(
+        thread.text.indexOf('nip22 comment')
+      );
+      const ignored = await get(`/issues/${other.id}`);
+      expect(ignored.text).toContain('Status: <strong>open</strong>');
+
+      const pulls = await get('/pulls');
+      expect(pulls.status).toBe(200);
+      expect(pulls.text).toContain(`/pulls/${patch.id}"`);
+      expect(pulls.text).toContain(`/pulls/${pr.id}"`);
+      expect(pulls.text).not.toContain(`/pulls/${reply.id}`);
+      expect(pulls.text).toContain('A pull request');
+
+      const patchPage = await get(`/pulls/${patch.id}`);
+      expect(patchPage.status).toBe(200);
+      expect(patchPage.text).toContain('+&lt;script&gt;evil()&lt;/script&gt;');
+      // The patch's own author closed it.
+      expect(patchPage.text).toContain('Status: <strong>closed</strong>');
+
+      const prPage = await get(`/pulls/${pr.id}`);
+      expect(prPage.status).toBe(200);
+      expect(prPage.text).toContain('Latest tip: <code>' + 'd'.repeat(40));
+      expect(prPage.text).toContain('Status: <strong>open</strong>');
+
+      // Not the right kind, malformed, unknown, or another route's id.
+      for (const path of [
+        `/issues/${patch.id}`,
+        `/pulls/${issue.id}`,
+        '/issues/not-an-id',
+        `/issues/${'0'.repeat(64)}`,
+        `/pulls/${'0'.repeat(64)}`,
+      ]) {
+        expect((await get(path)).status).toBe(404);
+      }
+      // A thread never resolves under another repo.
+      const elsewhere = await fetch(
+        `${relay.readUrl}/repo/${nip19.npubEncode(pubkeyOf(stranger))}/threads/issues/${issue.id}`
+      );
+      expect(elsewhere.status).toBe(404);
+    }
+  );
+
+  conformanceTest(
     'an unknown repo or id returns 404 HTML, not 426',
     async () => {
       for (const path of [

@@ -3,7 +3,10 @@
 //! Server-rendered pages over this relay's repository events, with no
 //! JavaScript: the list of repositories, a repository's home, and the
 //! redirects from an `naddr` or an event id to the canonical
-//! `/repo/<npub>/<d-tag>`.
+//! `/repo/<npub>/<d-tag>`, and a repository's issues and patches/PRs with their
+//! threads and honoured status ([`threads`]).
+
+mod threads;
 
 use std::collections::HashMap;
 
@@ -34,6 +37,10 @@ pub fn app(store: ReadOnlyStore) -> AppUi {
         .route(PREFIX, get(list))
         .route("/repo/{target}", get(redirect))
         .route("/repo/{npub}/{d}", get(home))
+        .route("/repo/{npub}/{d}/issues", get(threads::issues))
+        .route("/repo/{npub}/{d}/issues/{id}", get(threads::issue))
+        .route("/repo/{npub}/{d}/pulls", get(threads::pulls))
+        .route("/repo/{npub}/{d}/pulls/{id}", get(threads::pull))
         .fallback(not_found)
         .with_state(store);
     AppUi::new(PREFIX, router)
@@ -256,29 +263,34 @@ async fn list(State(store): State<ReadOnlyStore>) -> Response {
     html(StatusCode::OK, "Repositories", &body)
 }
 
-async fn home(
-    State(store): State<ReadOnlyStore>,
-    Path((owner, d)): Path<(String, String)>,
-) -> Response {
-    let Ok(owner) = PublicKey::from_bech32(&owner) else {
-        return not_found().await;
-    };
+/// The repo at `/repo/<npub>/<d>`: its owner and the owner's latest
+/// announcement, or none.
+async fn resolve_repo(store: &ReadOnlyStore, npub: &str, d: &str) -> Option<(PublicKey, Event)> {
+    let owner = PublicKey::from_bech32(npub).ok()?;
     let announcements = store
         .query(
             Filter::new()
                 .kind(Kind::from(ANNOUNCEMENT))
                 .author(owner)
-                .identifier(d.clone()),
+                .identifier(d),
         )
         .await;
-    let Some(announcement) = newest(
+    let announcement = newest(
         announcements
             .iter()
             .filter(|event| event.pubkey == owner && d_tag(event) == d),
-    ) else {
+    )?;
+    Some((owner, announcement.clone()))
+}
+
+async fn home(
+    State(store): State<ReadOnlyStore>,
+    Path((owner, d)): Path<(String, String)>,
+) -> Response {
+    let Some((owner, announcement)) = resolve_repo(&store, &owner, &d).await else {
         return not_found().await;
     };
-
+    let announcement = &announcement;
     let authors = authorized_authors(announcement);
     let states = store
         .query(
@@ -340,6 +352,11 @@ async fn home(
         }
         None => body.push_str("<p>No refs published.</p>"),
     }
+    let base = repo_path(&owner, &d);
+    body.push_str(&format!(
+        "<p><a href=\"{0}/issues\">Issues</a> &middot; <a href=\"{0}/pulls\">Patches and pull requests</a></p>",
+        escape(&base)
+    ));
     body.push_str("<p><a href=\"/repo\">All repositories</a></p>");
     html(StatusCode::OK, repo_name(announcement), &body)
 }
