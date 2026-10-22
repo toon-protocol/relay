@@ -1,0 +1,9 @@
+error[E0451]: fields `kind` and `body` of struct `RawObject` are private
+ --> tests/compile_fail/raw_object_without_verifying.rs:8:9
+  |
+7 |     let _ = RawObject {
+  |             --------- in this type
+8 |         kind: ObjectKind::Blob,
+  |         ^^^^ private field
+9 |         body: b"unchecked".to_vec(),
+  |         ^^^^ private field
