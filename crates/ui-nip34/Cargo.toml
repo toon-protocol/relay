@@ -11,4 +11,9 @@ workspace = true
 
 [dependencies]
 axum.workspace = true
+nostr.workspace = true
 relay-ui.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+nostr = { workspace = true, features = ["os-rng"] }
