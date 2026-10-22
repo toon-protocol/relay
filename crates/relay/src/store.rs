@@ -377,8 +377,12 @@ fn save(
     // The retraction, the replacement and the insert are one transaction: a
     // deletion that failed half way must not leave its tombstones without
     // its effect. The connection is behind a mutex, so no other writer in
-    // this process can read the old row between.
-    let transaction = connection.unchecked_transaction()?;
+    // this process can read the old row between. It begins IMMEDIATE: the
+    // ledger writes the same file from its own connection, and a deferred
+    // transaction that has read and then finds the file written since is
+    // refused at once as locked, past the busy timeout.
+    let transaction =
+        rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?;
     if is_retracted(&transaction, event)? {
         return Ok(Saved::Dropped);
     }
