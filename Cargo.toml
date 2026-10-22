@@ -28,6 +28,9 @@ base64 = "0.22"
 # `rev` is the commit that release is tagged at.
 # connector-release: 2026.10.16.1
 connector-domain = { git = "https://github.com/toon-protocol/connector", rev = "de8469c40952f1a8f0d2abbf9507b3d286ea0031" }
+# Git objects verified and parsed from bytes, for the browser half of /repo.
+git-objects = { path = "crates/git-objects" }
+js-sys = "0.3"
 # Pure Rust (miniz_oxide) so crates/git-objects builds for wasm32.
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
@@ -61,4 +64,21 @@ ui-nip34 = { path = "crates/ui-nip34" }
 # the `wasm-bindgen-cli` crates/relay/Dockerfile installs: the generated glue
 # and the module must come from the same one (deploy/rust-workspace.test.ts).
 wasm-bindgen = "=0.2.129"
-web-sys = { version = "0.3", features = ["Document", "Element", "Window"] }
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+    "AbortController",
+    "AbortSignal",
+    "Document",
+    "Element",
+    "Headers",
+    "Node",
+    "ReadableStream",
+    "ReadableStreamDefaultReader",
+    "ReferrerPolicy",
+    "Request",
+    "RequestCredentials",
+    "RequestInit",
+    "RequestMode",
+    "Response",
+    "Window",
+] }

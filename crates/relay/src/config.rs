@@ -180,8 +180,18 @@ const UI_ASSETS_DIR: Setting = Setting {
     env: "TOON_UI_ASSETS_DIR",
 };
 
+const UI_ARWEAVE_GATEWAYS: Setting = Setting {
+    flag: "--ui-arweave-gateways",
+    env: "TOON_UI_ARWEAVE_GATEWAYS",
+};
+
+const UI_BLOB_SERVERS: Setting = Setting {
+    flag: "--ui-blob-servers",
+    env: "TOON_UI_BLOB_SERVERS",
+};
+
 /// The flags that take a value, and the ones that stand alone.
-const VALUE_FLAGS: [&str; 30] = [
+const VALUE_FLAGS: [&str; 32] = [
     MNEMONIC.flag,
     SECRET_KEY.flag,
     READ_PORT.flag,
@@ -212,6 +222,8 @@ const VALUE_FLAGS: [&str; 30] = [
     AUTH_REQUIRED_KINDS.flag,
     UI_APPS.flag,
     UI_ASSETS_DIR.flag,
+    UI_ARWEAVE_GATEWAYS.flag,
+    UI_BLOB_SERVERS.flag,
 ];
 const SWITCH_FLAGS: [&str; 8] = [
     DEV_MODE.flag,
@@ -291,6 +303,10 @@ Options (each flag beats its environment variable):
                                            empty serves none)
   --ui-assets-dir <dir>                    TOON_UI_ASSETS_DIR (built UI assets, served under /repo/assets/;
                                            unset or unusable: git browsing is unavailable)
+  --ui-arweave-gateways <urls>             TOON_UI_ARWEAVE_GATEWAYS (comma-separated https URLs a browser tries after the
+                                           gateways a repo's own events name)
+  --ui-blob-servers <urls>                 TOON_UI_BLOB_SERVERS (comma-separated https URLs of Blossom servers a browser
+                                           tries after the ones a repo's own events name)
   --blocked-event-ids <ids>                TOON_BLOCKED_EVENT_IDS (comma-separated)
   --subscribe-ilp-address <addr>           TOON_SUBSCRIBE_ILP_ADDRESS (sells the live feed)
   --broadcast-price <n>                    TOON_BROADCAST_PRICE (what one broadcast event costs)
@@ -422,6 +438,12 @@ pub struct Config {
     /// relay starts without it; pages that need assets say they are
     /// unavailable.
     pub ui_assets_dir: Option<PathBuf>,
+    /// Arweave gateways (`TOON_UI_ARWEAVE_GATEWAYS`) a visitor's browser tries
+    /// for a git object after those the repo's events name. The relay never
+    /// contacts them.
+    pub ui_arweave_gateways: Vec<String>,
+    /// Blossom servers (`TOON_UI_BLOB_SERVERS`), likewise.
+    pub ui_blob_servers: Vec<String>,
 }
 
 /// The command line split into the flags that were given.
@@ -655,6 +677,8 @@ impl Config {
 
         let ui_apps = sources.ui_apps()?;
         let ui_assets_dir = sources.text(&UI_ASSETS_DIR).map(|(_, dir)| dir.into());
+        let ui_arweave_gateways = sources.https_urls(&UI_ARWEAVE_GATEWAYS)?;
+        let ui_blob_servers = sources.https_urls(&UI_BLOB_SERVERS)?;
         let nip29_groups = sources.on(&NIP29_GROUPS);
         let nip17_recipient_only = sources.on(&NIP17_RECIPIENT_ONLY);
         let text = |setting: &Setting| sources.text(setting).map(|(_, value)| value);
@@ -710,6 +734,8 @@ impl Config {
             auth_required_kinds,
             ui_apps,
             ui_assets_dir,
+            ui_arweave_gateways,
+            ui_blob_servers,
         })))
     }
 
@@ -754,6 +780,35 @@ impl Sources<'_> {
             }
         }
         Ok(apps)
+    }
+
+    /// A comma-separated list of `https` URLs, in order and once each; unset
+    /// or empty is none. A URL a browser would refuse is refused here.
+    fn https_urls(&self, setting: &Setting) -> Result<Vec<String>, RelayError> {
+        let Some((name, value)) = self.raw(setting) else {
+            return Ok(Vec::new());
+        };
+        let mut urls: Vec<String> = Vec::new();
+        for url in value
+            .split(',')
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+        {
+            let valid = url.strip_prefix("https://").is_some_and(|rest| {
+                !rest.is_empty() && !rest.starts_with('/') && !url.contains(char::is_whitespace)
+            });
+            if !valid {
+                return Err(RelayError::InvalidSetting {
+                    name,
+                    expected: "a comma-separated list of https URLs",
+                    value,
+                });
+            }
+            if !urls.iter().any(|listed| listed == url) {
+                urls.push(url.to_string());
+            }
+        }
+        Ok(urls)
     }
 
     /// The paid live feed's settings: the three of them, or none. The feed is

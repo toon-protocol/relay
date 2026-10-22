@@ -144,3 +144,118 @@ async fn an_unknown_repo_or_id_is_a_404_page() {
         assert!(!page.contains("<script"), "{path}");
     }
 }
+
+/// The tree and blob pages: the layout the browser fills, in the order it
+/// tries things, and nothing fetched by the relay (#285).
+#[tokio::test]
+async fn git_pages_carry_ordered_candidates_and_their_own_policy() {
+    let assets = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(
+        assets.path().join("manifest.json"),
+        r#"{"ui-nip34-web.js":"boot.abc.js"}"#,
+    )
+    .expect("manifest");
+    std::fs::write(assets.path().join("boot.abc.js"), "//").expect("js");
+    let assets_dir = assets.path().to_string_lossy().into_owned();
+    let running = common::running_with(|name| match name {
+        "TOON_UI_ASSETS_DIR" => Some(assets_dir.clone()),
+        "TOON_UI_ARWEAVE_GATEWAYS" => Some("https://operator-gateway.test".to_owned()),
+        "TOON_UI_BLOB_SERVERS" => Some("https://operator-blossom.test".to_owned()),
+        _ => None,
+    })
+    .await;
+    let relay = &running.relay;
+    let owner = Keys::generate();
+    let commit = "a".repeat(40);
+    let blob = "c".repeat(64);
+    store(
+        relay,
+        &signed_by(
+            &owner,
+            30_617,
+            10,
+            &[&["d", "proj"], &["blossoms", "https://own-blossom.test"]],
+        ),
+    )
+    .await;
+    store(
+        relay,
+        &signed_by(
+            &owner,
+            30_618,
+            20,
+            &[
+                &["d", "proj"],
+                &["refs/heads/feature/x", &commit],
+                &["arweave", &commit, "tx1", "https://own-gateway.test"],
+                &["blossom", &commit, &blob],
+            ],
+        ),
+    )
+    .await;
+    let home = format!("/repo/{}/proj", owner.public_key().to_bech32().unwrap());
+    for (page, kind, path) in [
+        ("tree", "tree", "feature/x"),
+        ("blob", "blob", "feature/x/dir/a%20b.txt"),
+    ] {
+        let response = relay
+            .read_router()
+            .oneshot(
+                Request::get(format!("{home}/{page}/{path}"))
+                    .body(Body::empty())
+                    .expect("a request"),
+            )
+            .await
+            .expect("infallible");
+        assert_eq!(response.status(), StatusCode::OK, "{page}");
+        assert_eq!(
+            response.headers()["content-security-policy"],
+            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src https:"
+        );
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let html = String::from_utf8_lossy(&bytes);
+        assert!(
+            html.contains("<script type=\"module\" src=\"/repo/assets/boot.abc.js\">"),
+            "{html}"
+        );
+        assert_eq!(html.matches("<script").count(), 1, "{html}");
+        let layout = html
+            .split("data-git=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .expect("a layout")
+            .replace("&quot;", "\"");
+        let layout: serde_json::Value = serde_json::from_str(&layout).expect("json");
+        assert_eq!(layout["kind"], kind);
+        assert_eq!(layout["commit"], commit);
+        assert_eq!(layout["ref"], "feature/x");
+        assert_eq!(layout["base"], home);
+        let expected_path: &[&str] = if page == "blob" {
+            &["dir", "a b.txt"]
+        } else {
+            &[]
+        };
+        assert_eq!(layout["path"], serde_json::json!(expected_path));
+        assert_eq!(
+            layout["objects"][&commit],
+            serde_json::json!([
+                "https://own-gateway.test/tx1",
+                format!("https://own-blossom.test/{blob}"),
+                "https://operator-gateway.test/tx1",
+                format!("https://operator-blossom.test/{blob}"),
+            ])
+        );
+    }
+    for missing in [
+        format!("{home}/blob/nope/a"),
+        format!("{home}/blob/feature/x"),
+    ] {
+        let (status, _, _) = get(relay, &missing).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{missing}");
+    }
+}

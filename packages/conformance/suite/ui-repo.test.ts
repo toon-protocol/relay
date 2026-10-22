@@ -6,6 +6,7 @@ import { publishOk, pubkeyOf, sign } from './harness/wire.js';
 import { startRelay, type RunningRelay } from './harness/relay-container.js';
 import { getDocument } from './harness/nip11.js';
 import { conformanceTest, imageUnderTest } from './implementation.js';
+import { commitOf, gitObject, treeOf } from './harness/git-fixture.js';
 
 let relay: RunningRelay;
 let off: RunningRelay;
@@ -216,6 +217,111 @@ describe('relay image conformance: the /repo app UI', () => {
         expect(response.status).toBe(404);
         expect(response.headers.get('content-type')).toMatch(/^text\/html/);
         expect(await response.text()).not.toContain('<script');
+      }
+    }
+  );
+
+  conformanceTest(
+    'tree and blob pages list candidate URLs in order, with their own policy and the module from the manifest',
+    async () => {
+      const gateways = 'https://operator-gateway.test';
+      const servers = 'https://operator-blossom.test';
+      const configured = await startRelay(imageUnderTest(), {
+        env: {
+          TOON_UI_ARWEAVE_GATEWAYS: gateways,
+          TOON_UI_BLOB_SERVERS: servers,
+        },
+      });
+      try {
+        const owner = generateSecretKey();
+        const stranger = generateSecretKey();
+        const file = gitObject('blob', 'hello\n');
+        const root = treeOf([['100644', 'a b.txt', file]]);
+        const commit = commitOf(root, 'first');
+        const blobId = 'c'.repeat(64);
+        await publishOk(
+          configured,
+          sign(owner, {
+            kind: 30617,
+            created_at: 10,
+            tags: [
+              ['d', 'layout'],
+              ['blossoms', 'https://own-blossom.test'],
+            ],
+          })
+        );
+        const state = (key: Uint8Array, at: number, tags: string[][]) =>
+          sign(key, {
+            kind: 30618,
+            created_at: at,
+            tags: [['d', 'layout'], ...tags],
+          });
+        await publishOk(
+          configured,
+          state(owner, 20, [
+            ['HEAD', 'ref: refs/heads/feature/x'],
+            ['refs/heads/feature/x', commit.id],
+            ['arweave', commit.id, 'txcommit', 'https://own-gateway.test'],
+            ['blossom', commit.id, blobId],
+            ['arweave', root.id, 'txroot'],
+            ['arweave', file.id, 'txfile'],
+          ])
+        );
+        // A stranger's state is not honoured, so its objects are not listed.
+        await publishOk(
+          configured,
+          state(stranger, 30, [['arweave', 'f'.repeat(40), 'txevil']])
+        );
+        const home = `/repo/${nip19.npubEncode(pubkeyOf(owner))}/layout`;
+        for (const [page, path, shown] of [
+          ['tree', 'feature/x', []],
+          ['blob', 'feature/x/a%20b.txt', ['a b.txt']],
+        ] as const) {
+          const response = await fetch(
+            `${configured.readUrl}${home}/${page}/${path}`
+          );
+          expect(response.status).toBe(200);
+          const policy = response.headers.get('content-security-policy') ?? '';
+          expect(policy).toContain("default-src 'self'");
+          expect(policy).toContain('connect-src https:');
+          expect(policy).not.toContain('unsafe-inline');
+          const html = await response.text();
+          // One script, loaded from the manifest, and no inline code.
+          const scripts = [...html.matchAll(/<script\b[^>]*>/g)].map(
+            (m) => m[0]
+          );
+          expect(scripts).toHaveLength(1);
+          expect(scripts[0]).toMatch(
+            /^<script type="module" src="\/repo\/assets\/[\w.-]+\.js">$/
+          );
+          expect(html).not.toMatch(/\son\w+=/);
+          const attribute = /data-git="([^"]*)"/.exec(html)?.[1] ?? '';
+          const layout = JSON.parse(
+            attribute
+              .replaceAll('&quot;', '"')
+              .replaceAll('&#39;', "'")
+              .replaceAll('&lt;', '<')
+              .replaceAll('&gt;', '>')
+              .replaceAll('&amp;', '&')
+          );
+          expect(layout.kind).toBe(page);
+          expect(layout.ref).toBe('feature/x');
+          expect(layout.commit).toBe(commit.id);
+          expect(layout.base).toBe(home);
+          expect(layout.path).toEqual(shown);
+          expect(layout.objects[commit.id]).toEqual([
+            'https://own-gateway.test/txcommit',
+            `https://own-blossom.test/${blobId}`,
+            `${gateways}/txcommit`,
+            `${servers}/${blobId}`,
+          ]);
+          expect(layout.objects[root.id]).toEqual([`${gateways}/txroot`]);
+          expect(layout.objects['f'.repeat(40)]).toBeUndefined();
+        }
+        const missing = await fetch(`${configured.readUrl}${home}/blob/nope/a`);
+        expect(missing.status).toBe(404);
+      } finally {
+        await configured.stop();
       }
     }
   );

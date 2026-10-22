@@ -24,8 +24,8 @@ use nostr::event::Event;
 use nostr::filter::Filter;
 use tower::ServiceExt;
 
-/// What an app's pages may load: only their own origin, and no inline script
-/// (an inline script is not `'self'`).
+/// What an app's pages may load unless the page sets its own policy: only
+/// their own origin, and no inline script (an inline script is not `'self'`).
 /// `'wasm-unsafe-eval'` lets the page compile its own WebAssembly, which a
 /// bare `default-src` forbids; it does not allow `eval` of script text.
 pub const CONTENT_SECURITY_POLICY_VALUE: &str =
@@ -102,8 +102,10 @@ impl AppUi {
             .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
     }
 
-    /// Answer a request under the prefix. Every answer carries the
-    /// Content-Security-Policy, whatever the app set.
+    /// Answer a request under the prefix. Every answer carries a
+    /// Content-Security-Policy: the one the page set for itself (a page that
+    /// fetches from elsewhere widens `connect-src`), else
+    /// [`CONTENT_SECURITY_POLICY_VALUE`].
     pub async fn respond(&self, request: Request) -> Response<Body> {
         let Ok(mut response) = self
             .router
@@ -112,10 +114,10 @@ impl AppUi {
             .await
             .map(axum::response::IntoResponse::into_response)
             .map_err(|never: Infallible| never);
-        response.headers_mut().insert(
-            CONTENT_SECURITY_POLICY,
-            HeaderValue::from_static(CONTENT_SECURITY_POLICY_VALUE),
-        );
+        response
+            .headers_mut()
+            .entry(CONTENT_SECURITY_POLICY)
+            .or_insert(HeaderValue::from_static(CONTENT_SECURITY_POLICY_VALUE));
         response
     }
 }
@@ -162,5 +164,30 @@ mod tests {
         }
         let request = Request::builder().uri("/repo").body(Body::empty()).unwrap();
         assert_eq!(app.respond(request).await.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn a_page_may_set_its_own_policy() {
+        let app = AppUi::new(
+            "/repo",
+            Router::new().route(
+                "/repo",
+                get(|| async { ([(CONTENT_SECURITY_POLICY, "default-src 'self'")], "page") }),
+            ),
+        );
+        let request = Request::builder().uri("/repo").body(Body::empty()).unwrap();
+        let response = app.respond(request).await;
+        assert_eq!(
+            response
+                .headers()
+                .get_all(CONTENT_SECURITY_POLICY)
+                .iter()
+                .count(),
+            1
+        );
+        assert_eq!(
+            response.headers()[CONTENT_SECURITY_POLICY],
+            "default-src 'self'"
+        );
     }
 }

@@ -222,6 +222,10 @@ jobs:
           }
           docker run --rm --entrypoint sh relay:conformance -c 'command -v wget'
 
+      # The /repo git pages are checked in a real browser (ui-repo-browser).
+      - name: Install the browser the suite drives
+        run: pnpm --filter @toon-protocol/relay-conformance exec playwright install --with-deps chromium
+
       - name: Run the suite against the image
         env:
           CONFORMANCE_IMAGE: relay:conformance
