@@ -3,12 +3,15 @@
 //! Server-rendered pages over this relay's repository events, with no
 //! JavaScript: the list of repositories, a repository's home, and the
 //! redirects from an `naddr` or an event id to the canonical
-//! `/repo/<npub>/<d-tag>`. The list also loads the browser half
-//! (`ui-nip34-web`, built by `cargo xtask ui-assets`) from `/repo/assets/`
-//! when the relay has its assets. The tree and blob pages (`git`) are layouts
-//! the browser half fills in: the relay never fetches a git object.
+//! `/repo/<npub>/<d-tag>`, and a repository's issues and patches/PRs with their
+//! threads and honoured status ([`threads`]). The list also loads the browser
+//! half (`ui-nip34-web`, built by `cargo xtask ui-assets`) from
+//! `/repo/assets/` when the relay has its assets. The tree and blob pages
+//! (`git`) are layouts the browser half fills in: the relay never fetches a
+//! git object.
 
 mod git;
+mod threads;
 
 pub use git::{CONTENT_SECURITY_POLICY_VALUE as GIT_CONTENT_SECURITY_POLICY_VALUE, Defaults};
 
@@ -59,6 +62,10 @@ pub fn app(store: ReadOnlyStore, assets: Option<Assets>, defaults: Defaults) -> 
         .route("/repo/{npub}/{d}", get(home))
         .route("/repo/{npub}/{d}/tree/{*rest}", get(git::tree))
         .route("/repo/{npub}/{d}/blob/{*rest}", get(git::blob))
+        .route("/repo/{npub}/{d}/issues", get(threads::issues))
+        .route("/repo/{npub}/{d}/issues/{id}", get(threads::issue))
+        .route("/repo/{npub}/{d}/pulls", get(threads::pulls))
+        .route("/repo/{npub}/{d}/pulls/{id}", get(threads::pull))
         .fallback(not_found)
         .with_state(Pages {
             store,
@@ -299,29 +306,46 @@ async fn list(State(Pages { store, assets, .. }): State<Pages>) -> Response {
     html(StatusCode::OK, "Repositories", &body)
 }
 
-async fn home(
-    State(Pages { store, .. }): State<Pages>,
-    Path((owner, d)): Path<(String, String)>,
-) -> Response {
-    let Ok(owner) = PublicKey::from_bech32(&owner) else {
-        return not_found().await;
-    };
+/// The repo at `/repo/<npub>/<d>`: its owner and the owner's latest
+/// announcement, or none.
+async fn resolve_repo(store: &ReadOnlyStore, npub: &str, d: &str) -> Option<(PublicKey, Event)> {
+    let owner = PublicKey::from_bech32(npub).ok()?;
     let announcements = store
         .query(
             Filter::new()
                 .kind(Kind::from(ANNOUNCEMENT))
                 .author(owner)
-                .identifier(d.clone()),
+                .identifier(d),
         )
         .await;
-    let Some(announcement) = newest(
+    let announcement = owner_announcement(&owner, d, &announcements)?;
+    Some((owner, announcement.clone()))
+}
+
+/// The repo's announcement among `announcements`: the newest `owner` signed
+/// for `d`. Another key's announcement for the same `d` never stands in for
+/// it, so its `maintainers` are never honoured (ADR 0002). A pure function.
+fn owner_announcement<'a>(
+    owner: &PublicKey,
+    d: &str,
+    announcements: &'a [Event],
+) -> Option<&'a Event> {
+    newest(
         announcements
             .iter()
-            .filter(|event| event.pubkey == owner && d_tag(event) == d),
-    ) else {
+            .filter(|event| event.kind == Kind::from(ANNOUNCEMENT))
+            .filter(|event| event.pubkey == *owner && d_tag(event) == d),
+    )
+}
+
+async fn home(
+    State(Pages { store, .. }): State<Pages>,
+    Path((owner, d)): Path<(String, String)>,
+) -> Response {
+    let Some((owner, announcement)) = resolve_repo(&store, &owner, &d).await else {
         return not_found().await;
     };
-
+    let announcement = &announcement;
     let authors = authorized_authors(announcement);
     let states = store
         .query(
@@ -394,6 +418,11 @@ async fn home(
         }
         None => body.push_str("<p>No refs published.</p>"),
     }
+    let base = repo_path(&owner, &d);
+    body.push_str(&format!(
+        "<p><a href=\"{0}/issues\">Issues</a> &middot; <a href=\"{0}/pulls\">Patches and pull requests</a></p>",
+        escape(&base)
+    ));
     body.push_str("<p><a href=\"/repo\">All repositories</a></p>");
     html(StatusCode::OK, repo_name(announcement), &body)
 }
