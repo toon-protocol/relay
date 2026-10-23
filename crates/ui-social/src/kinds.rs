@@ -1,0 +1,63 @@
+//! The event kinds `/social` reads, by the NIP that defines each.
+
+/// NIP-01 short text note.
+pub(crate) const NOTE: u16 = 1;
+/// NIP-02 follow list.
+pub(crate) const FOLLOWS: u16 = 3;
+/// NIP-25 reaction.
+pub(crate) const REACTION: u16 = 7;
+/// NIP-7D thread.
+pub(crate) const THREAD: u16 = 11;
+/// NIP-18 generic repost.
+pub(crate) const GENERIC_REPOST: u16 = 16;
+/// NIP-68 picture.
+pub(crate) const PICTURE: u16 = 20;
+/// NIP-71 video.
+pub(crate) const VIDEO: u16 = 21;
+/// NIP-71 short video.
+pub(crate) const SHORT_VIDEO: u16 = 22;
+/// NIP-22 comment.
+pub(crate) const COMMENT: u16 = 1_111;
+/// NIP-C0 code snippet.
+pub(crate) const SNIPPET: u16 = 1_337;
+/// NIP-34 pull request.
+pub(crate) const PULL_REQUEST: u16 = 1_618;
+/// NIP-34 issue.
+pub(crate) const ISSUE: u16 = 1_621;
+/// NIP-34 status: applied, merged or resolved.
+pub(crate) const STATUS_APPLIED: u16 = 1_631;
+/// NIP-84 highlight.
+pub(crate) const HIGHLIGHT: u16 = 9_802;
+/// NIP-51 git authors: the code authors a key follows.
+pub(crate) const GIT_AUTHORS: u16 = 10_017;
+/// NIP-5A root site manifest.
+pub(crate) const SITE_ROOT: u16 = 15_128;
+/// NIP-23 long-form article.
+pub(crate) const ARTICLE: u16 = 30_023;
+/// NIP-89 application handler; Shakespeare's app event.
+pub(crate) const APP_HANDLER: u16 = 31_990;
+/// NIP-5A named site manifest.
+pub(crate) const SITE_NAMED: u16 = 35_128;
+
+pub(crate) use ui_nip34::card::FOLLOWED_REPOS;
+pub(crate) use ui_nip34::repo::ANNOUNCEMENT;
+
+/// What a reader calls a kind, in a chip.
+pub(crate) fn label(kind: u16) -> &'static str {
+    match kind {
+        NOTE => "note",
+        THREAD => "thread",
+        GENERIC_REPOST => "boost",
+        PICTURE => "picture",
+        VIDEO | SHORT_VIDEO => "video",
+        COMMENT => "comment",
+        SNIPPET => "snippet",
+        HIGHLIGHT => "highlight",
+        ARTICLE => "article",
+        APP_HANDLER => "app",
+        ISSUE => "issue",
+        PULL_REQUEST => "pull request",
+        ANNOUNCEMENT => "repository",
+        _ => "event",
+    }
+}

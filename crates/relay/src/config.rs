@@ -190,8 +190,18 @@ const UI_BLOB_SERVERS: Setting = Setting {
     env: "TOON_UI_BLOB_SERVERS",
 };
 
+const UI_RELAY_URL: Setting = Setting {
+    flag: "--ui-relay-url",
+    env: "TOON_UI_RELAY_URL",
+};
+
+const UI_NSITE_GATEWAY: Setting = Setting {
+    flag: "--ui-nsite-gateway",
+    env: "TOON_UI_NSITE_GATEWAY",
+};
+
 /// The flags that take a value, and the ones that stand alone.
-const VALUE_FLAGS: [&str; 32] = [
+const VALUE_FLAGS: [&str; 34] = [
     MNEMONIC.flag,
     SECRET_KEY.flag,
     READ_PORT.flag,
@@ -224,6 +234,8 @@ const VALUE_FLAGS: [&str; 32] = [
     UI_ASSETS_DIR.flag,
     UI_ARWEAVE_GATEWAYS.flag,
     UI_BLOB_SERVERS.flag,
+    UI_RELAY_URL.flag,
+    UI_NSITE_GATEWAY.flag,
 ];
 const SWITCH_FLAGS: [&str; 8] = [
     DEV_MODE.flag,
@@ -242,6 +254,8 @@ const SWITCH_FLAGS: [&str; 8] = [
 const UI_APP_NAMES: &[&str] = &[
     #[cfg(feature = "ui-repo")]
     "repo",
+    #[cfg(feature = "ui-social")]
+    "social",
 ];
 
 const DEFAULT_WRITE_PORT: u16 = 3100;
@@ -299,14 +313,19 @@ Options (each flag beats its environment variable):
   --no-enforce-expiration                  TOON_ENFORCE_EXPIRATION=false
   --expiration-reap-grace-seconds <n>      TOON_EXPIRATION_REAP_GRACE_SECONDS (default 86400)
   --expiration-reap-interval-seconds <n>   TOON_EXPIRATION_REAP_INTERVAL_SECONDS (default 3600)
-  --ui-apps <names>                        TOON_UI_APPS (comma-separated app UIs served on the read port, default repo;
-                                           empty serves none)
+  --ui-apps <names>                        TOON_UI_APPS (comma-separated app UIs served on the read port, default
+                                           every app this build includes, repo,social; empty serves none)
   --ui-assets-dir <dir>                    TOON_UI_ASSETS_DIR (built UI assets, served under /repo/assets/;
                                            unset or unusable: git browsing is unavailable)
   --ui-arweave-gateways <urls>             TOON_UI_ARWEAVE_GATEWAYS (comma-separated https URLs a browser tries after the
                                            gateways a repo's own events name)
   --ui-blob-servers <urls>                 TOON_UI_BLOB_SERVERS (comma-separated https URLs of Blossom servers a browser
                                            tries after the ones a repo's own events name)
+  --ui-relay-url <url>                     TOON_UI_RELAY_URL (the ws://, wss://, http:// or https:// URL visitors' clients
+                                           reach this relay at; its host is the relay hint in /social's nostr:// clone
+                                           URLs; default TOON_RELAY_URL's when the live feed is sold)
+  --ui-nsite-gateway <url>                 TOON_UI_NSITE_GATEWAY (the https URL of an nsite gateway /social links a
+                                           repo's live demo through; unset, no demo is linked)
   --blocked-event-ids <ids>                TOON_BLOCKED_EVENT_IDS (comma-separated)
   --subscribe-ilp-address <addr>           TOON_SUBSCRIBE_ILP_ADDRESS (sells the live feed)
   --broadcast-price <n>                    TOON_BROADCAST_PRICE (what one broadcast event costs)
@@ -444,6 +463,13 @@ pub struct Config {
     pub ui_arweave_gateways: Vec<String>,
     /// Blossom servers (`TOON_UI_BLOB_SERVERS`), likewise.
     pub ui_blob_servers: Vec<String>,
+    /// The URL visitors' clients reach this relay at (`TOON_UI_RELAY_URL`),
+    /// if given: `/social` names its host in `nostr://` clone URLs. The paid
+    /// feed's `TOON_RELAY_URL` stands in when this is unset.
+    pub ui_relay_url: Option<String>,
+    /// The nsite gateway (`TOON_UI_NSITE_GATEWAY`) a repo's live demo is
+    /// linked through. The relay only writes it into pages.
+    pub ui_nsite_gateway: Option<String>,
 }
 
 /// The command line split into the flags that were given.
@@ -679,6 +705,21 @@ impl Config {
         let ui_assets_dir = sources.text(&UI_ASSETS_DIR).map(|(_, dir)| dir.into());
         let ui_arweave_gateways = sources.https_urls(&UI_ARWEAVE_GATEWAYS)?;
         let ui_blob_servers = sources.https_urls(&UI_BLOB_SERVERS)?;
+        let ui_relay_url = sources.relay_url(&UI_RELAY_URL)?;
+        let ui_nsite_gateway = match sources.https_urls(&UI_NSITE_GATEWAY)?.as_slice() {
+            [] => None,
+            [gateway] => Some(gateway.clone()),
+            _ => {
+                return Err(RelayError::InvalidSetting {
+                    name: UI_NSITE_GATEWAY.env,
+                    expected: "one https URL",
+                    value: sources
+                        .raw(&UI_NSITE_GATEWAY)
+                        .map(|(_, value)| value)
+                        .unwrap_or_default(),
+                });
+            }
+        };
         let nip29_groups = sources.on(&NIP29_GROUPS);
         let nip17_recipient_only = sources.on(&NIP17_RECIPIENT_ONLY);
         let text = |setting: &Setting| sources.text(setting).map(|(_, value)| value);
@@ -736,6 +777,8 @@ impl Config {
             ui_assets_dir,
             ui_arweave_gateways,
             ui_blob_servers,
+            ui_relay_url,
+            ui_nsite_gateway,
         })))
     }
 
@@ -811,6 +854,27 @@ impl Sources<'_> {
             }
         }
         Ok(urls)
+    }
+
+    /// A URL clients reach the relay at: `ws://`, `wss://`, `http://` or
+    /// `https://` with a host. Unset or empty is none.
+    fn relay_url(&self, setting: &Setting) -> Result<Option<String>, RelayError> {
+        let Some((name, value)) = self.text(setting) else {
+            return Ok(None);
+        };
+        let valid = value
+            .parse::<hyper::Uri>()
+            .ok()
+            .filter(|uri| uri.host().is_some_and(|host| !host.is_empty()))
+            .is_some_and(|uri| matches!(uri.scheme_str(), Some("ws" | "wss" | "http" | "https")));
+        if !valid {
+            return Err(RelayError::InvalidSetting {
+                name,
+                expected: "a ws://, wss://, http:// or https:// URL",
+                value,
+            });
+        }
+        Ok(Some(value))
     }
 
     /// The paid live feed's settings: the three of them, or none. The feed is
