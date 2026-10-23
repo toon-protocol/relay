@@ -103,7 +103,6 @@ console.log(
 console.log(`snippet:       ${readUrl}/social/s/${devlog.named.snippet.id}`);
 console.log(
   `writing:       ${readUrl}/social/r/${fixture.npubs.maya}/tidepool/writing`
-
 );
 console.log(`events:        ${readUrl}/social/events`);
 console.log(`hackathon:     ${readUrl}${eventsFixture.paths.hackathon}`);
