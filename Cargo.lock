@@ -327,7 +327,7 @@ dependencies = [
 [[package]]
 name = "connector-domain"
 version = "0.1.0"
-source = "git+https://github.com/toon-protocol/connector?rev=de8469c40952f1a8f0d2abbf9507b3d286ea0031#de8469c40952f1a8f0d2abbf9507b3d286ea0031"
+source = "git+https://github.com/toon-protocol/connector?rev=d3e2bd514cc713f4034bdc062c7b30f3ec84d275#d3e2bd514cc713f4034bdc062c7b30f3ec84d275"
 dependencies = [
  "chrono",
  "serde",
