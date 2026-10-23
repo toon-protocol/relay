@@ -196,23 +196,62 @@ async fn asset(Path(name): Path<String>) -> Response {
     StatusCode::NOT_FOUND.into_response()
 }
 
-/// The top bar's `/social` part: the feed, and a form that reads the feed
-/// of the key a visitor names (a `GET`, so nothing is written or kept).
-fn header(viewer: Option<&PublicKey>) -> String {
+/// The places the header links, so a page can say which one it is in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Nav {
+    Home,
+    Trending,
+    Events,
+    Bounties,
+    Apps,
+    /// A page that is none of them: a post, a repo, a profile, an article.
+    Other,
+}
+
+impl Nav {
+    /// The header's links, in order: where each goes, its icon, its label.
+    const LINKS: [(Nav, &'static str, Option<&'static str>, &'static str); 5] = [
+        (Nav::Home, "", Some(chrome::icon::HOME), "Home"),
+        (
+            Nav::Trending,
+            "/trending",
+            Some(chrome::icon::STAR),
+            "Trending",
+        ),
+        (
+            Nav::Events,
+            "/events",
+            Some(chrome::icon::CALENDAR),
+            "Events",
+        ),
+        (Nav::Bounties, "/bounties", None, "Bounties"),
+        (Nav::Apps, "/apps", None, "Apps"),
+    ];
+}
+
+/// The app's own header: its links, the current one marked, and a form
+/// that opens the following feed of the key a visitor names (a `GET`, so
+/// nothing is written or kept).
+fn header(viewer: Option<&PublicKey>, current: Nav) -> String {
+    let mut links = String::new();
+    for (nav, path, glyph, label) in Nav::LINKS {
+        let here = nav == current;
+        links.push_str(&format!(
+            "<a class=\"navlink{}\" href=\"{PREFIX}{path}\"{}>{}{label}</a>",
+            if here { " current" } else { "" },
+            if here { " aria-current=\"page\"" } else { "" },
+            glyph
+                .map(|glyph| chrome::svg(glyph, ""))
+                .unwrap_or_default(),
+        ));
+    }
     format!(
-        "<nav class=\"app-nav\" aria-label=\"Social\"><a class=\"navlink\" href=\"{PREFIX}\">{}Home</a>\
-         <a class=\"navlink\" href=\"{PREFIX}/trending\">{}Trending</a>\
-         <a class=\"navlink\" href=\"{PREFIX}/events\">{}Events</a>\
-         <a class=\"navlink\" href=\"{PREFIX}/bounties\">Bounties</a>\
-         <a class=\"navlink\" href=\"{PREFIX}/apps\">Apps</a></nav>\
+        "<nav class=\"app-nav\" aria-label=\"Social\">{links}</nav>\
          <span class=\"grow\"></span>\
          <form class=\"viewer\" method=\"get\" action=\"{PREFIX}/following\">\
          <label for=\"viewer-npub\">Viewing as</label>\
          <input class=\"input\" id=\"viewer-npub\" name=\"npub\" placeholder=\"npub1…\" value=\"{}\" autocomplete=\"off\">\
          <button class=\"btn\" type=\"submit\">Follow feed</button></form>",
-        chrome::svg(chrome::icon::HOME, ""),
-        chrome::svg(chrome::icon::STAR, ""),
-        chrome::svg(chrome::icon::CALENDAR, ""),
         viewer
             .map(npub)
             .map(|npub| escape(&npub))
@@ -223,6 +262,7 @@ fn header(viewer: Option<&PublicKey>) -> String {
 /// A page with `/social`'s policy: its own, since it shows media.
 fn html(
     pages: &Pages,
+    nav: Nav,
     status: StatusCode,
     title: &str,
     viewer: Option<&PublicKey>,
@@ -234,7 +274,7 @@ fn html(
             &pages.apps,
             App::Social,
             title,
-            &header(viewer),
+            &header(viewer, nav),
             body,
         )),
     )
@@ -251,6 +291,7 @@ fn html(
 fn not_found(pages: &Pages) -> Response {
     html(
         pages,
+        Nav::Other,
         StatusCode::NOT_FOUND,
         "Not found",
         None,
@@ -348,6 +389,27 @@ mod tests {
     use nostr::nips::nip19::ToBech32;
 
     use super::*;
+
+    #[test]
+    fn the_header_marks_the_page_it_is_on_and_only_that_one() {
+        let bar = header(None, Nav::Events);
+        assert!(bar.contains(
+            "<a class=\"navlink current\" href=\"/social/events\" aria-current=\"page\">"
+        ));
+        assert_eq!(bar.matches("aria-current").count(), 1);
+        for path in [
+            "/social\"",
+            "/social/trending",
+            "/social/bounties",
+            "/social/apps",
+        ] {
+            assert!(
+                bar.contains(&format!("class=\"navlink\" href=\"{path}")),
+                "{path}"
+            );
+        }
+        assert!(!header(None, Nav::Other).contains("aria-current"));
+    }
 
     #[test]
     fn a_reply_is_an_e_tag_that_is_not_a_mention() {

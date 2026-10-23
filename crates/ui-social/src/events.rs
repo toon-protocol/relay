@@ -180,7 +180,14 @@ pub(crate) async fn index(State(pages): State<Pages>) -> Response {
         }
         body.push_str("</section>");
     }
-    html(&pages, StatusCode::OK, "Events", None, &body)
+    html(
+        &pages,
+        crate::Nav::Events,
+        StatusCode::OK,
+        "Events",
+        None,
+        &body,
+    )
 }
 
 /// The feed sidebar's "Coming up": the next live or upcoming events.
@@ -806,7 +813,14 @@ pub(crate) async fn page(
     body.push_str(&format!(
         "<div><a href=\"{PREFIX}/events\">All events</a></div></aside></div>"
     ));
-    html(&pages, StatusCode::OK, event.title(), None, &body)
+    html(
+        &pages,
+        crate::Nav::Events,
+        StatusCode::OK,
+        event.title(),
+        None,
+        &body,
+    )
 }
 
 #[cfg(test)]

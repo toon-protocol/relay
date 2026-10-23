@@ -480,6 +480,7 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab, query: Option<&str>
     body.push_str("</div>");
     html(
         pages,
+        crate::Nav::Other,
         StatusCode::OK,
         &format!("{} · {}", card.name(), tab.label()),
         viewer.as_ref(),

@@ -339,7 +339,14 @@ pub(crate) async fn index(State(pages): State<Pages>) -> Response {
     body.push_str("</div><aside class=\"sidebar\">");
     body.push_str(&about_card(None));
     body.push_str("</aside></div>");
-    html(&pages, StatusCode::OK, "Topics", None, &body)
+    html(
+        &pages,
+        crate::Nav::Trending,
+        StatusCode::OK,
+        "Topics",
+        None,
+        &body,
+    )
 }
 
 /// `/social/t/<topic>`: the repos under one topic.
@@ -453,6 +460,7 @@ pub(crate) async fn page(
     body.push_str("</aside></div>");
     html(
         &pages,
+        crate::Nav::Trending,
         StatusCode::OK,
         &format!("Topic: {topic}"),
         None,

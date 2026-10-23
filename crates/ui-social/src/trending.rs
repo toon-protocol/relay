@@ -693,7 +693,14 @@ pub(crate) async fn page(State(pages): State<Pages>, RawQuery(query): RawQuery) 
         Some(topic) => format!("Trending in {topic}"),
         None => "Trending repos".to_owned(),
     };
-    html(&pages, StatusCode::OK, &title, asked.viewer.as_ref(), &body)
+    html(
+        &pages,
+        crate::Nav::Trending,
+        StatusCode::OK,
+        &title,
+        asked.viewer.as_ref(),
+        &body,
+    )
 }
 
 /// What a row's right-hand column says.

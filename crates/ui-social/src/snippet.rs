@@ -230,7 +230,14 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(target): Path<String>)
         "<div class=\"split\"><div class=\"main\">{main}</div>{}</div>",
         note::rail(&view, &replies, repos.first())
     );
-    html(&pages, StatusCode::OK, title(&snippet), None, &body)
+    html(
+        &pages,
+        crate::Nav::Other,
+        StatusCode::OK,
+        title(&snippet),
+        None,
+        &body,
+    )
 }
 
 #[cfg(test)]

@@ -489,6 +489,7 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
         .unwrap_or_else(|| format!("{}…", &npub(&key)[..12]));
     html(
         pages,
+        crate::Nav::Other,
         StatusCode::OK,
         &format!("{title} · {}", tab.label()),
         None,

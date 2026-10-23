@@ -95,7 +95,14 @@ pub(crate) async fn everyone(State(pages): State<Pages>, RawQuery(query): RawQue
         intro.push_str(&muted_line(&pages, key, &mutes).await);
     }
     let body = feed_page(&pages, events, None, &intro, &mutes, lens.as_ref()).await;
-    html(&pages, StatusCode::OK, "Social", None, &body)
+    html(
+        &pages,
+        crate::Nav::Home,
+        StatusCode::OK,
+        "Social",
+        None,
+        &body,
+    )
 }
 
 /// `/social/following?npub=…`: the form's answer, a redirect to the feed of
@@ -119,6 +126,7 @@ pub(crate) async fn viewer(State(pages): State<Pages>, RawQuery(query): RawQuery
             .into_response(),
         None => html(
             &pages,
+            crate::Nav::Home,
             StatusCode::BAD_REQUEST,
             "Not a key",
             None,
@@ -238,7 +246,14 @@ pub(crate) async fn following(
     let mut intro = intro;
     intro.push_str(&muted_line(&pages, &viewer, &mutes).await);
     let body = feed_page(&pages, events, Some(&viewer), &intro, &mutes, None).await;
-    html(&pages, StatusCode::OK, "Following", Some(&viewer), &body)
+    html(
+        &pages,
+        crate::Nav::Home,
+        StatusCode::OK,
+        "Following",
+        Some(&viewer),
+        &body,
+    )
 }
 
 /// Whether `viewer`'s mutes drop `event` from a feed: [`Mutes::hides`], or a

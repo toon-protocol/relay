@@ -402,6 +402,7 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(id): Path<String>) -> 
     let Some(groups) = pages.groups.clone() else {
         return html(
             &pages,
+            crate::Nav::Events,
             StatusCode::NOT_FOUND,
             "Rooms are off",
             None,
@@ -417,6 +418,7 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(id): Path<String>) -> 
         // to a visitor, so the page cannot tell them apart.
         return html(
             &pages,
+            crate::Nav::Events,
             StatusCode::NOT_FOUND,
             "Room not found",
             None,
@@ -432,6 +434,7 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(id): Path<String>) -> 
     if !room.listed() {
         return html(
             &pages,
+            crate::Nav::Events,
             StatusCode::OK,
             "Room needs sign-in",
             None,
@@ -463,7 +466,14 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(id): Path<String>) -> 
     ));
     if !room.readable() {
         body.push_str(&sign_in_box(Some(&room), groups.signer));
-        return html(&pages, StatusCode::OK, &room.name, None, &body);
+        return html(
+            &pages,
+            crate::Nav::Events,
+            StatusCode::OK,
+            &room.name,
+            None,
+            &body,
+        );
     }
     let store = &pages.store;
     let messages = in_room(store, &room.id, CHAT, TRANSCRIPT).await;
@@ -561,7 +571,14 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(id): Path<String>) -> 
          A client joins with a kind 9021 and posts a kind 9 with the room's <code>h</code> tag; each \
          is one paid write.</p></div></aside></div>",
     );
-    html(&pages, StatusCode::OK, &room.name, None, &body)
+    html(
+        &pages,
+        crate::Nav::Events,
+        StatusCode::OK,
+        &room.name,
+        None,
+        &body,
+    )
 }
 
 #[cfg(test)]

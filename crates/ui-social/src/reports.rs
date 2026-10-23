@@ -363,6 +363,7 @@ async fn reports_page(
     body.push_str(&list(&found, targets, follows.as_ref(), names));
     html(
         pages,
+        crate::Nav::Other,
         StatusCode::OK,
         &format!("Reports · {title}"),
         None,

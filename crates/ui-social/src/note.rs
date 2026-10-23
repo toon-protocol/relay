@@ -187,6 +187,7 @@ pub(crate) async fn page(
     };
     html(
         &pages,
+        crate::Nav::Other,
         StatusCode::OK,
         if title.is_empty() { "Post" } else { &title },
         None,

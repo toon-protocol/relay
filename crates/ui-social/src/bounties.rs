@@ -586,7 +586,14 @@ pub(crate) async fn page(State(pages): State<Pages>, RawQuery(query): RawQuery) 
          <code>price</code>, and an <code>a</code> to the repo or an <code>e</code> to the issue, as \
          one paid write. Paying the bounty happens outside this relay.</p></div></aside></div>",
     );
-    html(&pages, StatusCode::OK, "Bounties", None, &body)
+    html(
+        &pages,
+        crate::Nav::Bounties,
+        StatusCode::OK,
+        "Bounties",
+        None,
+        &body,
+    )
 }
 
 #[cfg(test)]

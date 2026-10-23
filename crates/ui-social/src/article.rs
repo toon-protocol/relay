@@ -447,6 +447,7 @@ async fn page(pages: &Pages, address: &ArticleAddress) -> Response {
     body.push_str("</div>");
     html(
         pages,
+        crate::Nav::Other,
         StatusCode::OK,
         if title.is_empty() { "Article" } else { &title },
         None,

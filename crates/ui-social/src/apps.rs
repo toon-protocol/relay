@@ -887,7 +887,14 @@ pub(crate) async fn index(State(pages): State<Pages>, RawQuery(query): RawQuery)
         Some(topic) => format!("Apps · {topic}"),
         None => "Apps".to_owned(),
     };
-    html(&pages, StatusCode::OK, &title, None, &body)
+    html(
+        &pages,
+        crate::Nav::Apps,
+        StatusCode::OK,
+        &title,
+        None,
+        &body,
+    )
 }
 
 /// A set's `title`, else its `d`.
@@ -1135,7 +1142,14 @@ async fn app_page(pages: &Pages, address: &Address, query: Option<&str>) -> Resp
         viewer::as_form(viewer.as_ref(), "Viewing as")
     ));
     body.push_str("</aside></div>");
-    html(pages, StatusCode::OK, app.name(), None, &body)
+    html(
+        pages,
+        crate::Nav::Apps,
+        StatusCode::OK,
+        app.name(),
+        None,
+        &body,
+    )
 }
 
 /// The release part of an app page: the channel links, the shown
@@ -1522,7 +1536,14 @@ pub(crate) async fn set(State(pages): State<Pages>, Path(target): Path<String>) 
         ));
     }
     body.push_str(&format!("<p><a href=\"{PREFIX}/apps\">All apps</a></p>"));
-    html(&pages, StatusCode::OK, &title, None, &body)
+    html(
+        &pages,
+        crate::Nav::Apps,
+        StatusCode::OK,
+        &title,
+        None,
+        &body,
+    )
 }
 
 #[cfg(test)]
