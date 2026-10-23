@@ -44,7 +44,12 @@ fn event(keys: &Keys, kind: u16, at: u64, content: &str, tags: &[&[&str]]) -> Ev
 }
 
 async fn store(relay: &relay::Relay, event: &Event) {
-    assert_eq!(write(relay, delivery(event)).await.0, 200, "{event:?}");
+    assert_eq!(
+        write(relay, delivery(event)).await.0,
+        200,
+        "kind {}",
+        event.kind
+    );
 }
 
 fn npub(keys: &Keys) -> String {
@@ -296,16 +301,16 @@ async fn a_private_room_shows_nothing_and_a_repo_links_its_room() {
         ),
     )
     .await;
-    let secret = event(
+    let members_plan = event(
         &maya,
         9,
         now - 90,
         "the launch date is secret",
         &[&["h", "core"]],
     );
-    store(relay, &secret).await;
-    let secret_note = event(&maya, 1, now - 89, "members only note", &[&["h", "core"]]);
-    store(relay, &secret_note).await;
+    store(relay, &members_plan).await;
+    let members_note = event(&maya, 1, now - 89, "members only note", &[&["h", "core"]]);
+    store(relay, &members_note).await;
 
     // The relay serves a visitor no private group's metadata, so its room
     // is not found, as a room that does not exist is.
@@ -317,7 +322,7 @@ async fn a_private_room_shows_nothing_and_a_repo_links_its_room() {
         "a private room's name is not shown"
     );
     assert!(!room.contains("secret"));
-    let (status, _) = get(relay, &format!("/social/e/{}", secret.id.to_hex())).await;
+    let (status, _) = get(relay, &format!("/social/e/{}", members_plan.id.to_hex())).await;
     assert_eq!(
         status,
         StatusCode::NOT_FOUND,
