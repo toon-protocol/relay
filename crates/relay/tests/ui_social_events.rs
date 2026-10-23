@@ -307,9 +307,11 @@ async fn a_private_room_shows_nothing_and_a_repo_links_its_room() {
     let secret_note = event(&maya, 1, now - 89, "members only note", &[&["h", "core"]]);
     store(relay, &secret_note).await;
 
+    // The relay serves a visitor no private group's metadata, so its room
+    // is not found, as a room that does not exist is.
     let (status, room) = get(relay, "/social/g/core").await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(room.contains("This room needs sign-in in a client"));
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(room.contains("needs sign-in in a client"));
     assert!(
         !room.contains("Core team"),
         "a private room's name is not shown"

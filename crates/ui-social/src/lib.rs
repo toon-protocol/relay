@@ -108,9 +108,9 @@ impl Settings {
     }
 
     /// The relay keeps NIP-29 groups and signs their metadata with
-    /// `signer`: `/social` shows their rooms, and reads every page as a
-    /// visitor who has not signed in would, leaving out what private and
-    /// closed groups hold.
+    /// `signer`: `/social` shows their rooms. The store it is handed is
+    /// already read as a visitor who has not signed in would, without what
+    /// private and closed groups hold.
     pub fn with_group_signer(mut self, signer: PublicKey) -> Self {
         self.group_signer = Some(signer);
         self
@@ -141,13 +141,9 @@ impl Pages {
 /// The app UI over `store`, with the operator's `settings` and the `apps`
 /// the relay serves (for the switcher and the links to `/repo`).
 pub fn app(store: ReadOnlyStore, settings: Settings, apps: Apps) -> AppUi {
-    let (store, groups) = match settings.group_signer {
-        Some(signer) => (
-            ReadOnlyStore::new(rooms::PublicOnly::new(store.clone(), signer)),
-            Some(rooms::Groups::new(signer, store)),
-        ),
-        None => (store, None),
-    };
+    let groups = settings
+        .group_signer
+        .map(|signer| rooms::Groups::new(signer, store.clone()));
     let router = Router::new()
         .route(PREFIX, get(feed::everyone))
         .route("/social/assets/{name}", get(asset))

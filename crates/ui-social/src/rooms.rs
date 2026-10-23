@@ -16,9 +16,10 @@
 //!   than upstream NIP-29, where `closed` only refuses join requests);
 //! - anything else is readable.
 //!
-//! [`PublicOnly`] applies the same rule to every `/social` page, so a note
+//! The relay applies that rule to the store it hands every app UI, so a note
 //! posted into a private group never reaches the feed, a repo page or
-//! `/social/e/<id>`.
+//! `/social/e/<id>` (nor `/repo`), and a private group's metadata is not
+//! there to read: its room is not found, like a room that does not exist.
 //!
 //! A repo's room is a convention (`docs/apps/social.md`): the group whose
 //! id is the repo's `d` and whose admins (kind 39001, relay-signed) include
@@ -26,9 +27,7 @@
 //! has a tag that links the two, and this relay's group metadata carries
 //! only the fields NIP-29 names.
 
-use std::collections::{BTreeSet, HashMap};
-use std::future::Future;
-use std::pin::Pin;
+use std::collections::HashMap;
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -40,14 +39,14 @@ use nostr::nips::nip01::Coordinate;
 use nostr::nips::nip19::{Nip19Coordinate, ToBech32};
 use nostr::types::Timestamp;
 use relay_ui::chrome::{self, Profiles, ago, avatar, escape, icon, name, plain_name, svg};
-use relay_ui::{EventSource, ReadOnlyStore};
+use relay_ui::ReadOnlyStore;
 use ui_nip34::card::{RepoCard, plural};
 use ui_nip34::repo::{d_tag, first_tag, newest};
 
 use crate::kinds::THREAD;
 use crate::live::{self, LIVE_ACTIVITY};
 use crate::media::Media;
-use crate::{PREFIX, Pages, content, html, not_found};
+use crate::{PREFIX, Pages, content, html};
 
 /// NIP-C7 chat message.
 pub(crate) const CHAT: u16 = 9;
@@ -57,8 +56,6 @@ pub(crate) const GROUP_METADATA: u16 = 39_000;
 pub(crate) const GROUP_ADMINS: u16 = 39_001;
 /// NIP-29 group members, signed by the relay.
 pub(crate) const GROUP_MEMBERS: u16 = 39_002;
-/// NIP-29 group roles, signed by the relay.
-pub(crate) const GROUP_ROLES: u16 = 39_003;
 
 /// The most chat messages a room shows: the newest, oldest first.
 const TRANSCRIPT: usize = 100;
@@ -68,7 +65,7 @@ const THREADS: usize = 20;
 const PREVIEW: usize = 5;
 
 /// What `/social` knows of this relay's groups: the key that signs their
-/// metadata, and the store unfiltered, to read a private group's flags.
+/// metadata, and the store as the relay serves it to a visitor.
 #[derive(Clone)]
 pub(crate) struct Groups {
     signer: PublicKey,
@@ -76,8 +73,8 @@ pub(crate) struct Groups {
 }
 
 impl Groups {
-    pub(crate) fn new(signer: PublicKey, raw: ReadOnlyStore) -> Self {
-        Self { signer, raw }
+    pub(crate) fn new(signer: PublicKey, store: ReadOnlyStore) -> Self {
+        Self { signer, raw: store }
     }
 
     /// The room `id`, if the relay has signed metadata for it.
@@ -224,66 +221,6 @@ async fn rooms(
         }
     }
     found
-}
-
-/// The group an event belongs to, as the relay judges it: the `d` of a
-/// group metadata event, the `h` of anything else.
-fn group_of(event: &Event) -> Option<&str> {
-    let kind = event.kind.as_u16();
-    if (GROUP_METADATA..=GROUP_ROLES).contains(&kind) {
-        first_tag(event, "d")
-    } else {
-        first_tag(event, "h")
-    }
-}
-
-/// Whether a visitor who has not signed in may read `event`, given the
-/// rooms its group could be. An event of a group the relay holds no
-/// metadata for is readable, as the relay serves it. A pure function.
-pub(crate) fn visible(event: &Event, rooms: &HashMap<String, Room>) -> bool {
-    let Some(room) = group_of(event).and_then(|id| rooms.get(id)) else {
-        return true;
-    };
-    if (GROUP_METADATA..=GROUP_ROLES).contains(&event.kind.as_u16()) {
-        room.listed()
-    } else {
-        room.readable()
-    }
-}
-
-/// The store as a visitor who has not signed in would read it over NIP-01:
-/// the events of a private or closed group, and a private group's metadata,
-/// left out. Every `/social` page reads through it when NIP-29 is on.
-pub(crate) struct PublicOnly {
-    inner: ReadOnlyStore,
-    signer: PublicKey,
-}
-
-impl PublicOnly {
-    pub(crate) fn new(inner: ReadOnlyStore, signer: PublicKey) -> Self {
-        Self { inner, signer }
-    }
-}
-
-impl EventSource for PublicOnly {
-    fn query(&self, filter: Filter) -> Pin<Box<dyn Future<Output = Vec<Event>> + Send + '_>> {
-        Box::pin(async move {
-            let events = self.inner.query(filter).await;
-            let ids: BTreeSet<String> = events
-                .iter()
-                .filter_map(group_of)
-                .map(str::to_owned)
-                .collect();
-            if ids.is_empty() {
-                return events;
-            }
-            let rooms = rooms(&self.inner, self.signer, ids).await;
-            events
-                .into_iter()
-                .filter(|event| visible(event, &rooms))
-                .collect()
-        })
-    }
 }
 
 /// The newest `limit` events of `kind` in group `id`, oldest first.
@@ -476,7 +413,21 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(id): Path<String>) -> 
         );
     };
     let Some(room) = groups.room(&id).await else {
-        return not_found(&pages);
+        // No room, or a private one: the relay serves neither's metadata
+        // to a visitor, so the page cannot tell them apart.
+        return html(
+            &pages,
+            StatusCode::NOT_FOUND,
+            "Room not found",
+            None,
+            &format!(
+                "<div class=\"box\" data-sign-in><div class=\"empty\"><h2>No public room here</h2>\
+                 <p>This relay holds no room <code>{}</code> that a visitor may see. A private room \
+                 needs sign-in in a client: a member reads it in a Nostr client that signs in to this \
+                 relay (NIP-42).</p><p><a href=\"{PREFIX}\">Back to the feed</a></p></div></div>",
+                escape(&id)
+            ),
+        );
     };
     if !room.listed() {
         return html(
@@ -635,43 +586,5 @@ mod tests {
         assert!(room.readable());
         assert_eq!(room.name, "Club");
         assert!(Room::read(&signed(&client, GROUP_METADATA, tags), &relay.public_key()).is_none());
-    }
-
-    #[test]
-    fn a_visitor_reads_what_the_relay_serves_without_sign_in() {
-        let relay = Keys::generate();
-        let key = relay.public_key();
-        let room = |id: &str, flags: &[&str]| {
-            let mut tags: Vec<Vec<&str>> = vec![vec!["d", id]];
-            tags.extend(flags.iter().map(|flag| vec![*flag]));
-            let tags: Vec<&[&str]> = tags.iter().map(Vec::as_slice).collect();
-            let event = signed(&relay, GROUP_METADATA, &tags);
-            (id.to_owned(), Room::read(&event, &key).unwrap())
-        };
-        let rooms: HashMap<String, Room> = [
-            room("open", &["public", "open"]),
-            room("closed", &["public", "closed"]),
-            room("secret", &["private", "closed"]),
-            room("hidden", &["hidden"]),
-        ]
-        .into();
-        let member = Keys::generate();
-        let chat = |id: &str| signed(&member, CHAT, &[&["h", id]]);
-        let metadata = |id: &str| signed(&relay, GROUP_METADATA, &[&["d", id]]);
-        assert!(visible(&chat("open"), &rooms));
-        assert!(!visible(&chat("closed"), &rooms));
-        assert!(!visible(&chat("secret"), &rooms));
-        assert!(!visible(&chat("hidden"), &rooms));
-        assert!(
-            visible(&chat("unknown"), &rooms),
-            "no such group: an h tag is any tag"
-        );
-        assert!(visible(&signed(&member, 1, &[]), &rooms));
-        assert!(
-            visible(&metadata("closed"), &rooms),
-            "a closed room's name is public"
-        );
-        assert!(!visible(&metadata("secret"), &rooms));
-        assert!(!visible(&metadata("hidden"), &rooms));
     }
 }

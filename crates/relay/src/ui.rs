@@ -2,6 +2,8 @@
 //! each is built from, and which one a request belongs to.
 
 #[cfg(any(feature = "ui-repo", feature = "ui-social"))]
+use std::collections::HashSet;
+#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
 use std::future::Future;
 use std::path::Path;
 #[cfg(any(feature = "ui-repo", feature = "ui-social"))]
@@ -19,22 +21,73 @@ use relay_ui::{AppUi, Assets};
 #[cfg(any(feature = "ui-repo", feature = "ui-social"))]
 use relay_ui::{EventSource, ReadOnlyStore};
 
+use crate::auth::AuthPolicy;
+use crate::groups::GroupView;
 use crate::{Relay, RelayError, Store};
 
-/// The store as an app UI sees it: queries, and nothing else.
+/// The read rules of a connection that has not authenticated (NIP-42), as a
+/// session applies them. A server-rendered page cannot sign in for its
+/// visitor, so every app UI reads the store as such a connection would: a
+/// private or closed NIP-29 group's events, a private group's metadata, the
+/// kinds the operator restricts and gift wraps meant for their recipients
+/// alone are left out, on `/repo` as on `/social`.
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(
+    not(any(feature = "ui-repo", feature = "ui-social")),
+    allow(dead_code)
+)]
+pub(crate) struct Unauthenticated {
+    /// NIP-42's policy, while it is on.
+    pub(crate) auth: Option<AuthPolicy>,
+    /// NIP-29's groups, while it is on.
+    pub(crate) groups: Option<GroupView>,
+}
+
 #[cfg(any(feature = "ui-repo", feature = "ui-social"))]
-struct Reading(Store);
+impl Unauthenticated {
+    /// Whether such a connection may be shown `event`.
+    fn may_read(&self, event: &Event) -> bool {
+        self.auth
+            .as_ref()
+            .is_none_or(|auth| auth.shows_unauthenticated(event))
+            && self
+                .groups
+                .as_ref()
+                .is_none_or(|groups| groups.may_read(event, &HashSet::new()))
+    }
+}
+
+/// The store as an app UI sees it: queries, and nothing else, answered as
+/// to a connection that has not authenticated.
+#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
+struct Reading {
+    store: Store,
+    rules: Unauthenticated,
+}
 
 #[cfg(any(feature = "ui-repo", feature = "ui-social"))]
 impl EventSource for Reading {
     fn query(&self, filter: Filter) -> Pin<Box<dyn Future<Output = Vec<Event>> + Send + '_>> {
         Box::pin(async move {
-            self.0.query(filter).await.unwrap_or_else(|error| {
+            let events = self.store.query(filter).await.unwrap_or_else(|error| {
                 eprintln!("ui: query failed: {error}");
                 Vec::new()
-            })
+            });
+            events
+                .into_iter()
+                .filter(|event| self.rules.may_read(event))
+                .collect()
         })
     }
+}
+
+/// The read-only handle every app UI is built from: `store` under `rules`.
+#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
+fn reading(store: &Store, rules: &Unauthenticated) -> ReadOnlyStore {
+    ReadOnlyStore::new(Reading {
+        store: store.clone(),
+        rules: rules.clone(),
+    })
 }
 
 /// What the operator told the app UIs. The relay only writes these into
@@ -54,6 +107,8 @@ pub(crate) struct UiSettings<'a> {
     /// the key their metadata is signed with.
     #[cfg_attr(not(feature = "ui-social"), allow(dead_code))]
     pub(crate) group_signer: Option<nostr::key::PublicKey>,
+    /// What every app UI may read ([`Unauthenticated`]).
+    pub(crate) reads: Unauthenticated,
 }
 
 /// The host and port (when one is given) of a URL configuration has already
@@ -108,7 +163,7 @@ fn built(
     #[cfg(feature = "ui-repo")]
     if name == App::Repo.name() {
         return Some(ui_nip34::app(
-            ReadOnlyStore::new(Reading(store.clone())),
+            reading(store, &settings.reads),
             assets.cloned(),
             ui_nip34::Defaults {
                 arweave_gateways: settings.arweave_gateways.to_vec(),
@@ -127,7 +182,7 @@ fn built(
             social = social.with_group_signer(signer);
         }
         return Some(ui_social::app(
-            ReadOnlyStore::new(Reading(store.clone())),
+            reading(store, &settings.reads),
             social,
             on.clone(),
         ));

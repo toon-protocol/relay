@@ -184,8 +184,10 @@ describe('relay image conformance: /social events and rooms', () => {
     async () => {
       const { named } = fixture;
       const room = await page('/social/g/judges');
-      expect(room.status).toBe(200);
-      expect(room.text).toContain('This room needs sign-in in a client');
+      // No private group's metadata is served to a visitor: its room is not
+      // found, as a room that does not exist is.
+      expect(room.status).toBe(404);
+      expect(room.text).toContain('needs sign-in in a client');
       expect(room.text).not.toContain('Judges only');
       expect(room.text).not.toContain('shortlist');
       expect((await page(`/social/e/${named.secretMessage.id}`)).status).toBe(

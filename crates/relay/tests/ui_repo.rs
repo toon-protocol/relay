@@ -6,7 +6,7 @@ mod common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use common::{delivery, running, signed_by, write};
+use common::{delivery, running, running_with, signed_by, write};
 use http_body_util::BodyExt;
 use nostr::event::Event;
 use nostr::key::Keys;
@@ -271,4 +271,56 @@ async fn git_pages_carry_ordered_candidates_and_their_own_policy() {
         let (status, _, _) = get(relay, &missing).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{missing}");
     }
+}
+
+#[tokio::test]
+async fn a_private_groups_events_never_reach_a_repo_page() {
+    // A page cannot sign in for its visitor, so `/repo` reads the store as a
+    // connection that has not authenticated would: an issue posted into a
+    // private NIP-29 group is left out, as `/social` leaves it out.
+    let running =
+        running_with(|name| (name == "TOON_NIP29_GROUPS").then(|| "true".to_owned())).await;
+    let relay = &running.relay;
+    let owner = Keys::generate();
+    let owner_hex = owner.public_key().to_hex();
+    let repo = format!("30617:{owner_hex}:proj");
+    store(
+        relay,
+        &signed_by(&owner, 30_617, 10, &[&["d", "proj"], &["name", "proj"]]),
+    )
+    .await;
+    store(
+        relay,
+        &signed_by(&owner, 9007, 11, &[&["h", "core"], &["private"]]),
+    )
+    .await;
+    let public = signed_by(
+        &owner,
+        1621,
+        20,
+        &[&["a", &repo], &["subject", "A public bug"]],
+    );
+    store(relay, &public).await;
+    let private = signed_by(
+        &owner,
+        1621,
+        21,
+        &[
+            &["a", &repo],
+            &["h", "core"],
+            &["subject", "A members-only plan"],
+        ],
+    );
+    store(relay, &private).await;
+
+    let base = format!("/repo/{}/proj", owner.public_key().to_bech32().unwrap());
+    let (status, _, issues) = get(relay, &format!("{base}/issues")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(issues.contains("A public bug"), "{issues}");
+    assert!(!issues.contains("members-only"), "{issues}");
+    let (status, _, _) = get(relay, &format!("{base}/issues/{}", public.id.to_hex())).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, page) = get(relay, &format!("{base}/issues/{}", private.id.to_hex())).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{page}");
+    assert!(!page.contains("members-only"), "{page}");
 }

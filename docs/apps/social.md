@@ -551,15 +551,21 @@ client opens, and where a chat input would be, the page says it is
 read-only.
 
 **What a visitor may read.** A page cannot sign in (NIP-42) for its visitor,
-so `/social` reads as a connection that has not authenticated would. A
-`private` or `hidden` group shows nothing at all, not even its name; a
+so the relay hands every app UI (`/repo` as well as `/social`) the store
+as a connection that has not authenticated reads it: the same rules a
+session applies, in `crates/relay/src/ui.rs`. A `private` group shows
+nothing at all, not even its name: its room is a 404, as a room that does
+not exist is, and says a private room needs sign-in in a client. A
 `closed` one shows its name and description and none of its messages (this
 relay restricts a closed group's reads, which is stricter than NIP-29's
-`closed`, a refusal of join requests). The same rule filters every
-`/social` page, so a note posted into a private group never reaches the
-feed, a repo page or its own `/social/e/<id>`. Both read "This room needs
-sign-in in a client". With NIP-29 off, an `h` tag is any tag and there are
-no rooms.
+`closed`, a refusal of join requests), and reads "This room needs sign-in
+in a client". The same rule filters every page, so a note or issue posted
+into a private group never reaches the feed, a repo page on `/social` or
+`/repo`, or its own `/social/e/<id>`. Kinds the operator restricts to
+signed-in readers (`TOON_AUTH_REQUIRED_KINDS`), and gift wraps when only
+their recipients may read them (`TOON_NIP17_RECIPIENT_ONLY`), are left out
+the same way. With NIP-29 off, an `h` tag is any tag and there are no
+rooms.
 
 ## Trying it locally
 
