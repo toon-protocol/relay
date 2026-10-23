@@ -26,6 +26,13 @@
   --hunk-fg: #0969da;
   --hunk-bg: #ddf4ff;
   --code-bg: #ffffff;
+  --accent-bg: #ddf4ff;
+  --accent-fg: #0550ae;
+  --attention-bg: #fff8c5;
+  --attention-border: #d4a72c;
+  --attention-fg: #7d4e00;
+  --done-bg: #fbefff;
+  --media-bg: #1f2328;
   --radius: 6px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
@@ -51,6 +58,13 @@
     --hunk-fg: #79c0ff;
     --hunk-bg: rgba(56, 139, 253, 0.1);
     --code-bg: #0d1117;
+    --accent-bg: rgba(56, 139, 253, 0.15);
+    --accent-fg: #79c0ff;
+    --attention-bg: rgba(187, 128, 9, 0.15);
+    --attention-border: #9e6a03;
+    --attention-fg: #e3b341;
+    --done-bg: rgba(163, 113, 247, 0.15);
+    --media-bg: #010409;
   }
 }
 
@@ -89,10 +103,25 @@ svg.icon-lg { width: 32px; height: 32px; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .empty { padding: 32px 16px; text-align: center; color: var(--muted-fg); }
 
-/* Top bar: the way back to the list from any page. */
+/* Top bar: the app switcher (Repos | Social), then the app's own nav. */
 .topbar { border-bottom: 1px solid var(--border); background: var(--muted); }
-.topbar .container { padding-top: 12px; padding-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+.topbar .container { padding-top: 10px; padding-bottom: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .topbar a { color: var(--fg); font-weight: 600; }
+.app-switch { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
+.topbar .app-link { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 4px; color: var(--muted-fg); font-weight: 500; }
+.topbar .app-link:hover { color: var(--fg); text-decoration: none; background: var(--muted); }
+.topbar .app-link.current { color: var(--fg); font-weight: 600; background: var(--subtle); }
+.app-nav { display: flex; flex-wrap: wrap; gap: 2px; }
+.topbar .navlink { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: var(--radius); color: var(--fg); font-weight: 500; }
+.topbar .navlink:hover { background: var(--subtle); text-decoration: none; }
+.topbar .navlink.current { background: var(--subtle); font-weight: 600; }
+.grow { flex: 1 1 0; }
+.viewer { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted-fg); }
+.input {
+  height: 28px; padding: 0 8px; min-width: 0; width: 220px; max-width: 100%;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--fg);
+  font-family: var(--mono); font-size: 12px;
+}
 
 /* Repo header: glyph, owner / name, visibility pill. */
 .repo-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 20px; font-weight: 400; }
@@ -377,3 +406,79 @@ pre.diff .hunk { background: var(--hunk-bg); color: var(--hunk-fg); }
 .page-title { font-size: 24px; font-weight: 600; }
 .repo-head h1 { font-size: inherit; font-weight: 600; }
 .labels { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+
+/* Counts after a tab or a button's label. */
+.count {
+  display: inline-flex; align-items: center; padding: 0 6px; margin-left: 2px; min-width: 20px; height: 18px;
+  justify-content: center; border-radius: 2em; background: var(--subtle); color: var(--fg); font-size: 12px; font-weight: 500;
+}
+.repo-head .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; font-size: 14px; }
+
+/* Chips: topics, a ship post, the maker's voice. */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; height: 22px;
+  border: 1px solid var(--border); border-radius: 2em; background: var(--bg);
+  color: var(--muted-fg); font-size: 12px; font-weight: 500; white-space: nowrap;
+}
+a.chip:hover { text-decoration: none; color: var(--fg); }
+.chip-topic { background: var(--accent-bg); border-color: transparent; color: var(--accent-fg); }
+.chip-ship, .chip-maker { background: var(--attention-bg); border-color: var(--attention-border); color: var(--attention-fg); }
+.chip-merged { background: var(--done-bg); border-color: var(--done); color: var(--done); }
+
+/* Social posts: a feed of cards. */
+.feed { display: flex; flex-direction: column; gap: 16px; }
+.post { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.post-slim { padding: 12px 16px; flex-direction: row; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.post-slim p { margin: 0; flex: 1 1 240px; min-width: 0; }
+.post .by { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.post .by .who { display: flex; flex-direction: column; min-width: 0; }
+.post .by .line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.post .context { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; color: var(--muted-fg); }
+.text { margin: 0; font-size: 15px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.post-title { font-size: 16px; font-weight: 600; color: var(--fg); }
+.actions-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.btn-lg { min-height: 32px; padding: 5px 14px; font-size: 14px; }
+.tally { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--muted-fg); }
+
+/* The repo card a mention of a repo unfurls into. */
+.repo-card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--muted); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.repo-card .title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.repo-card .title a { font-size: 15px; font-weight: 600; }
+.repo-card p { margin: 0; color: var(--muted-fg); }
+.repo-card .clone { display: flex; flex-direction: column; gap: 4px; }
+.repo-card .clone code { overflow-wrap: anywhere; }
+.repo-card .links { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Media from a post's imeta tags, loaded by the visitor's browser. */
+.hero { display: block; width: 100%; max-height: 480px; object-fit: contain; border-radius: 8px; background: var(--media-bg); }
+.thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.thumbs img, .thumbs video { display: block; width: 100%; height: 96px; object-fit: cover; border-radius: var(--radius); background: var(--subtle); }
+.media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.media-grid figure { margin: 0; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.media-grid img, .media-grid video { display: block; width: 100%; height: 160px; object-fit: cover; border-radius: var(--radius); background: var(--subtle); }
+.media-grid figcaption { font-size: 12px; color: var(--muted-fg); }
+
+/* People: stargazers and followers. */
+.people { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.person { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--fg); min-width: 0; }
+.person:hover { background: var(--muted); text-decoration: none; }
+.person .who { display: flex; flex-direction: column; min-width: 0; }
+
+/* A snippet of code (NIP-C0). */
+.snippet pre { margin: 0; padding: 12px; overflow-x: auto; font-size: 12px; line-height: 20px; background: var(--code-bg); }
+
+/* The sidebar's cards, and a ranked list. */
+.side-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.side-card h2 { font-size: 14px; font-weight: 600; margin: 0; }
+.side-card p { margin: 0; }
+.ranked { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.ranked li { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.ranked .rank { width: 16px; font-family: var(--mono); font-size: 12px; color: var(--muted-fg); }
+
+/* A ship post's page. */
+.launch-title { font-size: 32px; line-height: 1.2; margin: 0; overflow-wrap: anywhere; }
+.replies { display: flex; flex-direction: column; }
+.reply { display: flex; gap: 10px; padding: 10px 0; border-top: 1px solid var(--subtle); min-width: 0; }
+.reply .body { flex: 1 1 0; min-width: 0; }
+.reply .text { font-size: 14px; }
