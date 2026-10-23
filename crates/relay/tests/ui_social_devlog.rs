@@ -297,6 +297,12 @@ async fn an_article_is_read_with_its_series_highlights_and_comments() {
     assert!(page.text.contains(">MIT<"));
     assert!(page.text.contains("&lt;ok&gt;"));
     assert!(!page.text.contains("<ok>"));
+    assert!(
+        page.text.contains("<span class=\"hl-"),
+        "the code is coloured"
+    );
+    assert!(!page.text.contains("style="));
+    assert!(!page.text.contains("<script"));
     assert!(page.text.contains("class=\"repo-card"), "its repo unfurls");
     let snippets = get(relay, &format!("{base}/snippets")).await;
     assert!(snippets.text.contains(&format!("href=\"{snippet_path}\"")));

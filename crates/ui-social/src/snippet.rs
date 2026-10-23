@@ -2,11 +2,12 @@
 //! (an id in hex, `note` or `nevent`), and the snippet card the repo page's
 //! Snippets tab and an article that embeds a snippet draw.
 //!
-//! The code is text: escaped, in a monospace block, never run. It is not
-//! syntax-highlighted. `/repo` highlights a file with `ui-highlight-web`, a
-//! WebAssembly module, and `/social` pages run no script at all; colouring
-//! on the server would put syntect in the relay and need a `style`
-//! attribute per run, which the pages' policy refuses.
+//! The code is text: escaped, in a monospace block, never run. In a language
+//! `ui-highlight` knows (the `l` tag, else the `extension` tag) it is
+//! coloured on the server as `<span class="hl-…">` runs. The colours are
+//! the shared stylesheet's, as on `/repo`; the pages carry no `style`
+//! attribute and no script, so their policy (ADR 0005) is unchanged. Any
+//! other language, or code too big, stays plain escaped text.
 //!
 //! A snippet's `repo` tag (NIP-C0) is a URL or a repo's `30617:<pubkey>:<d>`
 //! address; this page also reads an `naddr`, a `nostr://<npub>/…/<d>` URL
@@ -100,6 +101,32 @@ fn chips(snippet: &Event) -> String {
     out
 }
 
+/// The snippet's code as the inside of `<code>`: classed runs when its
+/// language is known, else the plain text. Every piece is escaped, and the
+/// text content is the snippet's content.
+fn code_html(snippet: &Event) -> String {
+    let runs = ui_highlight::highlight_snippet(
+        first_tag(snippet, "l"),
+        first_tag(snippet, "extension"),
+        &snippet.content,
+    );
+    let Some(runs) = runs else {
+        return escape(&snippet.content);
+    };
+    let mut out = String::with_capacity(snippet.content.len() * 2);
+    for run in &runs {
+        match run.class {
+            Some(class) => out.push_str(&format!(
+                "<span class=\"{}\">{}</span>",
+                class.css(),
+                escape(&run.text)
+            )),
+            None => out.push_str(&escape(&run.text)),
+        }
+    }
+    out
+}
+
 /// A snippet as a card: its name (linking to its page), language, who and
 /// when, its description and its code.
 pub(crate) fn card(view: &View<'_>, snippet: &Event) -> String {
@@ -118,7 +145,7 @@ pub(crate) fn card(view: &View<'_>, snippet: &Event) -> String {
         escape(title(snippet)),
         person(view.links.apps(), view.names, &snippet.pubkey),
         ago(snippet.created_at),
-        escape(&snippet.content),
+        code_html(snippet),
     )
 }
 
@@ -187,7 +214,7 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(target): Path<String>)
          <span class=\"muted small\">{lines} {}</span></div><pre class=\"snippet-code\"><code>{}</code></pre></div>",
         escape(title(&snippet)),
         ui_nip34::card::plural(lines, "line", "lines"),
-        escape(&snippet.content),
+        code_html(&snippet),
     ));
     let deps: Vec<&str> = snippet
         .tags
@@ -225,7 +252,7 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(target): Path<String>)
     main.push_str(&note::tally_chips(&reactions));
     main.push_str(
         "<p class=\"muted small\">A code snippet (NIP-C0, kind 1337), shown as text: \
-         this page runs nothing and colours nothing. Copy it from here or open it in a client.</p></article>",
+         this page runs nothing, and any colour is the stylesheet\'s. Copy it from here or open it in a client.</p></article>",
     );
     let body = format!(
         "<div class=\"split\"><div class=\"main\">{main}</div>{}</div>",
@@ -292,5 +319,67 @@ mod tests {
         assert!(chips.contains(">MIT<"));
         assert!(chips.contains("&lt;b&gt;"));
         assert_eq!(title(&event), "snippet");
+    }
+
+    fn with_code(code: &str, tags: &[&[&str]]) -> Event {
+        EventBuilder::new(Kind::from(SNIPPET), code)
+            .tags(tags.iter().map(|parts| Tag::parse(parts.to_vec()).unwrap()))
+            .finalize(&Keys::generate())
+            .unwrap()
+    }
+
+    /// The text of `html` with its tags removed and entities undone.
+    fn text_of(html: &str) -> String {
+        let mut out = String::new();
+        let mut in_tag = false;
+        for c in html.chars() {
+            match c {
+                '<' => in_tag = true,
+                '>' => in_tag = false,
+                c if !in_tag => out.push(c),
+                _ => {}
+            }
+        }
+        out.replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&amp;", "&")
+    }
+
+    #[test]
+    fn rust_and_typescript_come_out_as_classed_spans() {
+        let rust = with_code("fn main() {}\n", &[&["l", "rust"]]);
+        let html = code_html(&rust);
+        assert!(
+            html.contains("<span class=\"hl-keyword\">fn</span>"),
+            "{html}"
+        );
+        let ts = with_code("const x: number = 1; // c\n", &[&["l", "TypeScript"]]);
+        let html = code_html(&ts);
+        assert!(html.contains("<span class=\"hl-"), "{html}");
+        assert!(!html.contains("style="));
+        assert_eq!(text_of(&html), ts.content);
+        let by_extension = with_code("fn a() {}", &[&["extension", ".rs"]]);
+        assert!(code_html(&by_extension).contains("hl-keyword"));
+    }
+
+    #[test]
+    fn an_unknown_language_stays_plain_escaped_text() {
+        let event = with_code("a < b && c", &[&["l", "klingon"]]);
+        assert_eq!(code_html(&event), "a &lt; b &amp;&amp; c");
+        let big = with_code(&"a".repeat(ui_highlight::MAX_BYTES + 1), &[&["l", "rust"]]);
+        assert!(!code_html(&big).contains("<span"));
+    }
+
+    #[test]
+    fn markup_in_highlighted_code_is_escaped_inside_the_spans() {
+        let code = "let s = \"<script>alert(1)</script>\"; // a & b\n";
+        let event = with_code(code, &[&["l", "rust"]]);
+        let html = code_html(&event);
+        assert!(html.contains("hl-"));
+        assert!(!html.contains("<script"), "{html}");
+        assert!(html.contains("&lt;script&gt;") && html.contains("a &amp; b"));
+        assert_eq!(text_of(&html), code);
     }
 }

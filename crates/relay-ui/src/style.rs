@@ -54,6 +54,17 @@ mod tests {
     }
 
     #[test]
+    fn every_class_the_highlighter_emits_has_a_rule() {
+        for class in ui_highlight::Class::ALL {
+            assert!(
+                STYLESHEET.contains(&format!(".{} {{", class.css())),
+                "{}",
+                class.css()
+            );
+        }
+    }
+
+    #[test]
     fn the_stylesheet_sets_no_remote_resource() {
         // The pages' policy is `default-src 'self'`: a font or image from
         // elsewhere would be refused, so the sheet names none.

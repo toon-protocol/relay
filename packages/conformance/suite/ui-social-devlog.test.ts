@@ -91,6 +91,7 @@ describe('relay image conformance: /social articles, series, highlights and snip
       // The snippet mentioned on its own line is embedded.
       expect(has(text, named.snippet.id)).toBe(true);
       expect(text).toContain('&lt;never the path&gt;');
+      expect(text).toContain('<span class="hl-');
       // The series, in the author's order, with the current part marked.
       expect(text).toContain('tidepool devlog');
       expect(text).toContain('Why I built a tide app');
@@ -183,6 +184,10 @@ describe('relay image conformance: /social articles, series, highlights and snip
       expect(snippet.text).toContain('workbox-core@7');
       expect(snippet.text).toContain('&lt;never the path&gt;');
       expect(snippet.text).not.toContain('<never the path>');
+      // Coloured on the server as classes: no style attribute, no script.
+      expect(snippet.text).toContain('<span class="hl-');
+      expect(snippet.text).not.toContain('style=');
+      expect(snippet.text).not.toContain('<script');
       // Its repo, named by a nostr:// URL, unfurls into the card.
       expect(snippet.text).toContain(`data-repo="${social.repos.tidepool}"`);
       const note = await page(
@@ -194,6 +199,7 @@ describe('relay image conformance: /social articles, series, highlights and snip
         `/social/r/${social.npubs.maya}/tidepool/snippets`
       );
       expect(tab.text).toContain(`href="${path}"`);
+      expect(tab.text).toContain('<span class="hl-');
       expect(tab.text).toContain(`href="/social/s/${social.named.snippet.id}"`);
     }
   );

@@ -6,9 +6,9 @@ use serde::Deserialize;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::JsValue;
-use web_sys::{Document, Element, HtmlElement, MutationObserver, MutationObserverInit};
+use web_sys::{Document, Element, MutationObserver, MutationObserverInit};
 
-use crate::highlight::{Run, extension, highlight};
+use ui_highlight::{Run, extension, highlight};
 
 /// The two fields of `ui-nip34-web`'s layout this module reads.
 #[derive(Deserialize)]
@@ -85,24 +85,16 @@ fn colour(document: &Document, root: &Element, extension: &str) -> bool {
     true
 }
 
-/// A run as an element. The colour goes through the CSSOM, not a `style`
-/// attribute, which the page's content security policy refuses.
+/// A run as an element. The colour is the stylesheet's, by class: a `style`
+/// attribute, or the CSSOM, is what the page's content security policy
+/// refuses to be the only way.
 fn span(document: &Document, run: &Run) -> Element {
     let span = document
         .create_element("span")
         .expect("span is a valid tag name");
     span.set_text_content(Some(&run.text));
-    if let Some(element) = span.dyn_ref::<HtmlElement>() {
-        let style = element.style();
-        if let Some(rgb) = run.color {
-            let _ = style.set_property("color", &format!("#{rgb:06x}"));
-        }
-        if run.bold {
-            let _ = style.set_property("font-weight", "bold");
-        }
-        if run.italic {
-            let _ = style.set_property("font-style", "italic");
-        }
+    if let Some(class) = run.class {
+        let _ = span.set_attribute("class", class.css());
     }
     span
 }
