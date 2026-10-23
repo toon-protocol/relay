@@ -106,10 +106,11 @@ async fn the_pages_read_written_events_and_ignore_a_strangers_refs() {
     let home = format!("/repo/{}/proj", owner.public_key().to_bech32().unwrap());
     let (status, _, page) = get(relay, &home).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(page.contains("refs/heads/main"), "{page}");
-    assert!(page.contains("Default branch: <code>main</code>"), "{page}");
+    // The branch menu lists the honoured refs, HEAD's branch current.
+    assert!(page.contains("/tree/main\">main</a>"), "{page}");
+    assert!(page.contains("<a class=\"menu-item current\""), "{page}");
     assert!(page.contains(&maintainer.public_key().to_bech32().unwrap()));
-    assert!(page.contains("<a href=\"https://example.test/proj.git\""));
+    assert!(page.contains("git clone https://example.test/proj.git"));
     assert!(!page.contains("href=\"javascript:"), "{page}");
     assert!(!page.contains("evil"), "{page}");
     assert!(!page.contains("<script"), "{page}");

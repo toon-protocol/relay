@@ -1,17 +1,20 @@
-//! The NIP-34 (git) app UI, mounted at `/repo` (#276).
+//! The NIP-34 (git) app UI, mounted at `/repo` (#276), in rig-web's look
+//! (`markup`, and `relay_ui`'s stylesheet).
 //!
 //! Server-rendered pages over this relay's repository events, with no
-//! JavaScript: the list of repositories, a repository's home, and the
-//! redirects from an `naddr` or an event id to the canonical
-//! `/repo/<npub>/<d-tag>`, and a repository's issues and patches/PRs with their
-//! threads and honoured status ([`threads`]). The list also loads the browser
-//! half (`ui-nip34-web`, built by `cargo xtask ui-assets`) from
-//! `/repo/assets/` when the relay has its assets. The tree and blob pages
-//! (`git`) are layouts the browser half fills in: the relay never fetches a
-//! git object. A blob page also loads the highlighter (`ui-highlight-web`,
-//! #287), its own module, which no other page names.
+//! JavaScript: the list of repositories, the redirects from an `naddr` or an
+//! event id to the canonical `/repo/<npub>/<d-tag>`, and a repository's
+//! issues and patches/PRs with their threads and honoured status
+//! ([`threads`]). The list also loads the browser half (`ui-nip34-web`, built
+//! by `cargo xtask ui-assets`) from `/repo/assets/` when the relay has its
+//! assets. A repository's home, like rig-web's, lists its files and README
+//! beside its About sidebar, so it is a git page too: the home, tree, blob
+//! and commit pages (`git`) are layouts the browser half fills in, and the
+//! relay never fetches a git object. A blob page also loads the highlighter
+//! (`ui-highlight-web`, #287), its own module, which no other page names.
 
 mod git;
+mod markup;
 mod threads;
 
 pub use git::{CONTENT_SECURITY_POLICY_VALUE as GIT_CONTENT_SECURITY_POLICY_VALUE, Defaults};
@@ -28,6 +31,8 @@ use nostr::filter::Filter;
 use nostr::key::PublicKey;
 use nostr::nips::nip19::{FromBech32, Nip19Coordinate, ToBech32};
 use relay_ui::{AppUi, Assets, ReadOnlyStore};
+
+use markup::{Tab, ago, avatar, icon, name, plain_name, ref_menu, repo_header, svg};
 
 /// The mount prefix.
 pub const PREFIX: &str = "/repo";
@@ -82,6 +87,9 @@ pub fn app(store: ReadOnlyStore, assets: Option<Assets>, defaults: Defaults) -> 
 }
 
 async fn asset(State(pages): State<Pages>, Path(name): Path<String>) -> Response {
+    if name == relay_ui::stylesheet_name() {
+        return relay_ui::stylesheet_response();
+    }
     match pages.assets {
         Some(assets) => assets.respond(&name),
         None => StatusCode::NOT_FOUND.into_response(),
@@ -120,6 +128,59 @@ fn newest<'a>(events: impl IntoIterator<Item = &'a Event>) -> Option<&'a Event> 
             Some(held) if !supersedes(candidate, held) => Some(held),
             _ => Some(candidate),
         })
+}
+
+/// The refs a repo state names, `(name, commit)`, in both shapes a state is
+/// written in (rig's rule, rig#156): NIP-34's `["refs/heads/main", <sha>]`,
+/// and the legacy `["r", "refs/heads/main", <sha>]` that every repo pushed by
+/// the rig CLI carries. When both name a ref, NIP-34's wins. A peeled tag
+/// (`refs/tags/v1^{}`) is not a ref. A pure function.
+pub(crate) fn refs(state: &Event) -> Vec<(&str, &str)> {
+    let is_ref = |name: &str| {
+        (name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
+            && !name.ends_with("^{}")
+    };
+    let mut found: Vec<(&str, &str)> = Vec::new();
+    for tag in state.tags.iter().map(|tag| tag.as_slice()) {
+        if let [name, commit, ..] = tag
+            && is_ref(name)
+            && !found.iter().any(|(held, _)| held == name)
+        {
+            found.push((name, commit));
+        }
+    }
+    for tag in state.tags.iter().map(|tag| tag.as_slice()) {
+        if let [marker, name, commit, ..] = tag
+            && marker == "r"
+            && is_ref(name)
+            && !found.iter().any(|(held, _)| held == name)
+        {
+            found.push((name, commit));
+        }
+    }
+    found
+}
+
+/// The branch a repo state's `HEAD` names: NIP-34's `["HEAD", "ref:
+/// refs/heads/main"]`, else rig's `["r", "HEAD", …]`, else `main` as rig-web
+/// assumed. A pure function.
+pub(crate) fn head_branch(state: &Event) -> String {
+    let nip = first_tag(state, "HEAD");
+    let legacy = state
+        .tags
+        .iter()
+        .map(|tag| tag.as_slice())
+        .find_map(|tag| match tag {
+            [marker, head, value, ..] if marker == "r" && head == "HEAD" => Some(value.as_str()),
+            _ => None,
+        });
+    nip.or(legacy)
+        .map(|head| {
+            let head = head.strip_prefix("ref:").unwrap_or(head).trim();
+            head.strip_prefix("refs/heads/").unwrap_or(head).to_owned()
+        })
+        .filter(|head| !head.is_empty())
+        .unwrap_or_else(|| "main".to_owned())
 }
 
 /// The pubkeys whose repo state is honoured: the owner and the maintainers
@@ -167,7 +228,10 @@ fn escape(text: &str) -> String {
 /// A link target is only followed if it is `http(s)`.
 fn link(url: &str) -> String {
     if url.starts_with("https://") || url.starts_with("http://") {
-        format!("<a href=\"{0}\" rel=\"nofollow\">{0}</a>", escape(url))
+        format!(
+            "<a class=\"truncate\" href=\"{0}\" rel=\"nofollow\">{0}</a>",
+            escape(url)
+        )
     } else {
         format!("<code>{}</code>", escape(url))
     }
@@ -194,23 +258,17 @@ fn repo_path(owner: &PublicKey, d: &str) -> String {
     format!("{PREFIX}/{}/{}", npub(owner), percent_encode(d))
 }
 
-fn page(title: &str, body: &str) -> String {
-    format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
-         <title>{}</title></head><body>{body}</body></html>",
-        escape(title)
-    )
-}
-
 fn html(status: StatusCode, title: &str, body: &str) -> Response {
-    (status, Html(page(title, body))).into_response()
+    (status, Html(markup::page(title, body))).into_response()
 }
 
 async fn not_found() -> Response {
     html(
         StatusCode::NOT_FOUND,
         "Not found",
-        "<h1>Not found</h1><p><a href=\"/repo\">Repositories</a></p>",
+        "<div class=\"box\"><div class=\"empty\"><h2>Not found</h2>\
+         <p>Nothing on this relay lives at this address.</p>\
+         <p><a href=\"/repo\">All repositories</a></p></div></div>",
     )
 }
 
@@ -239,15 +297,6 @@ async fn names(store: &ReadOnlyStore, keys: &[PublicKey]) -> HashMap<PublicKey, 
         }
     }
     names
-}
-
-/// A person: the profile's name where there is one, else the npub.
-fn person(names: &HashMap<PublicKey, String>, key: &PublicKey) -> String {
-    let npub = npub(key);
-    match names.get(key) {
-        Some(name) => format!("{} (<code>{}</code>)", escape(name), escape(&npub)),
-        None => format!("<code>{}</code>", escape(&npub)),
-    }
 }
 
 /// The newest announcement for each `(pubkey, d)`.
@@ -283,31 +332,48 @@ async fn list(State(Pages { store, assets, .. }): State<Pages>) -> Response {
     let repos = latest_announcements(&events);
     let owners: Vec<PublicKey> = repos.iter().map(|repo| repo.pubkey).collect();
     let names = names(&store, &owners).await;
-    let mut body = String::from("<h1>Repositories</h1>");
+    let mut body = String::from("<h1 class=\"page-title\">Repositories</h1>");
     if repos.is_empty() {
-        body.push_str("<p>No repositories on this relay.</p>");
+        body.push_str(
+            "<div class=\"box\"><div class=\"empty\">No repositories on this relay.</div></div>",
+        );
     } else {
-        body.push_str("<ul>");
+        body.push_str(&format!(
+            "<div class=\"box\"><div class=\"box-header strong\">{} {}</div><ul class=\"rows\">",
+            repos.len(),
+            if repos.len() == 1 {
+                "repository"
+            } else {
+                "repositories"
+            }
+        ));
         for repo in repos {
             body.push_str(&format!(
-                "<li><a href=\"{}\">{}</a> by {}",
+                "<li class=\"repo-row\"><div class=\"title\"><a href=\"{}\">{}</a>\
+                 <span class=\"pill\">Public</span></div>",
                 escape(&repo_path(&repo.pubkey, d_tag(repo))),
                 escape(repo_name(repo)),
-                person(&names, &repo.pubkey),
             ));
-            if let Some(description) = first_tag(repo, "description") {
-                body.push_str(&format!(" &mdash; {}", escape(description)));
+            if let Some(description) = first_tag(repo, "description")
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+            {
+                body.push_str(&format!("<p>{}</p>", escape(description)));
             }
-            body.push_str("</li>");
+            body.push_str(&format!(
+                "<div class=\"meta\">{}<span>Updated {}</span></div></li>",
+                name(&names, &repo.pubkey),
+                ago(repo.created_at),
+            ));
         }
-        body.push_str("</ul>");
+        body.push_str("</ul></div>");
     }
     match assets.and_then(|assets| assets.url(PREFIX, SCRIPT)) {
         Some(script) => body.push_str(&format!(
-            "<p id=\"app\"></p><script type=\"module\" src=\"{}\"></script>",
+            "<script type=\"module\" src=\"{}\"></script>",
             escape(&script)
         )),
-        None => body.push_str(&format!("<p>{UNAVAILABLE}</p>")),
+        None => body.push_str(&format!("<p class=\"muted small\">{UNAVAILABLE}</p>")),
     }
     html(StatusCode::OK, "Repositories", &body)
 }
@@ -345,7 +411,11 @@ fn owner_announcement<'a>(
 }
 
 async fn home(
-    State(Pages { store, .. }): State<Pages>,
+    State(Pages {
+        store,
+        assets,
+        defaults,
+    }): State<Pages>,
     Path((owner, d)): Path<(String, String)>,
 ) -> Response {
     let Some((owner, announcement)) = resolve_repo(&store, &owner, &d).await else {
@@ -363,74 +433,140 @@ async fn home(
         .await;
     let state = honoured_state(announcement, &states);
     let names = names(&store, &authors).await;
-
-    let mut body = format!("<h1>{}</h1>", escape(repo_name(announcement)));
-    if let Some(description) = first_tag(announcement, "description") {
-        body.push_str(&format!("<p>{}</p>", escape(description)));
-    }
-    body.push_str(&format!(
-        "<p>Owner: {}</p><h2>Maintainers</h2><ul>",
-        person(&names, &owner)
-    ));
-    for key in authors.iter().filter(|key| **key != owner) {
-        body.push_str(&format!("<li>{}</li>", person(&names, key)));
-    }
-    body.push_str("</ul>");
-    for (heading, tag) in [("Clone", "clone"), ("Web", "web")] {
-        let urls = tag_values(announcement, tag);
-        if !urls.is_empty() {
-            body.push_str(&format!("<h2>{heading}</h2><ul>"));
-            for url in urls {
-                body.push_str(&format!("<li>{}</li>", link(url)));
-            }
-            body.push_str("</ul>");
-        }
-    }
-    body.push_str("<h2>Refs</h2>");
-    match state {
-        Some(state) => {
-            if let Some(head) = first_tag(state, "HEAD") {
-                let branch = head.strip_prefix("ref: ").unwrap_or(head);
-                let branch = branch.strip_prefix("refs/heads/").unwrap_or(branch);
-                body.push_str(&format!(
-                    "<p>Default branch: <code>{}</code></p>",
-                    escape(branch)
-                ));
-                body.push_str(&format!(
-                    "<p><a href=\"{0}/tree/{1}\">Browse files</a> &middot; <a href=\"{0}/commits/{1}\">Commits</a></p>",
-                    escape(&repo_path(&owner, &d)),
-                    escape(
-                        &branch
-                            .split('/')
-                            .map(percent_encode)
-                            .collect::<Vec<_>>()
-                            .join("/")
-                    )
-                ));
-            }
-            body.push_str("<ul>");
-            for tag in state.tags.iter().map(|tag| tag.as_slice()) {
-                if let [name, commit, ..] = tag
-                    && name.starts_with("refs/")
-                {
-                    body.push_str(&format!(
-                        "<li><code>{}</code> <code>{}</code></li>",
-                        escape(name),
-                        escape(commit)
-                    ));
-                }
-            }
-            body.push_str("</ul>");
-        }
-        None => body.push_str("<p>No refs published.</p>"),
-    }
     let base = repo_path(&owner, &d);
-    body.push_str(&format!(
-        "<p><a href=\"{0}/issues\">Issues</a> &middot; <a href=\"{0}/pulls\">Patches and pull requests</a></p>",
-        escape(&base)
+
+    let mut body = repo_header(&owner, &d, announcement, &names, Tab::Code);
+    body.push_str("<div class=\"split\"><div class=\"main\"><div class=\"toolbar\">");
+    let default_branch = state.map(head_branch);
+    match (state, &default_branch) {
+        (Some(state), Some(branch)) => body.push_str(&ref_menu(&base, "tree", branch, state)),
+        _ => body.push_str("<span></span>"),
+    }
+    body.push_str(&clone_menu(announcement));
+    body.push_str("</div>");
+    let mut csp = false;
+    match (state, &default_branch) {
+        (Some(state), Some(branch)) => {
+            let segments: Vec<String> = branch.split('/').map(str::to_owned).collect();
+            match git::resolve(state, &segments) {
+                Some((ref_name, commit, _)) => {
+                    body.push_str(&git::mount(
+                        assets.as_ref(),
+                        git::PageKind::Tree,
+                        &base,
+                        &ref_name,
+                        &commit,
+                        &[],
+                        0,
+                        &git::candidates(announcement, state, &defaults),
+                    ));
+                    csp = true;
+                }
+                None => body.push_str(
+                    "<div class=\"box\"><div class=\"empty\">The default branch names no commit.</div></div>",
+                ),
+            }
+        }
+        _ => body
+            .push_str("<div class=\"box\"><div class=\"empty\">No refs published yet.</div></div>"),
+    }
+    body.push_str("</div>");
+    body.push_str(&about(&owner, announcement, state, &authors, &names));
+    body.push_str("</div>");
+    let mut response = html(StatusCode::OK, repo_name(announcement), &body);
+    if csp {
+        response.headers_mut().insert(
+            header::CONTENT_SECURITY_POLICY,
+            axum::http::HeaderValue::from_static(git::CONTENT_SECURITY_POLICY_VALUE),
+        );
+    }
+    response
+}
+
+/// The green Code button: the repo's clone URLs, in a panel.
+fn clone_menu(announcement: &Event) -> String {
+    let urls = tag_values(announcement, "clone");
+    let mut out = format!(
+        "<details class=\"menu\"><summary class=\"btn btn-success\">{}Code{}</summary>\
+         <div class=\"menu-panel right\"><div class=\"menu-title\">Clone</div><div class=\"menu-body\">",
+        svg(icon::CODE, "icon-sm"),
+        svg(icon::CHEVRON, "icon-sm caret"),
+    );
+    if urls.is_empty() {
+        out.push_str("<p class=\"muted small\">This repository names no clone URL.</p>");
+    }
+    for url in urls {
+        out.push_str(&format!(
+            "<code class=\"copy-field\">git clone {}</code>",
+            escape(url)
+        ));
+    }
+    out.push_str(
+        "<p class=\"muted small\">Pushing, issues and pull requests are paid writes, \
+         sent with a TOON client.</p></div></div></details>",
+    );
+    out
+}
+
+/// The sidebar: what the repo is, its refs, its links and who keeps it.
+fn about(
+    owner: &PublicKey,
+    announcement: &Event,
+    state: Option<&Event>,
+    authors: &[PublicKey],
+    names: &HashMap<PublicKey, String>,
+) -> String {
+    let mut out = String::from("<aside class=\"sidebar\"><div><h2>About</h2>");
+    match first_tag(announcement, "description")
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        Some(description) => out.push_str(&format!("<p>{}</p>", escape(description))),
+        None => out.push_str("<p class=\"muted\"><em>No description provided.</em></p>"),
+    }
+    let web = tag_values(announcement, "web");
+    if !web.is_empty() {
+        out.push_str("<ul class=\"facts\">");
+        for url in web {
+            out.push_str(&format!("<li>{}{}</li>", svg(icon::LINK, ""), link(url)));
+        }
+        out.push_str("</ul>");
+    }
+    out.push_str("</div>");
+    if let Some(state) = state {
+        let held = refs(state);
+        let count = |prefix: &str| {
+            held.iter()
+                .filter(|(name, _)| name.starts_with(prefix))
+                .count()
+        };
+        let (branches, tags) = (count("refs/heads/"), count("refs/tags/"));
+        out.push_str(&format!(
+            "<ul class=\"facts\"><li>{}<span>{branches} branch{}</span></li>\
+             <li>{}<span>{tags} tag{}</span></li></ul>",
+            svg(icon::BRANCH, ""),
+            if branches == 1 { "" } else { "es" },
+            svg(icon::TAG, ""),
+            if tags == 1 { "" } else { "s" },
+        ));
+    }
+    out.push_str(&format!(
+        "<div><h3>{}</h3><ul>",
+        if authors.len() > 1 {
+            "Maintainers"
+        } else {
+            "Owner"
+        }
     ));
-    body.push_str("<p><a href=\"/repo\">All repositories</a></p>");
-    html(StatusCode::OK, repo_name(announcement), &body)
+    for key in std::iter::once(owner).chain(authors.iter().filter(|key| *key != owner)) {
+        out.push_str(&format!(
+            "<li>{} {}</li>",
+            avatar(&plain_name(names, key), true),
+            name(names, key)
+        ));
+    }
+    out.push_str("</ul></div></aside>");
+    out
 }
 
 fn moved(path: &str) -> Response {

@@ -33,6 +33,8 @@ const CONTEXT: usize = 3;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LogRow {
     pub href: String,
+    /// The tree at this commit.
+    pub tree_href: String,
     pub id: ObjectId,
     pub summary: String,
     pub author: String,
@@ -108,7 +110,7 @@ fn id_of(text: &str) -> Result<ObjectId, Error> {
     ObjectId::from_hex(text).map_err(|_| Error::Unheld)
 }
 
-fn commit_href(layout: &Layout, id: &ObjectId) -> String {
+pub(crate) fn commit_href(layout: &Layout, id: &ObjectId) -> String {
     format!("{}/commit/{id}", layout.base)
 }
 
@@ -117,7 +119,7 @@ fn tree_href(layout: &Layout, id: &ObjectId) -> String {
 }
 
 /// `Name <email>`, or what is there of it.
-fn who(person: &git_objects::Person) -> String {
+pub(crate) fn who(person: &git_objects::Person) -> String {
     if person.email.is_empty() {
         person.name.clone()
     } else {
@@ -126,7 +128,7 @@ fn who(person: &git_objects::Person) -> String {
 }
 
 /// `YYYY-MM-DD HH:MM +ZZZZ` in the person's own time zone.
-fn when(person: &git_objects::Person) -> String {
+pub(crate) fn when(person: &git_objects::Person) -> String {
     let offset = person
         .tz
         .strip_prefix(['+', '-'])
@@ -231,6 +233,7 @@ pub async fn log(fetch: &impl Fetch, layout: &Layout) -> Result<Log, Error> {
             let commit = step.commit.as_ref().ok()?;
             Some(LogRow {
                 href: commit_href(layout, &step.id),
+                tree_href: tree_href(layout, &step.id),
                 id: step.id,
                 summary: commit.message.lines().next().unwrap_or_default().to_owned(),
                 author: who(&commit.author),

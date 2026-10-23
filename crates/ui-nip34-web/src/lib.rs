@@ -24,7 +24,7 @@ pub use history::{
 };
 pub use layout::{Layout, PageKind};
 pub use object::{Error, Fetch, MAX_OBJECT, NO_LONGER_HELD, load};
-pub use view::{Content, Row, build};
+pub use view::{Content, Document, Head, Listing, Readme, Row, build};
 
 use wasm_bindgen::prelude::wasm_bindgen;
 
