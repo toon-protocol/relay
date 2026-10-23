@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use crate::{Error, Fetch};
 
 /// A table of URL to bytes; anything else fails.
+#[derive(Default)]
 pub(crate) struct Table(pub(crate) BTreeMap<String, Vec<u8>>);
 
 impl Fetch for Table {

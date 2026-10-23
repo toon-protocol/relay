@@ -17,7 +17,10 @@ mod object;
 mod verify;
 mod walk;
 
-pub use diff::{Change, LineChange, LineOp, TreeChange, diff_lines, diff_trees};
+pub use diff::{
+    Change, FileChange, FileEntry, LineChange, LineOp, TreeChange, diff_files, diff_lines,
+    diff_trees,
+};
 pub use error::ObjectError;
 pub use id::{ObjectId, ObjectKind};
 pub use object::{Commit, Person, RawObject, Tag, Tree, TreeEntry};

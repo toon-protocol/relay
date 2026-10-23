@@ -65,6 +65,9 @@ pub fn app(store: ReadOnlyStore, assets: Option<Assets>, defaults: Defaults) -> 
         .route("/repo/{npub}/{d}", get(home))
         .route("/repo/{npub}/{d}/tree/{*rest}", get(git::tree))
         .route("/repo/{npub}/{d}/blob/{*rest}", get(git::blob))
+        .route("/repo/{npub}/{d}/commits", get(git::commits_default))
+        .route("/repo/{npub}/{d}/commits/{*rest}", get(git::commits))
+        .route("/repo/{npub}/{d}/commit/{id}", get(git::commit))
         .route("/repo/{npub}/{d}/issues", get(threads::issues))
         .route("/repo/{npub}/{d}/issues/{id}", get(threads::issue))
         .route("/repo/{npub}/{d}/pulls", get(threads::pulls))
@@ -394,7 +397,7 @@ async fn home(
                     escape(branch)
                 ));
                 body.push_str(&format!(
-                    "<p><a href=\"{}/tree/{}\">Browse files</a></p>",
+                    "<p><a href=\"{0}/tree/{1}\">Browse files</a> &middot; <a href=\"{0}/commits/{1}\">Commits</a></p>",
                     escape(&repo_path(&owner, &d)),
                     escape(
                         &branch

@@ -12,12 +12,16 @@
 
 mod browser;
 mod dom;
+mod history;
 mod layout;
 mod object;
 #[cfg(test)]
 mod testing;
 mod view;
 
+pub use history::{
+    Body, CommitLink, CommitView, FileView, Files, HISTORY_ENDS, Log, LogRow, PAGE_SIZE,
+};
 pub use layout::{Layout, PageKind};
 pub use object::{Error, Fetch, MAX_OBJECT, NO_LONGER_HELD, load};
 pub use view::{Content, Row, build};

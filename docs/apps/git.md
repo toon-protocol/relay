@@ -240,12 +240,16 @@ id. The relay **never fetches an object**: the page carries, as JSON in a
 `data-git` attribute, the resolved commit and, for each object the honoured
 `30618` names in an `arweave` or `blossom` tag, the URLs to try in order:
 
-1. the `arweave` tag against the gateways **that tag names**:
+1. the `blossom` tag against the announcement's `blossoms` servers;
+2. the `blossom` tag against the operator's `TOON_UI_BLOB_SERVERS`;
+3. the `arweave` tag against the gateways **that tag names**:
    `["arweave", <object id>, <txId>, <gateway https URL>…]`. The gateways are
    optional extra values on the tag; a tag with none contributes no URL here;
-2. the `blossom` tag against the announcement's `blossoms` servers;
-3. the `arweave` tag against the operator's `TOON_UI_ARWEAVE_GATEWAYS`;
-4. the `blossom` tag against the operator's `TOON_UI_BLOB_SERVERS`.
+4. the `arweave` tag against the operator's `TOON_UI_ARWEAVE_GATEWAYS`.
+
+Blossom comes first and Arweave is the durable fallback, because a Blossom
+blob may expire (see "Coexistence with Arweave tags" in
+`docs/nips/nip-34-blossom.md`).
 
 Each is `<gateway>/<txId>` or `<server>/<blob id>`; only `https` URLs are
 listed. The page's script (a WebAssembly module) fetches over `https` only,
