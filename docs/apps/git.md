@@ -231,6 +231,31 @@ A verified object never changes and can be cached indefinitely. Servers may
 lie, so the checks are not optional. Objects stored by an `arweave` tag
 follow that tag's format, which is not interchangeable with this one.
 
+### Reading in a browser: the relay's `/repo` pages
+
+A relay that serves `/repo` renders `/repo/<npub>/<d>/tree/<ref>/<path>` and
+`/repo/<npub>/<d>/blob/<ref>/<path>`. `<ref>` is a branch or tag name from the
+honoured state (it may hold slashes; the longest match wins) or a 40-hex commit
+id. The relay **never fetches an object**: the page carries, as JSON in a
+`data-git` attribute, the resolved commit and, for each object the honoured
+`30618` names in an `arweave` or `blossom` tag, the URLs to try in order:
+
+1. the `arweave` tag against the gateways **that tag names**:
+   `["arweave", <object id>, <txId>, <gateway https URL>…]`. The gateways are
+   optional extra values on the tag; a tag with none contributes no URL here;
+2. the `blossom` tag against the announcement's `blossoms` servers;
+3. the `arweave` tag against the operator's `TOON_UI_ARWEAVE_GATEWAYS`;
+4. the `blossom` tag against the operator's `TOON_UI_BLOB_SERVERS`.
+
+Each is `<gateway>/<txId>` or `<server>/<blob id>`; only `https` URLs are
+listed. The page's script (a WebAssembly module) fetches over `https` only,
+refuses an object over 2 MiB, times out each request, takes the first candidate
+whose bytes hash to the object id, and renders the tree or file. Bytes may be
+the object's body, the body behind its `<type> <size>\0` header, or the
+zlib-compressed loose object. A missing, oversized or mismatched object shows
+"this object is no longer held" in its place and the rest of the page still
+renders. The browser's HTTP cache does the caching.
+
 ## 4. Issues, patches, pull requests, comments and status
 
 Issues, patches, pull requests and status events reference the repository by

@@ -36,6 +36,14 @@ impl EventSource for Reading {
     }
 }
 
+/// The operator's default places for a browser to look for git objects
+/// (`TOON_UI_ARWEAVE_GATEWAYS`, `TOON_UI_BLOB_SERVERS`). The relay only
+/// writes them into pages; it never contacts them.
+pub(crate) struct ObjectSources<'a> {
+    pub(crate) arweave_gateways: &'a [String],
+    pub(crate) blob_servers: &'a [String],
+}
+
 /// The app UIs named in `apps` (`TOON_UI_APPS`), each over a read-only handle
 /// to `store`. A name this build has no app for is refused: the feature that
 /// holds it was left out.
@@ -43,10 +51,11 @@ pub(crate) fn enabled(
     apps: &[String],
     store: &Store,
     assets: Option<&Assets>,
+    sources: &ObjectSources<'_>,
 ) -> Result<Arc<[AppUi]>, RelayError> {
     let mut uis = Vec::new();
     for app in apps {
-        match built(app, store, assets) {
+        match built(app, store, assets, sources) {
             Some(ui) => uis.push(ui),
             None => {
                 return Err(RelayError::InvalidSetting {
@@ -62,12 +71,21 @@ pub(crate) fn enabled(
 
 /// The app UI called `name`, if this build includes it.
 #[cfg_attr(not(feature = "ui-repo"), allow(unused_variables))]
-fn built(name: &str, store: &Store, assets: Option<&Assets>) -> Option<AppUi> {
+fn built(
+    name: &str,
+    store: &Store,
+    assets: Option<&Assets>,
+    sources: &ObjectSources<'_>,
+) -> Option<AppUi> {
     #[cfg(feature = "ui-repo")]
     if name == "repo" {
         return Some(ui_nip34::app(
             ReadOnlyStore::new(Reading(store.clone())),
             assets.cloned(),
+            ui_nip34::Defaults {
+                arweave_gateways: sources.arweave_gateways.to_vec(),
+                blob_servers: sources.blob_servers.to_vec(),
+            },
         ));
     }
     None

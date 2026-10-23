@@ -165,6 +165,10 @@ impl Relay {
             &config.ui_apps,
             &store,
             ui::assets(config.ui_assets_dir.as_deref()).as_ref(),
+            &ui::ObjectSources {
+                arweave_gateways: &config.ui_arweave_gateways,
+                blob_servers: &config.ui_blob_servers,
+            },
         )?;
         Ok(Self {
             identity: config.identity,

@@ -154,6 +154,32 @@ fn an_app_no_one_wrote_is_refused() {
     assert!(refused.is_err());
 }
 
+#[test]
+fn object_sources_must_be_https_urls() {
+    let data = tempfile::tempdir().expect("a temp dir");
+    let data_dir = data.path().to_string_lossy().into_owned();
+    let with = |setting: &'static str, value: &'static str| {
+        Config::from_env(|name| match name {
+            "TOON_SECRET_KEY" => Some("1".repeat(64)),
+            "TOON_DATA_DIR" => Some(data_dir.clone()),
+            other if other == setting => Some(value.to_string()),
+            _ => None,
+        })
+    };
+    for setting in ["TOON_UI_ARWEAVE_GATEWAYS", "TOON_UI_BLOB_SERVERS"] {
+        assert!(with(setting, "https://a.test, https://b.test/x").is_ok());
+        for bad in [
+            "http://a.test",
+            "a.test",
+            "https://",
+            "https://a.test,ftp://b",
+            "https://a.test/\u{7}",
+        ] {
+            assert!(with(setting, bad).is_err(), "{setting}={bad}");
+        }
+    }
+}
+
 async fn body_text(response: axum::http::Response<Body>) -> String {
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await

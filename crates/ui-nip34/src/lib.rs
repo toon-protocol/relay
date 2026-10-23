@@ -6,9 +6,14 @@
 //! `/repo/<npub>/<d-tag>`, and a repository's issues and patches/PRs with their
 //! threads and honoured status ([`threads`]). The list also loads the browser
 //! half (`ui-nip34-web`, built by `cargo xtask ui-assets`) from
-//! `/repo/assets/` when the relay has its assets.
+//! `/repo/assets/` when the relay has its assets. The tree and blob pages
+//! (`git`) are layouts the browser half fills in: the relay never fetches a
+//! git object.
 
+mod git;
 mod threads;
+
+pub use git::{CONTENT_SECURITY_POLICY_VALUE as GIT_CONTENT_SECURITY_POLICY_VALUE, Defaults};
 
 use std::collections::HashMap;
 
@@ -44,21 +49,29 @@ pub const UNAVAILABLE: &str = "git browsing unavailable";
 struct Pages {
     store: ReadOnlyStore,
     assets: Option<Assets>,
+    defaults: Defaults,
 }
 
-/// The app UI over `store`, with the built `assets` if the relay has them.
-pub fn app(store: ReadOnlyStore, assets: Option<Assets>) -> AppUi {
+/// The app UI over `store`, with the built `assets` if the relay has them and
+/// the operator's `defaults` for where a browser looks for git objects.
+pub fn app(store: ReadOnlyStore, assets: Option<Assets>, defaults: Defaults) -> AppUi {
     let router = Router::new()
         .route(PREFIX, get(list))
         .route(&format!("{PREFIX}/assets/{{name}}"), get(asset))
         .route("/repo/{target}", get(redirect))
         .route("/repo/{npub}/{d}", get(home))
+        .route("/repo/{npub}/{d}/tree/{*rest}", get(git::tree))
+        .route("/repo/{npub}/{d}/blob/{*rest}", get(git::blob))
         .route("/repo/{npub}/{d}/issues", get(threads::issues))
         .route("/repo/{npub}/{d}/issues/{id}", get(threads::issue))
         .route("/repo/{npub}/{d}/pulls", get(threads::pulls))
         .route("/repo/{npub}/{d}/pulls/{id}", get(threads::pull))
         .fallback(not_found)
-        .with_state(Pages { store, assets });
+        .with_state(Pages {
+            store,
+            assets,
+            defaults,
+        });
     AppUi::new(PREFIX, router)
 }
 
@@ -253,7 +266,7 @@ fn repo_name(announcement: &Event) -> &str {
         .unwrap_or_else(|| d_tag(announcement))
 }
 
-async fn list(State(Pages { store, assets }): State<Pages>) -> Response {
+async fn list(State(Pages { store, assets, .. }): State<Pages>) -> Response {
     let events = store
         .query(
             Filter::new()
@@ -376,6 +389,17 @@ async fn home(
                 body.push_str(&format!(
                     "<p>Default branch: <code>{}</code></p>",
                     escape(branch)
+                ));
+                body.push_str(&format!(
+                    "<p><a href=\"{}/tree/{}\">Browse files</a></p>",
+                    escape(&repo_path(&owner, &d)),
+                    escape(
+                        &branch
+                            .split('/')
+                            .map(percent_encode)
+                            .collect::<Vec<_>>()
+                            .join("/")
+                    )
                 ));
             }
             body.push_str("<ul>");
