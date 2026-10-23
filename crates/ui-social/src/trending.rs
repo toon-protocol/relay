@@ -467,6 +467,50 @@ pub(crate) async fn stars_and_forks(
     counts
 }
 
+/// Distinct people other than each repo's `makers` (ADR 0002) who starred
+/// it: what a ranking by stars orders by, as the trending score leaves the
+/// makers out. One query.
+pub(crate) async fn stars_from_others(
+    store: &ReadOnlyStore,
+    repos: &[RepoAddress],
+    makers: &HashMap<RepoAddress, Vec<PublicKey>>,
+) -> HashMap<RepoAddress, usize> {
+    if repos.is_empty() {
+        return HashMap::new();
+    }
+    let coordinates: Vec<String> = repos.iter().map(RepoAddress::coordinate).collect();
+    let reactions = store
+        .query(
+            Filter::new()
+                .kind(Kind::from(REACTION))
+                .custom_tags(SingleLetterTag::LOWERCASE_A, coordinates)
+                .limit(COUNT_LIMIT),
+        )
+        .await;
+    count_from_others(&reactions, repos, makers)
+}
+
+/// [`stars_from_others`] over `reactions`. A pure function.
+fn count_from_others(
+    reactions: &[Event],
+    repos: &[RepoAddress],
+    makers: &HashMap<RepoAddress, Vec<PublicKey>>,
+) -> HashMap<RepoAddress, usize> {
+    repos
+        .iter()
+        .map(|repo| {
+            let coordinate = repo.coordinate();
+            let own = makers.get(repo).map(Vec::as_slice).unwrap_or_default();
+            let people: HashSet<PublicKey> = reactions
+                .iter()
+                .filter(|event| is_star(event, &coordinate) && !own.contains(&event.pubkey))
+                .map(|event| event.pubkey)
+                .collect();
+            (repo.clone(), people.len())
+        })
+        .collect()
+}
+
 /// A NIP-85 provider's ranking of repos: its kind 30384s whose `d` is a
 /// repo's address.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1078,6 +1122,19 @@ mod tests {
             .custom_created_at(Timestamp::from(at))
             .finalize(keys)
             .unwrap()
+    }
+
+    #[test]
+    fn stars_from_others_leave_the_makers_out() {
+        let (owner, fan, other_fan) = (Keys::generate(), Keys::generate(), Keys::generate());
+        let repo = RepoAddress::new(owner.public_key(), "r").unwrap();
+        let a = repo.coordinate();
+        let star = |keys: &Keys| signed(keys, 7, 1, "+", &[&["a", &a], &["k", "30617"]]);
+        let reactions = [star(&owner), star(&fan), star(&fan), star(&other_fan)];
+        let makers: HashMap<RepoAddress, Vec<PublicKey>> =
+            [(repo.clone(), vec![owner.public_key()])].into();
+        let counted = count_from_others(&reactions, std::slice::from_ref(&repo), &makers);
+        assert_eq!(counted.get(&repo), Some(&2));
     }
 
     #[test]

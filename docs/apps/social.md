@@ -326,7 +326,7 @@ that key. Under it, a Topics box links the topics with the most repos.
 | `/social/trending?topic=<t>` | Only repos under one topic |
 | `/social/trending?by=<npub>` | One NIP-85 provider's signed ranking, when the store holds one |
 | `/social/t` | Every topic, with the number of distinct repos under it |
-| `/social/t/<topic>` | The repos under one topic, by stars, each saying whether its owner tagged it or who labelled it |
+| `/social/t/<topic>` | The repos under one topic, by stars from people other than their makers, each saying whether its makers tagged it or who else labelled it |
 
 **The score**, printed on the page under "How this is ranked": the number of
 distinct pubkeys that, inside the window, did any of these to the repo `A`.
@@ -383,6 +383,15 @@ tag" (an `L` starting with `#`), so a label in it means exactly what the
 owner's `t` tag means and needs no new namespace. Labels in any other
 namespace, and `l` tags without the `#t` mark, are not topics. A label is the
 labeller's claim, paid for with one write: the topic page names each labeller.
+A label by the repo's own owner or a maintainer is not someone else's claim:
+it counts as the makers' own topic, like the `t` tag, and is not listed as a
+label.
+
+**Counting is the same on both pages.** A maker never moves their own repo
+up: the trending score leaves out the owner and maintainers, and the topic
+page orders by stars from people other than them. The star count a row shows
+is everyone's, as on a repo card, so a maker's own star is in the number but
+not in the order.
 Topic chips on repo cards and repo pages link to `/social/t/<topic>`. NIP-32
 is a draft NIP.
 

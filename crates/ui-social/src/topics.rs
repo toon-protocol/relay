@@ -12,6 +12,12 @@
 //!   other namespace are not topics. The labeller is always shown: a label is
 //!   someone's claim, paid for with one write, not the owner's.
 //!
+//! A label by one of the repo's own makers (its owner or a maintainer, ADR
+//! 0002) is not someone else's claim: it counts as the makers' own topic,
+//! like the announcement's `t` tags, and is not listed as a label. The topic
+//! page orders repos by stars from people other than their makers, the rule
+//! trending uses, so a maker cannot move their own repo up.
+//!
 //! Topics are compared lower-cased, with a leading `#` dropped, as GitHub
 //! does. The [`Catalog`] is also what [`crate::trending`] ranks over: every
 //! repo announced here, with the keys whose acts on it are the maker's own.
@@ -106,8 +112,11 @@ pub(crate) struct Tagged {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Catalog {
     announcements: HashMap<RepoAddress, Event>,
-    /// `(topic, repo, labeller)`, once each.
+    /// `(topic, repo, labeller)` by someone other than the repo's makers,
+    /// once each.
     labels: Vec<(String, RepoAddress, PublicKey)>,
+    /// `(topic, repo)` a maker of the repo labelled: its own topics.
+    maker_labels: Vec<(String, RepoAddress)>,
 }
 
 impl Catalog {
@@ -147,13 +156,25 @@ impl Catalog {
             }
         }
         let mut found: Vec<(String, RepoAddress, PublicKey)> = Vec::new();
+        let mut makers: Vec<(String, RepoAddress)> = Vec::new();
         for event in labels {
             let (topics, repos) = topic_labels(event);
-            for repo in repos.iter().filter(|repo| held.contains_key(repo)) {
+            for repo in repos.iter() {
+                let Some(announcement) = held.get(repo) else {
+                    continue;
+                };
+                let by_maker = authorized_authors(announcement).contains(&event.pubkey);
                 for topic in &topics {
-                    let entry = (topic.clone(), repo.clone(), event.pubkey);
-                    if !found.contains(&entry) {
-                        found.push(entry);
+                    if by_maker {
+                        let entry = (topic.clone(), repo.clone());
+                        if !makers.contains(&entry) {
+                            makers.push(entry);
+                        }
+                    } else {
+                        let entry = (topic.clone(), repo.clone(), event.pubkey);
+                        if !found.contains(&entry) {
+                            found.push(entry);
+                        }
                     }
                 }
             }
@@ -161,6 +182,7 @@ impl Catalog {
         Self {
             announcements: held,
             labels: found,
+            maker_labels: makers,
         }
     }
 
@@ -178,15 +200,22 @@ impl Catalog {
             .collect()
     }
 
-    /// The topics the owner gave the repo, normalized, once each.
+    /// The topics the repo's makers gave it, normalized, once each: the
+    /// announcement's `t` tags, then their own labels.
     pub(crate) fn own_topics(&self, repo: &RepoAddress) -> Vec<String> {
         let mut found: Vec<String> = Vec::new();
+        let labelled = self
+            .maker_labels
+            .iter()
+            .filter(|(_, labelled)| labelled == repo)
+            .map(|(topic, _)| topic.clone());
         for topic in self
             .announcement(repo)
             .map(topics)
             .unwrap_or_default()
             .into_iter()
             .filter_map(normalize)
+            .chain(labelled)
         {
             if !found.contains(&topic) {
                 found.push(topic);
@@ -289,8 +318,9 @@ pub(crate) fn sidebar_card(catalog: &Catalog) -> String {
         out.push_str("</div>");
     }
     out.push_str(&format!(
-        "<p class=\"muted small\">From the repos' own <code>t</code> tags and other people's \
-         NIP-32 labels. <a href=\"{PREFIX}/t\">All topics</a></p></div>"
+        "<p class=\"muted small\">From the topics repos' makers gave them (<code>t</code> tags \
+         and their own NIP-32 labels) and other people's labels. \
+         <a href=\"{PREFIX}/t\">All topics</a></p></div>"
     ));
     out
 }
@@ -300,9 +330,10 @@ fn about_card(topic: Option<&str>) -> String {
     format!(
         "<div class=\"side-card\"><h2>{}</h2><p class=\"muted small\">A repo is under a topic when \
          its owner put it in a <code>t</code> tag of the announcement (NIP-34), or when someone \
-         labelled the repo with a kind 1985 in NIP-32's <code>#t</code> namespace: \
+         (its owner or a maintainer included) labelled the repo with a kind 1985 in NIP-32's <code>#t</code> namespace: \
          <code>[\"L\",\"#t\"]</code>, <code>[\"l\",\"&lt;topic&gt;\",\"#t\"]</code> and the repo in \
-         an <code>a</code> tag. A label is the labeller's claim, so the page names who added it. \
+         an <code>a</code> tag. A label by someone other than the repo's makers is the labeller's \
+         claim, so the page names who added it. \
          Topics are compared in lower case.</p></div>",
         match topic {
             Some(topic) => format!("About {}", escape(topic)),
@@ -317,7 +348,7 @@ pub(crate) async fn index(State(pages): State<Pages>) -> Response {
     let counts = catalog.counts();
     let mut body = String::from(
         "<div class=\"page-hero\"><h1>Topics</h1><p class=\"muted\">What the repos on this relay \
-         are about, by their owners' tags and other people's labels.</p></div>\
+         are about, by their makers' tags and labels and other people's labels.</p></div>\
          <div class=\"split\"><div class=\"main\">",
     );
     if counts.is_empty() {
@@ -381,6 +412,7 @@ pub(crate) async fn page(
     let muted = listed - tagged.len();
     let repos: Vec<RepoAddress> = tagged.iter().map(|tagged| tagged.repo.clone()).collect();
     let counts = trending::stars_and_forks(store, &repos).await;
+    let others = trending::stars_from_others(store, &repos, &catalog.makers()).await;
     let mut keys: Vec<PublicKey> = lens.into_iter().collect();
     for key in tagged.iter().flat_map(|tagged| {
         catalog
@@ -402,8 +434,10 @@ pub(crate) async fn page(
             (tagged, stars, forks)
         })
         .collect();
-    rows.sort_by(|(a, x, _), (b, y, _)| {
-        y.cmp(x)
+    let from_others = |tagged: &Tagged| others.get(&tagged.repo).copied().unwrap_or_default();
+    rows.sort_by(|(a, _, _), (b, _, _)| {
+        from_others(b)
+            .cmp(&from_others(a))
             .then_with(|| a.repo.coordinate().cmp(&b.repo.coordinate()))
     });
 
@@ -415,7 +449,7 @@ pub(crate) async fn page(
     };
     let mut body = format!(
         "<div class=\"page-hero\"><h1>{}<span class=\"chip chip-topic on\">{}</span></h1>\
-         <p class=\"muted\">Repos tagged {} by their owners or labelled by others.</p></div>\
+         <p class=\"muted\">Repos tagged {} by their makers or labelled by others.</p></div>\
          <div class=\"split\"><div class=\"main\"><div class=\"toolbar\"><span class=\"muted\">{} {}</span>\
          <a class=\"btn\" href=\"{}\">{}Trending in {} this week</a></div>",
         svg(icon::TAG, ""),
@@ -454,8 +488,10 @@ pub(crate) async fn page(
     body.push_str(&about_card(Some(&topic)));
     body.push_str(&format!(
         "<div class=\"side-card\"><h2>Ordered by stars</h2><p class=\"muted small\">Distinct people \
-         who starred each repo (a kind 7 <code>+</code> with the repo's <code>a</code> and \
-         <code>k=30617</code>), then by address. <a href=\"{PREFIX}/t\">All topics</a></p></div>"
+         other than its owner and maintainers who starred each repo (a kind 7 <code>+</code> with \
+         the repo's <code>a</code> and <code>k=30617</code>), then by address. A maker's star on \
+         their own repo is in its count but does not move it up, as on Trending. \
+         <a href=\"{PREFIX}/t\">All topics</a></p></div>"
     ));
     body.push_str("</aside></div>");
     html(
@@ -504,7 +540,7 @@ fn row(
     if tagged.own || !tagged.labellers.is_empty() {
         out.push_str("<p class=\"muted small\" data-source>");
         if tagged.own {
-            out.push_str("Tagged by its owner.");
+            out.push_str("Tagged by its owner or a maintainer.");
         }
         if !tagged.labellers.is_empty() {
             if tagged.own {
@@ -705,5 +741,34 @@ mod tests {
         );
         assert!(catalog.has_topic(&RepoAddress::parse(&sail).unwrap(), "rust"));
         assert!(!catalog.has_topic(&RepoAddress::parse(&tide).unwrap(), "old"));
+    }
+
+    #[test]
+    fn a_makers_own_label_is_their_topic_not_someone_elses() {
+        let (maya, dan) = (Keys::generate(), Keys::generate());
+        let tide = format!("30617:{}:tide", maya.public_key().to_hex());
+        let announcements = [signed(&maya, 30_617, 1, &[&["d", "tide"]])];
+        let label = |keys: &Keys, topic: &str| {
+            signed(
+                keys,
+                1985,
+                2,
+                &[&["L", "#t"], &["l", topic, "#t"], &["a", &tide]],
+            )
+        };
+        let catalog =
+            Catalog::from_events(&announcements, &[label(&maya, "rust"), label(&dan, "wasm")]);
+        let repo = RepoAddress::parse(&tide).unwrap();
+        assert_eq!(catalog.own_topics(&repo), ["rust"]);
+        let rust = catalog.tagged("rust");
+        assert_eq!(rust.len(), 1);
+        assert!(rust[0].own);
+        assert!(
+            rust[0].labellers.is_empty(),
+            "the owner is not 'other people'"
+        );
+        let wasm = catalog.tagged("wasm");
+        assert!(!wasm[0].own);
+        assert_eq!(wasm[0].labellers, [dan.public_key()]);
     }
 }
