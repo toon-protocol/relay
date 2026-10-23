@@ -372,6 +372,10 @@ mod tests {
         assert!(header.contains("Project"), "{header}");
         assert!(!header.contains("<div"), "{header}");
         assert!(!html("<!-- hidden -->\n\nshown\n").contains("hidden"));
+        assert_eq!(
+            html("Broken <script>alert(1)</script> thing"),
+            "<p>Broken alert(1) thing</p>"
+        );
     }
 
     #[test]

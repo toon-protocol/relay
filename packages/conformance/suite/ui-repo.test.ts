@@ -395,7 +395,9 @@ describe('relay image conformance: the /repo app UI', () => {
       const thread = await get(`/issues/${issue.id}`);
       expect(thread.status).toBe(200);
       expect(thread.text).toContain('data-status="resolved"');
-      expect(thread.text).toContain('Broken &lt;script&gt;');
+      // The body is Markdown: its raw HTML is never markup, only its text
+      // between the tags is kept (the `get` helper also checks no script).
+      expect(thread.text).toContain('Broken alert(1) thing');
       expect(thread.text).toContain(nip19.npubEncode(pubkeyOf(author)));
       expect(thread.text.indexOf('nip22 comment')).toBeGreaterThan(0);
       expect(thread.text.indexOf('legacy comment')).toBeGreaterThan(
