@@ -418,10 +418,7 @@ fn header(view: &View<'_>, card: &RepoCard, stars: usize, followers: usize) -> S
     if !topics.is_empty() {
         out.push_str("<div class=\"chips\">");
         for topic in topics {
-            out.push_str(&format!(
-                "<span class=\"chip chip-topic\">{}</span>",
-                escape(topic)
-            ));
+            out.push_str(&view.links.topic_chip(topic));
         }
         out.push_str("</div>");
     }

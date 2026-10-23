@@ -5,9 +5,10 @@
 //! A feed shows notes that start a conversation (replies are on the post's
 //! page), boosts of repos, ship posts, articles, merges, and new repos; the
 //! following feed adds new issues and pull requests on followed repos. The
-//! sidebar's "trending today" counts distinct people, never events.
+//! sidebar's "trending today" is [`crate::trending`]'s ranking of the last
+//! day, and its Topics box is [`crate::topics`]'s.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use axum::extract::{Path, RawQuery, State};
 use axum::http::{StatusCode, header};
@@ -17,15 +18,16 @@ use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use nostr::types::Timestamp;
 use relay_ui::chrome::{self, Profiles, escape, npub};
-use ui_nip34::card::RepoCard;
 use ui_nip34::repo::RepoAddress;
 
 use crate::kinds::{
-    ANNOUNCEMENT, APP_HANDLER, ARTICLE, COMMENT, FOLLOWED_REPOS, FOLLOWS, GENERIC_REPOST,
-    GIT_AUTHORS, ISSUE, NOTE, PULL_REQUEST, REACTION, STATUS_APPLIED,
+    ANNOUNCEMENT, APP_HANDLER, ARTICLE, FOLLOWED_REPOS, FOLLOWS, GENERIC_REPOST, GIT_AUTHORS,
+    ISSUE, NOTE, PULL_REQUEST, STATUS_APPLIED,
 };
 use crate::post::{self, View};
 use crate::ship::{self, Site};
+use crate::topics::{self, Catalog};
+use crate::trending;
 use crate::{PREFIX, Pages, content, html, load_cards, parse_pubkey};
 
 /// What a feed reads.
@@ -43,18 +45,6 @@ const FEED_QUERY: usize = 120;
 const SHOWN: usize = 40;
 /// The most follows a following feed reads from.
 const FOLLOW_LIMIT: usize = 2_000;
-/// What "trending today" counts: acts that name a repo.
-const TRENDING_KINDS: [u16; 7] = [
-    NOTE,
-    REACTION,
-    GENERIC_REPOST,
-    COMMENT,
-    ISSUE,
-    PULL_REQUEST,
-    ARTICLE,
-];
-/// The window "today" is.
-const DAY: u64 = 86_400;
 
 /// Whether a feed shows `event` at all, before any repo is loaded: a note
 /// that is not a reply, a boost of a repo, and the other feed kinds. A pure
@@ -71,27 +61,6 @@ fn admits(event: &Event) -> bool {
         STATUS_APPLIED => !RepoAddress::tagged(event, "a").is_empty(),
         _ => false,
     }
-}
-
-/// The repos trending among `events`: for each repo named in an `a` or `A`
-/// tag, the number of distinct keys that named it, most first (a tie by
-/// address), at most `top`. A pure function.
-pub(crate) fn trending(events: &[Event], top: usize) -> Vec<(RepoAddress, usize)> {
-    let mut people: HashMap<RepoAddress, HashSet<PublicKey>> = HashMap::new();
-    for event in events {
-        let mut repos = RepoAddress::tagged(event, "a");
-        repos.extend(RepoAddress::tagged(event, "A"));
-        for repo in repos {
-            people.entry(repo).or_default().insert(event.pubkey);
-        }
-    }
-    let mut ranked: Vec<(RepoAddress, usize)> = people
-        .into_iter()
-        .map(|(repo, keys)| (repo, keys.len()))
-        .collect();
-    ranked.sort_by(|(a, x), (b, y)| y.cmp(x).then_with(|| a.coordinate().cmp(&b.coordinate())));
-    ranked.truncate(top);
-    ranked
 }
 
 /// `?until=<unix seconds>` from a query string: where an older page starts.
@@ -152,7 +121,11 @@ pub(crate) async fn viewer(State(pages): State<Pages>, RawQuery(query): RawQuery
 }
 
 /// The newest of `events` of `kind` by `author`.
-fn newest_list<'a>(events: &'a [Event], author: &PublicKey, kind: u16) -> Option<&'a Event> {
+pub(crate) fn newest_list<'a>(
+    events: &'a [Event],
+    author: &PublicKey,
+    kind: u16,
+) -> Option<&'a Event> {
     ui_nip34::repo::newest(
         events
             .iter()
@@ -161,7 +134,7 @@ fn newest_list<'a>(events: &'a [Event], author: &PublicKey, kind: u16) -> Option
 }
 
 /// The `p` keys of a list, once each.
-fn listed_keys(list: Option<&Event>) -> Vec<PublicKey> {
+pub(crate) fn listed_keys(list: Option<&Event>) -> Vec<PublicKey> {
     let mut keys: Vec<PublicKey> = Vec::new();
     for tag in list.into_iter().flat_map(|list| list.tags.iter()) {
         if let [name, value, ..] = tag.as_slice()
@@ -380,7 +353,9 @@ async fn feed_page(
         ));
     }
     body.push_str("</div><aside class=\"sidebar\">");
-    body.push_str(&trending_card(pages, &view).await);
+    let catalog = Catalog::load(store).await;
+    body.push_str(&trending::sidebar_card(pages, &catalog, viewer).await);
+    body.push_str(&topics::sidebar_card(&catalog));
     body.push_str(
         "<div class=\"side-card\"><h2>How this works</h2><p class=\"muted small\">Stars, follows, \
          replies and launches are written by a Nostr client and paid for one write each; this page \
@@ -418,64 +393,6 @@ async fn demos(pages: &Pages, view: &View<'_>, shown: &[Event]) -> HashMap<RepoA
     demos
 }
 
-/// "Trending today": the repos the most distinct people named in the last
-/// day, by the formula the card states.
-async fn trending_card(pages: &Pages, view: &View<'_>) -> String {
-    let since = Timestamp::from(
-        u64::try_from(chrome::now())
-            .unwrap_or(0)
-            .saturating_sub(DAY),
-    );
-    let events = pages
-        .store
-        .query(
-            Filter::new()
-                .kinds(TRENDING_KINDS.map(Kind::from))
-                .since(since)
-                .limit(2_000),
-        )
-        .await;
-    let ranked = trending(&events, 10);
-    let mut cards: HashMap<RepoAddress, RepoCard> = HashMap::new();
-    let mut rows = String::new();
-    let mut rank = 0;
-    for (repo, people) in ranked {
-        if rank == 5 {
-            break;
-        }
-        let card = match view.cards.get(&repo) {
-            Some(card) => card.clone(),
-            None => match RepoCard::load(&pages.store, &repo).await {
-                Some(card) => card,
-                None => continue,
-            },
-        };
-        rank += 1;
-        let href = view
-            .links
-            .social_path(&repo)
-            .unwrap_or_else(|| repo.repo_path());
-        rows.push_str(&format!(
-            "<li><span class=\"rank\">{rank}</span><div class=\"who\"><a class=\"strong\" href=\"{}\">{}</a>\
-             <div class=\"muted small\">{people} {} today</div></div></li>",
-            escape(&href),
-            escape(&card.title()),
-            if people == 1 { "person" } else { "people" },
-        ));
-        cards.insert(repo, card);
-    }
-    let list = if rows.is_empty() {
-        "<p class=\"muted small\">No repo was named in the last day.</p>".to_owned()
-    } else {
-        format!("<ol class=\"ranked\">{rows}</ol>")
-    };
-    format!(
-        "<div class=\"side-card\"><h2>Trending today</h2>{list}<p class=\"muted small\">\
-         Distinct people who named a repo in a note, reaction, boost, comment, issue, pull request \
-         or article on this relay in the last 24 hours. People, not events.</p></div>"
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use nostr::event::{EventBuilder, FinalizeEvent, Tag};
@@ -488,27 +405,6 @@ mod tests {
             .tags(tags.iter().map(|parts| Tag::parse(parts.to_vec()).unwrap()))
             .finalize(keys)
             .unwrap()
-    }
-
-    #[test]
-    fn trending_counts_people_not_events() {
-        let owner = Keys::generate().public_key().to_hex();
-        let hot = format!("30617:{owner}:hot");
-        let cold = format!("30617:{owner}:cold");
-        let (a, b) = (Keys::generate(), Keys::generate());
-        let events = [
-            // One loud key ten times is one person.
-            signed(&a, 7, &[&["a", &cold]]),
-            signed(&a, 1, &[&["a", &cold]]),
-            signed(&a, 16, &[&["a", &cold]]),
-            signed(&a, 7, &[&["a", &hot]]),
-            signed(&b, 1111, &[&["A", &hot]]),
-            signed(&b, 1, &[&["a", "30023:x:y"]]),
-        ];
-        let ranked = trending(&events, 5);
-        assert_eq!(ranked[0], (RepoAddress::parse(&hot).unwrap(), 2));
-        assert_eq!(ranked[1], (RepoAddress::parse(&cold).unwrap(), 1));
-        assert_eq!(ranked.len(), 2);
     }
 
     #[test]

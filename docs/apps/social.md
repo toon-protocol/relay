@@ -9,7 +9,7 @@ pay for writes can follow it.
 Sources, in order of authority:
 
 - The NIPs each section names (NIP-01, -02, -10, -18, -22, -23, -25, -27,
-  -51, -5A, -68, -71, -84, -89, -92, -C0, -7D).
+  -32, -51, -56, -5A, -68, -71, -84, -85, -89, -92, -C0, -7D).
 - [`git.md`](git.md) — repositories themselves (NIP-34) and whose repo state
   a reader honours.
 - [ADR 0001](../adr/0001-app-uis-live-on-the-relay.md) — the relay's UIs read
@@ -144,9 +144,87 @@ people; Stars and Followers list each key once, newest first; Media lists
 pictures and videos; Snippets lists code snippets. Code goes back to `/repo`,
 and `/repo`'s repository header has a Social tab back here.
 
-**Trending today.** The repos the most distinct keys named (in an `a` or `A`
-tag of a note, reaction, boost, comment, issue, pull request or article) on
-this relay in the last 24 hours. People, not events, and only this relay's.
+**Trending today.** The feed sidebar's top five of `/social/trending`'s
+ranking over the last 24 hours (below); on a following feed it is weighted by
+that key. Under it, a Topics box links the topics with the most repos.
+
+### Trending repos and topics
+
+| Path | What it shows |
+| --- | --- |
+| `/social/trending` | Repos ranked by distinct people in a window: `?window=day`, `week` (the default) or `month` (the last 24 hours, 7 or 30 days) |
+| `/social/trending?as=<npub>` | The same, weighted by that key's kind 3 follows and hiding what they reported |
+| `/social/trending?topic=<t>` | Only repos under one topic |
+| `/social/trending?by=<npub>` | One NIP-85 provider's signed ranking, when the store holds one |
+| `/social/t` | Every topic, with the number of distinct repos under it |
+| `/social/t/<topic>` | The repos under one topic, by stars, each saying whether its owner tagged it or who labelled it |
+
+**The score**, printed on the page under "How this is ranked": the number of
+distinct pubkeys that, inside the window, did any of these to the repo `A`.
+
+| Act | Event |
+| --- | --- |
+| starred | kind 7, content `+`, `a` = `A`, `k` = `30617` (NIP-25) |
+| boosted | kind 16, `a` = `A`, `k` = `30617` (NIP-18) |
+| commented | kind 1111 with `A` = `A` (NIP-22) |
+| followed | kind 10018 whose `a` tags include `A`, written in the window (NIP-51) |
+| forked | kind 30617 whose `u` tag is `A` (NIP-34) |
+| posted | kind 1 with `a` = `A` |
+
+- A key counts once per repo, however many acts it wrote; NIP-09 deletions
+  have already removed their events from the store.
+- The repo's owner and maintainers (ADR 0002) never count for their own repo.
+- With `?as=<npub>`, each person that key's newest kind 3 lists counts **3×**
+  (score = people + 2 × followed people), and a repo that the key or anyone
+  it follows reported (kind 1984 with `a` = `A`, NIP-56) is hidden; the page
+  says how many were.
+- **Follows and forks are replaceable.** The store keeps only each key's
+  newest kind 10018 list and newest announcement per `d`, so the relay knows
+  who follows a repo *now* and when that list was last saved, not when the
+  repo was added. A follow counts when the current list names the repo and was
+  written in the window: a key that followed long ago and saves its list today
+  for another reason counts again, and an unfollow leaves no trace. A fork
+  counts the same way, by its announcement's `created_at`.
+- Each row draws seven bars, one per seventh of the window (about 3½ hours,
+  one day, or about 4 days), each the distinct people in it, scaled to the
+  row's busiest bar. The bars are height classes in the stylesheet, not inline
+  styles.
+- Only this relay's events are read (ADR 0001), so this is "trending here".
+  Every write is paid, which puts a floor under spam; the amount is not stored
+  with the event, so money does not change the rank.
+
+**Topics.** A repo is under topic `<t>` (compared lower-cased, a leading `#`
+dropped) when its owner's announcement has `["t", "<t>"]`, or when anyone
+publishes a NIP-32 label in the `#t` namespace naming it:
+
+```json
+{
+  "kind": 1985,
+  "tags": [
+    ["L", "#t"],
+    ["l", "built-with:claude", "#t"],
+    ["a", "30617:<owner pubkey>:surfcast"]
+  ],
+  "content": "Shakespeare builds on Claude."
+}
+```
+
+`#t` is NIP-32's own convention for "associate the target with this standard
+tag" (an `L` starting with `#`), so a label in it means exactly what the
+owner's `t` tag means and needs no new namespace. Labels in any other
+namespace, and `l` tags without the `#t` mark, are not topics. A label is the
+labeller's claim, paid for with one write: the topic page names each labeller.
+Topic chips on repo cards and repo pages link to `/social/t/<topic>`. NIP-32
+is a draft NIP.
+
+**Other rankings (NIP-85).** When the store holds kind 30384 trusted
+assertions whose `d` is a repo address and whose `rank` is a whole number, the
+trending page lists each provider (the signing key) with how many repos it
+ranks, and `?by=<npub>` shows its ranking, highest `rank` first. With `?as=`,
+providers that key names for `30384:rank` in its kind 10040 are marked as
+trusted and listed first. When there are no such assertions the box is not
+drawn. The relay neither computes nor checks these ranks. NIP-85 is a draft
+NIP.
 
 ### What a page loads
 
@@ -185,5 +263,8 @@ WRITE_URL=http://127.0.0.1:3100 READ_URL=http://127.0.0.1:7100 \
 The script prints the pages to open. A relay started without a connector
 accepts `POST /write` directly, which is how the seed writes. The fixture is
 `packages/conformance/suite/harness/social-fixture.ts`; the conformance cases
-in `packages/conformance/suite/ui-social.test.ts` seed the same events. Its
+in `packages/conformance/suite/ui-social.test.ts` seed the same events. The
+seed then adds `suite/harness/trending-fixture.ts`, a month of stars, forks,
+topic labels, a report and NIP-85 ranks for `/social/trending` and `/social/t`
+(its cases are `suite/ui-social-trending.test.ts`). Its
 media are placeholder images from picsum.photos, which your browser loads.

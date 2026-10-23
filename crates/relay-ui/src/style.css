@@ -483,3 +483,45 @@ a.chip:hover { text-decoration: none; color: var(--fg); }
 .reply { display: flex; gap: 10px; padding: 10px 0; border-top: 1px solid var(--subtle); min-width: 0; }
 .reply .body { flex: 1 1 0; min-width: 0; }
 .reply .text { font-size: 14px; }
+
+/* Trending and topics: a heading band, window links, ranked rows, sparklines. */
+.page-hero { padding: 24px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--muted); text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.page-hero h1 { font-size: 28px; display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; overflow-wrap: anywhere; }
+.page-hero h1 .chip { height: 28px; font-size: 16px; padding: 0 12px; }
+.page-hero p { margin: 0; font-size: 16px; }
+.seg-group { display: inline-flex; }
+.seg { display: inline-flex; align-items: center; min-height: 32px; padding: 0 14px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font-weight: 500; margin-left: -1px; }
+.seg:first-child { margin-left: 0; border-radius: var(--radius) 0 0 var(--radius); }
+.seg:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+.seg:hover { background: var(--muted); text-decoration: none; }
+.seg.on { background: var(--subtle); font-weight: 600; }
+.chip-topic.on { background: var(--link); color: var(--bg); }
+.callout.small { font-size: 13px; margin: 0; display: block; }
+.trend-list { list-style: none; margin: 0; padding: 0; }
+.trend-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; padding: 16px; border-top: 1px solid var(--border); }
+.trend-row:first-child { border-top: 0; }
+.trend-rank { width: 24px; font-family: var(--mono); font-size: 16px; color: var(--muted-fg); }
+.trend-main { flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.trend-main p { margin: 0; }
+.trend-title { font-size: 18px; overflow-wrap: anywhere; }
+.trend-title .strong { color: inherit; }
+.built-by { display: inline-flex; align-items: center; gap: 4px; }
+.trend-people { min-width: 96px; display: flex; flex-direction: column; align-items: flex-end; text-align: right; }
+.trend-people strong { font-size: 16px; }
+.spark { display: inline-flex; align-items: flex-end; gap: 2px; height: 32px; }
+.spark i { display: block; width: 6px; border-radius: 1px; background: var(--success); }
+.spark .h0 { height: 2px; background: var(--subtle); }
+.spark .h1 { height: 4px; }
+.spark .h2 { height: 8px; }
+.spark .h3 { height: 12px; }
+.spark .h4 { height: 16px; }
+.spark .h5 { height: 20px; }
+.spark .h6 { height: 24px; }
+.spark .h7 { height: 28px; }
+.spark .h8 { height: 32px; }
+.bullets { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.sidebar ul.bullets { list-style: disc; padding-left: 18px; }
+.topic-index { gap: 8px; }
+.meta a.chip-topic { color: var(--accent-fg); }
+.meta a.chip-topic.on { color: var(--bg); }
+.ranked .trend-title { font-size: 14px; }

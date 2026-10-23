@@ -26,6 +26,14 @@ pub(crate) const PULL_REQUEST: u16 = 1_618;
 pub(crate) const ISSUE: u16 = 1_621;
 /// NIP-34 status: applied, merged or resolved.
 pub(crate) const STATUS_APPLIED: u16 = 1_631;
+/// NIP-56 report.
+pub(crate) const REPORT: u16 = 1_984;
+/// NIP-32 label.
+pub(crate) const LABEL: u16 = 1_985;
+/// NIP-85 trusted service providers: whose assertions a key trusts.
+pub(crate) const TRUSTED_PROVIDERS: u16 = 10_040;
+/// NIP-85 trusted assertion about an addressable event (here, a repo).
+pub(crate) const ADDRESS_ASSERTION: u16 = 30_384;
 /// NIP-84 highlight.
 pub(crate) const HIGHLIGHT: u16 = 9_802;
 /// NIP-51 git authors: the code authors a key follows.
