@@ -20,12 +20,13 @@ use relay_ui::chrome::{self, Profiles, escape, npub};
 use ui_nip34::card::RepoCard;
 use ui_nip34::repo::RepoAddress;
 
+use crate::demo::{self, Demo};
 use crate::kinds::{
     ANNOUNCEMENT, APP_HANDLER, ARTICLE, COMMENT, FOLLOWED_REPOS, FOLLOWS, GENERIC_REPOST,
     GIT_AUTHORS, ISSUE, NOTE, PULL_REQUEST, REACTION, STATUS_APPLIED,
 };
 use crate::post::{self, View};
-use crate::ship::{self, Site};
+use crate::ship;
 use crate::{PREFIX, Pages, content, html, load_cards, parse_pubkey};
 
 /// What a feed reads.
@@ -391,31 +392,14 @@ async fn feed_page(
     body
 }
 
-/// The live demos of the ship posts among `shown`.
-async fn demos(pages: &Pages, view: &View<'_>, shown: &[Event]) -> HashMap<RepoAddress, Site> {
-    let mut demos = HashMap::new();
-    if pages.gateway().is_none() {
-        return demos;
-    }
-    for event in shown {
-        let Some(repo) = view.ship(event) else {
-            continue;
-        };
-        if demos.contains_key(&repo) {
-            continue;
-        }
-        let site = match ship::app_site(event) {
-            Some(site) => Some(site),
-            None => match view.cards.get(&repo) {
-                Some(card) => ship::demo(&pages.store, card).await,
-                None => None,
-            },
-        };
-        if let Some(site) = site {
-            demos.insert(repo, site);
-        }
-    }
-    demos
+/// The live demos of the repos whose cards are drawn, a launch's own site
+/// first ([`crate::demo`]).
+async fn demos(pages: &Pages, view: &View<'_>, shown: &[Event]) -> HashMap<RepoAddress, Demo> {
+    let launches: Vec<(&Event, RepoAddress)> = shown
+        .iter()
+        .filter_map(|event| view.ship(event).map(|repo| (event, repo)))
+        .collect();
+    demo::for_cards(&pages.store, view.cards, &launches, pages.gateway()).await
 }
 
 /// "Trending today": the repos the most distinct people named in the last

@@ -13,9 +13,10 @@ use ui_nip34::repo::{RepoAddress, first_tag};
 
 use crate::PREFIX;
 use crate::content::{self, first_line};
+use crate::demo::Demo;
 use crate::kinds::{self, ANNOUNCEMENT, APP_HANDLER, ARTICLE, HIGHLIGHT, THREAD};
 use crate::media::{self, Media};
-use crate::ship::{self, Site};
+use crate::ship;
 
 /// The most characters of a note a list shows before it links to the rest.
 const CLIP: usize = 1_000;
@@ -25,8 +26,9 @@ pub(crate) struct View<'a> {
     pub(crate) links: &'a Links,
     pub(crate) names: &'a HashMap<PublicKey, String>,
     pub(crate) cards: &'a HashMap<RepoAddress, RepoCard>,
-    /// The live demo of each repo a ship post launches, where there is one.
-    pub(crate) demos: &'a HashMap<RepoAddress, Site>,
+    /// The live demo of each repo drawn, where there is one
+    /// ([`crate::demo`]).
+    pub(crate) demos: &'a HashMap<RepoAddress, Demo>,
     pub(crate) gateway: Option<&'a str>,
 }
 
@@ -44,7 +46,12 @@ impl View<'_> {
 
     /// The live demo's URL for `repo`, if it has one and a gateway is set.
     pub(crate) fn demo_url(&self, repo: &RepoAddress) -> Option<String> {
-        self.demos.get(repo)?.url(self.gateway?)
+        self.demos.get(repo)?.url(self.gateway)
+    }
+
+    /// `card`, with its live demo when it has one.
+    pub(crate) fn card(&self, card: &RepoCard) -> String {
+        card.render_with_demo(self.links, self.demo_url(card.address()).as_deref())
     }
 }
 
@@ -104,7 +111,7 @@ pub(crate) fn cards_html(view: &View<'_>, repos: &[RepoAddress]) -> String {
     repos
         .iter()
         .filter_map(|repo| view.cards.get(repo))
-        .map(|card| card.render(view.links))
+        .map(|card| view.card(card))
         .collect()
 }
 
@@ -302,7 +309,7 @@ pub(crate) fn repost_card(view: &View<'_>, event: &Event) -> Option<String> {
         svg(icon::REPOST, ""),
         name(view.names, &event.pubkey),
         ago(event.created_at),
-        card.render(view.links),
+        view.card(card),
     ))
 }
 
@@ -440,7 +447,7 @@ pub(crate) fn announced_card(view: &View<'_>, event: &Event) -> Option<String> {
         svg(icon::REPO, ""),
         name(view.names, &event.pubkey),
         ago(event.created_at),
-        card.render(view.links),
+        view.card(card),
     ))
 }
 

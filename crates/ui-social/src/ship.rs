@@ -10,17 +10,14 @@
 //! - a kind 31990 app event (Shakespeare's) that `a`-tags such a repo and
 //!   an NIP-5A site (`35128:…`), which is its live demo.
 //!
-//! A kind 1 ship's live demo is a NIP-5A site manifest signed by an
-//! authorized author whose `source` tag is the repo's `nostr://` URL. A demo
-//! is linked only through the operator's nsite gateway
-//! (`TOON_UI_NSITE_GATEWAY`): the relay serves nothing of the site.
+//! What a launch's live demo is, and how one is found for any repo, is
+//! [`crate::demo`]'s. This module holds what a NIP-5A site is and how a
+//! gateway addresses it.
 
 use nostr::event::{Event, Kind};
-use nostr::filter::Filter;
 use nostr::key::PublicKey;
-use relay_ui::ReadOnlyStore;
+use nostr::nips::nip19::{FromBech32, Nip19};
 use relay_ui::chrome::npub;
-use ui_nip34::card::RepoCard;
 use ui_nip34::repo::{RepoAddress, first_tag};
 
 use crate::kinds::{APP_HANDLER, NOTE, SITE_NAMED, SITE_ROOT};
@@ -59,7 +56,7 @@ pub(crate) struct Site {
 
 impl Site {
     /// The site `event` is, if it is a site manifest.
-    fn of(event: &Event) -> Option<Self> {
+    pub(crate) fn of(event: &Event) -> Option<Self> {
         match event.kind.as_u16() {
             SITE_ROOT => Some(Self {
                 author: event.pubkey,
@@ -73,9 +70,44 @@ impl Site {
         }
     }
 
+    /// The key that signed the site.
+    pub(crate) fn author(&self) -> &PublicKey {
+        &self.author
+    }
+
+    /// The site's address as an `a` tag names it: `35128:<hex>:<d>`, or
+    /// `15128:<hex>:` for a root site (NIP-01's form for a replaceable
+    /// event).
+    pub(crate) fn coordinate(&self) -> String {
+        match &self.name {
+            Some(name) => format!("{SITE_NAMED}:{}:{name}", self.author.to_hex()),
+            None => format!("{SITE_ROOT}:{}:", self.author.to_hex()),
+        }
+    }
+
+    /// The site an `a` or `A` tag value names: `35128:<hex>:<d>`, or a root
+    /// site `15128:<hex>` with or without the trailing colon.
+    pub(crate) fn parse(coordinate: &str) -> Option<Self> {
+        let mut parts = coordinate.splitn(3, ':');
+        let (kind, author) = (parts.next()?, parts.next()?);
+        let d = parts.next();
+        let author = PublicKey::from_hex(author).ok()?;
+        match kind.parse::<u16>().ok()? {
+            SITE_NAMED => Some(Self {
+                author,
+                name: Some(d.filter(|d| !d.is_empty())?.to_owned()),
+            }),
+            SITE_ROOT if d.is_none_or(str::is_empty) => Some(Self { author, name: None }),
+            _ => None,
+        }
+    }
+
     /// The site's address on the gateway at `gateway` (an `https` URL), if
     /// its name can be a DNS label: a root site is `<npub>.<host>`, a named
-    /// one `<pubkey in base36><name>.<host>`, as NIP-5A gateways serve them.
+    /// one `<pubkey in base36><name>.<host>`, the canonical formats of
+    /// NIP-5A's "Address Formats" (verified against `5A.md` at
+    /// nostr-protocol/nips@d47a2ec). The base36 key is the 50 characters the
+    /// NIP says it always is, so a key with leading zero digits keeps them.
     pub(crate) fn url(&self, gateway: &str) -> Option<String> {
         let host = gateway
             .strip_prefix("https://")?
@@ -101,7 +133,8 @@ impl Site {
     }
 }
 
-/// The site an app event names in an `a` tag `35128:<pubkey>:<name>`.
+/// The site an app event names in an `a` tag (`35128:<pubkey>:<name>`, or a
+/// root site).
 pub(crate) fn app_site(event: &Event) -> Option<Site> {
     if event.kind != Kind::from(APP_HANDLER) {
         return None;
@@ -111,36 +144,67 @@ pub(crate) fn app_site(event: &Event) -> Option<Site> {
         .iter()
         .map(|tag| tag.as_slice())
         .find_map(|tag| match tag {
-            [name, value, ..] if name == "a" => {
-                let mut parts = value.splitn(3, ':');
-                let (kind, author, d) = (parts.next()?, parts.next()?, parts.next()?);
-                (kind == SITE_NAMED.to_string()).then_some(())?;
-                Some(Site {
-                    author: PublicKey::from_hex(author).ok()?,
-                    name: Some(d.to_owned()),
-                })
-            }
+            [name, value, ..] if name == "a" => Site::parse(value),
             _ => None,
         })
 }
 
-/// Whether a NIP-5A `source` tag names `repo`: a `nostr://` URL whose first
-/// part is the owner's npub (or the NIP-05 name the owner claims) and whose
-/// last part is the repo's `d`. A pure function.
-pub(crate) fn source_names(source: &str, repo: &RepoAddress, nip05: Option<&str>) -> bool {
-    let Some(rest) = source.trim().strip_prefix("nostr://") else {
-        return false;
-    };
-    let parts: Vec<&str> = rest.trim_end_matches('/').split('/').collect();
-    let (Some(who), Some(last)) = (parts.first(), parts.last()) else {
-        return false;
-    };
-    if parts.len() < 2 {
-        return false;
+/// Who a NIP-34 `nostr://` clone URL names, and which repo of theirs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Source {
+    /// `nostr://<naddr>` or `nostr://<npub>/[<relay>/]<d>`: an address.
+    Repo(RepoAddress),
+    /// `nostr://<nip05>/[<relay>/]<d>`: a NIP-05 name (lower case, `_@`
+    /// dropped as NIP-05 does) that only its owner's profile can tie to a key.
+    Named(String, String),
+}
+
+impl Source {
+    /// The repo a `source` value names, in any of NIP-34's three clone URL
+    /// forms (`34.md`, "Nostr Clone URL format"). A pure function.
+    pub(crate) fn parse(source: &str) -> Option<Self> {
+        let rest = source.trim().strip_prefix("nostr://")?;
+        let parts: Vec<&str> = rest.trim_end_matches('/').split('/').collect();
+        match parts.as_slice() {
+            [naddr] => RepoAddress::from_naddr(naddr).map(Self::Repo),
+            [who, .., last] if parts.len() <= 3 => {
+                let d = percent_decode(last);
+                match Nip19::from_bech32(who) {
+                    Ok(Nip19::Pubkey(key)) => RepoAddress::new(key, &d).map(Self::Repo),
+                    Ok(Nip19::Profile(profile)) => {
+                        RepoAddress::new(profile.public_key, &d).map(Self::Repo)
+                    }
+                    Ok(_) => None,
+                    Err(_) => {
+                        let who = if who.contains('@') {
+                            relay_ui::chrome::nip05_identifier(who)?
+                        } else {
+                            relay_ui::chrome::nip05_identifier(&format!("_@{who}"))?
+                        };
+                        (!d.is_empty()).then_some(Self::Named(who, d))
+                    }
+                }
+            }
+            _ => None,
+        }
     }
-    let who_matches =
-        *who == npub(repo.owner()) || nip05.is_some_and(|claim| who.eq_ignore_ascii_case(claim));
-    who_matches && percent_decode(last) == repo.d()
+}
+
+/// Whether a NIP-5A `source` tag names `repo`: a `nostr://` clone URL of it
+/// by `naddr`, by the owner's npub, or by the NIP-05 name the owner's
+/// profile claims (`nip05`). A pure function.
+pub(crate) fn source_names(source: &str, repo: &RepoAddress, nip05: Option<&str>) -> bool {
+    match Source::parse(source) {
+        Some(Source::Repo(named)) => named == *repo,
+        Some(Source::Named(who, d)) => {
+            nip05
+                .and_then(relay_ui::chrome::nip05_identifier)
+                .as_deref()
+                == Some(who.as_str())
+                && d == repo.d()
+        }
+        None => false,
+    }
 }
 
 /// `%XX` escapes decoded; anything malformed is kept as written.
@@ -186,31 +250,6 @@ fn base36(bytes: &[u8]) -> String {
     }
     digits.reverse();
     String::from_utf8_lossy(&digits).into_owned()
-}
-
-/// The live demo of `card`'s repo: the newest site manifest an authorized
-/// author signed whose `source` names the repo.
-pub(crate) async fn demo(store: &ReadOnlyStore, card: &RepoCard) -> Option<Site> {
-    let mut sites = store
-        .query(
-            Filter::new()
-                .kinds([Kind::from(SITE_NAMED), Kind::from(SITE_ROOT)])
-                .authors(card.authorized().to_vec())
-                .limit(200),
-        )
-        .await;
-    sites.sort_by(|a, b| (b.created_at, a.id).cmp(&(a.created_at, b.id)));
-    let nip05 = card.profiles().nip05(card.address().owner());
-    sites
-        .iter()
-        .filter(|site| card.is_maker(&site.pubkey))
-        .find(|site| {
-            site.tags
-                .iter()
-                .map(|tag| tag.as_slice())
-                .any(|tag| matches!(tag, [name, value, ..] if name == "source" && source_names(value, card.address(), nip05)))
-        })
-        .and_then(Site::of)
 }
 
 /// What an app event's content says about the app (NIP-89 metadata JSON):
@@ -311,6 +350,38 @@ mod tests {
             None
         ));
         assert!(!source_names(&format!("nostr://{npub}"), &repo, None));
+        // An naddr names it too, and `_@domain` is the domain.
+        let naddr =
+            nostr::nips::nip19::ToBech32::to_bech32(&nostr::nips::nip19::Nip19Coordinate::new(
+                nostr::nips::nip01::Coordinate::new(Kind::from(30_617), owner)
+                    .identifier("my repo"),
+                Vec::<nostr::types::RelayUrl>::new(),
+            ))
+            .unwrap();
+        assert!(source_names(&format!("nostr://{naddr}"), &repo, None));
+        assert!(source_names(
+            "nostr://tide.dev/relay.test/my%20repo",
+            &repo,
+            Some("_@tide.dev")
+        ));
+        assert!(!source_names("nostr://a/b/c/my%20repo", &repo, None));
+    }
+
+    #[test]
+    fn a_site_coordinate_reads_back_as_the_site() {
+        let author = Keys::generate().public_key();
+        for site in [
+            Site {
+                author,
+                name: Some("blog".to_owned()),
+            },
+            Site { author, name: None },
+        ] {
+            assert_eq!(Site::parse(&site.coordinate()), Some(site.clone()));
+        }
+        assert!(Site::parse(&format!("15128:{}", author.to_hex())).is_some());
+        assert_eq!(Site::parse(&format!("35128:{}:", author.to_hex())), None);
+        assert_eq!(Site::parse(&format!("30617:{}:x", author.to_hex())), None);
     }
 
     #[test]
