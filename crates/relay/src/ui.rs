@@ -32,10 +32,7 @@ use crate::{Relay, RelayError, Store};
 /// kinds the operator restricts and gift wraps meant for their recipients
 /// alone are left out, on `/repo` as on `/social`.
 #[derive(Debug, Clone, Default)]
-#[cfg_attr(
-    not(any(feature = "ui-repo", feature = "ui-social")),
-    allow(dead_code)
-)]
+#[cfg_attr(not(any(feature = "ui-repo", feature = "ui-social")), allow(dead_code))]
 pub(crate) struct Unauthenticated {
     /// NIP-42's policy, while it is on.
     pub(crate) auth: Option<AuthPolicy>,

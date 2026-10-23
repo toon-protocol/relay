@@ -24,9 +24,7 @@ use axum::response::Response;
 use nostr::event::{Event, Kind};
 use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
-use relay_ui::chrome::{
-    self, Profiles, avatar, escape, icon, percent_encode, plain_name, svg,
-};
+use relay_ui::chrome::{self, Profiles, avatar, escape, icon, percent_encode, plain_name, svg};
 use ui_nip34::card::{Links, plural};
 use ui_nip34::repo::{
     ANNOUNCEMENT, RepoAddress, authorized_authors, first_tag, repo_name, supersedes, topics,

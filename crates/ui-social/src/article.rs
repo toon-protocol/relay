@@ -152,9 +152,7 @@ fn link(url: &str) -> Option<String> {
     let bech32 = url.strip_prefix("nostr:")?;
     match Nip19::from_bech32(bech32).ok()? {
         Nip19::Pubkey(key) => Some(format!("{PREFIX}/p/{}", npub(&key))),
-        Nip19::Profile(profile) => {
-            Some(format!("{PREFIX}/p/{}", npub(&profile.public_key)))
-        }
+        Nip19::Profile(profile) => Some(format!("{PREFIX}/p/{}", npub(&profile.public_key))),
         Nip19::EventId(id) => Some(format!("{PREFIX}/e/{}", id.to_hex())),
         Nip19::Event(event) => Some(format!("{PREFIX}/e/{}", event.event_id.to_hex())),
         Nip19::Coordinate(coordinate) => {

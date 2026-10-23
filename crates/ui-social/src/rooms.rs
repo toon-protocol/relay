@@ -38,8 +38,8 @@ use nostr::key::PublicKey;
 use nostr::nips::nip01::Coordinate;
 use nostr::nips::nip19::{Nip19Coordinate, ToBech32};
 use nostr::types::Timestamp;
-use relay_ui::chrome::{self, Profiles, ago, avatar, escape, icon, name, plain_name, svg};
 use relay_ui::ReadOnlyStore;
+use relay_ui::chrome::{self, Profiles, ago, avatar, escape, icon, name, plain_name, svg};
 use ui_nip34::card::{RepoCard, plural};
 use ui_nip34::repo::{d_tag, first_tag, newest};
 
