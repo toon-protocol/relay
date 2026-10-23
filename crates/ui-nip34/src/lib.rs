@@ -17,6 +17,7 @@ pub mod card;
 mod git;
 pub mod lineage;
 mod markup;
+mod og;
 pub mod repo;
 mod threads;
 
@@ -35,9 +36,11 @@ use nostr::filter::Filter;
 use nostr::key::PublicKey;
 use nostr::nips::nip19::{FromBech32, Nip19Coordinate};
 use relay_ui::chrome::{
-    Apps, Profiles, escape, names, npub, percent_encode, person, person_avatar,
+    Apps, Profiles, escape, names, npub, percent_encode, person, person_avatar, shown_name,
 };
+use relay_ui::meta::Preview;
 use relay_ui::{AppUi, Assets, ReadOnlyStore};
+use ui_preview::Previews;
 
 use markup::{Tab, ago, icon, ref_menu, repo_header, svg};
 use repo::{
@@ -66,6 +69,8 @@ struct Pages {
     assets: Option<Assets>,
     defaults: Defaults,
     apps: Apps,
+    /// Link preview cards drawn so far ([`og`]).
+    previews: Previews,
 }
 
 /// The app UI over `store`, with the built `assets` if the relay has them,
@@ -75,6 +80,8 @@ pub fn app(store: ReadOnlyStore, assets: Option<Assets>, defaults: Defaults, app
     let router = Router::new()
         .route(PREFIX, get(list))
         .route(&format!("{PREFIX}/assets/{{name}}"), get(asset))
+        .route("/repo/og/site.png", get(og::site))
+        .route("/repo/og/{npub}/{file}", get(og::repo))
         .route("/repo/{target}", get(redirect))
         .route("/repo/{npub}/{d}", get(home))
         .route("/repo/{npub}/{d}/tree/{*rest}", get(git::tree))
@@ -92,6 +99,7 @@ pub fn app(store: ReadOnlyStore, assets: Option<Assets>, defaults: Defaults, app
             assets,
             defaults,
             apps,
+            previews: Previews::new(),
         });
     AppUi::new(PREFIX, router)
 }
@@ -124,6 +132,17 @@ fn repo_path(owner: &PublicKey, d: &str) -> String {
 
 fn html(apps: &Apps, status: StatusCode, title: &str, body: &str) -> Response {
     (status, Html(markup::page(apps, title, body))).into_response()
+}
+
+/// [`html`], with what the page tells a link unfurler.
+fn html_with(
+    apps: &Apps,
+    status: StatusCode,
+    title: &str,
+    body: &str,
+    preview: &Preview,
+) -> Response {
+    (status, Html(markup::page_with(apps, title, body, preview))).into_response()
 }
 
 async fn fallback(State(pages): State<Pages>) -> Response {
@@ -243,6 +262,7 @@ async fn home(
         assets,
         defaults,
         apps,
+        ..
     }): State<Pages>,
     Path((owner, d)): Path<(String, String)>,
 ) -> Response {
@@ -311,7 +331,34 @@ async fn home(
     body.push_str("</div>");
     body.push_str(&about(&apps, &owner, announcement, state, &authors, &names));
     body.push_str("</div>");
-    let mut response = html(&apps, StatusCode::OK, repo_name(announcement), &body);
+    let preview = RepoAddress::new(owner, &d)
+        .map(|address| {
+            let title = format!(
+                "{} / {}",
+                shown_name(&names, &owner),
+                repo_name(announcement)
+            );
+            let description = first_tag(announcement, "description")
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("{title}: a repository on TOON."));
+            Preview::new(title.clone(), description)
+                .at(base.clone())
+                .image(
+                    card::Links::new(apps.clone(), defaults.relay_host.clone())
+                        .preview_image(&address),
+                    title,
+                )
+        })
+        .unwrap_or_default();
+    let mut response = html_with(
+        &apps,
+        StatusCode::OK,
+        repo_name(announcement),
+        &body,
+        &preview,
+    );
     if csp {
         response.headers_mut().insert(
             header::CONTENT_SECURITY_POLICY,

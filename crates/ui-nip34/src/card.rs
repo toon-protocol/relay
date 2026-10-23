@@ -95,6 +95,21 @@ impl Links {
         self.social_path(address)
             .or_else(|| self.repo_path(address))
     }
+
+    /// The repo's link preview image: `/social`'s when it is on, so both
+    /// apps' pages name one image counted as the social page counts, else
+    /// `/repo`'s own.
+    pub fn preview_image(&self, address: &RepoAddress) -> String {
+        if self.apps.serves(App::Social) {
+            format!(
+                "{}/og/r/{}.png",
+                App::Social.prefix(),
+                address.path_segments()
+            )
+        } else {
+            format!("{}/og/{}.png", crate::PREFIX, address.path_segments())
+        }
+    }
 }
 
 /// A repository as a card shows it, loaded from the store.
@@ -284,6 +299,41 @@ impl RepoCard {
             chrome::plain_name(self.profiles.names(), self.address.owner()),
             self.name()
         )
+    }
+
+    /// The repo as its link preview draws it, with `forks` counted as the
+    /// page naming the image counts them (none: no fork count is shown).
+    pub fn preview(&self, forks: Option<usize>) -> ui_preview::Repo {
+        ui_preview::Repo {
+            owner: chrome::shown_name(self.profiles.names(), self.address.owner()),
+            name: self.name().to_owned(),
+            description: self.description().map(str::to_owned),
+            topics: topics(&self.announcement)
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            stars: self.stars,
+            followers: self.followers,
+            forks,
+        }
+    }
+
+    /// What a page about the repo tells a link unfurler: `owner / name`,
+    /// its description, and its preview image.
+    pub fn meta(&self, links: &Links, path: String) -> relay_ui::meta::Preview {
+        let title = format!(
+            "{} / {}",
+            chrome::shown_name(self.profiles.names(), self.address.owner()),
+            self.name()
+        );
+        relay_ui::meta::Preview::new(
+            title.clone(),
+            self.description()
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("{title}: a repository on TOON.")),
+        )
+        .at(path)
+        .image(links.preview_image(&self.address), title)
     }
 
     /// The card's HTML.

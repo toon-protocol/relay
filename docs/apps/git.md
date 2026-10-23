@@ -260,6 +260,18 @@ zlib-compressed loose object. A missing, oversized or mismatched object shows
 "this object is no longer held" in its place and the rest of the page still
 renders. The browser's HTTP cache does the caching.
 
+**Link previews.** A repository's home carries Open Graph and X card tags,
+so a `/repo` link posted elsewhere unfurls into a card: `owner / name`, the
+announcement's `description`, and a 1200×630 PNG the relay draws from its
+own store (ADR 0006). While `/social` is on, the page names `/social`'s
+image of the repo (`/social/og/r/<npub>/<d>.png`), so both apps share one
+image counted as the social page counts; served alone, `/repo` names its own,
+`/repo/og/<npub>/<d>.png` (stars, followers and the forks this relay holds).
+Other `/repo` pages name `/repo/og/site.png`. The tags are absolute only when
+the relay knows its public `https` origin (`TOON_UI_PUBLIC_URL`, else the
+origin of a `wss://` `TOON_UI_RELAY_URL`); see "Link previews" in
+[`social.md`](social.md) for the tags, the cache and its bounds.
+
 ## 4. Issues, patches, pull requests, comments and status
 
 Issues, patches, pull requests and status events reference the repository by

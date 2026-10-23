@@ -8,9 +8,12 @@
 //!
 //! [`chrome`] is what the apps' pages share, so they read as one site: the
 //! page shell and app switcher, the repo header's pieces, names and dates.
+//! [`meta`] is what the shell tells a link unfurler: Open Graph and X card
+//! tags naming the card image a page has.
 
 mod assets;
 pub mod chrome;
+pub mod meta;
 mod style;
 
 pub use assets::{Assets, CACHE_CONTROL_VALUE, MANIFEST_FILE};

@@ -32,3 +32,8 @@ services:
       # `[node] http_endpoint` says — which is a production hostname unless
       # you changed it.
       - '127.0.0.1:7100:7100'
+    environment:
+      # No public name: clone URLs name no relay, and pages name no link
+      # preview image (an empty value is the same as unset).
+      TOON_UI_RELAY_URL: ''
+      TOON_UI_PUBLIC_URL: ''

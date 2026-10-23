@@ -297,6 +297,7 @@ async fn page(
         assets,
         defaults,
         apps,
+        ..
     } = pages;
     let Ok(owner) = PublicKey::from_bech32(owner) else {
         return not_found(&apps);

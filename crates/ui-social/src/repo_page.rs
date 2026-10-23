@@ -42,7 +42,7 @@ use crate::kinds::{
 use crate::lineage::{self, Lineage};
 use crate::media;
 use crate::post::{self, View};
-use crate::{PREFIX, Pages, html, not_found, parse_pubkey};
+use crate::{PREFIX, Pages, html_with, not_found, parse_pubkey};
 use crate::{handlers, ship};
 
 /// The kinds that name a repo in an `a` tag and appear on its page.
@@ -479,13 +479,18 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab, query: Option<&str>
     ));
     body.push_str(&sidebar(&view, &card, &before, &after));
     body.push_str("</div>");
-    html(
+    let here = if tab == Tab::Maker {
+        base.clone()
+    } else {
+        format!("{base}/{}", tab.slug())
+    };
+    html_with(
         pages,
-        crate::Nav::Other,
-        StatusCode::OK,
+        (crate::Nav::Other, StatusCode::OK),
         &format!("{} · {}", card.name(), tab.label()),
         viewer.as_ref(),
         &body,
+        &card.meta(&links, here),
     )
 }
 

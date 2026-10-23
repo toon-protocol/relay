@@ -50,7 +50,10 @@ use crate::highlights::{self, Marker, Passage};
 use crate::kinds::{ARTICLE, COMMENT, GENERIC_REPOST, HIGHLIGHT, REACTION, SNIPPET};
 use crate::post::{self, View};
 use crate::series::{self, Series};
-use crate::{PREFIX, Pages, content, html, load_cards, not_found, note, parse_pubkey, snippet};
+use crate::{
+    PREFIX, Pages, content, html_with, load_cards, not_found, note, parse_pubkey, snippet,
+};
+use relay_ui::meta::Preview;
 
 /// The most events one of the page's queries reads.
 const LIMIT: usize = 2_000;
@@ -258,8 +261,31 @@ fn body_html(
     out
 }
 
+/// The article's title: its `title` tag, else its first line.
+pub(crate) fn title_of(article: &Event) -> String {
+    first_tag(article, "title")
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| content::first_line(&article.content, 120))
+}
+
+/// The article's `summary` tag, if it says something, else its first line.
+pub(crate) fn summary_of(article: &Event) -> Option<String> {
+    first_tag(article, "summary")
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            Some(content::first_line(&article.content, 240)).filter(|line| !line.is_empty())
+        })
+}
+
 /// The newest version of the article at `address` the store holds.
-async fn load(store: &relay_ui::ReadOnlyStore, address: &ArticleAddress) -> Option<Event> {
+pub(crate) async fn load(
+    store: &relay_ui::ReadOnlyStore,
+    address: &ArticleAddress,
+) -> Option<Event> {
     let versions = store
         .query(
             Filter::new()
@@ -426,11 +452,7 @@ async fn page(pages: &Pages, address: &ArticleAddress, query: Option<&str>) -> R
         gateway: pages.gateway(),
     };
 
-    let title = first_tag(&article, "title")
-        .map(str::trim)
-        .filter(|title| !title.is_empty())
-        .map(str::to_owned)
-        .unwrap_or_else(|| content::first_line(&article.content, 120));
+    let title = title_of(&article);
     let mut marker = Marker::new(&passages);
     let around = Around {
         series: series.first(),
@@ -455,13 +477,25 @@ async fn page(pages: &Pages, address: &ArticleAddress, query: Option<&str>) -> R
     body.push_str(&main);
     body.push_str(&rail(&view, &passages));
     body.push_str("</div>");
-    html(
+    let shown = if title.is_empty() { "Article" } else { &title };
+    let author = relay_ui::chrome::shown_name(profiles.names(), &address.author);
+    let preview = Preview::new(
+        shown,
+        summary_of(&article).unwrap_or_else(|| format!("An article by {author} on TOON.")),
+    )
+    .kind("article")
+    .at(address.path())
+    .image(
+        crate::og::article_path(address),
+        format!("{shown}, by {author}"),
+    );
+    html_with(
         pages,
-        crate::Nav::Other,
-        StatusCode::OK,
-        if title.is_empty() { "Article" } else { &title },
+        (crate::Nav::Other, StatusCode::OK),
+        shown,
         None,
         &body,
+        &preview,
     )
 }
 
