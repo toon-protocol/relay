@@ -26,8 +26,8 @@ base64 = "0.22"
 # pins was built from; deploy/bundle.test.ts holds the two together (#199):
 # the release named on the next line is the image tag's release handle, and
 # `rev` is the commit that release is tagged at.
-# connector-release: 2026.10.16.1
-connector-domain = { git = "https://github.com/toon-protocol/connector", rev = "de8469c40952f1a8f0d2abbf9507b3d286ea0031" }
+# connector-release: 2026.10.23.1
+connector-domain = { git = "https://github.com/toon-protocol/connector", rev = "d3e2bd514cc713f4034bdc062c7b30f3ec84d275" }
 # Git objects verified and parsed from bytes, for the browser half of /repo.
 git-objects = { path = "crates/git-objects" }
 js-sys = "0.3"
