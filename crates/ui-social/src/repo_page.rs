@@ -368,7 +368,8 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab) -> Response {
         Tab::Snippets => body.push_str(&snippets(&view, &listed)),
     }
     body.push_str("</div>");
-    body.push_str(&sidebar(&view, &card));
+    let room = crate::rooms::repo_room_box(pages, &card).await;
+    body.push_str(&sidebar(&view, &card, &room));
     body.push_str("</div>");
     html(
         pages,
@@ -532,8 +533,8 @@ fn snippets(view: &View<'_>, events: &[&Event]) -> String {
 }
 
 /// The sidebar: what the repo is, where to clone it, who keeps it, and how
-/// to star or follow it from a client.
-fn sidebar(view: &View<'_>, card: &RepoCard) -> String {
+/// to star or follow it from a client; `room` is its Room box, or empty.
+fn sidebar(view: &View<'_>, card: &RepoCard, room: &str) -> String {
     let repo = card.address();
     let mut out = String::from("<aside class=\"sidebar\"><div><h2>About</h2>");
     match card.description() {
@@ -585,8 +586,10 @@ fn sidebar(view: &View<'_>, card: &RepoCard) -> String {
             name(card.profiles().names(), key)
         ));
     }
+    out.push_str("</ul></div>");
+    out.push_str(room);
     out.push_str(&format!(
-        "</ul></div><div class=\"side-card\"><h2>Star or follow</h2><p class=\"muted small\">\
+        "<div class=\"side-card\"><h2>Star or follow</h2><p class=\"muted small\">\
          This page writes nothing. From a Nostr client, a star is a kind 7 with content <code>+</code> \
          and the tags <code>a</code> <code>{0}</code> and <code>k</code> <code>30617</code>; a follow \
          adds <code>a</code> <code>{0}</code> to your kind 10018 list. Each is one paid write.</p></div></aside>",

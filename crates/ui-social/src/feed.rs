@@ -381,6 +381,7 @@ async fn feed_page(
     }
     body.push_str("</div><aside class=\"sidebar\">");
     body.push_str(&trending_card(pages, &view).await);
+    body.push_str(&crate::events::coming_up(pages).await);
     body.push_str(
         "<div class=\"side-card\"><h2>How this works</h2><p class=\"muted small\">Stars, follows, \
          replies and launches are written by a Nostr client and paid for one write each; this page \
