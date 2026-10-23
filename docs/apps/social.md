@@ -685,7 +685,11 @@ when people that key follows reported it (how many, by type) with a link to
 the reports list; without it, only a neutral "N reports on this relay" line.
 **Nothing is hidden because of a report**: anyone can report anything, and
 removal stays the operator's blocklist (`docs/retention.md`). A person's
-reports count once.
+reports count once. An article page shows the same line for reports naming
+the article's address or the version shown, and a profile for reports about
+the person: a report whose only target is its `p` tag (one that also names
+an `e`, `a` or `x` is about that note, repo or file, not the person). Those
+two have no reports list to link to.
 
 With `?as=<npub>`, the feed `/social` (and always the following feed of its
 own key) leaves out what that key's NIP-51 mute list (kind 10000) names:

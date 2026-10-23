@@ -343,7 +343,10 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
     let starred_muted = starred_all - stars.len();
 
     let links = pages.links();
-    let mut body = banner(&who.meta);
+    let mut reported = crate::reports::Targets::default();
+    reported.person(&key, "this person".to_owned());
+    let mut body = crate::reports::page_banner(store, &reported, query, None).await;
+    body.push_str(&banner(&who.meta));
     body.push_str("<div class=\"profile\">");
     let mut issuers: Vec<PublicKey> = who.badges.iter().map(|badge| badge.issuer).collect();
     issuers.push(key);

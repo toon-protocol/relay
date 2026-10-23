@@ -28,7 +28,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, RawQuery, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use nostr::event::{Event, EventId, Kind};
@@ -324,9 +324,13 @@ async fn naming(
     found
 }
 
-pub(crate) async fn by_naddr(State(pages): State<Pages>, Path(target): Path<String>) -> Response {
+pub(crate) async fn by_naddr(
+    State(pages): State<Pages>,
+    Path(target): Path<String>,
+    RawQuery(query): RawQuery,
+) -> Response {
     match ArticleAddress::from_naddr(&target) {
-        Some(address) => page(&pages, &address).await,
+        Some(address) => page(&pages, &address, query.as_deref()).await,
         None => not_found(&pages),
     }
 }
@@ -334,14 +338,15 @@ pub(crate) async fn by_naddr(State(pages): State<Pages>, Path(target): Path<Stri
 pub(crate) async fn by_key(
     State(pages): State<Pages>,
     Path((author, d)): Path<(String, String)>,
+    RawQuery(query): RawQuery,
 ) -> Response {
     match parse_pubkey(&author) {
-        Some(author) => page(&pages, &ArticleAddress::new(author, &d)).await,
+        Some(author) => page(&pages, &ArticleAddress::new(author, &d), query.as_deref()).await,
         None => not_found(&pages),
     }
 }
 
-async fn page(pages: &Pages, address: &ArticleAddress) -> Response {
+async fn page(pages: &Pages, address: &ArticleAddress, query: Option<&str>) -> Response {
     let store = &pages.store;
     let Some(article) = load(store, address).await else {
         return not_found(pages);
@@ -436,10 +441,14 @@ async fn page(pages: &Pages, address: &ArticleAddress) -> Response {
         comments: &comments,
     };
     let main = reader(&view, &article, &title, &mut marker, &around);
-    let mut body = format!(
+    let mut reported = crate::reports::Targets::default();
+    reported.address(coordinate.clone(), "this article".to_owned());
+    reported.event(article.id, "this article".to_owned());
+    let mut body = crate::reports::page_banner(store, &reported, query, None).await;
+    body.push_str(&format!(
         "<div class=\"reader{}\">",
         if series.is_empty() { " no-series" } else { "" }
-    );
+    ));
     if !series.is_empty() {
         body.push_str(&series_nav(&series, &titles));
     }

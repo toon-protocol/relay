@@ -415,3 +415,76 @@ async fn a_bots_posts_carry_a_bot_chip_in_their_by_line() {
     let (_, post) = get(relay, &format!("/social/e/{}", note.id.to_hex())).await;
     assert!(post.contains("chip-bot"), "{post}");
 }
+
+#[tokio::test]
+async fn reports_about_a_person_or_an_article_show_on_their_pages() {
+    let running = running_with(|_| None).await;
+    let relay = &running.relay;
+    let (maya, viewer, friend) = (Keys::generate(), Keys::generate(), Keys::generate());
+    let now = Timestamp::now().as_secs();
+    let maya_hex = maya.public_key().to_hex();
+    store(relay, &event(&maya, 0, now - 50, r#"{"name":"Maya"}"#, &[])).await;
+    store(
+        relay,
+        &event(
+            &maya,
+            30_023,
+            now - 40,
+            "Body.",
+            &[&["d", "post"], &["title", "Post"]],
+        ),
+    )
+    .await;
+    store(
+        relay,
+        &event(
+            &viewer,
+            3,
+            now - 30,
+            "",
+            &[&["p", &friend.public_key().to_hex()]],
+        ),
+    )
+    .await;
+    // A report about Maya, and one about her article (which names her too).
+    store(
+        relay,
+        &event(
+            &friend,
+            1984,
+            now - 20,
+            "",
+            &[&["p", &maya_hex, "impersonation"]],
+        ),
+    )
+    .await;
+    store(
+        relay,
+        &event(
+            &friend,
+            1984,
+            now - 10,
+            "",
+            &[
+                &["a", &format!("30023:{maya_hex}:post"), "spam"],
+                &["p", &maya_hex],
+            ],
+        ),
+    )
+    .await;
+    let lens = format!("?as={}", npub(&viewer));
+    let (_, profile) = get(relay, &format!("/social/p/{}{lens}", npub(&maya))).await;
+    assert!(profile.contains("data-reports-banner=\"1\""), "{profile}");
+    assert!(profile.contains("impersonation (1)"), "{profile}");
+    assert!(
+        !profile.contains("spam"),
+        "the article's report is not about her"
+    );
+    let (_, plain) = get(relay, &format!("/social/p/{}", npub(&maya))).await;
+    assert!(!plain.contains("data-reports-banner"), "no lens, no banner");
+    assert!(plain.contains("data-reports=\"1\""), "{plain}");
+    let (status, article) = get(relay, &format!("/social/a/{}/post{lens}", npub(&maya))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(article.contains("data-reports-banner=\"1\""), "{article}");
+    assert!(article.contains("spam (1)"), "{article}");
+}

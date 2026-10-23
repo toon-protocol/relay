@@ -58,6 +58,7 @@ pub(crate) struct Targets {
     addresses: HashMap<String, String>,
     events: HashMap<String, String>,
     blobs: HashMap<String, String>,
+    people: HashMap<String, String>,
 }
 
 impl Targets {
@@ -71,6 +72,13 @@ impl Targets {
         self.events.entry(id.to_hex()).or_insert(label);
     }
 
+    /// A person, by their key: a report whose only target is its `p` tag
+    /// (NIP-56 reports a note, a repo or a file with a `p` of its author
+    /// too, and those are not about the person).
+    pub(crate) fn person(&mut self, key: &PublicKey, label: String) {
+        self.people.entry(key.to_hex()).or_insert(label);
+    }
+
     /// A blob, by its SHA-256 in hex.
     pub(crate) fn blob(&mut self, hash: &str, label: String) {
         let hash = hash.trim().to_lowercase();
@@ -80,7 +88,10 @@ impl Targets {
     }
 
     fn is_empty(&self) -> bool {
-        self.addresses.is_empty() && self.events.is_empty() && self.blobs.is_empty()
+        self.addresses.is_empty()
+            && self.events.is_empty()
+            && self.blobs.is_empty()
+            && self.people.is_empty()
     }
 
     /// What `name`'s tag `value` names, if it is one of these.
@@ -89,6 +100,7 @@ impl Targets {
             "a" => self.addresses.get(value),
             "e" => self.events.get(value),
             "x" => self.blobs.get(&value.to_lowercase()),
+            "p" => self.people.get(value),
             _ => None,
         }
         .map(String::as_str)
@@ -111,7 +123,12 @@ pub(crate) fn reason<'a>(report: &Event, targets: &'a Targets) -> Option<(&'stat
         return None;
     }
     let tags = || report.tags.iter().map(|tag| tag.as_slice());
+    // A report naming a note, an address or a file is about that, not
+    // about the person its `p` tag also names.
+    let about_a_thing =
+        tags().any(|tag| matches!(tag, [name, ..] if ["e", "a", "x"].contains(&name.as_str())));
     let (named, label) = tags().find_map(|tag| match tag {
+        [name, ..] if name == "p" && about_a_thing => None,
         [name, value, rest @ ..] => targets
             .label(name, value)
             .map(|label| (rest.first().map(String::as_str), label)),
@@ -176,6 +193,7 @@ pub(crate) async fn load(store: &ReadOnlyStore, targets: &Targets) -> Vec<Event>
         (SingleLetterTag::LOWERCASE_A, &targets.addresses),
         (SingleLetterTag::LOWERCASE_E, &targets.events),
         (SingleLetterTag::LOWERCASE_X, &targets.blobs),
+        (SingleLetterTag::LOWERCASE_P, &targets.people),
     ] {
         if values.is_empty() {
             continue;
@@ -463,7 +481,23 @@ pub(crate) async fn post_banner(
         None => Targets::default(),
     };
     targets.event(event.id, "this post".to_owned());
-    let found = load(store, &targets).await;
+    let viewer = as_key(query);
+    let link = launched
+        .and_then(|card| links.social_path(card.address()))
+        .map(|base| format!("{base}/reports{}", viewer::as_query(viewer.as_ref(), true)));
+    page_banner(store, &targets, query, link.as_deref()).await
+}
+
+/// A page's report line for `targets`, read through the `?as=` lens in
+/// `query` when it names one: [`banner`], after loading what it needs.
+/// Empty when nobody reported any of them.
+pub(crate) async fn page_banner(
+    store: &ReadOnlyStore,
+    targets: &Targets,
+    query: Option<&str>,
+    link: Option<&str>,
+) -> String {
+    let found = load(store, targets).await;
     if found.is_empty() {
         return String::new();
     }
@@ -476,15 +510,12 @@ pub(crate) async fn post_banner(
         Some(viewer) => Profiles::load(store, &[*viewer]).await.into_names(),
         None => HashMap::new(),
     };
-    let link = launched
-        .and_then(|card| links.social_path(card.address()))
-        .map(|base| format!("{base}/reports{}", viewer::as_query(viewer.as_ref(), true)));
     banner(
         &found,
-        &targets,
+        targets,
         viewer.as_ref().zip(follows.as_ref()),
         &names,
-        link.as_deref(),
+        link,
     )
 }
 
@@ -500,6 +531,21 @@ mod tests {
             .tags(tags.iter().map(|parts| Tag::parse(parts.to_vec()).unwrap()))
             .finalize(keys)
             .unwrap()
+    }
+
+    #[test]
+    fn a_person_is_reported_only_by_a_report_that_names_nothing_else() {
+        let (reporter, person) = (Keys::generate(), Keys::generate());
+        let hex = person.public_key().to_hex();
+        let mut targets = Targets::default();
+        targets.person(&person.public_key(), "this person".to_owned());
+        let about_them = report(&reporter, &[&["p", &hex, "impersonation"]]);
+        assert_eq!(
+            reason(&about_them, &targets),
+            Some(("impersonation", "this person"))
+        );
+        let about_a_note = report(&reporter, &[&["e", &"a".repeat(64), "spam"], &["p", &hex]]);
+        assert_eq!(reason(&about_a_note, &targets), None);
     }
 
     fn targets() -> (Targets, String, String, String) {
