@@ -169,6 +169,10 @@ impl Relay {
                 arweave_gateways: &config.ui_arweave_gateways,
                 blob_servers: &config.ui_blob_servers,
             },
+            &ui::Unauthenticated {
+                auth: auth.clone(),
+                groups: groups.as_ref().map(groups::GroupRules::view),
+            },
         )?;
         Ok(Self {
             identity: config.identity,

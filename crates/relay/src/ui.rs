@@ -2,6 +2,8 @@
 //! each is built from, and which one a request belongs to.
 
 #[cfg(feature = "ui-repo")]
+use std::collections::HashSet;
+#[cfg(feature = "ui-repo")]
 use std::future::Future;
 use std::path::Path;
 #[cfg(feature = "ui-repo")]
@@ -18,22 +20,70 @@ use relay_ui::{AppUi, Assets};
 #[cfg(feature = "ui-repo")]
 use relay_ui::{EventSource, ReadOnlyStore};
 
+use crate::auth::AuthPolicy;
+use crate::groups::GroupView;
 use crate::{Relay, RelayError, Store};
 
-/// The store as an app UI sees it: queries, and nothing else.
+/// The read rules of a connection that has not authenticated (NIP-42), as a
+/// session applies them. A server-rendered page cannot sign in for its
+/// visitor, so every app UI reads the store as such a connection would: a
+/// private or closed NIP-29 group's events, a private group's metadata, the
+/// kinds the operator restricts and gift wraps meant for their recipients
+/// alone are left out.
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(not(feature = "ui-repo"), allow(dead_code))]
+pub(crate) struct Unauthenticated {
+    /// NIP-42's policy, while it is on.
+    pub(crate) auth: Option<AuthPolicy>,
+    /// NIP-29's groups, while it is on.
+    pub(crate) groups: Option<GroupView>,
+}
+
 #[cfg(feature = "ui-repo")]
-struct Reading(Store);
+impl Unauthenticated {
+    /// Whether such a connection may be shown `event`.
+    fn may_read(&self, event: &Event) -> bool {
+        self.auth
+            .as_ref()
+            .is_none_or(|auth| auth.shows_unauthenticated(event))
+            && self
+                .groups
+                .as_ref()
+                .is_none_or(|groups| groups.may_read(event, &HashSet::new()))
+    }
+}
+
+/// The store as an app UI sees it: queries, and nothing else, answered as
+/// to a connection that has not authenticated.
+#[cfg(feature = "ui-repo")]
+struct Reading {
+    store: Store,
+    rules: Unauthenticated,
+}
 
 #[cfg(feature = "ui-repo")]
 impl EventSource for Reading {
     fn query(&self, filter: Filter) -> Pin<Box<dyn Future<Output = Vec<Event>> + Send + '_>> {
         Box::pin(async move {
-            self.0.query(filter).await.unwrap_or_else(|error| {
+            let events = self.store.query(filter).await.unwrap_or_else(|error| {
                 eprintln!("ui: query failed: {error}");
                 Vec::new()
-            })
+            });
+            events
+                .into_iter()
+                .filter(|event| self.rules.may_read(event))
+                .collect()
         })
     }
+}
+
+/// The read-only handle every app UI is built from: `store` under `rules`.
+#[cfg(feature = "ui-repo")]
+fn reading(store: &Store, rules: &Unauthenticated) -> ReadOnlyStore {
+    ReadOnlyStore::new(Reading {
+        store: store.clone(),
+        rules: rules.clone(),
+    })
 }
 
 /// The operator's default places for a browser to look for git objects
@@ -45,17 +95,18 @@ pub(crate) struct ObjectSources<'a> {
 }
 
 /// The app UIs named in `apps` (`TOON_UI_APPS`), each over a read-only handle
-/// to `store`. A name this build has no app for is refused: the feature that
+/// to `store` that answers under `reads`. A name this build has no app for is refused: the feature that
 /// holds it was left out.
 pub(crate) fn enabled(
     apps: &[String],
     store: &Store,
     assets: Option<&Assets>,
     sources: &ObjectSources<'_>,
+    reads: &Unauthenticated,
 ) -> Result<Arc<[AppUi]>, RelayError> {
     let mut uis = Vec::new();
     for app in apps {
-        match built(app, store, assets, sources) {
+        match built(app, store, assets, sources, reads) {
             Some(ui) => uis.push(ui),
             None => {
                 return Err(RelayError::InvalidSetting {
@@ -76,11 +127,12 @@ fn built(
     store: &Store,
     assets: Option<&Assets>,
     sources: &ObjectSources<'_>,
+    reads: &Unauthenticated,
 ) -> Option<AppUi> {
     #[cfg(feature = "ui-repo")]
     if name == "repo" {
         return Some(ui_nip34::app(
-            ReadOnlyStore::new(Reading(store.clone())),
+            reading(store, reads),
             assets.cloned(),
             ui_nip34::Defaults {
                 arweave_gateways: sources.arweave_gateways.to_vec(),

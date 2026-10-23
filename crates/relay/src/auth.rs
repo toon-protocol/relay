@@ -81,6 +81,15 @@ impl AuthPolicy {
             .any(|recipient| keys.contains(&recipient))
     }
 
+    /// Whether `event` may be shown to a connection that has not
+    /// authenticated: not a kind this policy restricts, and not a gift wrap
+    /// only its recipients may read. What an app UI's page reads, since a
+    /// page cannot sign in for its visitor.
+    #[cfg_attr(not(feature = "ui-repo"), allow(dead_code))]
+    pub(crate) fn shows_unauthenticated(&self, event: &Event) -> bool {
+        !self.required_kinds.contains(&event.kind) && self.may_read(event, &HashSet::new())
+    }
+
     /// Whether a connection that has not authenticated may not be answered
     /// `filter`: it names no kind, so it may return a restricted one, or it
     /// names one.
