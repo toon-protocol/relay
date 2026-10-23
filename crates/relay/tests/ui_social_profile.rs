@@ -389,3 +389,29 @@ async fn a_profile_shows_the_tip_split_its_kind_0_names_as_text() {
     let (_, plain) = get(relay, &format!("/social/p/{}", npub(&kofi))).await;
     assert!(!plain.contains("data-tip-split"), "no zap tags, no card");
 }
+
+#[tokio::test]
+async fn a_bots_posts_carry_a_bot_chip_in_their_by_line() {
+    let running = running_with(|_| None).await;
+    let relay = &running.relay;
+    let (bot, person) = (Keys::generate(), Keys::generate());
+    let now = Timestamp::now().as_secs();
+    store(
+        relay,
+        &event(&bot, 0, now - 30, r#"{"name":"shipbot","bot":true}"#, &[]),
+    )
+    .await;
+    store(
+        relay,
+        &event(&person, 0, now - 30, r#"{"name":"Maya"}"#, &[]),
+    )
+    .await;
+    let note = event(&bot, 1, now - 20, "Release notes drafted.", &[]);
+    store(relay, &note).await;
+    store(relay, &event(&person, 1, now - 10, "Thanks, bot.", &[])).await;
+    let (status, feed) = get(relay, "/social").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(feed.matches("chip-bot").count(), 1, "{feed}");
+    let (_, post) = get(relay, &format!("/social/e/{}", note.id.to_hex())).await;
+    assert!(post.contains("chip-bot"), "{post}");
+}

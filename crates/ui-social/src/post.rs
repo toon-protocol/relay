@@ -3,7 +3,7 @@
 //! merge, a new repo. The feed, the repo page and the post page all draw
 //! posts with these.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use nostr::event::Event;
 use nostr::key::PublicKey;
@@ -25,6 +25,8 @@ const CLIP: usize = 1_000;
 pub(crate) struct View<'a> {
     pub(crate) links: &'a Links,
     pub(crate) names: &'a HashMap<PublicKey, String>,
+    /// The keys whose profile says they are bots (NIP-24).
+    pub(crate) bots: &'a HashSet<PublicKey>,
     pub(crate) cards: &'a HashMap<RepoAddress, RepoCard>,
     /// The live demo of each repo drawn, where there is one
     /// ([`crate::demo`]).
@@ -71,10 +73,11 @@ pub(crate) fn event_path(event: &Event) -> String {
 pub(crate) fn by_line(view: &View<'_>, event: &Event, chips: &str, context: &str) -> String {
     format!(
         "<div class=\"by\">{}<div class=\"who\"><div class=\"line\">\
-         {}{chips}</div>\
+         {}{}{chips}</div>\
          <span class=\"muted small\"><a class=\"muted\" href=\"{}\">{}</a>{}</span></div></div>",
         person_avatar(view.links.apps(), view.names, &event.pubkey, false),
         person(view.links.apps(), view.names, &event.pubkey),
+        relay_ui::chrome::bot_chip(view.bots, &event.pubkey),
         escape(&event_path(event)),
         ago(event.created_at),
         if context.is_empty() {

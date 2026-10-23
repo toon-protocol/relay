@@ -335,6 +335,7 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab, query: Option<&str>
     let view = View {
         links: &links,
         names: profiles.names(),
+        bots: profiles.bots(),
         cards: &cards,
         demos: &demos,
         gateway: pages.gateway(),

@@ -403,8 +403,10 @@ links here, and `/repo` links a repo's owner and maintainers here when
 
 - kind 0: name (`display_name`, else `name`), `about`, `website`, and the
   NIP-24 `banner` (an `https` image the visitor's browser loads, like a
-  post's media) and `bot` (a "bot" chip when it is `true`). The avatar stays
-  initials, as everywhere.
+  post's media) and `bot` (a "bot" chip when it is `true`, the JSON
+  boolean only; the same chip follows the key's name in every by-line on
+  `/social`: posts, replies, articles). The avatar stays initials, as
+  everywhere.
 - the NIP-05 name, shown as **unverified**: the relay never fetches the
   `.well-known` document.
 - NIP-38 statuses (kind 30315), newest per `d`, `general` first; one that is

@@ -150,6 +150,7 @@ pub(crate) async fn page(
     let view = View {
         links: &links,
         names: profiles.names(),
+        bots: profiles.bots(),
         cards: &cards,
         demos: &no_demos,
         gateway: pages.gateway(),
@@ -330,7 +331,11 @@ pub(crate) fn reply_html(view: &View<'_>, reply: &Event, maker: bool) -> String 
          <a class=\"muted small\" href=\"{}\">{}</a></div><p class=\"text\">{}</p></div></article>",
         reply.id.to_hex(),
         person_avatar(view.links.apps(), view.names, &reply.pubkey, true),
-        person(view.links.apps(), view.names, &reply.pubkey),
+        format!(
+            "{}{}",
+            person(view.links.apps(), view.names, &reply.pubkey),
+            relay_ui::chrome::bot_chip(view.bots, &reply.pubkey)
+        ),
         if maker {
             " <span class=\"chip chip-maker\">Maker</span> "
         } else {

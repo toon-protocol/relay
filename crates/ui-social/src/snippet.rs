@@ -163,6 +163,7 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(target): Path<String>)
     let view = View {
         links: &links,
         names: profiles.names(),
+        bots: profiles.bots(),
         cards: &cards,
         demos: &no_demos,
         gateway: pages.gateway(),

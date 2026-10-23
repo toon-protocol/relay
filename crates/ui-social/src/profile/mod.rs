@@ -1024,6 +1024,7 @@ async fn posts(pages: &Pages, links: &Links, key: &PublicKey) -> String {
     let view = View {
         links,
         names: profiles.names(),
+        bots: profiles.bots(),
         cards: &cards,
         demos: &no_demos,
         gateway: pages.gateway(),

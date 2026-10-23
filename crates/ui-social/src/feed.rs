@@ -348,6 +348,7 @@ async fn feed_page(
     let view = View {
         links: &links,
         names: profiles.names(),
+        bots: profiles.bots(),
         cards: &cards,
         demos: &no_demos,
         gateway: pages.gateway(),

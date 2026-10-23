@@ -7,7 +7,7 @@
 //! `style` attributes and inline script. An app adds its own markup between
 //! these pieces; what it shares with another app lives here, once.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use nostr::event::{Event, Kind};
@@ -365,13 +365,15 @@ pub fn avatar(name: &str, small: bool) -> String {
     )
 }
 
-/// What kind 0 profiles say about some keys: display names and NIP-05
-/// identifiers. A NIP-05 identifier is a claim; the relay never fetches the
-/// `.well-known` document that would verify it, so a page shows it as one.
+/// What kind 0 profiles say about some keys: display names, NIP-05
+/// identifiers, and which keys say they are bots (NIP-24 `"bot": true`). A
+/// NIP-05 identifier is a claim; the relay never fetches the `.well-known`
+/// document that would verify it, so a page shows it as one.
 #[derive(Debug, Clone, Default)]
 pub struct Profiles {
     names: HashMap<PublicKey, String>,
     nip05: HashMap<PublicKey, String>,
+    bots: HashSet<PublicKey>,
 }
 
 impl Profiles {
@@ -410,6 +412,9 @@ impl Profiles {
             if let Some(nip05) = text("nip05").and_then(nip05_identifier) {
                 profiles.nip05.insert(*key, nip05);
             }
+            if fields.get("bot") == Some(&serde_json::Value::Bool(true)) {
+                profiles.bots.insert(*key);
+            }
         }
         profiles
     }
@@ -427,6 +432,21 @@ impl Profiles {
     /// The NIP-05 identifier `key`'s profile claims, unverified.
     pub fn nip05(&self, key: &PublicKey) -> Option<&str> {
         self.nip05.get(key).map(String::as_str)
+    }
+
+    /// The keys whose profile says `"bot": true` (NIP-24): content that is
+    /// "largely the result of automation". Only the boolean counts.
+    pub fn bots(&self) -> &HashSet<PublicKey> {
+        &self.bots
+    }
+}
+
+/// The chip that marks a key's posts as a bot's, when `bots` holds it.
+pub fn bot_chip(bots: &HashSet<PublicKey>, key: &PublicKey) -> &'static str {
+    if bots.contains(key) {
+        " <span class=\"chip chip-bot\" title=\"Its profile says it is a bot (NIP-24)\">bot</span>"
+    } else {
+        ""
     }
 }
 
@@ -613,6 +633,29 @@ mod tests {
             Some("Ada")
         );
         assert_eq!(profiles.nip05(&keys.public_key()), Some("ada@x.y"));
+    }
+
+    #[test]
+    fn a_profile_is_a_bot_only_when_it_says_bot_true() {
+        let (bot, yes, plain) = (Keys::generate(), Keys::generate(), Keys::generate());
+        let profile = |keys: &Keys, content: &str| {
+            EventBuilder::new(Kind::Metadata, content)
+                .finalize(keys)
+                .unwrap()
+        };
+        let keys = [bot.public_key(), yes.public_key(), plain.public_key()];
+        let profiles = Profiles::from_events(
+            &keys,
+            &[
+                profile(&bot, r#"{"name":"b","bot":true}"#),
+                profile(&yes, r#"{"name":"y","bot":"yes"}"#),
+                profile(&plain, r#"{"name":"p"}"#),
+            ],
+        );
+        assert!(profiles.bots().contains(&bot.public_key()));
+        assert!(!profiles.bots().contains(&yes.public_key()));
+        assert!(bot_chip(profiles.bots(), &bot.public_key()).contains("chip-bot"));
+        assert_eq!(bot_chip(profiles.bots(), &plain.public_key()), "");
     }
 
     #[test]

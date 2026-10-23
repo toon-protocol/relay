@@ -415,6 +415,7 @@ async fn page(pages: &Pages, address: &ArticleAddress) -> Response {
     let view = View {
         links: &links,
         names: profiles.names(),
+        bots: profiles.bots(),
         cards: &cards,
         demos: &no_demos,
         gateway: pages.gateway(),
@@ -626,9 +627,10 @@ fn reader(
     let maker = repo.is_some_and(|repo| view.is_maker(repo, &article.pubkey));
     out.push_str(&format!(
         "<div class=\"article-by\">{}<div class=\"who\"><div class=\"line\">\
-         {}{}</div>{about}</div></div>",
+         {}{}{}</div>{about}</div></div>",
         person_avatar(view.links.apps(), view.names, &article.pubkey, false),
         person(view.links.apps(), view.names, &article.pubkey),
+        relay_ui::chrome::bot_chip(view.bots, &article.pubkey),
         if maker {
             "<span class=\"chip chip-maker\">Maker</span>"
         } else {
