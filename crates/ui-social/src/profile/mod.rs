@@ -26,7 +26,7 @@ mod identity;
 
 use std::collections::{HashMap, HashSet};
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, RawQuery, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use nostr::event::{Event, EventId, Kind};
@@ -38,6 +38,7 @@ use ui_nip34::card::{self, Links, RepoCard, plural};
 use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors, first_tag, newest, topics};
 
 use crate::kinds::{ARTICLE, FOLLOWED_REPOS, FOLLOWS, NOTE, REACTION};
+use crate::mute::Mutes;
 use crate::post::{self, View};
 use crate::{PREFIX, Pages, content, html, load_cards, not_found, parse_pubkey};
 use activity::Graph;
@@ -256,25 +257,36 @@ struct Who {
     known: bool,
 }
 
-pub(crate) async fn overview(State(pages): State<Pages>, Path(target): Path<String>) -> Response {
-    page(&pages, &target, Tab::Pinned).await
+pub(crate) async fn overview(
+    State(pages): State<Pages>,
+    Path(target): Path<String>,
+    RawQuery(query): RawQuery,
+) -> Response {
+    page(&pages, &target, Tab::Pinned, query.as_deref()).await
 }
 
 pub(crate) async fn tab(
     State(pages): State<Pages>,
     Path((target, tab)): Path<(String, String)>,
+    RawQuery(query): RawQuery,
 ) -> Response {
     match Tab::from_slug(&tab) {
-        Some(tab) => page(&pages, &target, tab).await,
+        Some(tab) => page(&pages, &target, tab, query.as_deref()).await,
         None => not_found(&pages),
     }
 }
 
-async fn page(pages: &Pages, target: &str, tab: Tab) -> Response {
+async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Response {
     let Some(key) = parse_pubkey(target) else {
         return not_found(pages);
     };
     let store = &pages.store;
+    // `?as=<npub>`: read through that key's mute list (NIP-51 kind 10000).
+    let lens = crate::viewer::as_key(query);
+    let mutes = match &lens {
+        Some(viewer) => Mutes::load(store, viewer).await,
+        None => Mutes::default(),
+    };
     let now = chrome::now();
     let lists = store
         .query(
@@ -325,7 +337,10 @@ async fn page(pages: &Pages, target: &str, tab: Tab) -> Response {
                 .limit(LIMIT),
         )
         .await;
-    let stars = starred(&key, &reactions);
+    let mut stars = starred(&key, &reactions);
+    let starred_all = stars.len();
+    stars.retain(|repo| !mutes.hides_key(repo.owner()));
+    let starred_muted = starred_all - stars.len();
 
     let links = pages.links();
     let mut body = banner(&who.meta);
@@ -337,10 +352,11 @@ async fn page(pages: &Pages, target: &str, tab: Tab) -> Response {
     let tabs: Vec<chrome::Tab> = Tab::ALL
         .into_iter()
         .map(|each| {
+            let lens_query = crate::viewer::as_query(lens.as_ref(), true);
             let href = if each == Tab::Pinned {
-                base.clone()
+                format!("{base}{lens_query}")
             } else {
-                format!("{base}/{}", each.slug())
+                format!("{base}/{}{lens_query}", each.slug())
             };
             let made = chrome::Tab::new(each.label(), each.icon(), href).current(each == tab);
             match each {
@@ -352,6 +368,22 @@ async fn page(pages: &Pages, target: &str, tab: Tab) -> Response {
         .collect();
     main.push_str(&chrome::tabs("Profile", &tabs));
     let mut names_wanted = issuers;
+    names_wanted.extend(lens);
+    let lens_names = Profiles::load(store, &lens.into_iter().collect::<Vec<_>>()).await;
+    if let Some(viewer) = &lens {
+        main.push_str(&format!(
+            "<p class=\"muted small\" data-muted>Read as {}: {}{starred_muted} starred {} by \
+             people their mute list (NIP-51 kind 10000) names left out.</p>",
+            name(lens_names.names(), viewer),
+            if mutes.hides_key(&key) {
+                "their mute list names this person, so their posts are left out of that key's \
+                 feeds; "
+            } else {
+                ""
+            },
+            plural(starred_muted, "repo", "repos"),
+        ));
+    }
     match tab {
         Tab::Pinned => {
             let pins = pinned(&key, &lists, &kept);

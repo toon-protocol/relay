@@ -18,7 +18,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, RawQuery, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use nostr::event::{Event, Kind};
@@ -31,6 +31,7 @@ use ui_nip34::repo::{
 };
 
 use crate::kinds::LABEL;
+use crate::mute::Mutes;
 use crate::trending::{self, Window};
 use crate::{PREFIX, Pages, html};
 
@@ -342,16 +343,38 @@ pub(crate) async fn index(State(pages): State<Pages>) -> Response {
 }
 
 /// `/social/t/<topic>`: the repos under one topic.
-pub(crate) async fn page(State(pages): State<Pages>, Path(raw): Path<String>) -> Response {
+pub(crate) async fn page(
+    State(pages): State<Pages>,
+    Path(raw): Path<String>,
+    RawQuery(query): RawQuery,
+) -> Response {
     let Some(topic) = normalize(&raw) else {
         return crate::not_found(&pages);
     };
     let store = &pages.store;
     let catalog = Catalog::load(store).await;
-    let tagged = catalog.tagged(&topic);
+    // `?as=<npub>`: that key's mute list drops repos whose owner or own
+    // topic it muted, and labels by people it muted.
+    let lens = crate::viewer::as_key(query.as_deref());
+    let mutes = match &lens {
+        Some(key) => Mutes::load(store, key).await,
+        None => Mutes::default(),
+    };
+    let all = catalog.tagged(&topic);
+    let listed = all.len();
+    let tagged: Vec<Tagged> = all
+        .into_iter()
+        .filter_map(|mut tagged| {
+            tagged.labellers.retain(|key| !mutes.hides_key(key));
+            (!trending::muted_repo(&mutes, &catalog, &tagged.repo)
+                && (tagged.own || !tagged.labellers.is_empty()))
+            .then_some(tagged)
+        })
+        .collect();
+    let muted = listed - tagged.len();
     let repos: Vec<RepoAddress> = tagged.iter().map(|tagged| tagged.repo.clone()).collect();
     let counts = trending::stars_and_forks(store, &repos).await;
-    let mut keys: Vec<PublicKey> = Vec::new();
+    let mut keys: Vec<PublicKey> = lens.into_iter().collect();
     for key in tagged.iter().flat_map(|tagged| {
         catalog
             .announcement(&tagged.repo)
@@ -397,6 +420,14 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(raw): Path<String>) ->
         svg(icon::STAR, "icon-sm"),
         escape(&topic),
     );
+    if let Some(key) = &lens {
+        body.push_str(&format!(
+            "<p class=\"muted small\" data-muted>Read as {}: {muted} {} left out by their mute list \
+             (NIP-51 kind 10000), and labels by people it mutes are not counted.</p>",
+            chrome::name(profiles.names(), key),
+            plural(muted, "repo", "repos"),
+        ));
+    }
     if rows.is_empty() {
         body.push_str(&format!(
             "<div class=\"box\"><div class=\"empty\">No repo on this relay is tagged or labelled {}.</div></div>",

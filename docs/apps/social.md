@@ -689,6 +689,11 @@ own key) leaves out what that key's NIP-51 mute list (kind 10000) names:
 muted or whose topics are muted from "trending today". Only the list's public
 tags are read; its encrypted private items stay private to its author's
 client. `crates/ui-social/src/mute.rs` is the filter, for any list to reuse.
+The same `?as=` applies it elsewhere: `/social/trending` does not count the
+acts of muted people and drops repos whose owner or own topic is muted
+(the page says how many); `/social/t/<topic>` drops the same repos and the
+labels of muted people; a profile's Starred tab drops repos whose owner is
+muted, and the profile says when the key's mute list names that person.
 
 ## Trying it locally
 

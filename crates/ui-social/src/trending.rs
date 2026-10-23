@@ -49,6 +49,7 @@ use crate::kinds::{
     ADDRESS_ASSERTION, COMMENT, FOLLOWED_REPOS, FOLLOWS, GENERIC_REPOST, NOTE, REACTION, REPORT,
     TRUSTED_PROVIDERS,
 };
+use crate::mute::Mutes;
 use crate::topics::{self, Catalog, Rows};
 use crate::{PREFIX, Pages, html, parse_pubkey};
 
@@ -325,6 +326,9 @@ pub(crate) struct Ranking {
     pub(crate) follows: Option<HashSet<PublicKey>>,
     /// Repos hidden by a report from the `as` key or someone it follows.
     pub(crate) hidden: usize,
+    /// Repos hidden by the `as` key's mute list (an owner or a topic it
+    /// muted); the acts of people it muted are not counted at all.
+    pub(crate) muted: usize,
     /// Whether a query hit its limit, so older acts may be missing.
     pub(crate) full: bool,
 }
@@ -367,6 +371,11 @@ pub(crate) async fn rank(
     full |= notes.len() >= NOTE_LIMIT;
     events.extend(notes);
 
+    let mutes = match viewer {
+        Some(viewer) => Mutes::load(store, viewer).await,
+        None => Mutes::default(),
+    };
+    events.retain(|event| !mutes.hides(event));
     let (follows, reported) = match viewer {
         Some(viewer) => {
             let follows = follows_of(store, viewer).await;
@@ -397,12 +406,26 @@ pub(crate) async fn rank(
     );
     let before = scores.len();
     scores.retain(|score| !reported.contains(&score.repo));
+    let hidden = before - scores.len();
+    let before = scores.len();
+    scores.retain(|score| !muted_repo(&mutes, catalog, &score.repo));
     Ranking {
-        hidden: before - scores.len(),
+        hidden,
+        muted: before - scores.len(),
         scores,
         follows,
         full,
     }
+}
+
+/// Whether `mutes` drops `repo`: its owner is muted, or one of its own
+/// topics is a muted hashtag. A pure function.
+pub(crate) fn muted_repo(mutes: &Mutes, catalog: &Catalog, repo: &RepoAddress) -> bool {
+    mutes.hides_key(repo.owner())
+        || catalog
+            .own_topics(repo)
+            .iter()
+            .any(|topic| mutes.hides_hashtag(topic))
 }
 
 /// Distinct stargazers and distinct forks of each of `repos`: two queries.
@@ -754,7 +777,8 @@ fn controls(asked: &Asked, ranking: &Ranking, names: &HashMap<PublicKey, String>
     if let (Some(viewer), Some(follows)) = (&asked.viewer, &ranking.follows) {
         out.push_str(&format!(
             "<p class=\"callout small\" data-weighted>Weighted: the {} {} {} follows (kind 3) count \
-             {FOLLOWED_WEIGHT}× each. {} hidden by a report (kind 1984) from them or from {}. \
+             {FOLLOWED_WEIGHT}× each. {} hidden by a report (kind 1984) from them or from {}, and {} \
+             by {}'s mute list (kind 10000), whose people's acts are not counted. \
              <a href=\"{}\">Remove weighting</a></p>",
             follows.len(),
             plural(follows.len(), "person", "people"),
@@ -764,6 +788,8 @@ fn controls(asked: &Asked, ranking: &Ranking, names: &HashMap<PublicKey, String>
                 1 => "1 repo is".to_owned(),
                 count => format!("{count} repos are"),
             },
+            chrome::name(names, viewer),
+            ranking.muted,
             chrome::name(names, viewer),
             escape(&path(asked.window, None, asked.topic.as_deref(), None)),
         ));
@@ -1049,6 +1075,34 @@ mod tests {
             .custom_created_at(Timestamp::from(at))
             .finalize(keys)
             .unwrap()
+    }
+
+    #[test]
+    fn a_mute_list_drops_a_repo_by_its_owner_or_its_own_topic() {
+        let (viewer, owner, other) = (Keys::generate(), Keys::generate(), Keys::generate());
+        let announce = |keys: &Keys, d: &str, topic: &str| {
+            signed(keys, ANNOUNCEMENT, 1, "", &[&["d", d], &["t", topic]])
+        };
+        let catalog = Catalog::from_events(
+            &[
+                announce(&owner, "a", "rust"),
+                announce(&other, "b", "crypto"),
+                announce(&other, "c", "rust"),
+            ],
+            &[],
+        );
+        let mutes = Mutes::from_list(&signed(
+            &viewer,
+            crate::kinds::MUTE_LIST,
+            1,
+            "",
+            &[&["p", &owner.public_key().to_hex()], &["t", "crypto"]],
+        ));
+        let repo = |keys: &Keys, d: &str| RepoAddress::new(keys.public_key(), d).unwrap();
+        assert!(muted_repo(&mutes, &catalog, &repo(&owner, "a")));
+        assert!(muted_repo(&mutes, &catalog, &repo(&other, "b")));
+        assert!(!muted_repo(&mutes, &catalog, &repo(&other, "c")));
+        assert!(!muted_repo(&Mutes::default(), &catalog, &repo(&owner, "a")));
     }
 
     #[test]

@@ -400,7 +400,7 @@ async fn feed_page(
     }
     body.push_str("</div><aside class=\"sidebar\">");
     let catalog = Catalog::load(store).await;
-    body.push_str(&trending::sidebar_card(pages, &catalog, viewer).await);
+    body.push_str(&trending::sidebar_card(pages, &catalog, viewer.or(lens)).await);
     body.push_str(&topics::sidebar_card(&catalog));
     body.push_str(&crate::events::coming_up(pages).await);
     body.push_str(
