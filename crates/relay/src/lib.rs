@@ -174,6 +174,7 @@ impl Relay {
                     .or(config.subscribe.as_ref().map(|s| s.relay_url.as_str()))
                     .and_then(ui::relay_host),
                 nsite_gateway: config.ui_nsite_gateway.as_deref(),
+                group_signer: config.nip29_groups.then_some(config.identity),
             },
         )?;
         Ok(Self {

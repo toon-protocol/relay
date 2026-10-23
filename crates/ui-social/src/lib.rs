@@ -21,7 +21,11 @@
 //!   Starred and Posts tabs and a year of activity ([`profile`]);
 //! - `/social/a/<naddr>`: an article (NIP-23) with its series, highlights
 //!   and comments ([`article`], [`series`], [`highlights`]);
-//! - `/social/s/<id>`: a code snippet (NIP-C0) ([`snippet`]).
+//! - `/social/s/<id>`: a code snippet (NIP-C0) ([`snippet`]);
+//! - `/social/events` and `/social/ev/<npub>/<d>`: NIP-52 calendar events,
+//!   their RSVPs, badges and submissions gallery ([`events`]);
+//! - `/social/g/<id>`: a NIP-29 room, read-only, when the relay keeps
+//!   groups ([`rooms`]).
 //!
 //! A mention of a repo anywhere unfurls into `ui_nip34`'s repo card, and the
 //! page shell is `relay_ui::chrome`'s, so `/repo` and `/social` read as one
@@ -29,18 +33,23 @@
 //! relay ([`media`]).
 
 mod article;
+mod badges;
+mod calendar;
 mod content;
 mod demo;
+mod events;
 mod feed;
 mod handlers;
 mod highlights;
 mod kinds;
 mod lineage;
+mod live;
 mod media;
 mod note;
 mod post;
 mod profile;
 mod repo_page;
+mod rooms;
 mod series;
 mod ship;
 mod snippet;
@@ -83,6 +92,7 @@ const CARD_LIMIT: usize = 24;
 pub struct Settings {
     relay_host: Option<String>,
     nsite_gateway: Option<String>,
+    group_signer: Option<PublicKey>,
 }
 
 impl Settings {
@@ -93,7 +103,17 @@ impl Settings {
         Self {
             relay_host,
             nsite_gateway,
+            group_signer: None,
         }
+    }
+
+    /// The relay keeps NIP-29 groups and signs their metadata with
+    /// `signer`: `/social` shows their rooms, and reads every page as a
+    /// visitor who has not signed in would, leaving out what private and
+    /// closed groups hold.
+    pub fn with_group_signer(mut self, signer: PublicKey) -> Self {
+        self.group_signer = Some(signer);
+        self
     }
 }
 
@@ -103,6 +123,8 @@ struct Pages {
     store: ReadOnlyStore,
     settings: Settings,
     apps: Apps,
+    /// This relay's NIP-29 groups, when it keeps them.
+    groups: Option<rooms::Groups>,
 }
 
 impl Pages {
@@ -119,6 +141,13 @@ impl Pages {
 /// The app UI over `store`, with the operator's `settings` and the `apps`
 /// the relay serves (for the switcher and the links to `/repo`).
 pub fn app(store: ReadOnlyStore, settings: Settings, apps: Apps) -> AppUi {
+    let (store, groups) = match settings.group_signer {
+        Some(signer) => (
+            ReadOnlyStore::new(rooms::PublicOnly::new(store.clone(), signer)),
+            Some(rooms::Groups::new(signer, store)),
+        ),
+        None => (store, None),
+    };
     let router = Router::new()
         .route(PREFIX, get(feed::everyone))
         .route("/social/assets/{name}", get(asset))
@@ -136,11 +165,16 @@ pub fn app(store: ReadOnlyStore, settings: Settings, apps: Apps) -> AppUi {
         .route("/social/a/{naddr}", get(article::by_naddr))
         .route("/social/a/{npub}/{d}", get(article::by_key))
         .route("/social/s/{id}", get(snippet::page))
+        .route("/social/events", get(events::index))
+        .route("/social/ev/{target}", get(events::redirect))
+        .route("/social/ev/{npub}/{d}", get(events::page))
+        .route("/social/g/{id}", get(rooms::page))
         .fallback(fallback)
         .with_state(Pages {
             store,
             settings,
             apps,
+            groups,
         });
     AppUi::new(PREFIX, router)
 }
@@ -157,7 +191,8 @@ async fn asset(Path(name): Path<String>) -> Response {
 fn header(viewer: Option<&PublicKey>) -> String {
     format!(
         "<nav class=\"app-nav\" aria-label=\"Social\"><a class=\"navlink\" href=\"{PREFIX}\">{}Home</a>\
-         <a class=\"navlink\" href=\"{PREFIX}/trending\">{}Trending</a></nav>\
+         <a class=\"navlink\" href=\"{PREFIX}/trending\">{}Trending</a>\
+         <a class=\"navlink\" href=\"{PREFIX}/events\">{}Events</a></nav>\
          <span class=\"grow\"></span>\
          <form class=\"viewer\" method=\"get\" action=\"{PREFIX}/following\">\
          <label for=\"viewer-npub\">Viewing as</label>\
@@ -165,6 +200,7 @@ fn header(viewer: Option<&PublicKey>) -> String {
          <button class=\"btn\" type=\"submit\">Follow feed</button></form>",
         chrome::svg(chrome::icon::HOME, ""),
         chrome::svg(chrome::icon::STAR, ""),
+        chrome::svg(chrome::icon::CALENDAR, ""),
         viewer
             .map(npub)
             .map(|npub| escape(&npub))

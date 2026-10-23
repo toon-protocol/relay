@@ -357,6 +357,7 @@ async fn feed_page(
     let catalog = Catalog::load(store).await;
     body.push_str(&trending::sidebar_card(pages, &catalog, viewer).await);
     body.push_str(&topics::sidebar_card(&catalog));
+    body.push_str(&crate::events::coming_up(pages).await);
     body.push_str(
         "<div class=\"side-card\"><h2>How this works</h2><p class=\"muted small\">Stars, follows, \
          replies and launches are written by a Nostr client and paid for one write each; this page \

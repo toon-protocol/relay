@@ -450,7 +450,8 @@ async fn page(
         links.relay_host(),
         viewer.is_some(),
     ));
-    body.push_str(&sidebar(&view, &card, &extra));
+    let room = crate::rooms::repo_room_box(pages, &card).await;
+    body.push_str(&sidebar(&view, &card, &extra, &room));
     body.push_str("</div>");
     html(
         pages,
@@ -640,9 +641,9 @@ fn writing(view: &View<'_>, repo: &RepoAddress, events: &[&Event]) -> String {
 }
 
 /// The sidebar: what the repo is and its live demo, where to clone it, the
-/// tab's own cards and the apps to open it in (`extra`), who keeps it, and
-/// how to star or follow it from a client.
-fn sidebar(view: &View<'_>, card: &RepoCard, extra: &str) -> String {
+/// tab's own cards and the apps to open it in (`extra`), who keeps it, its
+/// Room box (`room`, or empty), and how to star or follow it from a client.
+fn sidebar(view: &View<'_>, card: &RepoCard, extra: &str, room: &str) -> String {
     let repo = card.address();
     let mut out = String::from("<aside class=\"sidebar\"><div><h2>About</h2>");
     match card.description() {
@@ -703,8 +704,10 @@ fn sidebar(view: &View<'_>, card: &RepoCard, extra: &str) -> String {
             chrome::person(view.links.apps(), card.profiles().names(), key)
         ));
     }
+    out.push_str("</ul></div>");
+    out.push_str(room);
     out.push_str(&format!(
-        "</ul></div><div class=\"side-card\"><h2>Star or follow</h2><p class=\"muted small\">\
+        "<div class=\"side-card\"><h2>Star or follow</h2><p class=\"muted small\">\
          This page writes nothing. From a Nostr client, a star is a kind 7 with content <code>+</code> \
          and the tags <code>a</code> <code>{0}</code> and <code>k</code> <code>30617</code>; a follow \
          adds <code>a</code> <code>{0}</code> to your kind 10018 list. Each is one paid write.</p></div></aside>",

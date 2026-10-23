@@ -50,6 +50,10 @@ pub(crate) struct UiSettings<'a> {
     /// The nsite gateway a live demo is linked through
     /// (`TOON_UI_NSITE_GATEWAY`).
     pub(crate) nsite_gateway: Option<&'a str>,
+    /// The relay's key when it keeps NIP-29 groups (`TOON_NIP29_GROUPS`):
+    /// the key their metadata is signed with.
+    #[cfg_attr(not(feature = "ui-social"), allow(dead_code))]
+    pub(crate) group_signer: Option<nostr::key::PublicKey>,
 }
 
 /// The host and port (when one is given) of a URL configuration has already
@@ -115,12 +119,16 @@ fn built(
     }
     #[cfg(feature = "ui-social")]
     if name == App::Social.name() {
+        let mut social = ui_social::Settings::new(
+            settings.relay_host.clone(),
+            settings.nsite_gateway.map(str::to_owned),
+        );
+        if let Some(signer) = settings.group_signer {
+            social = social.with_group_signer(signer);
+        }
         return Some(ui_social::app(
             ReadOnlyStore::new(Reading(store.clone())),
-            ui_social::Settings::new(
-                settings.relay_host.clone(),
-                settings.nsite_gateway.map(str::to_owned),
-            ),
+            social,
             on.clone(),
         ));
     }

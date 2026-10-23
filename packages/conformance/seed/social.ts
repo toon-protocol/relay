@@ -20,11 +20,17 @@
 // the hour before now, and the keys are fixed, so seeding twice stores the
 // same people with a second set of posts. RELAY_HOST (default the host of
 // READ_URL) is what the fixture's site manifest names as its relay.
+//
+// It also loads the events fixture (suite/harness/social-events-fixture.ts):
+// a hackathon, a live build night, a launch day, a meetup and their rooms.
+// The rooms are NIP-29 groups, so start the relay with
+// TOON_NIP29_GROUPS=true; a second seeding is refused the groups it made.
 import { socialFixture } from '../suite/harness/social-fixture.js';
 import { trendingFixture } from '../suite/harness/trending-fixture.js';
 import { profileFixture } from '../suite/harness/profile-fixture.js';
 import { lineageFixture } from '../suite/harness/lineage-fixture.js';
 import { devlogFixture } from '../suite/harness/devlog-fixture.js';
+import { socialEventsFixture } from '../suite/harness/social-events-fixture.js';
 
 const writeUrl = process.env['WRITE_URL'] ?? 'http://127.0.0.1:3100';
 const readUrl = process.env['READ_URL'] ?? 'http://127.0.0.1:7100';
@@ -40,12 +46,15 @@ const profile = profileFixture(fixture, now);
 const lineage = lineageFixture(fixture, now, relayHost);
 // A devlog series with highlights, comments and an embedded snippet.
 const devlog = devlogFixture(fixture, now, relayHost);
+// Events, their badges and galleries, and their NIP-29 rooms.
+const eventsFixture = socialEventsFixture(now, fixture);
 const events = [
   ...fixture.events,
   ...trending.events,
   ...profile.events,
   ...lineage.events,
   ...devlog.events,
+  ...eventsFixture.events,
 ];
 let stored = 0;
 for (const event of events) {
@@ -94,4 +103,11 @@ console.log(
 console.log(`snippet:       ${readUrl}/social/s/${devlog.named.snippet.id}`);
 console.log(
   `writing:       ${readUrl}/social/r/${fixture.npubs.maya}/tidepool/writing`
+
+);
+console.log(`events:        ${readUrl}/social/events`);
+console.log(`hackathon:     ${readUrl}${eventsFixture.paths.hackathon}`);
+console.log(`live now:      ${readUrl}${eventsFixture.paths.buildNight}`);
+console.log(
+  `room:          ${readUrl}/social/g/${eventsFixture.rooms.hackathon}`
 );
