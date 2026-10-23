@@ -3,7 +3,7 @@
 //! `manifest.json` from logical names to hashed ones (the folder
 //! `TOON_UI_ASSETS_DIR` points the relay at).
 //!
-//! Per crate `<name>` (`ui-nip34-web`), the manifest has:
+//! Per crate `<name>` (`ui-nip34-web`, `ui-highlight-web`), the manifest has:
 //! - `<name>.wasm`: the module;
 //! - `<name>.glue.js`: wasm-bindgen's loader, rewritten to fetch the hashed
 //!   module;

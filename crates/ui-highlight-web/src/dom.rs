@@ -39,7 +39,7 @@ pub(crate) fn watch() {
         return;
     };
     let callback = {
-        let (document, root) = (document.clone(), root.clone());
+        let (document, root, extension) = (document.clone(), root.clone(), extension.clone());
         Closure::<dyn FnMut(JsValue, MutationObserver)>::new(
             move |_records: JsValue, observer: MutationObserver| {
                 if colour(&document, &root, &extension) {
@@ -60,13 +60,9 @@ pub(crate) fn watch() {
         return;
     }
     // The file may be there already.
-    if colour(&document, &root, &extension_of(&root)) {
+    if colour(&document, &root, &extension) {
         observer.disconnect();
     }
-}
-
-fn extension_of(root: &Element) -> String {
-    blob_extension(root).unwrap_or_default()
 }
 
 /// Whether the page now holds a file (highlighted or left plain): the watch

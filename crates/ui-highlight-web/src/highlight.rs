@@ -21,10 +21,13 @@ static SYNTAXES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/syntaxes.pack
 /// One run of text in one style.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Run {
+    /// The text, exactly as it is in the file.
     pub text: String,
     /// `0xRRGGBB`, or none for the page's own colour.
     pub color: Option<u32>,
+    /// Whether the run is drawn bold.
     pub bold: bool,
+    /// Whether the run is drawn italic.
     pub italic: bool,
 }
 
