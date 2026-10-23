@@ -383,10 +383,10 @@ describe('relay image conformance: /repo git pages in a browser', () => {
         await page.goto(`${repo}/commit/${next.id}`);
         await page.locator('#git .diff-file').first().waitFor();
         // Runs in the browser; the suite's tsconfig has no DOM lib.
-        type DiffFile = {
+        interface DiffFile {
           dataset: { status: string };
           querySelector(selector: string): { textContent: string };
-        };
+        }
         expect(
           await page
             .locator('#git .diff-file')
