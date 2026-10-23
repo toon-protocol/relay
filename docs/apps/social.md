@@ -58,6 +58,9 @@ how much anyone paid.
 | Show it | kind 20, 21 or 22 | `a` = `A`, `imeta` | NIP-68 pictures, NIP-71 videos |
 | Share code | kind 1337 | `a` = `A`, or `repo` = `A`, its `naddr` or its `nostr://` URL | NIP-C0 snippet |
 | Write it up | kind 30023 | `a` = `A` | NIP-23 article; by the maker it is a devlog |
+| Keep a series | kind 30004 by the articles' author | `d`, `title`, one `a` = `30023:<author>:<d>` per part, in order | NIP-51 curation set; see [Devlogs](#devlogs-series-highlights-and-snippets) |
+| Highlight an article | kind 9802 | `a` = the article's `30023:<author>:<d>` (and `p` = author) | NIP-84; content is the passage, word for word |
+| Comment on an article | kind 1111 | `A` = the article's address, `K` = `30023`, `P` = author | NIP-22; a kind 7 or 16 on it carries `a` (and `e`) and `k` = `30023` |
 
 ### A ship post
 
@@ -123,7 +126,10 @@ gateway is set.
 | `/social/following/<npub>` | What that key follows; the top bar's form gets here | its kind 3 and 10017 `p` tags (their posts), its 10018 `a` tags (posts, issues and pull requests on those repos) |
 | `/social/r/<npub>/<d>` | The repo as a profile; tabs `/talk`, `/stars`, `/followers`, `/media`, `/snippets` | `{"#a":[A]}`, `{"kinds":[1111],"#A":[A]}`, kind 7 and 10018 by `#a`, recent 1337s for a `repo` tag |
 | `/social/r/<naddr>` | A redirect to the repo's page | — |
-| `/social/e/<id>` | One post (hex, `note` or `nevent`) with its replies; a launch when it is one | the event, kind 1 replies by `e`, kind 1111 by `E`, kind 7 reactions by `e` |
+| `/social/e/<id>` | One post (hex, `note` or `nevent`) with its replies; a launch when it is one. An article or a snippet redirects to its own page | the event, kind 1 replies by `e`, kind 1111 by `E`, kind 7 reactions by `e` |
+| `/social/a/<naddr>` | An article (also `/social/a/<npub>/<d>`): its series, highlights, reactions and comments | the newest 30023 at the address; 30004 by its author with its `a`; 9802 and 7 by `#a` or `#e`; 16 by `#a`; 1111 by `#A` |
+| `/social/s/<id>` | A code snippet (hex, `note` or `nevent`) with its repo, reactions and replies | the 1337; kind 7 by `e`; replies as a post's |
+| `/social/r/<npub>/<d>/writing` | The repo's Writing tab: every article that tags it, the maker's marked | kind 30023 by `#a` |
 
 A note's replies are on its page, not in the feed. A merge (kind 1631) shows
 only from an authorized author or the change's own author (ADR 0002, rule 3).
@@ -141,12 +147,84 @@ because the relay never fetches the `.well-known` document that would prove it.
 authors (notes, threads, comments, highlights, articles, app events); Talk
 lists everyone else's notes, threads, comments and highlights, and counts the
 people; Stars and Followers list each key once, newest first; Media lists
-pictures and videos; Snippets lists code snippets. Code goes back to `/repo`,
+pictures and videos; Snippets lists code snippets; Writing lists every
+article that tags the repo, the maker's marked. Code goes back to `/repo`,
 and `/repo`'s repository header has a Social tab back here.
 
 **Trending today.** The repos the most distinct keys named (in an `a` or `A`
 tag of a note, reaction, boost, comment, issue, pull request or article) on
 this relay in the last 24 hours. People, not events, and only this relay's.
+
+### Devlogs, series, highlights and snippets
+
+NIP-23, NIP-51, NIP-84 and NIP-C0 are all **drafts** upstream; what follows
+is how these pages read them today.
+
+**An article** (kind 30023) that `a`-tags a repo is a devlog when its author
+is an authorized author of the repo, and a write-up when anyone else wrote
+it; both are on the repo's Writing tab, and the maker's are on Maker too.
+Every article card (feed, Maker, Writing) links to the reader at
+`/social/a/<naddr>`. The reader shows the newest version the store holds:
+an edit is a replacement, and so one more paid write. It reads `title`,
+`summary`, `image` (drawn only over `https`, by the visitor's browser, like
+any `/social` media) and `published_at` (else `created_at`), and estimates
+the reading time at 230 words a minute. The body is Markdown through the
+same renderer `/repo` uses: a fixed set of tags, raw HTML shown as text (as
+NIP-23 asks), links only to `http(s)`, `mailto`, in-page anchors and
+`nostr:` URIs (sent to this app's pages). A Markdown image is a link by its
+alt text, not an `<img>`; only the cover is drawn. A `nostr:` mention in the
+text is drawn as in a note. A paragraph that is nothing but a mention of a
+code snippet (`nostr:nevent1…` of a kind 1337 on this relay) embeds the
+snippet's card.
+
+**A series** is a NIP-51 curation set, kind 30004, by the article's author:
+
+```json
+{
+  "kind": 30004,
+  "tags": [
+    ["d", "tidepool-devlog"],
+    ["title", "tidepool devlog"],
+    ["description", "Building an offline tide app in public."],
+    ["a", "30023:<author pubkey>:tidepool-why"],
+    ["a", "30023:<author pubkey>:tidepool-nsite"],
+    ["a", "30023:<author pubkey>:tidepool-cache"]
+  ],
+  "content": ""
+}
+```
+
+The reader shows, beside the article, every such set of the author's that
+names it: the parts in the set's tag order, "Part N of M", the current part
+marked and a part this relay does not hold named by its `d`, unlinked. A set
+by someone else is their curation, not the author's series, and is not
+shown. A set's encrypted private items cannot be read and do not count.
+
+**Highlights** (kind 9802) whose `a` is the article's address, or whose `e`
+is the version being read, fill a rail grouped by passage (white space
+collapsed), each counted by distinct people, most first. Up to three passages
+that two or more people highlighted are also marked in the text, but only
+where the passage is found word for word inside one run of text, outside
+code, and without cutting a link or mention in two. A passage that crosses
+formatting (half of it in `*emphasis*`), or that a client re-spaced or
+trimmed, is in the rail and not marked: finding it would mean matching
+across elements, which risks marking the wrong words.
+
+**Reactions** (kind 7, by `a` or `e`) are counted by person per content, as
+a post's are; **boosts** (kind 16 with `a`) and **comments** (kind 1111 whose
+root `A` is the article, NIP-22) are counted by person and the comments are
+listed, the author's and the repo maker's marked.
+
+**A snippet** (kind 1337) has a page at `/social/s/<id>`: its `name`, `l`
+language, `extension`, `runtime`, `license` and `dep` tags, its
+`description`, and its code as escaped text in a monospace block. Its repo is
+its `repo` tag read as a `30617:<pubkey>:<d>` address, an `naddr` or a
+`nostr://<npub>/…/<d>` URL (a NIP-05 name there is not resolved: that needs
+a fetch), else its `a` tag; a repo on this relay unfurls into its card, and
+an `https` URL is a plain link. The code is **not syntax-highlighted**:
+`/repo` colours a file with a WebAssembly module, and `/social` pages run no
+script; colouring on the server would put syntect in the relay and need a
+`style` attribute per run, which the pages' policy refuses.
 
 ### What a page loads
 
@@ -187,3 +265,6 @@ accepts `POST /write` directly, which is how the seed writes. The fixture is
 `packages/conformance/suite/harness/social-fixture.ts`; the conformance cases
 in `packages/conformance/suite/ui-social.test.ts` seed the same events. Its
 media are placeholder images from picsum.photos, which your browser loads.
+The seed then loads `suite/harness/devlog-fixture.ts` (a series of articles
+with highlights, comments and an embedded snippet), which
+`suite/ui-social-devlog.test.ts` seeds too.
