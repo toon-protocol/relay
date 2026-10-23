@@ -8,8 +8,9 @@ pay for writes can follow it.
 
 Sources, in order of authority:
 
-- The NIPs each section names (NIP-01, -02, -10, -18, -22, -23, -25, -27,
-  -51, -5A, -68, -71, -84, -89, -92, -C0, -7D).
+- The NIPs each section names (NIP-01, -02, -10, -18, -22, -23, -24, -25,
+  -27, -38, -39, -51, -58, -5A, -68, -71, -84, -89, -92, -C0, -7D), and
+  TOON's draft NIP-C1 ([`../nips/nip-c1.md`](../nips/nip-c1.md)).
 - [`git.md`](git.md) — repositories themselves (NIP-34) and whose repo state
   a reader honours.
 - [ADR 0001](../adr/0001-app-uis-live-on-the-relay.md) — the relay's UIs read
@@ -58,6 +59,11 @@ how much anyone paid.
 | Show it | kind 20, 21 or 22 | `a` = `A`, `imeta` | NIP-68 pictures, NIP-71 videos |
 | Share code | kind 1337 | `a` = `A`, or `repo` = `A`, its `naddr` or its `nostr://` URL | NIP-C0 snippet |
 | Write it up | kind 30023 | `a` = `A` | NIP-23 article; by the maker it is a devlog |
+| Pin your repos | kind 10617 | one `a` per `A` you own or maintain, in order | GitWorkshop's list, **not in the NIPs**; a profile shows the first six |
+| Say what you are shipping | kind 30315, `d` = `general` | `a` = `A`; optionally `r`, `expiration` | NIP-38 status (draft) |
+| Claim an account | kind 10011 | `i` = `<platform>:<identity>`, proof | NIP-39 (draft): `github`, `twitter`, `mastodon`, `telegram` |
+| Give a badge | kind 30009 by the issuer, then kind 8 | award: `a` = `30009:<issuer>:<d>`, `p` = holder | NIP-58 (draft); the holder lists `a` and `e` pairs in kind 10008 to show it |
+| Mark a bot | kind 0 `"bot": true` | — | NIP-24 |
 
 ### A ship post
 
@@ -124,6 +130,7 @@ gateway is set.
 | `/social/r/<npub>/<d>` | The repo as a profile; tabs `/talk`, `/stars`, `/followers`, `/media`, `/snippets` | `{"#a":[A]}`, `{"kinds":[1111],"#A":[A]}`, kind 7 and 10018 by `#a`, recent 1337s for a `repo` tag |
 | `/social/r/<naddr>` | A redirect to the repo's page | — |
 | `/social/e/<id>` | One post (hex, `note` or `nevent`) with its replies; a launch when it is one | the event, kind 1 replies by `e`, kind 1111 by `E`, kind 7 reactions by `e` |
+| `/social/p/<npub>` | A builder's profile; tabs `/repos`, `/starred`, `/posts` | see [The builder profile](#the-builder-profile) |
 
 A note's replies are on its page, not in the feed. A merge (kind 1631) shows
 only from an authorized author or the change's own author (ADR 0002, rule 3).
@@ -148,6 +155,61 @@ and `/repo`'s repository header has a Social tab back here.
 tag of a note, reaction, boost, comment, issue, pull request or article) on
 this relay in the last 24 hours. People, not events, and only this relay's.
 
+### The builder profile
+
+`/social/p/<npub>` (an `nprofile` or 64 hex works too) is what a key says
+about itself and what it built. Every author name and avatar on `/social`
+links here, and `/repo` links a repo's owner and maintainers here when
+`/social` is on.
+
+**The column on the left** reads the key's own events:
+
+- kind 0: name (`display_name`, else `name`), `about`, `website`, and the
+  NIP-24 `banner` (an `https` image the visitor's browser loads, like a
+  post's media) and `bot` (a "bot" chip when it is `true`). The avatar stays
+  initials, as everywhere.
+- the NIP-05 name, shown as **unverified**: the relay never fetches the
+  `.well-known` document.
+- NIP-38 statuses (kind 30315), newest per `d`, `general` first; one that is
+  empty or past its `expiration` is not shown. An `a` tag naming a repo
+  links it.
+- NIP-39 identities from kind 10011 (or the older `i` tags on kind 0), each
+  linked to the account and to its proof, marked **unchecked**: a reader
+  opens the gist or post to check it.
+- followers: distinct keys whose kind 3 names this key; following: the `p`
+  tags of its own kind 3, linking to its following feed; repos followed: the
+  `a` tags of its kind 10018.
+- NIP-58 badges: the pairs in its kind 10008 (or the older kind 30008
+  `profile_badges`), each shown only when the `e` award is a kind 8 signed
+  by the definition's issuer that names this key and that definition.
+- A "Follow in your client" link, `nostr:<npub>`. The page writes nothing.
+
+There is **no "agents this person runs" section**: no NIP lets a key say
+which other keys it operates in a way a reader can check, so the page does
+not guess. A key that runs as an agent says so itself with `bot`.
+
+**The tabs**:
+
+| Tab | Path | What it lists |
+| --- | --- | --- |
+| Pinned | `/social/p/<npub>` | the key's kind 10617 `a` tags in order, only repos it owns or maintains, at most six; without a list, its six most-starred owned repos, and the page says so. Then the activity graph and recent activity |
+| Repositories | `/repos` | 30617s it announced, then repos whose owner's newest announcement names it in `maintainers` (ADR 0002), each marked owner or maintainer |
+| Starred | `/starred` | repos it starred (kind 7 `+` with `a` and `k` = `30617`), newest first |
+| Posts | `/posts` | its notes that start a conversation (kind 1) and articles (kind 30023), the newest 40 |
+
+**The activity graph** is 53 weeks of days, a week a column, Sunday at the
+top, ending today. A square counts the **regular** events the key signed
+that day of these kinds: patches (1617), pull requests (1618) and their
+updates (1619), issues (1621), status changes (1630–1633), comments
+(1111), notes (1) and NIP-C1 CI results (9841, 9842; a TOON draft). Repo
+state (30618) is not counted: it is addressable, so the store keeps only
+the newest per repo and pushes cannot be rebuilt from it. Shades are
+quarters of the key's busiest day. The heading reads "N contributions
+across M repos", M being the distinct repos those events name in an `a`
+or `A` tag. The page prints this rule under the graph. Recent activity
+lists the ten newest of the same events, each linking to its issue or pull
+request on `/repo` (or its post on `/social`).
+
 ### What a page loads
 
 `/social` pages run no script. Their policy is
@@ -162,6 +224,7 @@ wherever the post says, over `https` only. The relay itself never fetches them
 so too), so a media host is not told which post was read, and a video is not
 requested until it is played (`preload="none"`). Avatars are initials, never a
 profile's `picture`, so reading a feed does not load a picture per person.
+A profile page loads one image the person chose: their `banner`.
 `/repo`'s pages keep their stricter policy.
 
 ## Trying it locally
@@ -182,8 +245,12 @@ WRITE_URL=http://127.0.0.1:3100 READ_URL=http://127.0.0.1:7100 \
   pnpm exec tsx packages/conformance/seed/social.ts
 ```
 
-The script prints the pages to open. A relay started without a connector
+The script prints the pages to open, Maya's profile and a bot's among
+them. A relay started without a connector
 accepts `POST /write` directly, which is how the seed writes. The fixture is
 `packages/conformance/suite/harness/social-fixture.ts`; the conformance cases
-in `packages/conformance/suite/ui-social.test.ts` seed the same events. Its
+in `packages/conformance/suite/ui-social.test.ts` seed the same events. The
+profile's extra events (a banner, a status, identities, pins, a badge, a
+year of activity, a bot) are `suite/harness/profile-fixture.ts`, which
+`suite/ui-social-profile.test.ts` and the seed load after it. Its
 media are placeholder images from picsum.photos, which your browser loads.
