@@ -119,13 +119,14 @@ const commit = commitOf(root, 'a commit');
 
 // A later commit on another ref: hello.txt edited, liar.txt deleted, lost.txt
 // renamed (its blob was never uploaded, so only its rename shows), one file
-// added.
+// added, pooled.txt unchanged.
 const hello2 = gitObject('blob', 'hello again from the stub gateway\n');
 const fresh = gitObject('blob', 'a new file\n');
 const nextRoot = treeOf([
   ['100644', 'fresh.txt', fresh],
   ['100644', 'hello.txt', hello2],
   ['100644', 'moved.txt', lost],
+  ['100644', 'pooled.txt', pooled],
 ]);
 const next = commitOf(nextRoot, 'second commit', commit, 1700000100);
 
