@@ -139,7 +139,7 @@ svg.icon-lg { width: 32px; height: 32px; }
 .repo-head a { color: var(--link); }
 .repo-head .name { font-weight: 600; }
 .repo-head .sep { color: var(--muted-fg); }
-.repo-desc { margin: -8px 0 0; color: var(--muted-fg); }
+.repo-desc { margin: 8px 0 0; color: var(--muted-fg); }
 
 .pill {
   display: inline-flex; align-items: center; gap: 4px;
@@ -594,7 +594,7 @@ a.avatar-link:hover { text-decoration: none; }
 
 /* Forks and remixes: a lineage drawn as nested lists, and the line under a
    fork's title. */
-.forked-from { display: flex; align-items: center; gap: 6px; margin: -8px 0 0; color: var(--muted-fg); }
+.forked-from { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; color: var(--muted-fg); }
 .repo-card .forked-from { margin: 0; }
 .forked-from + .repo-desc { margin-top: 4px; }
 /* A green button in the repo header keeps its own text colour. */
