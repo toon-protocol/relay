@@ -164,6 +164,55 @@ requested until it is played (`preload="none"`). Avatars are initials, never a
 profile's `picture`, so reading a feed does not load a picture per person.
 `/repo`'s pages keep their stricter policy.
 
+## Events and rooms
+
+Launch days, hackathons and the rooms builders talk in. Every NIP here is a
+**draft** upstream (NIP-29, -52, -53, -58, -C7, read on 2026-10-23); the
+links between them marked *convention* are this guide's, not any NIP's.
+
+| Act | Event | Required tags | Notes |
+| --- | --- | --- | --- |
+| Hold an event | kind 31923 (a time) or 31922 (whole days) | `d`, `title`, `start` (and `end`, `start_tzid`, `D` for 31923) | NIP-52. `p` with a role names people; a role saying `host` or `organizer` makes a host |
+| RSVP | kind 31925 | `d`, `a` = the event, `status` `accepted`, `tentative` or `declined` | NIP-52. Counted by person: each key's newest RSVP is its answer |
+| Submit to an event | kind 30617, or a ship note (kind 1 with `t` `ship` or `imeta`), or a kind 31990 | `a` = the event | *Convention.* NIP-52's `a` links an event to a calendar, not a project to an event. A maker's ship note that also tags their repo joins the repo's entry |
+| Give the event a room | the calendar event itself | `h` = a group id on this relay | NIP-29 lets a group hold any kind; the relay checks the host is a member |
+| Define a prize | kind 30009 by a host | `d`, `name`; `a` = the event (or the event `a`-tags the badge) | NIP-58 plus a *convention* tying the badge to the event |
+| Award it | kind 8 by the badge's author | `a` = the badge, `p` = each winner | NIP-58. An award by anyone else does not count |
+| Stream it | kind 30311 | `a` = the event, or `h` = the room; `status`, `streaming` | NIP-53 plus a *convention* for the link. `live` not updated for an hour reads as ended |
+| Chat in a room | kind 9 | `h` = the group id; `q` quotes the message answered | NIP-C7 inside a NIP-29 group |
+| Start a room thread | kind 11 | `h`, `title` | NIP-7D inside a NIP-29 group |
+| A repo's room | a group whose id is the repo's `d` | — | *Convention.* Its admins (kind 39001) must include an authorized author of the repo (ADR 0002). No NIP has a tag linking a group and a repo, and this relay's group metadata carries only the fields NIP-29 names |
+
+A group is made, joined and moderated with NIP-29's kinds 9000–9022 and
+exists only on a relay started with `TOON_NIP29_GROUPS=true`. Its metadata
+(kinds 39000–39003) is signed by the relay's own key, and `/social`
+believes no other. Every message, RSVP, submission and award is one paid
+write; reading them is free.
+
+| Path | What it shows | What it reads |
+| --- | --- | --- |
+| `/social/events` | Calendar events, live now, upcoming and past, with RSVP counts | kinds 31922, 31923; 31925 by `#a` |
+| `/social/ev/<npub>/<d>` | One event: when (UTC, with the host's `start_tzid` named), where, hosts, RSVPs, a live banner, its room, badges, and the gallery; once it has ended, submissions whose author holds one of its badges are pinned first | the event; 31925, 30617/1/31990 and 30311 by `#a`; 30009 and 8 by the hosts |
+| `/social/ev/<naddr>` | A redirect to the event's page | — |
+| `/social/g/<id>` | A room: its chat oldest first (the newest 100), threads, admins, member count, live banner | 39000–39002 by the relay's key; kinds 9, 11 and 30311 by `#h` |
+
+The feed's sidebar shows the next live or upcoming events ("Coming up"), the
+header links Events, and a repo page's sidebar links the repo's room.
+Buttons that would write (RSVP, open a room) are `nostr:naddr` links a
+client opens, and where a chat input would be, the page says it is
+read-only.
+
+**What a visitor may read.** A page cannot sign in (NIP-42) for its visitor,
+so `/social` reads as a connection that has not authenticated would. A
+`private` or `hidden` group shows nothing at all, not even its name; a
+`closed` one shows its name and description and none of its messages (this
+relay restricts a closed group's reads, which is stricter than NIP-29's
+`closed`, a refusal of join requests). The same rule filters every
+`/social` page, so a note posted into a private group never reaches the
+feed, a repo page or its own `/social/e/<id>`. Both read "This room needs
+sign-in in a client". With NIP-29 off, an `h` tag is any tag and there are
+no rooms.
+
 ## Trying it locally
 
 A dev seed loads a small, realistic community (profiles, two repos and a
@@ -175,7 +224,7 @@ picture, a snippet, an issue and a merge) into a relay on this machine:
 cargo build -p relay
 TOON_SECRET_KEY=$(printf '1%.0s' {1..64}) TOON_DATA_DIR=/tmp/social-dev \
   TOON_UI_RELAY_URL=ws://127.0.0.1:7100 TOON_UI_NSITE_GATEWAY=https://nsite.lol \
-  target/debug/relay
+  TOON_NIP29_GROUPS=true target/debug/relay
 # in another shell, from the repo root:
 pnpm install
 WRITE_URL=http://127.0.0.1:3100 READ_URL=http://127.0.0.1:7100 \
@@ -187,3 +236,10 @@ accepts `POST /write` directly, which is how the seed writes. The fixture is
 `packages/conformance/suite/harness/social-fixture.ts`; the conformance cases
 in `packages/conformance/suite/ui-social.test.ts` seed the same events. Its
 media are placeholder images from picsum.photos, which your browser loads.
+
+The seed also writes `packages/conformance/suite/harness/social-events-fixture.ts`
+(a hackathon that has ended, a live build night, a launch day, a meetup,
+their rooms, a private group and tidepool's room), which
+`packages/conformance/suite/ui-social-events.test.ts` checks. Its rooms need
+`TOON_NIP29_GROUPS=true`, as above; without it the group events are stored
+as plain events and `/social/g/…` says the relay has no rooms.
