@@ -11,7 +11,9 @@
 //! - `/social/r/<npub>/<d>`: a repo's social page, with Maker, Talk, Stars,
 //!   Followers, Media and Snippets tabs ([`repo_page`]);
 //! - `/social/e/<id>`: one post, drawn as a launch when it is a ship post
-//!   ([`note`], [`ship`]).
+//!   ([`note`], [`ship`]);
+//! - `/social/p/<npub>`: a builder's profile, with Pinned, Repositories,
+//!   Starred and Posts tabs and a year of activity ([`profile`]).
 //!
 //! A mention of a repo anywhere unfurls into `ui_nip34`'s repo card, and the
 //! page shell is `relay_ui::chrome`'s, so `/repo` and `/social` read as one
@@ -24,6 +26,7 @@ mod kinds;
 mod media;
 mod note;
 mod post;
+mod profile;
 mod repo_page;
 mod ship;
 
@@ -108,6 +111,8 @@ pub fn app(store: ReadOnlyStore, settings: Settings, apps: Apps) -> AppUi {
         .route("/social/r/{npub}/{d}", get(repo_page::maker))
         .route("/social/r/{npub}/{d}/{tab}", get(repo_page::tab))
         .route("/social/e/{id}", get(note::page))
+        .route("/social/p/{npub}", get(profile::overview))
+        .route("/social/p/{npub}/{tab}", get(profile::tab))
         .fallback(fallback)
         .with_state(Pages {
             store,
