@@ -559,6 +559,7 @@ a.avatar-link:hover { text-decoration: none; }
 .profile-side h2, .profile-section h2 { font-size: 14px; font-weight: 600; margin: 0 0 8px; }
 .profile-side ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .profile-side .facts li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.profile-website { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0; color: var(--muted-fg); }
 .profile-side p { margin: 6px 0 0; }
 .chip-bot { background: var(--accent-bg); border-color: transparent; color: var(--accent-fg); }
 .status-card { display: flex; align-items: baseline; gap: 8px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 13px; overflow-wrap: anywhere; }

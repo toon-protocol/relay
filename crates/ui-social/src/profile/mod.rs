@@ -635,21 +635,23 @@ fn sidebar(who: &Who, names: &HashMap<PublicKey, String>, tips: &str) -> String 
         who.repos_followed,
         plural(who.repos_followed, "repo", "repos"),
     ));
-    if who.meta.website.is_some() || !who.identities.is_empty() {
+    // A kind 0 `website` is the profile's own field, not a NIP-39 claim:
+    // it stands alone, and the claims box opens only for kind 10011 claims.
+    if let Some(website) = &who.meta.website {
+        out.push_str(&format!(
+            "<p class=\"profile-website\">{}<a class=\"truncate\" href=\"{1}\" rel=\"nofollow noopener noreferrer\">{2}</a></p>",
+            svg(icon::LINK, ""),
+            escape(website),
+            escape(
+                website
+                    .trim_start_matches("https://")
+                    .trim_start_matches("http://")
+                    .trim_end_matches('/')
+            ),
+        ));
+    }
+    if !who.identities.is_empty() {
         out.push_str("<section class=\"profile-links\"><h2>Also on</h2><ul class=\"facts\">");
-        if let Some(website) = &who.meta.website {
-            out.push_str(&format!(
-                "<li>{}<a class=\"truncate\" href=\"{1}\" rel=\"nofollow noopener noreferrer\">{2}</a></li>",
-                svg(icon::LINK, ""),
-                escape(website),
-                escape(
-                    website
-                        .trim_start_matches("https://")
-                        .trim_start_matches("http://")
-                        .trim_end_matches('/')
-                ),
-            ));
-        }
         for claim in &who.identities {
             out.push_str(&identity_html(claim));
         }

@@ -488,3 +488,30 @@ async fn reports_about_a_person_or_an_article_show_on_their_pages() {
     assert!(article.contains("data-reports-banner=\"1\""), "{article}");
     assert!(article.contains("spam (1)"), "{article}");
 }
+
+#[tokio::test]
+async fn a_website_alone_is_not_a_nip_39_claim() {
+    let running = running_with(|_| None).await;
+    let relay = &running.relay;
+    let maya = Keys::generate();
+    store(
+        relay,
+        &event(
+            &maya,
+            0,
+            10,
+            r#"{"name":"Maya","website":"https://maya.example"}"#,
+            &[],
+        ),
+    )
+    .await;
+    let (status, page) = get(relay, &format!("/social/p/{}", npub(&maya))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("class=\"profile-website\""), "{page}");
+    assert!(page.contains("href=\"https://maya.example\""), "{page}");
+    assert!(
+        !page.contains("Also on"),
+        "no claims, no claims box: {page}"
+    );
+    assert!(!page.contains("NIP-39"), "{page}");
+}

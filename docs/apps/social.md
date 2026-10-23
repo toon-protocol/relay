@@ -414,7 +414,9 @@ links here, and `/repo` links a repo's owner and maintainers here when
   links it.
 - NIP-39 identities from kind 10011 (or the older `i` tags on kind 0), each
   linked to the account and to its proof, marked **unchecked**: a reader
-  opens the gist or post to check it.
+  opens the gist or post to check it. The **Also on** box with its NIP-39
+  note opens only when there is such a claim; a kind 0 `website` is shown
+  on its own line, as the profile's field, not as a claim.
 - followers: distinct keys whose kind 3 names this key; following: the `p`
   tags of its own kind 3, linking to its following feed; repos followed: the
   `a` tags of its kind 10018.
