@@ -1038,7 +1038,7 @@ async fn app_page(pages: &Pages, address: &Address, query: Option<&str>) -> Resp
     let mut buttons = String::new();
     if let Some(url) = app.website() {
         buttons.push_str(&format!(
-            "<a class=\"btn\" href=\"{}\" rel=\"nofollow noopener noreferrer\">{}Open the website</a>",
+            "<a class=\"btn\" href=\"{}\" rel=\"nofollow noopener noreferrer\" data-website>{}Website</a>",
             escape(url),
             svg(icon::LINK, "icon-sm")
         ));

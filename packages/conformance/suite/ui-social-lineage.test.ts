@@ -130,14 +130,17 @@ describe('relay image conformance: /social forks, remixes, live demos and Open i
       expect(repoPage.text).toContain('class="demo-link"');
       const launch = await page(`/social/e/${social.named.ship.id}`);
       expect(launch.text).toMatch(demo);
-      // A web app listing (kind 32267) is gitsail's demo, with no site.
+      // A web app listing's (kind 32267) url is gitsail's website, not a
+      // demo: NIP-82 defines it as the app's website.
       const feed = await page('/social');
-      const card = feed.text.slice(
-        feed.text.indexOf(`data-repo="${social.repos.gitsail}"`)
+      const card = feed.text
+        .slice(feed.text.indexOf(`data-repo="${social.repos.gitsail}"`))
+        .split('</article>')[0];
+      expect(card).toContain(
+        'href="https://gitsail.example" rel="nofollow noopener noreferrer" data-website'
       );
-      expect(card.split('</article>')[0]).toContain(
-        'href="https://gitsail.example" rel="noopener noreferrer" data-demo'
-      );
+      expect(card).toContain('Website</a>');
+      expect(card).not.toContain('data-demo');
     }
   );
 

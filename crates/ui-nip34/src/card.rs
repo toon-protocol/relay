@@ -288,13 +288,12 @@ impl RepoCard {
 
     /// The card's HTML.
     pub fn render(&self, links: &Links) -> String {
-        self.render_with_demo(links, None)
+        self.render_with(links, &Extras::default())
     }
 
-    /// The card's HTML, with a Live demo button to `demo` when the repo has
-    /// one (the app that draws the card finds it: NIP-5A sites are not
-    /// `/repo`'s).
-    pub fn render_with_demo(&self, links: &Links, demo: Option<&str>) -> String {
+    /// The card's HTML, with what the app that draws it adds ([`Extras`]):
+    /// NIP-5A sites and app listings are not `/repo`'s to find.
+    pub fn render_with(&self, links: &Links, extras: &Extras<'_>) -> String {
         let owner = self.address.owner();
         let href = links
             .social_path(&self.address)
@@ -373,14 +372,16 @@ impl RepoCard {
         }
         out.push_str("</div>");
         let mut buttons = String::new();
-        if let Some(url) = demo {
-            buttons.push_str(&format!(
-                "<a class=\"btn btn-success\" href=\"{}\" rel=\"noopener noreferrer\" data-demo>{}Live demo</a>",
-                escape(url),
-                svg(icon::PLAY, "icon-sm")
-            ));
+        if let Some(url) = extras.demo {
+            buttons.push_str(&demo_button(url, "btn-success"));
         }
-        if let Some(path) = links.repo_path(&self.address) {
+        if let Some(url) = extras.website {
+            buttons.push_str(&website_button(url, ""));
+        }
+        if let Some(path) = links
+            .repo_path(&self.address)
+            .filter(|_| !extras.without_open_repo)
+        {
             buttons.push_str(&format!(
                 "<a class=\"btn\" href=\"{}\">{}Open repo</a>",
                 escape(&path),
@@ -400,6 +401,38 @@ impl RepoCard {
         out.push_str("</div>");
         out
     }
+}
+
+/// What the app drawing a card adds to `/repo`'s own links.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Extras<'a> {
+    /// The repo's live demo, a NIP-5A site its maker named.
+    pub demo: Option<&'a str>,
+    /// The website its maker's app listing names (a NIP-82 `url`). A
+    /// website is not a demo, and is labelled as what it is.
+    pub website: Option<&'a str>,
+    /// Leave out Open repo: the page already has one beside the card.
+    pub without_open_repo: bool,
+}
+
+/// A Live demo button to `url`, with `class` beside `btn`.
+pub fn demo_button(url: &str, class: &str) -> String {
+    format!(
+        "<a class=\"btn {}\" href=\"{}\" rel=\"noopener noreferrer\" data-demo>{}Live demo</a>",
+        escape(class),
+        escape(url),
+        svg(icon::PLAY, "icon-sm")
+    )
+}
+
+/// A Website button to `url`, with `class` beside `btn`.
+pub fn website_button(url: &str, class: &str) -> String {
+    format!(
+        "<a class=\"btn {}\" href=\"{}\" rel=\"nofollow noopener noreferrer\" data-website>{}Website</a>",
+        escape(class),
+        escape(url),
+        svg(icon::LINK, "icon-sm")
+    )
 }
 
 /// `singular` for one, else `plural`.
@@ -512,6 +545,38 @@ mod tests {
             .custom_created_at(Timestamp::from(at))
             .finalize(keys)
             .unwrap()
+    }
+
+    #[test]
+    fn a_card_labels_a_website_as_one_and_can_leave_open_repo_out() {
+        let owner = Keys::generate();
+        let card =
+            RepoCard::from_announcement(&signed(&owner, 30_617, 1, "", &[&["d", "r"]])).unwrap();
+        let links = Links::new(Apps::new([App::Repo, App::Social]), None);
+        let website = card.render_with(
+            &links,
+            &Extras {
+                website: Some("https://app.test"),
+                ..Extras::default()
+            },
+        );
+        assert!(website.contains(
+            "href=\"https://app.test\" rel=\"nofollow noopener noreferrer\" data-website"
+        ));
+        assert!(website.contains("Website</a>"));
+        assert!(!website.contains("Live demo"));
+        assert_eq!(website.matches("Open repo</a>").count(), 1);
+        let demo = card.render_with(
+            &links,
+            &Extras {
+                demo: Some("https://site.test/"),
+                without_open_repo: true,
+                ..Extras::default()
+            },
+        );
+        assert!(demo.contains("data-demo>"));
+        assert!(demo.contains("Live demo</a>"));
+        assert!(!demo.contains("Open repo"));
     }
 
     #[test]

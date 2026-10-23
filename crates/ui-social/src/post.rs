@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use nostr::event::Event;
 use nostr::key::PublicKey;
 use relay_ui::chrome::{ago, escape, icon, person, person_avatar, svg};
-use ui_nip34::card::{Links, RepoCard};
+use ui_nip34::card::{self, Extras, Links, RepoCard};
 use ui_nip34::repo::{RepoAddress, first_tag};
 
 use crate::PREFIX;
@@ -46,14 +46,36 @@ impl View<'_> {
         ship::ship_repo(event, |repo, key| self.is_maker(repo, key))
     }
 
-    /// The live demo's URL for `repo`, if it has one and a gateway is set.
+    /// The live demo's URL for `repo`, if it has one and a gateway is set:
+    /// a NIP-5A site, never an app listing's website.
     pub(crate) fn demo_url(&self, repo: &RepoAddress) -> Option<String> {
-        self.demos.get(repo)?.url(self.gateway)
+        match self.demos.get(repo)? {
+            demo @ Demo::Site(_) => demo.url(self.gateway),
+            Demo::Website(_) => None,
+        }
     }
 
-    /// `card`, with its live demo when it has one.
+    /// The website a maker's app listing names for `repo` (a NIP-82 `url`),
+    /// when it has no live demo.
+    pub(crate) fn website_url(&self, repo: &RepoAddress) -> Option<String> {
+        match self.demos.get(repo)? {
+            Demo::Website(url) => Some(url.clone()),
+            Demo::Site(_) => None,
+        }
+    }
+
+    /// `card`, with its live demo or website when it has one.
     pub(crate) fn card(&self, card: &RepoCard) -> String {
-        card.render_with_demo(self.links, self.demo_url(card.address()).as_deref())
+        let demo = self.demo_url(card.address());
+        let website = self.website_url(card.address());
+        card.render_with(
+            self.links,
+            &Extras {
+                demo: demo.as_deref(),
+                website: website.as_deref(),
+                without_open_repo: false,
+            },
+        )
     }
 }
 
@@ -124,12 +146,20 @@ pub(crate) fn cards_html(view: &View<'_>, repos: &[RepoAddress]) -> String {
         .collect()
 }
 
-/// The card of the repo a launch ships, without its own Live demo button:
-/// the launch's buttons already lead there.
+/// The card of the repo a launch ships, without its own Live demo, Website
+/// or Open repo buttons: the launch's buttons already lead there.
 pub(crate) fn launch_card(view: &View<'_>, repo: &RepoAddress) -> String {
     view.cards
         .get(repo)
-        .map(|card| card.render(view.links))
+        .map(|card| {
+            card.render_with(
+                view.links,
+                &Extras {
+                    without_open_repo: true,
+                    ..Extras::default()
+                },
+            )
+        })
         .unwrap_or_default()
 }
 
@@ -200,16 +230,15 @@ pub(crate) fn note_card(view: &View<'_>, event: &Event) -> String {
     out
 }
 
-/// The buttons under a launch: the live demo when there is one, the repo
-/// on `/repo`, its social page, and the post itself.
+/// The buttons under a launch: the live demo (or the app's website) when
+/// there is one, the repo on `/repo`, its social page, and the post itself.
 pub(crate) fn launch_actions(view: &View<'_>, repo: &RepoAddress, event: &Event) -> String {
     let mut out = String::from("<div class=\"actions-row\">");
     if let Some(url) = view.demo_url(repo) {
-        out.push_str(&format!(
-            "<a class=\"btn btn-success btn-lg\" href=\"{}\" rel=\"noopener noreferrer\" data-demo>{}Live demo</a>",
-            escape(&url),
-            svg(icon::PLAY, "")
-        ));
+        out.push_str(&card::demo_button(&url, "btn-success btn-lg"));
+    }
+    if let Some(url) = view.website_url(repo) {
+        out.push_str(&card::website_button(&url, "btn-lg"));
     }
     if let Some(path) = view.links.repo_path(repo) {
         out.push_str(&format!(

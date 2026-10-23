@@ -161,7 +161,10 @@ operator's gateway (`TOON_UI_NSITE_GATEWAY`) in NIP-5A's canonical forms,
 key is always the 50 characters the NIP names; `d` must match
 `^[a-z0-9-]{1,13}$` and not end in `-`, or there is no link) and
 `https://<npub>.<gateway host>/` for a root site. With no gateway set, a
-site is no demo; a kind 32267's `url` is linked as it is either way.
+site is no demo. A kind 32267's `url` is not a demo either: NIP-82 defines
+it as the app's website, so where rule 3 finds one (and no site), the pages
+draw it as a **Website** link in the demo's place, labelled the same on the
+card, the repo page, a launch and the app's own page.
 
 ### Forks and remixes
 

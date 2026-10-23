@@ -15,9 +15,11 @@
 //!    (nips#1336, an open PR) with an `https` `url` tag.
 //!
 //! A site is linked through the operator's nsite gateway
-//! (`TOON_UI_NSITE_GATEWAY`), and without one a site is no demo; a 32267's
-//! `url` is linked as it is. Either way the relay serves and fetches nothing
-//! of the demo (ADR 0001).
+//! (`TOON_UI_NSITE_GATEWAY`), and without one a site is no demo. A 32267's
+//! `url` is not a demo: NIP-82 defines it as the app's website, so it is
+//! drawn as a "Website" link ([`Demo::Website`]), linked as it is, in the
+//! demo's place. Either way the relay serves and fetches nothing of either
+//! (ADR 0001).
 
 use std::collections::HashMap;
 
@@ -38,8 +40,10 @@ const SCAN: usize = 200;
 pub(crate) enum Demo {
     /// A NIP-5A site, reached through the gateway.
     Site(Site),
-    /// A web app's own `https` URL (a kind 32267's `url`).
-    Web(String),
+    /// Not a demo: the website a maker's app listing names (a kind 32267's
+    /// `https` `url`, which NIP-82 defines as the app's website). Drawn as
+    /// a Website link, used only when the repo has no site.
+    Website(String),
 }
 
 impl Demo {
@@ -47,7 +51,7 @@ impl Demo {
     pub(crate) fn url(&self, gateway: Option<&str>) -> Option<String> {
         match self {
             Self::Site(site) => site.url(gateway?),
-            Self::Web(url) => Some(url.clone()),
+            Self::Website(url) => Some(url.clone()),
         }
     }
 }
@@ -91,7 +95,7 @@ fn of_app(event: &Event, card: &RepoCard) -> Option<Demo> {
         SOFTWARE_APP => first_tag(event, "url")
             .map(str::trim)
             .filter(|url| url.starts_with("https://") && !url.contains(char::is_whitespace))
-            .map(|url| Demo::Web(url.to_owned())),
+            .map(|url| Demo::Website(url.to_owned())),
         _ => None,
     }
 }
@@ -244,7 +248,7 @@ mod tests {
     }
 
     #[test]
-    fn an_app_listing_with_an_https_url_is_a_demo_without_a_gateway() {
+    fn an_app_listing_with_an_https_url_is_its_website_without_a_gateway() {
         let maker = Keys::generate();
         let card = card_of(&maker, "gitsail");
         let a = card.address().coordinate();
@@ -260,7 +264,7 @@ mod tests {
         );
         assert_eq!(
             choose(&card, &[], std::slice::from_ref(&app), None),
-            Some(Demo::Web("https://gitsail.test".to_owned()))
+            Some(Demo::Website("https://gitsail.test".to_owned()))
         );
         let plain = signed(
             &maker,

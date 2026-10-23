@@ -513,11 +513,10 @@ fn header(
         svg(icon::FORK, "icon-sm"),
     );
     if let Some(url) = view.demo_url(repo) {
-        actions.push_str(&format!(
-            "<a class=\"btn btn-success\" href=\"{}\" rel=\"noopener noreferrer\" data-demo>{}Live demo</a>",
-            escape(&url),
-            svg(icon::PLAY, "icon-sm")
-        ));
+        actions.push_str(&card::demo_button(&url, "btn-success"));
+    }
+    if let Some(url) = view.website_url(repo) {
+        actions.push_str(&card::website_button(&url, ""));
     }
     actions.push_str("</span>");
     let mut out = chrome::repo_title(
@@ -682,6 +681,13 @@ fn sidebar(view: &View<'_>, card: &RepoCard, before: &str, after: &str) -> Strin
         out.push_str(&format!(
             "<p class=\"demo-link\">{}<a class=\"truncate\" href=\"{1}\" rel=\"noopener noreferrer\" data-demo>{1}</a></p>",
             svg(icon::PLAY, "icon-sm"),
+            escape(&url)
+        ));
+    }
+    if let Some(url) = view.website_url(repo) {
+        out.push_str(&format!(
+            "<p class=\"demo-link\">{}<a class=\"truncate\" href=\"{1}\" rel=\"nofollow noopener noreferrer\" data-website>{1}</a></p>",
+            svg(icon::LINK, "icon-sm"),
             escape(&url)
         ));
     }

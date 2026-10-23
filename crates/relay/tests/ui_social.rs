@@ -276,6 +276,14 @@ async fn the_social_pages_read_written_events() {
     )));
     assert!(html.contains("git clone nostr://maya@tide.dev/relay.test/tidepool"));
     assert!(html.contains(".nsite.test/\" rel=\"noopener noreferrer\" data-demo"));
+    // The launch's buttons lead to the repo; its card does not repeat them.
+    let launch = html
+        .split(&format!("data-id=\"{}\" data-ship", ship.id.to_hex()))
+        .nth(1)
+        .and_then(|rest| rest.split("</article>").next())
+        .expect("the launch");
+    assert_eq!(launch.matches("Open repo</a>").count(), 1, "{launch}");
+    assert_eq!(launch.matches("Live demo</a>").count(), 1, "{launch}");
     assert!(html.contains("Trending today"));
 
     // The repo page and its tabs.
