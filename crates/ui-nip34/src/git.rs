@@ -357,7 +357,7 @@ async fn page(
     }
 
     let base = repo_path(&owner, d);
-    let names = names(&store, &[owner]).await;
+    let names = names(&store, &crate::lineage::named_keys(announcement)).await;
     let tab = match kind {
         PageKind::Tree | PageKind::Blob => Tab::Code,
         PageKind::Commits | PageKind::Commit => Tab::Commits,

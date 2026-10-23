@@ -15,6 +15,7 @@
 
 pub mod card;
 mod git;
+pub mod lineage;
 mod markup;
 pub mod repo;
 mod threads;
@@ -256,7 +257,7 @@ async fn home(
         )
         .await;
     let state = honoured_state(announcement, &states);
-    let names = names(&store, &authors).await;
+    let names = names(&store, &lineage::named_keys(announcement)).await;
     let base = repo_path(&owner, &d);
 
     let mut body = repo_header(&apps, &owner, &d, announcement, &names, Tab::Code);

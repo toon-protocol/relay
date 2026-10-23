@@ -483,3 +483,21 @@ a.chip:hover { text-decoration: none; color: var(--fg); }
 .reply { display: flex; gap: 10px; padding: 10px 0; border-top: 1px solid var(--subtle); min-width: 0; }
 .reply .body { flex: 1 1 0; min-width: 0; }
 .reply .text { font-size: 14px; }
+
+/* Forks and remixes: a lineage drawn as nested lists, and the line under a
+   fork's title. */
+.forked-from { display: flex; align-items: center; gap: 6px; margin: -8px 0 0; color: var(--muted-fg); }
+.repo-card .forked-from { margin: 0; }
+.section-title { font-size: 16px; font-weight: 600; margin: 0; }
+.lineage-box { padding: 12px; overflow-x: auto; }
+.lineage { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.lineage .lineage { margin: 8px 0 0 11px; padding-left: 16px; border-left: 2px solid var(--border); }
+.lineage .node {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 8px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); min-width: 0;
+}
+.lineage .node .muted { overflow-wrap: anywhere; }
+.lineage .node.here { border-color: var(--link); background: var(--accent-bg); }
+.chip-here { background: var(--accent-bg); border-color: var(--link); color: var(--accent-fg); }
+.demo-link { display: flex; align-items: center; gap: 6px; min-width: 0; }
+@media (max-width: 543px) { .lineage .lineage { margin-left: 4px; padding-left: 10px; } }
