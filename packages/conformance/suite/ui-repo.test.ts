@@ -459,6 +459,7 @@ describe('relay image conformance: the /repo app UI', () => {
         const root = treeOf([['100644', 'a b.txt', file]]);
         const commit = commitOf(root, 'first');
         const blobId = 'c'.repeat(64);
+        const blobId2 = 'd'.repeat(64);
         await publishOk(
           configured,
           sign(owner, {
@@ -484,7 +485,7 @@ describe('relay image conformance: the /repo app UI', () => {
             ['arweave', commit.id, 'txcommit', 'https://own-gateway.test'],
             ['blossom', commit.id, blobId],
             ['arweave', root.id, 'txroot'],
-            ['arweave', file.id, 'txfile'],
+            ['blossom', file.id, blobId2],
           ])
         );
         // A stranger's state is not honoured, so its objects are not listed.
@@ -530,12 +531,17 @@ describe('relay image conformance: the /repo app UI', () => {
           expect(layout.base).toBe(home);
           expect(layout.path).toEqual(shown);
           expect(layout.objects[commit.id]).toEqual([
-            'https://own-gateway.test/txcommit',
             `https://own-blossom.test/${blobId}`,
-            `${gateways}/txcommit`,
             `${servers}/${blobId}`,
+            'https://own-gateway.test/txcommit',
+            `${gateways}/txcommit`,
           ]);
           expect(layout.objects[root.id]).toEqual([`${gateways}/txroot`]);
+          // Only a `blossom` tag: Blossom servers alone.
+          expect(layout.objects[file.id]).toEqual([
+            `https://own-blossom.test/${blobId2}`,
+            `${servers}/${blobId2}`,
+          ]);
           expect(layout.objects['f'.repeat(40)]).toBeUndefined();
         }
         const missing = await fetch(`${configured.readUrl}${home}/blob/nope/a`);

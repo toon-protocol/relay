@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:https';
@@ -103,16 +104,21 @@ async function stubGateway(objects: Map<string, Buffer>) {
 const hello = gitObject('blob', 'hello from the stub gateway\n');
 const lost = gitObject('blob', 'this object was never uploaded\n');
 const liar = gitObject('blob', 'what the liar should have served\n');
+// Held only on Blossom, by sha256, with the header.
+const pooled = gitObject('blob', 'hello from the stub blossom server\n');
+const pooledBlobId = createHash('sha256').update(pooled.headed).digest('hex');
 // Entries in git's order, sorted by name.
 const root = treeOf([
   ['100644', 'hello.txt', hello],
   ['100644', 'liar.txt', liar],
   ['100644', 'lost.txt', lost],
+  ['100644', 'pooled.txt', pooled],
 ]);
 const commit = commitOf(root, 'a commit');
 
 let relay: RunningRelay;
 let gateway: Awaited<ReturnType<typeof stubGateway>>;
+let blossom: Awaited<ReturnType<typeof stubGateway>>;
 let browser: Browser;
 let repo: string;
 
@@ -126,8 +132,12 @@ beforeAll(async () => {
       [`tx${liar.id}`, Buffer.from('not what the tag says\n')],
     ])
   );
+  blossom = await stubGateway(new Map([[pooledBlobId, pooled.headed]]));
   relay = await startRelay(imageUnderTest(), {
-    env: { TOON_UI_ARWEAVE_GATEWAYS: gateway.url },
+    env: {
+      TOON_UI_ARWEAVE_GATEWAYS: gateway.url,
+      TOON_UI_BLOB_SERVERS: blossom.url,
+    },
   });
   const owner = generateSecretKey();
   await publishOk(
@@ -148,6 +158,7 @@ beforeAll(async () => {
           object.id,
           `tx${object.id}`,
         ]),
+        ['blossom', pooled.id, pooledBlobId],
       ],
     })
   );
@@ -161,6 +172,7 @@ afterAll(async () => {
   await browser?.close();
   await relay?.stop();
   await gateway?.stop();
+  await blossom?.stop();
 });
 
 describe('relay image conformance: /repo git pages in a browser', () => {
@@ -198,6 +210,17 @@ describe('relay image conformance: /repo git pages in a browser', () => {
           'hello from the stub gateway\n'
         );
 
+        // A blob only on Blossom, fetched by its sha256, checked by sha1.
+        await page.goto(`${repo}/blob/main/pooled.txt`);
+        await page.locator('#git pre').waitFor();
+        expect(await page.locator('#git pre').textContent()).toBe(
+          'hello from the stub blossom server\n'
+        );
+        expect(blossom.received.map((r) => r.path)).toContain(
+          `/${pooledBlobId}`
+        );
+        expect(new Set(blossom.connectedFrom)).toEqual(new Set(['127.0.0.1']));
+
         await page.goto(`${repo}/blob/main/lost.txt`);
         await page.locator('#git', { hasText: HELD }).waitFor();
         // The rest of the page still rendered.
@@ -215,6 +238,7 @@ describe('relay image conformance: /repo git pages in a browser', () => {
           'hello.txt',
           'liar.txt',
           'lost.txt',
+          'pooled.txt',
         ]);
 
         // Everything the stub received came from the browser, which the
