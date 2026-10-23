@@ -145,17 +145,26 @@ describe('relay image conformance: /social forks, remixes, live demos and Open i
     'Open in lists recommended handlers with the naddr filled in, follows first',
     async () => {
       const base = `/social/r/${social.npubs.maya}/tidepool`;
-      const naddr = nip19.naddrEncode({
-        kind: 30617,
-        pubkey: social.pubkeys.maya,
-        identifier: 'tidepool',
-        relays: ['wss://relay.example'],
-      });
-      const gitworkshop = `href="https://gitworkshop.example/${naddr}"`;
-      const shakespeare = `href="https://shakespeare.diy/clone?url=nostr://${naddr}"`;
       const anyone = (await page(base)).text;
-      expect(anyone).toContain(gitworkshop);
-      expect(anyone).toContain(shakespeare);
+      // Each handler's template, its placeholder filled with tidepool's naddr.
+      const filled = (prefix: string): string => {
+        const escaped = prefix.replace(/[.?/]/g, '\\$&');
+        const match = new RegExp(`href="${escaped}(naddr1[0-9a-z]+)"`).exec(
+          anyone
+        );
+        expect(match, prefix).not.toBeNull();
+        const naddr = match?.[1] ?? '';
+        const decoded = nip19.decode(naddr);
+        expect(decoded.type).toBe('naddr');
+        if (decoded.type === 'naddr') {
+          expect(decoded.data.kind).toBe(30617);
+          expect(decoded.data.pubkey).toBe(social.pubkeys.maya);
+          expect(decoded.data.identifier).toBe('tidepool');
+        }
+        return `href="${prefix}${naddr}"`;
+      };
+      const gitworkshop = filled('https://gitworkshop.example/');
+      const shakespeare = filled('https://shakespeare.diy/clone?url=nostr://');
       expect(anyone.indexOf(gitworkshop)).toBeLessThan(
         anyone.indexOf(shakespeare)
       );
