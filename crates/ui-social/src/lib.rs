@@ -11,7 +11,11 @@
 //! - `/social/r/<npub>/<d>`: a repo's social page, with Maker, Talk, Stars,
 //!   Followers, Media and Snippets tabs ([`repo_page`]);
 //! - `/social/e/<id>`: one post, drawn as a launch when it is a ship post
-//!   ([`note`], [`ship`]).
+//!   ([`note`], [`ship`]);
+//! - `/social/trending`: repos ranked by distinct people per window, by a
+//!   formula the page prints ([`trending`]);
+//! - `/social/t` and `/social/t/<topic>`: topics, from repos' `t` tags and
+//!   NIP-32 labels ([`topics`]).
 //!
 //! A mention of a repo anywhere unfurls into `ui_nip34`'s repo card, and the
 //! page shell is `relay_ui::chrome`'s, so `/repo` and `/social` read as one
@@ -26,6 +30,8 @@ mod note;
 mod post;
 mod repo_page;
 mod ship;
+mod topics;
+mod trending;
 
 use std::collections::HashMap;
 
@@ -108,6 +114,9 @@ pub fn app(store: ReadOnlyStore, settings: Settings, apps: Apps) -> AppUi {
         .route("/social/r/{npub}/{d}", get(repo_page::maker))
         .route("/social/r/{npub}/{d}/{tab}", get(repo_page::tab))
         .route("/social/e/{id}", get(note::page))
+        .route("/social/trending", get(trending::page))
+        .route("/social/t", get(topics::index))
+        .route("/social/t/{topic}", get(topics::page))
         .fallback(fallback)
         .with_state(Pages {
             store,
@@ -128,13 +137,15 @@ async fn asset(Path(name): Path<String>) -> Response {
 /// of the key a visitor names (a `GET`, so nothing is written or kept).
 fn header(viewer: Option<&PublicKey>) -> String {
     format!(
-        "<nav class=\"app-nav\" aria-label=\"Social\"><a class=\"navlink\" href=\"{PREFIX}\">{}Home</a></nav>\
+        "<nav class=\"app-nav\" aria-label=\"Social\"><a class=\"navlink\" href=\"{PREFIX}\">{}Home</a>\
+         <a class=\"navlink\" href=\"{PREFIX}/trending\">{}Trending</a></nav>\
          <span class=\"grow\"></span>\
          <form class=\"viewer\" method=\"get\" action=\"{PREFIX}/following\">\
          <label for=\"viewer-npub\">Viewing as</label>\
          <input class=\"input\" id=\"viewer-npub\" name=\"npub\" placeholder=\"npub1…\" value=\"{}\" autocomplete=\"off\">\
          <button class=\"btn\" type=\"submit\">Follow feed</button></form>",
         chrome::svg(chrome::icon::HOME, ""),
+        chrome::svg(chrome::icon::STAR, ""),
         viewer
             .map(npub)
             .map(|npub| escape(&npub))
