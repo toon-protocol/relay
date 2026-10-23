@@ -233,7 +233,7 @@ pub(crate) fn ship_title(event: &Event) -> String {
             return name;
         }
     }
-    first_line(&event.content, 120)
+    content::headline(&event.content, 90)
 }
 
 /// The media a launch shows: its `imeta` media, or an app's `image` tag.

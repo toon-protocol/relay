@@ -146,6 +146,20 @@ pub(crate) fn first_line(text: &str, limit: usize) -> String {
     )
 }
 
+/// The first sentence of the first non-empty line, clipped: a launch's
+/// headline when it names none.
+pub(crate) fn headline(text: &str, limit: usize) -> String {
+    let line = first_line(text, usize::MAX);
+    let end = line
+        .char_indices()
+        .find(|(index, c)| {
+            matches!(c, '.' | '!' | '?')
+                && line[index + c.len_utf8()..].starts_with(char::is_whitespace)
+        })
+        .map_or(line.len(), |(index, c)| index + c.len_utf8());
+    clip(line[..end].trim_end_matches('.'), limit)
+}
+
 #[cfg(test)]
 mod tests {
     use nostr::event::Kind;
@@ -218,5 +232,13 @@ mod tests {
         assert_eq!(clip("héllo", 2), "hé…");
         assert_eq!(clip("hi", 5), "hi");
         assert_eq!(first_line("\n  \n  Shipped it  \nmore", 50), "Shipped it");
+        assert_eq!(
+            headline(
+                "Shipped tidepool: charts. Vibe-coded v1.2 in a weekend.",
+                80
+            ),
+            "Shipped tidepool: charts"
+        );
+        assert_eq!(headline("v1.2 is out", 80), "v1.2 is out");
     }
 }
