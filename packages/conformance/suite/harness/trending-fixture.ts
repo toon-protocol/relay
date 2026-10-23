@@ -120,8 +120,10 @@ export function trendingFixture(
       ['a', repo],
       ['k', '30617'],
     ]);
-  // relay-kit: one person a day for a week.
-  star('nina', ago(1), relayKit);
+  // relay-kit: one person a day or so for a week, none in the last day. The
+  // newest star is a little over a day old, not exactly one: a page read in
+  // the same second as `now` would otherwise count it in the day window.
+  star('nina', ago(1.25), relayKit);
   star('omar', ago(3), relayKit);
   star('pia', ago(5), relayKit);
   sign(as('quinn'), 1111, ago(6), 'The subscription matcher is tidy.', [
