@@ -1,8 +1,10 @@
 //! Diffing trees and blobs, for the `/repo` view of what a commit changed.
 
+use std::collections::BTreeMap;
+
 use similar::{ChangeTag, TextDiff};
 
-use crate::{Tree, TreeEntry};
+use crate::{ObjectId, Tree, TreeEntry};
 
 /// What happened to one name between two trees.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -104,4 +106,78 @@ pub fn diff_lines(old: &[u8], new: &[u8]) -> Vec<LineChange> {
             text: change.value().trim_end_matches(['\n', '\r']).to_owned(),
         })
         .collect()
+}
+
+/// One file (not a directory) at a path from the root of a tree.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileEntry {
+    /// Slash-separated, from the root of the tree.
+    pub path: String,
+    pub mode: String,
+    pub id: ObjectId,
+}
+
+/// What a commit did to one file, with a file that moved paired with its old
+/// path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FileChange {
+    Added(FileEntry),
+    Deleted(FileEntry),
+    /// Same path, different id or mode.
+    Modified {
+        old: FileEntry,
+        new: FileEntry,
+    },
+    /// A deleted and an added file with the same content id. The paths differ.
+    Renamed {
+        old: FileEntry,
+        new: FileEntry,
+    },
+}
+
+impl FileChange {
+    /// The path the change is listed under: the new one, or the old one for a
+    /// deletion.
+    pub fn path(&self) -> &str {
+        match self {
+            Self::Added(file) | Self::Deleted(file) => &file.path,
+            Self::Modified { new, .. } | Self::Renamed { new, .. } => &new.path,
+        }
+    }
+}
+
+/// Compares two flat lists of files by path. A file that left one path and
+/// appears at another with the same content id is a rename (each file pairs
+/// at most once, in path order); changes come back in path order. The lists
+/// may leave out files that are the same on both sides.
+pub fn diff_files(old: &[FileEntry], new: &[FileEntry]) -> Vec<FileChange> {
+    let old: BTreeMap<&str, &FileEntry> = old.iter().map(|f| (f.path.as_str(), f)).collect();
+    let new: BTreeMap<&str, &FileEntry> = new.iter().map(|f| (f.path.as_str(), f)).collect();
+    let mut out = Vec::new();
+    let mut deleted: Vec<&FileEntry> = Vec::new();
+    for (path, o) in &old {
+        match new.get(path) {
+            Some(n) if n.id != o.id || n.mode != o.mode => out.push(FileChange::Modified {
+                old: (*o).clone(),
+                new: (*n).clone(),
+            }),
+            Some(_) => {}
+            None => deleted.push(o),
+        }
+    }
+    for (path, n) in &new {
+        if old.contains_key(path) {
+            continue;
+        }
+        match deleted.iter().position(|o| o.id == n.id) {
+            Some(index) => out.push(FileChange::Renamed {
+                old: deleted.remove(index).clone(),
+                new: (*n).clone(),
+            }),
+            None => out.push(FileChange::Added((*n).clone())),
+        }
+    }
+    out.extend(deleted.into_iter().map(|o| FileChange::Deleted(o.clone())));
+    out.sort_by(|a, b| a.path().cmp(b.path()));
+    out
 }

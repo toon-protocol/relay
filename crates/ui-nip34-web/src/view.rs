@@ -3,6 +3,7 @@
 
 use git_objects::{ObjectId, ObjectKind, TreeEntry};
 
+use crate::history::{self, CommitView, Log};
 use crate::object::{Error, Fetch, load};
 use crate::{Layout, PageKind};
 
@@ -26,6 +27,10 @@ pub enum Content {
     Binary(usize),
     /// An object on the way, or the file itself, could not be had.
     Unheld,
+    /// One page of the commit log.
+    Log(Log),
+    /// One commit and its changes.
+    Commit(Box<CommitView>),
     /// The commit and trees are held, and the path is not in them.
     NoSuchPath,
 }
@@ -43,7 +48,7 @@ fn percent_encode(text: &str) -> String {
 }
 
 /// The page address of `segments` below the layout's ref.
-fn address(layout: &Layout, page: &str, segments: &[&str]) -> String {
+pub(crate) fn address(layout: &Layout, page: &str, segments: &[&str]) -> String {
     let mut href = format!("{}/{page}", layout.base);
     for segment in layout.ref_name.split('/').chain(segments.iter().copied()) {
         href.push('/');
@@ -87,6 +92,15 @@ pub async fn build(fetch: &impl Fetch, layout: &Layout) -> Content {
 }
 
 async fn walk(fetch: &impl Fetch, layout: &Layout) -> Result<Content, Error> {
+    match layout.kind {
+        PageKind::Commits => return history::log(fetch, layout).await.map(Content::Log),
+        PageKind::Commit => {
+            return history::commit(fetch, layout)
+                .await
+                .map(|view| Content::Commit(Box::new(view)));
+        }
+        PageKind::Tree | PageKind::Blob => {}
+    }
     let id = |text: &str| ObjectId::from_hex(text).map_err(|_| Error::Unheld);
     let commit = load(fetch, layout, id(&layout.commit)?, ObjectKind::Commit).await?;
     let mut tree_id = commit.parse_commit().map_err(|_| Error::Unheld)?.tree;
@@ -161,6 +175,7 @@ mod tests {
                 ref_name: "feature/x".into(),
                 commit: self.commit.to_string(),
                 path: path.iter().map(|s| (*s).to_owned()).collect(),
+                page: 0,
                 objects: self.objects.clone(),
             }
         }

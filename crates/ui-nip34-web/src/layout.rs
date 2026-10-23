@@ -4,12 +4,14 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-/// Which page: a directory listing or a file.
+/// Which page: a directory listing, a file, a commit log or one commit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PageKind {
     Tree,
     Blob,
+    Commits,
+    Commit,
 }
 
 /// The page's layout.
@@ -25,6 +27,9 @@ pub struct Layout {
     pub commit: String,
     /// The path below the ref, one entry per segment.
     pub path: Vec<String>,
+    /// Which page of the commit log, counting from 0.
+    #[serde(default)]
+    pub page: usize,
     /// Object id to its candidate URLs, in the order to try them.
     pub objects: BTreeMap<String, Vec<String>>,
 }

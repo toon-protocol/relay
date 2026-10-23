@@ -442,7 +442,7 @@ describe('relay image conformance: the /repo app UI', () => {
   );
 
   conformanceTest(
-    'tree and blob pages list candidate URLs in order, with their own policy and the module from the manifest',
+    'tree, blob, commits and commit pages list candidate URLs in order, with their own policy and the module from the manifest',
     async () => {
       const gateways = 'https://operator-gateway.test';
       const servers = 'https://operator-blossom.test';
@@ -504,13 +504,14 @@ describe('relay image conformance: the /repo app UI', () => {
           state(stranger, 30, [['arweave', 'f'.repeat(40), 'txevil']])
         );
         const home = `/repo/${nip19.npubEncode(pubkeyOf(owner))}/layout`;
-        for (const [page, path, shown] of [
-          ['tree', 'feature/x', []],
-          ['blob', 'feature/x/a%20b.txt', ['a b.txt']],
+        for (const [page, path, shown, ref] of [
+          ['tree', 'tree/feature/x', [], 'feature/x'],
+          ['blob', 'blob/feature/x/a%20b.txt', ['a b.txt'], 'feature/x'],
+          ['commits', 'commits/feature/x', [], 'feature/x'],
+          ['commits', 'commits', [], 'feature/x'],
+          ['commit', `commit/${commit.id}`, [], commit.id],
         ] as const) {
-          const response = await fetch(
-            `${configured.readUrl}${home}/${page}/${path}`
-          );
+          const response = await fetch(`${configured.readUrl}${home}/${path}`);
           expect(response.status).toBe(200);
           const policy = response.headers.get('content-security-policy') ?? '';
           expect(policy).toContain("default-src 'self'");
@@ -528,7 +529,7 @@ describe('relay image conformance: the /repo app UI', () => {
           expect(html).not.toMatch(/\son\w+=/);
           const layout = layoutOf(html);
           expect(layout.kind).toBe(page);
-          expect(layout.ref).toBe('feature/x');
+          expect(layout.ref).toBe(ref);
           expect(layout.commit).toBe(commit.id);
           expect(layout.base).toBe(home);
           expect(layout.path).toEqual(shown);
@@ -597,6 +598,19 @@ describe('relay image conformance: the /repo app UI', () => {
 
         const missing = await fetch(`${configured.readUrl}${home}/blob/nope/a`);
         expect(missing.status).toBe(404);
+        // A commit page wants a full commit id; a log wants a ref that exists.
+        for (const path of ['commit/main', 'commits/nope']) {
+          expect(
+            (await fetch(`${configured.readUrl}${home}/${path}`)).status
+          ).toBe(404);
+        }
+        // The log's page number reaches the layout, and nonsense is page 0.
+        const pageOf = async (path: string) =>
+          layoutOf(
+            await (await fetch(`${configured.readUrl}${home}/${path}`)).text()
+          ).page;
+        expect(await pageOf('commits/feature/x?page=2')).toBe(2);
+        expect(await pageOf('commits/feature/x?page=-1')).toBe(0);
       } finally {
         await configured.stop();
       }

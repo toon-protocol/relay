@@ -107,6 +107,7 @@ mod tests {
             ref_name: "main".into(),
             commit: "0".repeat(40),
             path: vec![],
+            page: 0,
             objects: BTreeMap::from([(
                 id.to_string(),
                 urls.iter().map(|u| (*u).to_owned()).collect(),

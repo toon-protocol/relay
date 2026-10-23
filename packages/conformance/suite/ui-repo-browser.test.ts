@@ -117,6 +117,19 @@ const root = treeOf([
 ]);
 const commit = commitOf(root, 'a commit');
 
+// A later commit on another ref: hello.txt edited, liar.txt deleted, lost.txt
+// renamed (its blob was never uploaded, so only its rename shows), one file
+// added, pooled.txt unchanged.
+const hello2 = gitObject('blob', 'hello again from the stub gateway\n');
+const fresh = gitObject('blob', 'a new file\n');
+const nextRoot = treeOf([
+  ['100644', 'fresh.txt', fresh],
+  ['100644', 'hello.txt', hello2],
+  ['100644', 'moved.txt', lost],
+  ['100644', 'pooled.txt', pooled],
+]);
+const next = commitOf(nextRoot, 'second commit', commit, 1700000100);
+
 let relay: RunningRelay;
 let gateway: Awaited<ReturnType<typeof stubGateway>>;
 let blossom: Awaited<ReturnType<typeof stubGateway>>;
@@ -131,6 +144,10 @@ beforeAll(async () => {
       [`tx${root.id}`, root.headed],
       [`tx${hello.id}`, hello.body],
       [`tx${liar.id}`, Buffer.from('not what the tag says\n')],
+      [`tx${next.id}`, next.body],
+      [`tx${nextRoot.id}`, nextRoot.body],
+      [`tx${hello2.id}`, hello2.body],
+      [`tx${fresh.id}`, fresh.body],
     ])
   );
   blossom = await stubGateway(new Map([[pooledBlobId, pooled.headed]]));
@@ -154,11 +171,10 @@ beforeAll(async () => {
         ['d', 'smoke'],
         ['HEAD', 'ref: refs/heads/main'],
         ['refs/heads/main', commit.id],
-        ...[commit, root, hello, lost, liar].map((object) => [
-          'arweave',
-          object.id,
-          `tx${object.id}`,
-        ]),
+        ['refs/heads/next', next.id],
+        ...[commit, root, hello, lost, liar, next, nextRoot, hello2, fresh].map(
+          (object) => ['arweave', object.id, `tx${object.id}`]
+        ),
         ['blossom', pooled.id, pooledBlobId],
       ],
     })
@@ -263,6 +279,58 @@ describe('relay image conformance: /repo git pages in a browser', () => {
             ...blossom.received.map((r) => `${blossom.url}${r.path}`),
           ])
         ).toEqual(new Set(asked));
+      } catch (error) {
+        throw new Error(
+          `${String(error)}\nthe browser saw:\n${seen.join('\n')}`
+        );
+      } finally {
+        await context.close();
+      }
+    }
+  );
+
+  conformanceTest(
+    'a commit page shows the diff against its parent, and the log lists the history',
+    async () => {
+      const context = await browser.newContext({ ignoreHTTPSErrors: true });
+      const seen: string[] = [];
+      try {
+        const page = await context.newPage();
+        page.on('console', (m) =>
+          seen.push(`console ${m.type()}: ${m.text()}`)
+        );
+        page.on('pageerror', (e) => seen.push(`page error: ${e.message}`));
+
+        await page.goto(`${repo}/commit/${next.id}`);
+        await page.locator('#git h3').first().waitFor();
+        expect(await page.locator('#git h3').allTextContents()).toEqual([
+          'added: fresh.txt',
+          'modified: hello.txt',
+          'deleted: liar.txt',
+          'renamed: lost.txt -> moved.txt',
+        ]);
+        const diffs = await page.locator('#git pre').allTextContents();
+        expect(diffs[0]).toBe('second commit\n');
+        expect(diffs).toContain('+a new file\n');
+        expect(diffs).toContain(
+          '-hello from the stub gateway\n+hello again from the stub gateway\n'
+        );
+        // liar.txt's blob is served wrongly, so its diff is not shown.
+        expect(await page.locator('#git').textContent()).toContain(HELD);
+        expect(await page.locator('#git').textContent()).not.toContain(
+          'not what the tag says'
+        );
+        // The parent links to its own commit page.
+        expect(
+          await page.locator(`#git a[href$="/commit/${commit.id}"]`).count()
+        ).toBe(1);
+
+        await page.goto(`${repo}/commits/next`);
+        await page.locator('#git li').first().waitFor();
+        const rows = await page.locator('#git li').allTextContents();
+        expect(rows).toHaveLength(2);
+        expect(rows[0]).toContain('second commit');
+        expect(rows[1]).toContain('a commit');
       } catch (error) {
         throw new Error(
           `${String(error)}\nthe browser saw:\n${seen.join('\n')}`
