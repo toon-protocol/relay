@@ -488,6 +488,9 @@ a.chip:hover { text-decoration: none; color: var(--fg); }
    fork's title. */
 .forked-from { display: flex; align-items: center; gap: 6px; margin: -8px 0 0; color: var(--muted-fg); }
 .repo-card .forked-from { margin: 0; }
+.forked-from + .repo-desc { margin-top: 4px; }
+/* A green button in the repo header keeps its own text colour. */
+.repo-head a.btn-success { color: var(--success-fg); }
 .section-title { font-size: 16px; font-weight: 600; margin: 0; }
 .lineage-box { padding: 12px; overflow-x: auto; }
 .lineage { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
@@ -501,3 +504,4 @@ a.chip:hover { text-decoration: none; color: var(--fg); }
 .chip-here { background: var(--accent-bg); border-color: var(--link); color: var(--accent-fg); }
 .demo-link { display: flex; align-items: center; gap: 6px; min-width: 0; }
 @media (max-width: 543px) { .lineage .lineage { margin-left: 4px; padding-left: 10px; } }
+.side-card .links { display: flex; flex-wrap: wrap; gap: 8px; }

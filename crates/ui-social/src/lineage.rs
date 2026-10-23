@@ -383,7 +383,7 @@ fn repo_node(
     let held = lineage.network.announcement(address);
     let label = format!(
         "{} / {}",
-        plain_name(draw.names, address.owner()),
+        chrome::shown_name(draw.names, address.owner()),
         held.map_or(address.d(), repo_name)
     );
     let title = match (held, draw.links.repo_link(address)) {
@@ -443,7 +443,7 @@ fn site_node(lineage: &Lineage, site: &Event, chip: &str, note: &str, draw: &Dra
     let mut title = format!(
         "<span class=\"strong\" data-site=\"{}\">{} / {}</span>",
         escape(&coordinate_of(site).unwrap_or_default()),
-        escape(&plain_name(draw.names, &site.pubkey)),
+        escape(&chrome::shown_name(draw.names, &site.pubkey)),
         escape(&title_text)
     );
     let mut notes: Vec<String> = Vec::new();
@@ -467,7 +467,7 @@ fn site_node(lineage: &Lineage, site: &Event, chip: &str, note: &str, draw: &Dra
     {
         let label = format!(
             "{} / {}",
-            plain_name(draw.names, repo.owner()),
+            chrome::shown_name(draw.names, repo.owner()),
             repo_name(announcement)
         );
         notes.push(match draw.links.repo_link(&repo) {
@@ -593,7 +593,7 @@ fn tree(lineage: &Lineage, card: &RepoCard, demo_url: Option<&str>, draw: &Draw<
                 .and_then(|held| first_tag(held, "title").map(str::to_owned));
             escape(&format!(
                 "{} / {}",
-                plain_name(draw.names, site.author()),
+                chrome::shown_name(draw.names, site.author()),
                 title.unwrap_or_else(|| {
                     Some(site.coordinate())
                         .and_then(|c| c.rsplit(':').next().map(str::to_owned))

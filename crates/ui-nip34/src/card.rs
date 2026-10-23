@@ -248,7 +248,7 @@ impl RepoCard {
         let (parent, name) = self.fork_of.as_ref()?;
         Some(format!(
             "{} / {}",
-            chrome::plain_name(self.profiles.names(), parent.address().owner()),
+            chrome::shown_name(self.profiles.names(), parent.address().owner()),
             name.as_deref().unwrap_or(parent.address().d())
         ))
     }

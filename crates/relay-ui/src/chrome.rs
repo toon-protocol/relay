@@ -279,15 +279,21 @@ pub fn repo_title(owner: &str, name: &str, href: &str, actions: &str) -> String 
 /// npub. The full npub is the title either way.
 pub fn name(names: &HashMap<PublicKey, String>, key: &PublicKey) -> String {
     let npub = npub(key);
-    let shown = match names.get(key) {
-        Some(name) => name.clone(),
-        None => format!("{}…", &npub[..12]),
-    };
+    let shown = shown_name(names, key);
     format!(
         "<span class=\"strong\" title=\"{}\">{}</span>",
         escape(&npub),
         escape(&shown)
     )
+}
+
+/// The plain text [`name`] shows: the profile's name, else the start of
+/// the npub.
+pub fn shown_name(names: &HashMap<PublicKey, String>, key: &PublicKey) -> String {
+    match names.get(key) {
+        Some(name) => name.clone(),
+        None => format!("{}…", &npub(key)[..12]),
+    }
 }
 
 /// The plain text of a person's name, for initials.

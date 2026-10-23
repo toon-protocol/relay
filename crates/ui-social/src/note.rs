@@ -240,7 +240,7 @@ fn launch(view: &View<'_>, event: &Event, repo: &RepoAddress, reactions: &[Event
         let text = content::render(&event.content, &hidden, view.names);
         out.push_str(&format!("<p class=\"text\">{}</p>", text.html.trim()));
     }
-    out.push_str(&post::cards_html(view, std::slice::from_ref(repo)));
+    out.push_str(&post::launch_card(view, repo));
     out.push_str(&tally_chips(reactions));
     out
 }

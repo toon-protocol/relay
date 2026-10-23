@@ -115,6 +115,15 @@ pub(crate) fn cards_html(view: &View<'_>, repos: &[RepoAddress]) -> String {
         .collect()
 }
 
+/// The card of the repo a launch ships, without its own Live demo button:
+/// the launch's buttons already lead there.
+pub(crate) fn launch_card(view: &View<'_>, repo: &RepoAddress) -> String {
+    view.cards
+        .get(repo)
+        .map(|card| card.render(view.links))
+        .unwrap_or_default()
+}
+
 /// A note's text, clipped to [`CLIP`] in a list, with the media its `imeta`
 /// tags show left out of it.
 fn text_html(view: &View<'_>, event: &Event, media: &[Media], clipped: bool) -> String {
@@ -293,7 +302,7 @@ pub(crate) fn ship_card(view: &View<'_>, event: &Event, repo: &RepoAddress) -> S
         }
         out.push_str(&thumbs(rest));
     }
-    out.push_str(&cards_html(view, std::slice::from_ref(repo)));
+    out.push_str(&launch_card(view, repo));
     out.push_str(&launch_actions(view, repo, event));
     out.push_str("</article>");
     out
