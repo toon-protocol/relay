@@ -109,6 +109,18 @@ impl Status {
 /// or the author of `target` itself. A `created_at` tie goes to the lowest
 /// event id; with no honoured status the target is open. A pure function.
 fn resolve_status(authorized: &[PublicKey], target: &Event, statuses: &[Event]) -> Status {
+    honoured_status(authorized, target, statuses)
+        .and_then(|status| Status::from_kind(status.kind))
+        .unwrap_or(Status::Open)
+}
+
+/// The status event [`resolve_status`] goes by, if there is one: its
+/// content is the note its author left with it. A pure function.
+fn honoured_status<'a>(
+    authorized: &[PublicKey],
+    target: &Event,
+    statuses: &'a [Event],
+) -> Option<&'a Event> {
     let target_id = target.id.to_hex();
     newest(statuses.iter().filter(|status| {
         Status::from_kind(status.kind).is_some()
@@ -119,8 +131,6 @@ fn resolve_status(authorized: &[PublicKey], target: &Event, statuses: &[Event]) 
                 .map(|tag| tag.as_slice())
                 .any(|tag| matches!(tag, [name, id, ..] if name == "e" && *id == target_id))
     }))
-    .and_then(|status| Status::from_kind(status.kind))
-    .unwrap_or(Status::Open)
 }
 
 /// The NIP-34 status kinds a reader honours: open, applied, closed, draft.
@@ -168,6 +178,19 @@ async fn statuses_of(
     authorized: &[PublicKey],
     targets: &[&Event],
 ) -> Vec<Status> {
+    let events = status_events(store, authorized, targets).await;
+    targets
+        .iter()
+        .map(|target| resolve_status(authorized, target, &events))
+        .collect()
+}
+
+/// The statuses stored for `targets` by the keys that may set them.
+async fn status_events(
+    store: &ReadOnlyStore,
+    authorized: &[PublicKey],
+    targets: &[&Event],
+) -> Vec<Event> {
     if targets.is_empty() {
         return Vec::new();
     }
@@ -179,7 +202,7 @@ async fn statuses_of(
             authors.push(target.pubkey);
         }
     }
-    let events = store
+    store
         .query(
             Filter::new()
                 .kinds([
@@ -192,11 +215,7 @@ async fn statuses_of(
                 .authors(authors)
                 .limit(LIMIT * 4),
         )
-        .await;
-    targets
-        .iter()
-        .map(|target| resolve_status(authorized, target, &events))
-        .collect()
+        .await
 }
 
 /// How many of the repo at `coordinate`'s issues, and of its patch series
@@ -604,11 +623,12 @@ fn comment(names: &HashMap<PublicKey, String>, event: &Event, verb: &str, text: 
 fn thread_body(
     repo: &Repo,
     target: &Event,
-    status: Status,
+    status: (Status, Option<&Event>),
     names: &HashMap<PublicKey, String>,
     side: &str,
     comments: &[Event],
 ) -> String {
+    let (status, set_by) = status;
     let (tab, noun, back) = match target.kind.as_u16() {
         ISSUE => (Tab::Issues, "issue", "issues"),
         PATCH => (Tab::Pulls, "patch", "pulls"),
@@ -646,6 +666,19 @@ fn thread_body(
             &format!(
                 "<div class=\"card-body\">{}</div>",
                 markdown(&reply.content)
+            ),
+        ));
+    }
+    // The honoured status, with the note its author left, when it has one.
+    if let Some(set) = set_by.filter(|set| !set.content.trim().is_empty()) {
+        body.push_str(&comment(
+            names,
+            set,
+            &format!("marked this {}", status.label(target)),
+            &format!(
+                "<div class=\"card-body\" data-status-note=\"{}\">{}</div>",
+                status.label(target),
+                markdown(&set.content)
             ),
         ));
     }
@@ -701,9 +734,16 @@ pub(super) async fn issue(
     let Some(issue) = target(&store, &repo, &id, &[ISSUE]).await else {
         return not_found(&apps);
     };
-    let status = statuses_of(&store, &repo.authorized, &[&issue]).await[0];
+    let statuses = status_events(&store, &repo.authorized, &[&issue]).await;
+    let set_by = honoured_status(&repo.authorized, &issue, &statuses);
+    let status = (resolve_status(&repo.authorized, &issue, &statuses), set_by);
     let comments = comments(&store, &issue).await;
-    let people: Vec<PublicKey> = people(&issue, &comments);
+    let mut people: Vec<PublicKey> = people(&issue, &comments);
+    if let Some(set) = set_by
+        && !people.contains(&set.pubkey)
+    {
+        people.push(set.pubkey);
+    }
     let names = names(&store, &people).await;
     let body = thread_body(&repo, &issue, status, &names, "", &comments);
     html(&apps, StatusCode::OK, &title_of(&issue), &body)
@@ -719,9 +759,16 @@ pub(super) async fn pull(
     let Some(pull) = target(&store, &repo, &id, &[PATCH, PULL_REQUEST]).await else {
         return not_found(&apps);
     };
-    let status = statuses_of(&store, &repo.authorized, &[&pull]).await[0];
+    let statuses = status_events(&store, &repo.authorized, &[&pull]).await;
+    let set_by = honoured_status(&repo.authorized, &pull, &statuses);
+    let status = (resolve_status(&repo.authorized, &pull, &statuses), set_by);
     let comments = comments(&store, &pull).await;
-    let people: Vec<PublicKey> = people(&pull, &comments);
+    let mut people: Vec<PublicKey> = people(&pull, &comments);
+    if let Some(set) = set_by
+        && !people.contains(&set.pubkey)
+    {
+        people.push(set.pubkey);
+    }
     let names = names(&store, &people).await;
 
     let mut facts: Vec<(&str, String)> = Vec::new();
