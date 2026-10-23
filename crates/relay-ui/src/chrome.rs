@@ -288,6 +288,45 @@ pub fn name(names: &HashMap<PublicKey, String>, key: &PublicKey) -> String {
     )
 }
 
+/// A key's builder profile on `/social`, `/social/p/<npub>`.
+pub fn profile_path(key: &PublicKey) -> String {
+    format!("{}/p/{}", App::Social.prefix(), npub(key))
+}
+
+/// A person's [`name`], linking to their `/social` profile when `apps`
+/// serves `/social`; else the name alone.
+pub fn person(apps: &Apps, names: &HashMap<PublicKey, String>, key: &PublicKey) -> String {
+    if apps.serves(App::Social) {
+        format!(
+            "<a class=\"person-link\" href=\"{}\">{}</a>",
+            profile_path(key),
+            name(names, key)
+        )
+    } else {
+        name(names, key)
+    }
+}
+
+/// A person's [`avatar`], linking to their `/social` profile when `apps`
+/// serves `/social`. The link is hidden from assistive technology: the
+/// name beside it carries the same link.
+pub fn person_avatar(
+    apps: &Apps,
+    names: &HashMap<PublicKey, String>,
+    key: &PublicKey,
+    small: bool,
+) -> String {
+    let drawn = avatar(&plain_name(names, key), small);
+    if apps.serves(App::Social) {
+        format!(
+            "<a class=\"avatar-link\" href=\"{}\" tabindex=\"-1\" aria-hidden=\"true\">{drawn}</a>",
+            profile_path(key)
+        )
+    } else {
+        drawn
+    }
+}
+
 /// The plain text of a person's name, for initials.
 pub fn plain_name(names: &HashMap<PublicKey, String>, key: &PublicKey) -> String {
     names
@@ -560,6 +599,20 @@ mod tests {
             Some("Ada")
         );
         assert_eq!(profiles.nip05(&keys.public_key()), Some("ada@x.y"));
+    }
+
+    #[test]
+    fn a_person_links_to_their_profile_only_when_social_is_on() {
+        let key = Keys::generate().public_key();
+        let names = HashMap::from([(key, "Ada".to_owned())]);
+        let path = format!("/social/p/{}", npub(&key));
+        assert_eq!(profile_path(&key), path);
+        let on = Apps::new([App::Repo, App::Social]);
+        assert!(person(&on, &names, &key).contains(&format!("href=\"{path}\"")));
+        assert!(person_avatar(&on, &names, &key, true).contains(&format!("href=\"{path}\"")));
+        let off = Apps::new([App::Repo]);
+        assert!(!person(&off, &names, &key).contains("href"));
+        assert!(!person_avatar(&off, &names, &key, false).contains("href"));
     }
 
     #[test]

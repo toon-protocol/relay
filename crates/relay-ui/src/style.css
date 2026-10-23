@@ -33,6 +33,11 @@
   --attention-fg: #7d4e00;
   --done-bg: #fbefff;
   --media-bg: #1f2328;
+  --contrib-0: #eff2f5;
+  --contrib-1: #aceebb;
+  --contrib-2: #4ac26b;
+  --contrib-3: #2da44e;
+  --contrib-4: #116329;
   --radius: 6px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
@@ -65,6 +70,11 @@
     --attention-fg: #e3b341;
     --done-bg: rgba(163, 113, 247, 0.15);
     --media-bg: #010409;
+    --contrib-0: #151b23;
+    --contrib-1: #033a16;
+    --contrib-2: #196c2e;
+    --contrib-3: #2ea043;
+    --contrib-4: #56d364;
   }
 }
 
@@ -483,3 +493,59 @@ a.chip:hover { text-decoration: none; color: var(--fg); }
 .reply { display: flex; gap: 10px; padding: 10px 0; border-top: 1px solid var(--subtle); min-width: 0; }
 .reply .body { flex: 1 1 0; min-width: 0; }
 .reply .text { font-size: 14px; }
+
+/* A link on a person's name or avatar, to their /social profile. */
+a.person-link { color: inherit; }
+a.person-link:hover .strong { color: var(--link); text-decoration: underline; }
+a.avatar-link { display: inline-flex; flex-shrink: 0; }
+a.avatar-link:hover { text-decoration: none; }
+
+/* A builder's profile: banner, a column about the person, then tabs. */
+.profile-banner { height: 160px; border-radius: var(--radius); overflow: hidden; background: var(--done-bg); }
+.profile-banner .banner { display: block; width: 100%; height: 100%; object-fit: cover; }
+.profile { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 24px 32px; }
+.profile-side { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.profile-main { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 20px; }
+.profile-avatar { margin-top: -72px; }
+.profile-avatar .avatar { width: 128px; height: 128px; font-size: 44px; border: 4px solid var(--bg); background: var(--done-bg); color: var(--done); }
+.profile-name { font-size: 24px; font-weight: 600; overflow-wrap: anywhere; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.profile-handle { font-size: 18px; font-weight: 300; }
+.profile-nip05 { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--muted-fg); }
+.profile-npub { display: block; max-width: 100%; }
+.profile-about { font-size: 14px; }
+.profile-follow { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.profile-side h2, .profile-section h2 { font-size: 14px; font-weight: 600; margin: 0 0 8px; }
+.profile-side ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.profile-side .facts li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.profile-side p { margin: 6px 0 0; }
+.chip-bot { background: var(--accent-bg); border-color: transparent; color: var(--accent-fg); }
+.status-card { display: flex; align-items: baseline; gap: 8px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 13px; overflow-wrap: anywhere; }
+.status-card .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); flex-shrink: 0; }
+.badges { display: flex; flex-wrap: wrap; gap: 8px; }
+.badge {
+  display: inline-flex; align-items: center; justify-content: center; width: 56px; height: 56px; padding: 4px;
+  border: 2px solid var(--done); border-radius: 50%; color: var(--fg); font-size: 10px; font-weight: 600;
+  line-height: 1.1; text-align: center; overflow: hidden; overflow-wrap: anywhere;
+}
+.badge:hover { background: var(--done-bg); text-decoration: none; }
+.section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; margin-bottom: 8px; }
+.section-head h2 { margin: 0; }
+.repo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.repo-tile { display: flex; flex-direction: column; gap: 6px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); min-width: 0; }
+.repo-tile .title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.repo-tile .title a { font-weight: 600; overflow-wrap: anywhere; }
+.repo-tile p { margin: 0; font-size: 13px; color: var(--muted-fg); }
+.contrib { padding: 14px; }
+.contrib-scroll { overflow-x: auto; }
+.contrib-grid { display: grid; grid-template-rows: repeat(7, 10px); grid-auto-flow: column; grid-auto-columns: 10px; gap: 3px; width: max-content; }
+.cell { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--contrib-0); outline: 1px solid rgba(27, 31, 36, 0.06); outline-offset: -1px; }
+.cell.l1 { background: var(--contrib-1); }
+.cell.l2 { background: var(--contrib-2); }
+.cell.l3 { background: var(--contrib-3); }
+.cell.l4 { background: var(--contrib-4); }
+.cell.future { visibility: hidden; }
+.contrib-foot { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 16px; margin-top: 10px; }
+.contrib-foot p { margin: 0; flex: 1 1 320px; }
+.legend { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+.activity-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 16px; }
+.activity-row .what { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
