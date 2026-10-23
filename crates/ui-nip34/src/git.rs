@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, RawQuery, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::Response;
 use nostr::event::{Event, Kind};
@@ -37,11 +37,13 @@ pub struct Defaults {
     pub blob_servers: Vec<String>,
 }
 
-/// Which page: a directory listing or a file.
+/// Which page: a directory listing, a file, a commit log or one commit.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PageKind {
     Tree,
     Blob,
+    Commits,
+    Commit,
 }
 
 impl PageKind {
@@ -49,6 +51,8 @@ impl PageKind {
         match self {
             Self::Tree => "tree",
             Self::Blob => "blob",
+            Self::Commits => "commits",
+            Self::Commit => "commit",
         }
     }
 }
@@ -204,21 +208,94 @@ pub(crate) async fn tree(
     State(pages): State<Pages>,
     Path((owner, d, rest)): Path<(String, String, String)>,
 ) -> Response {
-    page(pages, PageKind::Tree, &owner, &d, &rest).await
+    page(pages, PageKind::Tree, &owner, &d, &rest, 0).await
 }
 
 pub(crate) async fn blob(
     State(pages): State<Pages>,
     Path((owner, d, rest)): Path<(String, String, String)>,
 ) -> Response {
-    page(pages, PageKind::Blob, &owner, &d, &rest).await
+    page(pages, PageKind::Blob, &owner, &d, &rest, 0).await
+}
+
+/// The commit log of the default branch.
+pub(crate) async fn commits_default(
+    State(pages): State<Pages>,
+    Path((owner, d)): Path<(String, String)>,
+    RawQuery(query): RawQuery,
+) -> Response {
+    page(
+        pages,
+        PageKind::Commits,
+        &owner,
+        &d,
+        "",
+        page_number(query.as_deref()),
+    )
+    .await
+}
+
+/// The commit log from a ref (or a commit id).
+pub(crate) async fn commits(
+    State(pages): State<Pages>,
+    Path((owner, d, rest)): Path<(String, String, String)>,
+    RawQuery(query): RawQuery,
+) -> Response {
+    page(
+        pages,
+        PageKind::Commits,
+        &owner,
+        &d,
+        &rest,
+        page_number(query.as_deref()),
+    )
+    .await
+}
+
+pub(crate) async fn commit(
+    State(pages): State<Pages>,
+    Path((owner, d, id)): Path<(String, String, String)>,
+) -> Response {
+    page(pages, PageKind::Commit, &owner, &d, &id, 0).await
+}
+
+/// `?page=N`, counting from 0; anything unreadable is the first page, and a
+/// page past a thousand is no page anyone walks to.
+fn page_number(query: Option<&str>) -> usize {
+    query
+        .into_iter()
+        .flat_map(|query| query.split('&'))
+        .find_map(|pair| pair.strip_prefix("page="))
+        .and_then(|page| page.parse::<usize>().ok())
+        .map_or(0, |page| page.min(1000))
+}
+
+/// The branch the state's `HEAD` names, as the segments of its ref name.
+fn default_segments(state: &Event) -> Vec<String> {
+    let head = tag_values(state, "HEAD")
+        .first()
+        .cloned()
+        .unwrap_or_default();
+    let head = head.strip_prefix("ref: ").unwrap_or(&head);
+    let head = head.strip_prefix("refs/heads/").unwrap_or(head);
+    head.split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 fn link(href: &str, text: &str) -> String {
     format!("<a href=\"{}\">{}</a>", escape(href), escape(text))
 }
 
-async fn page(pages: Pages, kind: PageKind, owner: &str, d: &str, rest: &str) -> Response {
+async fn page(
+    pages: Pages,
+    kind: PageKind,
+    owner: &str,
+    d: &str,
+    rest: &str,
+    page_no: usize,
+) -> Response {
     let Pages {
         store,
         assets,
@@ -258,8 +335,27 @@ async fn page(pages: Pages, kind: PageKind, owner: &str, d: &str, rest: &str) ->
         .filter(|segment| !segment.is_empty())
         .map(str::to_owned)
         .collect();
-    let Some((ref_name, commit, path)) = resolve(state, &segments) else {
-        return not_found().await;
+    let default;
+    let (ref_name, commit, path): (String, String, &[String]) = if kind == PageKind::Commit {
+        // `/commit/<sha>` names its commit; no ref is involved.
+        let id = rest.to_ascii_lowercase();
+        if !is_object_id(&id) {
+            return not_found().await;
+        }
+        (id.clone(), id, &[])
+    } else {
+        if kind == PageKind::Commits && segments.is_empty() {
+            default = default_segments(state);
+            let Some(found) = resolve(state, &default) else {
+                return not_found().await;
+            };
+            found
+        } else {
+            let Some(found) = resolve(state, &segments) else {
+                return not_found().await;
+            };
+            found
+        }
     };
     // A blob page with no file is not a page.
     if kind == PageKind::Blob && path.is_empty() {
@@ -285,10 +381,11 @@ async fn page(pages: Pages, kind: PageKind, owner: &str, d: &str, rest: &str) ->
     let mut body = format!(
         "<h1>{}</h1><p>{} at <code>{}</code> (<code>{}</code>)</p><p>{}",
         link(&base, repo_name(announcement)),
-        if kind == PageKind::Tree {
-            "Tree"
-        } else {
-            "File"
+        match kind {
+            PageKind::Tree => "Tree",
+            PageKind::Blob => "File",
+            PageKind::Commits => "Commits",
+            PageKind::Commit => "Commit",
         },
         escape(&ref_name),
         escape(&commit),
@@ -312,6 +409,7 @@ async fn page(pages: Pages, kind: PageKind, owner: &str, d: &str, rest: &str) ->
                 "ref": ref_name,
                 "commit": commit,
                 "path": path,
+                "page": page_no,
                 "objects": candidates(announcement, state, &defaults),
             });
             body.push_str(&format!(
@@ -398,6 +496,16 @@ mod tests {
             ["https://arweave.test/tx2", "https://own-gateway.test/tx2"]
         );
         assert_eq!(found.len(), 2, "a malformed tag names no object");
+    }
+
+    #[test]
+    fn the_page_number_is_forgiving_and_bounded() {
+        assert_eq!(page_number(None), 0);
+        assert_eq!(page_number(Some("page=3")), 3);
+        assert_eq!(page_number(Some("x=1&page=2")), 2);
+        assert_eq!(page_number(Some("page=-1")), 0);
+        assert_eq!(page_number(Some("page=99999999999999999999")), 0);
+        assert_eq!(page_number(Some("page=5000")), 1000);
     }
 
     #[test]

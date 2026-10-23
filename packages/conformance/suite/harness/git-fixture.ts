@@ -40,10 +40,17 @@ export function treeOf(entries: [string, string, GitObject][]): GitObject {
   );
 }
 
-export function commitOf(tree: GitObject, message: string): GitObject {
-  const person = 'Ada <ada@example.test> 1700000000 +0000';
+/** A commit of `tree`, after `parent` if it has one; `at` is its time. */
+export function commitOf(
+  tree: GitObject,
+  message: string,
+  parent?: GitObject,
+  at = 1700000000
+): GitObject {
+  const person = `Ada <ada@example.test> ${at} +0000`;
+  const parents = parent ? `parent ${parent.id}\n` : '';
   return gitObject(
     'commit',
-    `tree ${tree.id}\nauthor ${person}\ncommitter ${person}\n\n${message}\n`
+    `tree ${tree.id}\n${parents}author ${person}\ncommitter ${person}\n\n${message}\n`
   );
 }
