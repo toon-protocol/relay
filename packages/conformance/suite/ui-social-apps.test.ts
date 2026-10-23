@@ -57,7 +57,10 @@ describe('relay image conformance: /social apps, bounties and trust', () => {
       // Dan's star and Iris's app set: two people.
       expect(apps.text).toContain('data-vouches="2"');
       expect(apps.text).toContain('Iris&#39;s sailing kit');
-      expect(apps.text).toContain('href="/social/apps">Apps</a>');
+      // The header links Apps, marked as the page it is on.
+      expect(apps.text).toContain(
+        'class="navlink current" href="/social/apps" aria-current="page">Apps</a>'
+      );
       expect(apps.text).toContain('href="/social/bounties">Bounties</a>');
       expect(apps.text).toContain('open draft (nostr-protocol/nips#1336)');
       expect((await page('/social/apps?t=weather')).text).toContain(

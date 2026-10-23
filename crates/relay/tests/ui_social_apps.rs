@@ -199,8 +199,10 @@ async fn an_app_listing_shows_its_newest_release_files_and_vouchers() {
     assert!(index.1.contains("data-vouches=\"2\""));
     assert!(index.1.contains("Sailing kit"));
     assert!(
-        index.1.contains("href=\"/social/apps\">Apps</a>"),
-        "the header links here"
+        index
+            .1
+            .contains("href=\"/social/apps\" aria-current=\"page\">Apps</a>"),
+        "the header links here, marked current"
     );
     let filtered = get(relay, "/social/apps?t=rust").await;
     assert!(!filtered.1.contains(&format!("data-app=\"{app}\"")));
