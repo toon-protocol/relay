@@ -83,7 +83,7 @@ impl Media {
 }
 
 /// `url` if it is `https` with a host and holds nothing a URL should not.
-fn https(url: &str) -> Option<&str> {
+pub(crate) fn https(url: &str) -> Option<&str> {
     let url = url.trim();
     let rest = url.strip_prefix("https://")?;
     (!rest.is_empty()

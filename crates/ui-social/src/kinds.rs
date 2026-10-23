@@ -39,6 +39,23 @@ pub(crate) const APP_HANDLER: u16 = 31_990;
 /// NIP-5A named site manifest.
 pub(crate) const SITE_NAMED: u16 = 35_128;
 
+/// NIP-82 (draft, nostr-protocol/nips#1336) software asset.
+pub(crate) const SOFTWARE_ASSET: u16 = 3_063;
+/// NIP-56 report.
+pub(crate) const REPORT: u16 = 1_984;
+/// NIP-75 zap goal.
+pub(crate) const ZAP_GOAL: u16 = 9_041;
+/// NIP-51 mute list.
+pub(crate) const MUTE_LIST: u16 = 10_000;
+/// NIP-82 software release (NIP-51's release artifact set kind).
+pub(crate) const SOFTWARE_RELEASE: u16 = 30_063;
+/// NIP-51 app curation set.
+pub(crate) const APP_SET: u16 = 30_267;
+/// NIP-99 classified listing.
+pub(crate) const CLASSIFIED: u16 = 30_402;
+/// NIP-82 software application.
+pub(crate) const SOFTWARE_APP: u16 = 32_267;
+
 pub(crate) use ui_nip34::card::FOLLOWED_REPOS;
 pub(crate) use ui_nip34::repo::ANNOUNCEMENT;
 

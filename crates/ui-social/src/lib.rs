@@ -18,14 +18,21 @@
 //! site. Media a post names is loaded by the visitor's browser, never by the
 //! relay ([`media`]).
 
+mod apps;
+mod bounties;
 mod content;
 mod feed;
 mod kinds;
 mod media;
+mod mute;
 mod note;
 mod post;
 mod repo_page;
+mod reports;
 mod ship;
+mod tips;
+mod version;
+mod viewer;
 
 use std::collections::HashMap;
 
@@ -108,6 +115,13 @@ pub fn app(store: ReadOnlyStore, settings: Settings, apps: Apps) -> AppUi {
         .route("/social/r/{npub}/{d}", get(repo_page::maker))
         .route("/social/r/{npub}/{d}/{tab}", get(repo_page::tab))
         .route("/social/e/{id}", get(note::page))
+        .route("/social/apps", get(apps::index))
+        .route("/social/apps/sets/{naddr}", get(apps::set))
+        .route("/social/app/{naddr}", get(apps::by_naddr))
+        .route("/social/app/{npub}/{d}", get(apps::page))
+        .route("/social/app/{npub}/{d}/reports", get(reports::app))
+        .route("/social/r/{npub}/{d}/reports", get(reports::repo))
+        .route("/social/bounties", get(bounties::page))
         .fallback(fallback)
         .with_state(Pages {
             store,
@@ -128,7 +142,9 @@ async fn asset(Path(name): Path<String>) -> Response {
 /// of the key a visitor names (a `GET`, so nothing is written or kept).
 fn header(viewer: Option<&PublicKey>) -> String {
     format!(
-        "<nav class=\"app-nav\" aria-label=\"Social\"><a class=\"navlink\" href=\"{PREFIX}\">{}Home</a></nav>\
+        "<nav class=\"app-nav\" aria-label=\"Social\"><a class=\"navlink\" href=\"{PREFIX}\">{}Home</a>\
+         <a class=\"navlink\" href=\"{PREFIX}/bounties\">Bounties</a>\
+         <a class=\"navlink\" href=\"{PREFIX}/apps\">Apps</a></nav>\
          <span class=\"grow\"></span>\
          <form class=\"viewer\" method=\"get\" action=\"{PREFIX}/following\">\
          <label for=\"viewer-npub\">Viewing as</label>\

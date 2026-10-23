@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, RawQuery, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use nostr::event::{Event, Kind};
@@ -93,7 +93,11 @@ pub(crate) fn tally(reactions: &[Event]) -> Vec<(String, usize)> {
     ranked
 }
 
-pub(crate) async fn page(State(pages): State<Pages>, Path(target): Path<String>) -> Response {
+pub(crate) async fn page(
+    State(pages): State<Pages>,
+    Path(target): Path<String>,
+    RawQuery(query): RawQuery,
+) -> Response {
     let Some(id) = parse_event_id(&target) else {
         return not_found(&pages);
     };
@@ -165,10 +169,18 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(target): Path<String>)
         None => plain(&view, &event, &repos, &reactions),
     };
     let maker_of = ship.as_ref().or(repos.first());
-    let body = format!(
+    let mut body = crate::reports::post_banner(
+        store,
+        &event,
+        ship.as_ref().and_then(|repo| cards.get(repo)),
+        &pages.links(),
+        query.as_deref(),
+    )
+    .await;
+    body.push_str(&format!(
         "<div class=\"split\"><div class=\"main\">{main}</div>{}</div>",
         rail(&view, &replies, maker_of)
-    );
+    ));
     let title = match &ship {
         Some(_) => post::ship_title(&event),
         None => first_tag(&event, "title")

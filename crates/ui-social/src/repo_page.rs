@@ -16,7 +16,7 @@
 
 use std::collections::HashSet;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, RawQuery, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use nostr::event::{Event, Kind};
@@ -191,21 +191,23 @@ pub(crate) async fn redirect(State(pages): State<Pages>, Path(target): Path<Stri
 pub(crate) async fn maker(
     State(pages): State<Pages>,
     Path((owner, d)): Path<(String, String)>,
+    RawQuery(query): RawQuery,
 ) -> Response {
-    page(&pages, &owner, &d, Tab::Maker).await
+    page(&pages, &owner, &d, Tab::Maker, query.as_deref()).await
 }
 
 pub(crate) async fn tab(
     State(pages): State<Pages>,
     Path((owner, d, tab)): Path<(String, String, String)>,
+    RawQuery(query): RawQuery,
 ) -> Response {
     match Tab::from_slug(&tab) {
-        Some(tab) => page(&pages, &owner, &d, tab).await,
+        Some(tab) => page(&pages, &owner, &d, tab, query.as_deref()).await,
         None => not_found(&pages),
     }
 }
 
-async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab) -> Response {
+async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab, query: Option<&str>) -> Response {
     let Some(repo) = parse_pubkey(owner).and_then(|owner| RepoAddress::new(owner, d)) else {
         return not_found(pages);
     };
@@ -262,10 +264,27 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab) -> Response {
         Tab::Followers => followers.as_slice(),
         _ => &[],
     };
+    // Trust and safety, releases, bounties and tips (the apps slice).
+    let viewer = crate::viewer::as_key(query);
+    let follows: Option<HashSet<PublicKey>> = match &viewer {
+        Some(viewer) => Some(
+            crate::viewer::follows(store, viewer)
+                .await
+                .into_iter()
+                .collect(),
+        ),
+        None => None,
+    };
+    let report_targets = crate::reports::repo_targets(store, &card).await;
+    let found_reports = crate::reports::load(store, &report_targets).await;
+    let mut extras = crate::apps::repo_sidebar(store, &card).await;
+    extras.push_str(&crate::bounties::repo_sidebar(store, &repo).await);
     for key in listed
         .iter()
         .map(|event| event.pubkey)
         .chain(people.iter().map(|(key, _)| *key))
+        .chain(crate::tips::split_keys(card.announcement()))
+        .chain(viewer)
     {
         if !keys.contains(&key) {
             keys.push(key);
@@ -298,10 +317,20 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab) -> Response {
         Tab::Media => sections.media.len(),
         Tab::Snippets => sections.snippets.len(),
     };
-    let mut body = header(&view, &card, stars.len(), followers.len());
     let base = links
         .social_path(&repo)
         .unwrap_or_else(|| format!("{PREFIX}/r/{}", repo.path_segments()));
+    let mut body = crate::reports::banner(
+        &found_reports,
+        &report_targets,
+        viewer.as_ref().zip(follows.as_ref()),
+        profiles.names(),
+        Some(&format!(
+            "{base}/reports{}",
+            crate::viewer::as_query(viewer.as_ref(), true)
+        )),
+    );
+    body.push_str(&header(&view, &card, stars.len(), followers.len()));
     let mut tabs: Vec<chrome::Tab> = Vec::new();
     if let Some(code) = links.repo_path(&repo) {
         tabs.push(chrome::Tab::new("Code", icon::CODE, code));
@@ -368,7 +397,12 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab) -> Response {
         Tab::Snippets => body.push_str(&snippets(&view, &listed)),
     }
     body.push_str("</div>");
-    body.push_str(&sidebar(&view, &card));
+    extras.push_str(&crate::tips::split_card(
+        card.announcement(),
+        profiles.names(),
+        "the owner",
+    ));
+    body.push_str(&sidebar(&view, &card, &extras));
     body.push_str("</div>");
     html(
         pages,
@@ -533,7 +567,7 @@ fn snippets(view: &View<'_>, events: &[&Event]) -> String {
 
 /// The sidebar: what the repo is, where to clone it, who keeps it, and how
 /// to star or follow it from a client.
-fn sidebar(view: &View<'_>, card: &RepoCard) -> String {
+fn sidebar(view: &View<'_>, card: &RepoCard, extras: &str) -> String {
     let repo = card.address();
     let mut out = String::from("<aside class=\"sidebar\"><div><h2>About</h2>");
     match card.description() {
@@ -585,8 +619,10 @@ fn sidebar(view: &View<'_>, card: &RepoCard) -> String {
             name(card.profiles().names(), key)
         ));
     }
+    out.push_str("</ul></div>");
+    out.push_str(extras);
     out.push_str(&format!(
-        "</ul></div><div class=\"side-card\"><h2>Star or follow</h2><p class=\"muted small\">\
+        "<div class=\"side-card\"><h2>Star or follow</h2><p class=\"muted small\">\
          This page writes nothing. From a Nostr client, a star is a kind 7 with content <code>+</code> \
          and the tags <code>a</code> <code>{0}</code> and <code>k</code> <code>30617</code>; a follow \
          adds <code>a</code> <code>{0}</code> to your kind 10018 list. Each is one paid write.</p></div></aside>",
