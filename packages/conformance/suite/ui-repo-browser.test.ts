@@ -35,11 +35,12 @@ interface Received {
 const ALIAS = 'host.docker.internal';
 
 /**
- * An https server standing in for an Arweave gateway, serving `objects` by
- * path. It allows any origin (the browser fetches cross-origin) and records
- * every request, and the address of every connection, so a case can tell who
- * asked: the browser connects from loopback, the relay container from the
- * Docker bridge, even when its TLS handshake fails before any request.
+ * An https server standing in for an Arweave gateway or a Blossom server,
+ * serving `objects` by path. It allows any origin (the browser fetches
+ * cross-origin) and records every request, and the address of every
+ * connection, so a case can tell who asked: the browser connects from
+ * loopback, the relay container from the Docker bridge, even when its TLS
+ * handshake fails before any request.
  */
 async function stubGateway(objects: Map<string, Buffer>) {
   const directory = await mkdtemp(join(tmpdir(), 'stub-gateway-'));
@@ -99,12 +100,12 @@ async function stubGateway(objects: Map<string, Buffer>) {
   };
 }
 
-// A repository whose files are on the stub gateway, except one it lost and
-// one it answers wrongly.
+// A repository whose files are on the stub gateway, except one it lost, one
+// it answers wrongly, and one held only on the stub Blossom server.
 const hello = gitObject('blob', 'hello from the stub gateway\n');
 const lost = gitObject('blob', 'this object was never uploaded\n');
 const liar = gitObject('blob', 'what the liar should have served\n');
-// Held only on Blossom, by sha256, with the header.
+// Held only on Blossom, under the sha256 of its object bytes (header included).
 const pooled = gitObject('blob', 'hello from the stub blossom server\n');
 const pooledBlobId = createHash('sha256').update(pooled.headed).digest('hex');
 // Entries in git's order, sorted by name.
@@ -177,13 +178,14 @@ afterAll(async () => {
 
 describe('relay image conformance: /repo git pages in a browser', () => {
   conformanceTest(
-    'a blob page renders the file; a lost or wrong object shows "no longer held"; only the browser asks the gateway',
+    'a blob page renders the file; a lost or wrong object shows "no longer held"; a blob only on Blossom renders; only the browser asks the gateway or Blossom server',
     async () => {
       // Fetching the pages without a browser must not make the relay fetch.
       for (const path of ['tree/main', 'blob/main/hello.txt']) {
         expect((await fetch(`${repo}/${path}`)).status).toBe(200);
       }
       expect(gateway.connectedFrom).toEqual([]);
+      expect(blossom.connectedFrom).toEqual([]);
 
       const context = await browser.newContext({ ignoreHTTPSErrors: true });
       // What the browser saw, reported if the case fails: a page that never
@@ -201,7 +203,11 @@ describe('relay image conformance: /repo git pages in a browser', () => {
         page.on('response', (r) => seen.push(`${r.status()} ${r.url()}`));
         const asked: string[] = [];
         page.on('request', (request) => {
-          if (request.url().startsWith(gateway.url)) asked.push(request.url());
+          if (
+            request.url().startsWith(gateway.url) ||
+            request.url().startsWith(blossom.url)
+          )
+            asked.push(request.url());
         });
 
         await page.goto(`${repo}/blob/main/hello.txt`);
@@ -219,7 +225,6 @@ describe('relay image conformance: /repo git pages in a browser', () => {
         expect(blossom.received.map((r) => r.path)).toContain(
           `/${pooledBlobId}`
         );
-        expect(new Set(blossom.connectedFrom)).toEqual(new Set(['127.0.0.1']));
 
         await page.goto(`${repo}/blob/main/lost.txt`);
         await page.locator('#git', { hasText: HELD }).waitFor();
@@ -241,17 +246,22 @@ describe('relay image conformance: /repo git pages in a browser', () => {
           'pooled.txt',
         ]);
 
-        // Everything the stub received came from the browser, which the
+        // Everything the stubs received came from the browser, which the
         // browser itself saw and which carries the page's origin; no
         // connection came from the relay's container.
-        expect(gateway.received.length).toBeGreaterThan(0);
-        expect(new Set(gateway.connectedFrom)).toEqual(new Set(['127.0.0.1']));
-        for (const request of gateway.received) {
-          expect(request.origin).toBe(relay.readUrl);
-          expect(request.userAgent).toMatch(/Chrome/);
+        for (const stub of [gateway, blossom]) {
+          expect(stub.received.length).toBeGreaterThan(0);
+          expect(new Set(stub.connectedFrom)).toEqual(new Set(['127.0.0.1']));
+          for (const request of stub.received) {
+            expect(request.origin).toBe(relay.readUrl);
+            expect(request.userAgent).toMatch(/Chrome/);
+          }
         }
         expect(
-          new Set(gateway.received.map((r) => `${gateway.url}${r.path}`))
+          new Set([
+            ...gateway.received.map((r) => `${gateway.url}${r.path}`),
+            ...blossom.received.map((r) => `${blossom.url}${r.path}`),
+          ])
         ).toEqual(new Set(asked));
       } catch (error) {
         throw new Error(

@@ -452,6 +452,16 @@ describe('relay image conformance: the /repo app UI', () => {
           TOON_UI_BLOB_SERVERS: servers,
         },
       });
+      // The page's `data-git` attribute, parsed.
+      const layoutOf = (html: string) =>
+        JSON.parse(
+          (/data-git="([^"]*)"/.exec(html)?.[1] ?? '')
+            .replaceAll('&quot;', '"')
+            .replaceAll('&#39;', "'")
+            .replaceAll('&lt;', '<')
+            .replaceAll('&gt;', '>')
+            .replaceAll('&amp;', '&')
+        );
       try {
         const owner = generateSecretKey();
         const stranger = generateSecretKey();
@@ -459,7 +469,7 @@ describe('relay image conformance: the /repo app UI', () => {
         const root = treeOf([['100644', 'a b.txt', file]]);
         const commit = commitOf(root, 'first');
         const blobId = 'c'.repeat(64);
-        const blobId2 = 'd'.repeat(64);
+        const fileBlobId = 'd'.repeat(64);
         await publishOk(
           configured,
           sign(owner, {
@@ -485,7 +495,7 @@ describe('relay image conformance: the /repo app UI', () => {
             ['arweave', commit.id, 'txcommit', 'https://own-gateway.test'],
             ['blossom', commit.id, blobId],
             ['arweave', root.id, 'txroot'],
-            ['blossom', file.id, blobId2],
+            ['blossom', file.id, fileBlobId],
           ])
         );
         // A stranger's state is not honoured, so its objects are not listed.
@@ -516,15 +526,7 @@ describe('relay image conformance: the /repo app UI', () => {
             /^<script type="module" src="\/repo\/assets\/[\w.-]+\.js">$/
           );
           expect(html).not.toMatch(/\son\w+=/);
-          const attribute = /data-git="([^"]*)"/.exec(html)?.[1] ?? '';
-          const layout = JSON.parse(
-            attribute
-              .replaceAll('&quot;', '"')
-              .replaceAll('&#39;', "'")
-              .replaceAll('&lt;', '<')
-              .replaceAll('&gt;', '>')
-              .replaceAll('&amp;', '&')
-          );
+          const layout = layoutOf(html);
           expect(layout.kind).toBe(page);
           expect(layout.ref).toBe('feature/x');
           expect(layout.commit).toBe(commit.id);
@@ -539,11 +541,60 @@ describe('relay image conformance: the /repo app UI', () => {
           expect(layout.objects[root.id]).toEqual([`${gateways}/txroot`]);
           // Only a `blossom` tag: Blossom servers alone.
           expect(layout.objects[file.id]).toEqual([
-            `https://own-blossom.test/${blobId2}`,
-            `${servers}/${blobId2}`,
+            `https://own-blossom.test/${fileBlobId}`,
+            `${servers}/${fileBlobId}`,
           ]);
           expect(layout.objects['f'.repeat(40)]).toBeUndefined();
         }
+
+        // A repository whose state carries only `blossom` tags: every object
+        // is listed against Blossom servers alone, the announcement's first.
+        const pooledFile = gitObject('blob', 'only on blossom\n');
+        const pooledRoot = treeOf([['100644', 'b.txt', pooledFile]]);
+        const pooledCommit = commitOf(pooledRoot, 'pooled');
+        const pooled = [pooledCommit, pooledRoot, pooledFile].map(
+          (object, i) => [object.id, String(i + 1).repeat(64)] as const
+        );
+        await publishOk(
+          configured,
+          sign(owner, {
+            kind: 30617,
+            created_at: 10,
+            tags: [
+              ['d', 'pooled'],
+              ['blossoms', 'https://own-blossom.test'],
+            ],
+          })
+        );
+        await publishOk(
+          configured,
+          sign(owner, {
+            kind: 30618,
+            created_at: 20,
+            tags: [
+              ['d', 'pooled'],
+              ['HEAD', 'ref: refs/heads/main'],
+              ['refs/heads/main', pooledCommit.id],
+              ...pooled.map(([id, blob]) => ['blossom', id, blob]),
+            ],
+          })
+        );
+        const pooledHome = `/repo/${nip19.npubEncode(pubkeyOf(owner))}/pooled`;
+        const pooledPage = await fetch(
+          `${configured.readUrl}${pooledHome}/tree/main`
+        );
+        expect(pooledPage.status).toBe(200);
+        const pooledLayout = layoutOf(await pooledPage.text());
+        expect(pooledLayout.commit).toBe(pooledCommit.id);
+        expect(pooledLayout.objects).toEqual(
+          Object.fromEntries(
+            pooled.map(([id, blob]) => [
+              id,
+              [`https://own-blossom.test/${blob}`, `${servers}/${blob}`],
+            ])
+          )
+        );
+
         const missing = await fetch(`${configured.readUrl}${home}/blob/nope/a`);
         expect(missing.status).toBe(404);
       } finally {
