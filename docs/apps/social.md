@@ -124,6 +124,11 @@ gateway is set.
 | `/social/r/<npub>/<d>` | The repo as a profile; tabs `/talk`, `/stars`, `/followers`, `/media`, `/snippets` | `{"#a":[A]}`, `{"kinds":[1111],"#A":[A]}`, kind 7 and 10018 by `#a`, recent 1337s for a `repo` tag |
 | `/social/r/<naddr>` | A redirect to the repo's page | — |
 | `/social/e/<id>` | One post (hex, `note` or `nevent`) with its replies; a launch when it is one | the event, kind 1 replies by `e`, kind 1111 by `E`, kind 7 reactions by `e` |
+| `/social/apps` | Every app listing here, `?t=<topic>` for one topic, and recent app sets | kind 32267 (NIP-82, **draft**), kind 7 and 30267 by `#a` |
+| `/social/app/<npub>/<d>`, `/social/app/<naddr>` | One app: its releases by channel (`?channel=`), files, who vouches, `?as=<npub>` | kinds 32267, 30063 by `#i`, 3063 by id, 7 and 30267 by `#a`, 1984 |
+| `/social/apps/sets/<naddr>` | One app set and the apps it lists | kind 30267, then 32267 |
+| `/social/bounties` | Bounties by status (`?status=open\|claimed\|resolved`, `?repo=<A>`) and goals | kind 30402 by `#t` `bounty`, 1621 and 1630–1633, 9041 |
+| `/social/r/<npub>/<d>/reports`, `/social/app/<npub>/<d>/reports` | The reports on a repo (or an app) and what it ships | kind 1984 by `#a`, `#e`, `#x` |
 
 A note's replies are on its page, not in the feed. A merge (kind 1631) shows
 only from an authorized author or the change's own author (ADR 0002, rule 3).
@@ -164,6 +169,123 @@ requested until it is played (`preload="none"`). Avatars are initials, never a
 profile's `picture`, so reading a feed does not load a picture per person.
 `/repo`'s pages keep their stricter policy.
 
+## Apps, bounties, tips and trust
+
+Proposals 15, 16, 18 of the research note, and app listings. Sources: the
+open NIP-82 pull request
+([nostr-protocol/nips#1336](https://github.com/nostr-protocol/nips/pull/1336),
+read at its head `9d959cd`), and NIP-51, -56, -57, -75 and -99 at
+nostr-protocol/nips `d47a2ec`.
+
+### Reading as someone: `?as=<npub>`
+
+The pages have no login (ADR 0001), so a page that can be read through
+someone's eyes takes `?as=<npub>` in its URL and reads that key's public
+lists: its kind 3 follows and its kind 10000 mute list. Anyone can read as
+anyone, since those lists are public; nothing is kept.
+
+### Apps (NIP-82, an unmerged draft)
+
+**NIP-82 is not a merged NIP.** It is an open pull request (Zapstore uses
+it); its shapes may still change, and the pages say so. A listing is three
+kinds, each one paid write:
+
+| Event | Kind | What the pages read |
+| --- | --- | --- |
+| App | 32267, addressable | `d` (app id, reverse-domain), `name`, `summary`, `icon`, `image`s, `t`s, `url`, `repository`, `a` → `30617:…` (the source repo), `f` platforms, `license`; content is Markdown |
+| Release | 30063, addressable | `i` = the app's `d`, `version`, `d` = `<i>@<version>`, `c` channel (`main` when absent), `e` per asset; content is the release notes |
+| Asset | 3063 | `i`, `url`, `m` MIME, `x` SHA-256, `size`, `version`, `f`, `variant`, `commit`, `supported_nip` |
+
+- Releases count only when signed by the app's author with `i` equal to its
+  `d`. Each channel shows its **newest version** by the draft's Appendix D,
+  not its newest event: SemVer precedence, a leading `v` ignored, fallback
+  segments on `.`, `-`, `_`, and the draft's own example order
+  (`1.0.0-dev < -alpha < -alpha.2 < -beta < -beta.2 < -rc1 < 1.0.0`), which
+  ranks `dev < alpha < beta < rc/pre/preview` where plain SemVer would not
+  (`crates/ui-social/src/version.rs`).
+- An asset row shows platform, MIME type, size, the SHA-256 shortened (full in
+  its title) and the commit, linked to the `/repo` commit page when the app
+  `a`-tags a repo. It links **Download** only for an `https` `url`;
+  otherwise it says to fetch the file by hash from a Blossom server. The relay
+  fetches neither the file nor any image: the browser loads `https` icons and
+  screenshots under the media policy below.
+- **Who vouches** counts distinct people who starred the app (a kind 7 `+`
+  with `a` = the app's address; a `k` other than `32267` disqualifies it) or
+  put it in a NIP-51 app set (kind 30267). With `?as=`, only the people that
+  key follows. The card says whether the signer also keeps the linked repo
+  (ADR 0002's authorized authors).
+- A repo's page shows **Latest release** when an authorized author's app
+  `a`-tags it.
+
+### Bounties and goals
+
+A bounty is a NIP-99 listing tagged as one, naming a repo or an issue:
+
+```json
+{
+  "kind": 30402,
+  "tags": [
+    ["d", "southern-stations"],
+    ["title", "Southern Hemisphere tide stations"],
+    ["t", "bounty"],
+    ["price", "50", "USDC"],
+    ["e", "<issue id, kind 1621>"],
+    ["a", "30617:<owner pubkey>:tidepool"]
+  ],
+  "content": "What is wanted, in Markdown."
+}
+```
+
+Its status on `/social/bounties` is **Resolved** when its issue's honoured
+status (ADR 0002 rule 3: the owner, a maintainer or the issue's author) is a
+kind 1631; else **Claimed** when the listing's NIP-99 `status` is `sold` (or
+`claimed`); else **Open**. The price is shown as written; nothing converts or
+checks it. A repo's page counts the open bounties naming it.
+
+A goal is a NIP-75 kind 9041 with an `a` tag naming the repo. The page shows
+its description and its target (`amount`, in millisats) and **no progress**:
+NIP-75 tallies Lightning zap receipts (kind 9735), which TOON does not
+produce, and the relay never checks a payment.
+
+### Tips: the gap
+
+There is no tip button, on purpose. The Nostr shape for tipping is NIP-57
+zaps, and they are out on TOON: a zap receipt is written by the recipient's
+Lightning server, not by the payer, and nothing on TOON carries Lightning. The
+relay must not validate a payment either; payment checks live only in the
+connector. What would close the gap is a NIP for a **receipt the payer
+writes** for an ILP payment to a pubkey, taggable to a repo, which the relay
+stores and shows as a claim (or as connector-stated, if the connector states
+it) and never verifies. Until then, a repo announcement or app that carries
+NIP-57 `zap` split tags shows them as text, **"Tip split (set by the
+owner)"**, with each share computed as NIP-57 Appendix G says.
+
+### Reports and mutes
+
+A report is a NIP-56 kind 1984. NIP-56 names the target in an `e`, `p` or `x`
+tag with the report type as its third entry; to report a repo or an app, this
+guide's convention is the same on an `a` tag:
+
+```json
+{ "kind": 1984, "tags": [["a", "30617:<owner pubkey>:tidepool", "malware"], ["p", "<owner pubkey>"]], "content": "Why." }
+```
+
+A file is reported by its asset's `e` and its `x` hash. The pages read reports
+on a repo, its makers' posts about it, the apps they publish for it, their
+releases and files. With `?as=<npub>`, a repo, app or post page shows a banner
+when people that key follows reported it (how many, by type) with a link to
+the reports list; without it, only a neutral "N reports on this relay" line.
+**Nothing is hidden because of a report**: anyone can report anything, and
+removal stays the operator's blocklist (`docs/retention.md`). A person's
+reports count once.
+
+With `?as=<npub>`, the feed `/social` (and always the following feed of its
+own key) leaves out what that key's NIP-51 mute list (kind 10000) names:
+`p` people, `t` hashtags, `word`s and `e` threads, and repos whose owner is
+muted or whose topics are muted from "trending today". Only the list's public
+tags are read; its encrypted private items stay private to its author's
+client. `crates/ui-social/src/mute.rs` is the filter, for any list to reuse.
+
 ## Trying it locally
 
 A dev seed loads a small, realistic community (profiles, two repos and a
@@ -187,3 +309,8 @@ accepts `POST /write` directly, which is how the seed writes. The fixture is
 `packages/conformance/suite/harness/social-fixture.ts`; the conformance cases
 in `packages/conformance/suite/ui-social.test.ts` seed the same events. Its
 media are placeholder images from picsum.photos, which your browser loads.
+
+The seed then loads `suite/harness/social-apps-fixture.ts`: tidepool as an
+app with releases and files, an app set, bounties, a goal, reports and a mute
+list. `ui-social-apps.test.ts` seeds the same; open the printed `read as`,
+`reports` and `muted feed` links to see the `?as=` lens at work.
