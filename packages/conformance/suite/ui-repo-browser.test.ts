@@ -103,10 +103,11 @@ async function stubGateway(objects: Map<string, Buffer>) {
 const hello = gitObject('blob', 'hello from the stub gateway\n');
 const lost = gitObject('blob', 'this object was never uploaded\n');
 const liar = gitObject('blob', 'what the liar should have served\n');
+// Entries in git's order, sorted by name.
 const root = treeOf([
   ['100644', 'hello.txt', hello],
-  ['100644', 'lost.txt', lost],
   ['100644', 'liar.txt', liar],
+  ['100644', 'lost.txt', lost],
 ]);
 const commit = commitOf(root, 'a commit');
 
@@ -212,8 +213,8 @@ describe('relay image conformance: /repo git pages in a browser', () => {
         await page.locator('#git li').first().waitFor();
         expect(await page.locator('#git li').allTextContents()).toEqual([
           'hello.txt',
-          'lost.txt',
           'liar.txt',
+          'lost.txt',
         ]);
 
         // Everything the stub received came from the browser, which the
