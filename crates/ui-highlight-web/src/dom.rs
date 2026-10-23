@@ -85,16 +85,15 @@ fn colour(document: &Document, root: &Element, extension: &str) -> bool {
     true
 }
 
-/// A run as an element. The colour is the stylesheet's, by class: a `style`
-/// attribute, or the CSSOM, is what the page's content security policy
-/// refuses to be the only way.
+/// A run as an element. Its look is the stylesheet's, by class, never a
+/// `style` attribute or the CSSOM, so `/repo` and `/social` share one theme.
 fn span(document: &Document, run: &Run) -> Element {
     let span = document
         .create_element("span")
         .expect("span is a valid tag name");
     span.set_text_content(Some(&run.text));
-    if let Some(class) = run.class {
-        let _ = span.set_attribute("class", class.css());
+    if let Some(class) = run.css() {
+        let _ = span.set_attribute("class", &class);
     }
     span
 }

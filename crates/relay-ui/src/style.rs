@@ -55,12 +55,8 @@ mod tests {
 
     #[test]
     fn every_class_the_highlighter_emits_has_a_rule() {
-        for class in ui_highlight::Class::ALL {
-            assert!(
-                STYLESHEET.contains(&format!(".{} {{", class.css())),
-                "{}",
-                class.css()
-            );
+        for class in ui_highlight::css_classes() {
+            assert!(STYLESHEET.contains(&format!(".{class} {{")), "{class}");
         }
     }
 

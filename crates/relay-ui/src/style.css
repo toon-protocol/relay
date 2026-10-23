@@ -810,14 +810,16 @@ details.older > ul { margin-top: 8px; }
    come from crates/ui-highlight, on /repo blob pages (set by the browser
    module) and on /social snippets (written by the server). Mid-tone colours
    with contrast on both the light and the dark page. */
-.hl-comment { color: #6a8a6a; font-style: italic; }
+.hl-comment { color: #6a8a6a; }
 .hl-string { color: #2f8f6a; }
 .hl-number { color: #c2703d; }
 .hl-escape { color: #b5499c; }
 .hl-keyword { color: #4d8ad8; }
 .hl-entity { color: #b08a2e; }
 .hl-parameter { color: #8a7bd1; }
-.hl-heading { color: #4d8ad8; font-weight: bold; }
-.hl-bold { color: #c2703d; font-weight: bold; }
-.hl-italic { color: #c2703d; font-style: italic; }
+.hl-heading { color: #4d8ad8; }
+.hl-bold { color: #c2703d; }
+.hl-italic { color: #c2703d; }
 .hl-raw { color: #2f8f6a; }
+.hl-b { font-weight: bold; }
+.hl-i { font-style: italic; }

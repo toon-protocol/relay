@@ -115,10 +115,9 @@ fn code_html(snippet: &Event) -> String {
     };
     let mut out = String::with_capacity(snippet.content.len() * 2);
     for run in &runs {
-        match run.class {
+        match run.css() {
             Some(class) => out.push_str(&format!(
-                "<span class=\"{}\">{}</span>",
-                class.css(),
+                "<span class=\"{class}\">{}</span>",
                 escape(&run.text)
             )),
             None => out.push_str(&escape(&run.text)),
@@ -252,7 +251,7 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(target): Path<String>)
     main.push_str(&note::tally_chips(&reactions));
     main.push_str(
         "<p class=\"muted small\">A code snippet (NIP-C0, kind 1337), shown as text: \
-         this page runs nothing, and any colour is the stylesheet\'s. Copy it from here or open it in a client.</p></article>",
+         this page runs nothing, and any colour is the stylesheet's. Copy it from here or open it in a client.</p></article>",
     );
     let body = format!(
         "<div class=\"split\"><div class=\"main\">{main}</div>{}</div>",

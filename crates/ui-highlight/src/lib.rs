@@ -8,8 +8,8 @@ use std::str::FromStr;
 use std::sync::OnceLock;
 
 use syntect::highlighting::{
-    Color, HighlightIterator, HighlightState, Highlighter, ScopeSelectors, Style, StyleModifier,
-    Theme, ThemeItem, ThemeSettings,
+    Color, FontStyle, HighlightIterator, HighlightState, Highlighter, ScopeSelectors, Style,
+    StyleModifier, Theme, ThemeItem, ThemeSettings,
 };
 use syntect::parsing::{ParseState, ScopeStack, ScopeStackOp, SyntaxReference, SyntaxSet};
 use syntect::util::LinesWithEndings;
@@ -18,8 +18,15 @@ use syntect::util::LinesWithEndings;
 /// a minified bundle.
 pub const MAX_BYTES: usize = 512 * 1024;
 
-/// The compiled set of the languages the page highlights (`build.rs`).
+/// The compiled set of the languages highlighted (`build.rs`).
 static SYNTAXES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/syntaxes.packdump"));
+
+/// The class the stylesheet draws bold. Apart from the colour, so text inside
+/// a bold scope (a Markdown heading's `code`) stays bold in its own colour.
+pub const BOLD: &str = "hl-b";
+
+/// The class the stylesheet draws italic, as [`BOLD`].
+pub const ITALIC: &str = "hl-i";
 
 /// What a run of text is, which the stylesheet turns into a colour.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,12 +80,21 @@ impl Class {
     /// The marker colour the theme gives this class, so a style read back
     /// from syntect names it. Never zero: that is the unscoped text.
     fn marker(self) -> u32 {
-        Self::ALL.iter().position(|&c| c == self).unwrap_or(0) as u32 + 1
+        let index = Self::ALL
+            .iter()
+            .position(|&c| c == self)
+            .expect("ALL lists every class");
+        index as u32 + 1
     }
 
     fn from_marker(marker: u32) -> Option<Class> {
         Self::ALL.get((marker as usize).checked_sub(1)?).copied()
     }
+}
+
+/// Every CSS class a run can carry, for the stylesheet's test.
+pub fn css_classes() -> impl Iterator<Item = &'static str> {
+    Class::ALL.into_iter().map(Class::css).chain([BOLD, ITALIC])
 }
 
 /// One run of text in one class.
@@ -88,6 +104,24 @@ pub struct Run {
     pub text: String,
     /// None for the page's own colour.
     pub class: Option<Class>,
+    /// Whether the run is drawn bold ([`BOLD`]).
+    pub bold: bool,
+    /// Whether the run is drawn italic ([`ITALIC`]).
+    pub italic: bool,
+}
+
+impl Run {
+    /// The run's `class` attribute value, or none for unstyled text.
+    pub fn css(&self) -> Option<String> {
+        let classes: Vec<&str> = self
+            .class
+            .map(Class::css)
+            .into_iter()
+            .chain(self.bold.then_some(BOLD))
+            .chain(self.italic.then_some(ITALIC))
+            .collect();
+        (!classes.is_empty()).then(|| classes.join(" "))
+    }
 }
 
 fn syntaxes() -> &'static SyntaxSet {
@@ -95,7 +129,7 @@ fn syntaxes() -> &'static SyntaxSet {
     SET.get_or_init(|| syntect::dumps::from_binary(SYNTAXES))
 }
 
-fn item(scope: &str, class: Class) -> ThemeItem {
+fn item(scope: &str, class: Class, font: Option<FontStyle>) -> ThemeItem {
     let marker = class.marker();
     ThemeItem {
         scope: ScopeSelectors::from_str(scope).expect("the theme's selectors are fixed and valid"),
@@ -107,30 +141,36 @@ fn item(scope: &str, class: Class) -> ThemeItem {
                 a: 0xff,
             }),
             background: None,
-            font_style: None,
+            font_style: font,
         },
     }
 }
 
-/// Which scopes are which class. The colours are the stylesheet's.
+/// Which scopes are which class, and which are bold or italic (an inner scope
+/// keeps the outer one's). The colours are the stylesheet's.
 fn theme() -> Theme {
     Theme {
         settings: ThemeSettings::default(),
         scopes: vec![
-            item("comment", Class::Comment),
-            item("string", Class::String),
-            item("constant.numeric, constant.language", Class::Number),
-            item("constant.character.escape", Class::Escape),
-            item("keyword, storage", Class::Keyword),
-            item("entity.name, support.function, support.type", Class::Entity),
+            item("comment", Class::Comment, Some(FontStyle::ITALIC)),
+            item("string", Class::String, None),
+            item("constant.numeric, constant.language", Class::Number, None),
+            item("constant.character.escape", Class::Escape, None),
+            item("keyword, storage", Class::Keyword, None),
+            item(
+                "entity.name, support.function, support.type",
+                Class::Entity,
+                None,
+            ),
             item(
                 "variable.parameter, variable.other.member, entity.other.attribute-name",
                 Class::Parameter,
+                None,
             ),
-            item("markup.heading", Class::Heading),
-            item("markup.bold", Class::Bold),
-            item("markup.italic", Class::Italic),
-            item("markup.raw, markup.underline.link", Class::Raw),
+            item("markup.heading", Class::Heading, Some(FontStyle::BOLD)),
+            item("markup.bold", Class::Bold, Some(FontStyle::BOLD)),
+            item("markup.italic", Class::Italic, Some(FontStyle::ITALIC)),
+            item("markup.raw, markup.underline.link", Class::Raw, None),
         ],
         ..Theme::default()
     }
@@ -143,7 +183,7 @@ pub fn extension(name: &str) -> Option<&str> {
         .filter(|extension| !extension.is_empty())
 }
 
-/// Whether the page can highlight files of this extension.
+/// Whether files of this extension can be highlighted.
 pub fn knows(extension: &str) -> bool {
     syntaxes().find_syntax_by_extension(extension).is_some()
 }
@@ -193,7 +233,7 @@ fn run(syntax: &SyntaxReference, text: &str) -> Option<Vec<Run>> {
     Some(runs)
 }
 
-/// Adds `piece`, merging it into the last run when the class is the same.
+/// Adds `piece`, merging it into the last run when the style is the same.
 fn push(runs: &mut Vec<Run>, style: Style, piece: &str) {
     if piece.is_empty() {
         return;
@@ -203,11 +243,17 @@ fn push(runs: &mut Vec<Run>, style: Style, piece: &str) {
         | u32::from(style.foreground.b);
     // The theme names no default colour, so unscoped text comes back black.
     let class = Class::from_marker(marker);
+    let bold = style.font_style.contains(FontStyle::BOLD);
+    let italic = style.font_style.contains(FontStyle::ITALIC);
     match runs.last_mut() {
-        Some(last) if last.class == class => last.text.push_str(piece),
+        Some(last) if last.class == class && last.bold == bold && last.italic == italic => {
+            last.text.push_str(piece)
+        }
         _ => runs.push(Run {
             text: piece.to_owned(),
             class,
+            bold,
+            italic,
         }),
     }
 }
@@ -304,6 +350,19 @@ mod tests {
     fn an_oversized_snippet_is_left_plain() {
         let big = "a".repeat(MAX_BYTES + 1);
         assert!(highlight_snippet(Some("rust"), None, &big).is_none());
+    }
+
+    #[test]
+    fn text_inside_a_bold_scope_stays_bold_in_its_own_class() {
+        let runs = highlight("md", "# Title `code`\n").expect("md is known");
+        let code = runs
+            .iter()
+            .find(|run| run.text.contains("code"))
+            .expect("code is a run");
+        assert!(code.bold, "{runs:?}");
+        assert_ne!(code.class, Some(Class::Heading));
+        let comment = highlight("rs", "// c\n").expect("rs is known");
+        assert_eq!(comment[0].css().as_deref(), Some("hl-comment hl-i"));
     }
 
     #[test]
