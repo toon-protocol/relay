@@ -58,7 +58,7 @@ fn io(action: &'static str, path: &Path) -> impl FnOnce(std::io::Error) -> UiAss
 }
 
 /// The WebAssembly crates, by package name.
-const WEB_CRATES: &[&str] = &["ui-nip34-web"];
+const WEB_CRATES: &[&str] = &["ui-highlight-web", "ui-nip34-web"];
 
 const TARGET: &str = "wasm32-unknown-unknown";
 

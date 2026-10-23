@@ -1,0 +1,78 @@
+%YAML 1.2
+---
+# Written for this crate: the Sublime Packages repository has no Solidity.
+# Deliberately small: comments, strings, numbers, keywords, types and
+# contract and function names, which is what reading a contract needs.
+name: Solidity
+scope: source.solidity
+file_extensions:
+  - sol
+
+variables:
+  ident: '[A-Za-z_$][A-Za-z0-9_$]*'
+
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - match: '\b(?:contract|interface|library|abstract)\b'
+      scope: storage.type.class.solidity
+      push: type-name
+    - match: '\b(?:function|modifier|event|error|struct|enum)\b'
+      scope: storage.type.function.solidity
+      push: type-name
+    - match: '\b(?:pragma|import|using|is|as|from|constructor|fallback|receive|returns|return|if|else|for|while|do|break|continue|try|catch|emit|revert|require|assert|new|delete|assembly|unchecked)\b'
+      scope: keyword.control.solidity
+    - match: '\b(?:public|private|internal|external|pure|view|payable|virtual|override|constant|immutable|indexed|memory|storage|calldata|anonymous)\b'
+      scope: storage.modifier.solidity
+    - match: '\b(?:true|false|this|super|msg|block|tx|abi)\b'
+      scope: constant.language.solidity
+    - match: '\b(?:address|bool|string|bytes\d*|u?int\d*|u?fixed\d*(?:x\d+)?|mapping|var)\b'
+      scope: storage.type.solidity
+    - match: '\b0[xX][0-9a-fA-F_]+\b|\b\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?\b'
+      scope: constant.numeric.solidity
+
+  type-name:
+    - match: '\s+'
+    - match: '{{ident}}'
+      scope: entity.name.type.solidity
+      pop: true
+    - match: ''
+      pop: true
+
+  comments:
+    - match: '//.*$'
+      scope: comment.line.double-slash.solidity
+    - match: '/\*'
+      scope: punctuation.definition.comment.solidity
+      push:
+        - meta_scope: comment.block.solidity
+        - match: '\*/'
+          scope: punctuation.definition.comment.solidity
+          pop: true
+
+  strings:
+    - match: '(?:hex|unicode)?"'
+      scope: punctuation.definition.string.begin.solidity
+      push: dq
+    - match: "(?:hex|unicode)?'"
+      scope: punctuation.definition.string.begin.solidity
+      push: sq
+
+  dq:
+    - meta_include_prototype: false
+    - meta_scope: string.quoted.double.solidity
+    - match: '\\.'
+      scope: constant.character.escape.solidity
+    - match: '"|$'
+      scope: punctuation.definition.string.end.solidity
+      pop: true
+
+  sq:
+    - meta_include_prototype: false
+    - meta_scope: string.quoted.single.solidity
+    - match: '\\.'
+      scope: constant.character.escape.solidity
+    - match: "'|$"
+      scope: punctuation.definition.string.end.solidity
+      pop: true

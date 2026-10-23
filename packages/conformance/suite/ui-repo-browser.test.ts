@@ -103,11 +103,15 @@ async function stubGateway(objects: Map<string, Buffer>) {
 const hello = gitObject('blob', 'hello from the stub gateway\n');
 const lost = gitObject('blob', 'this object was never uploaded\n');
 const liar = gitObject('blob', 'what the liar should have served\n');
+const rust = gitObject('blob', '// hi\nfn main() {\n    let x = "s";\n}\n');
+const unknown = gitObject('blob', 'fn main() {}\n');
 // Entries in git's order, sorted by name.
 const root = treeOf([
   ['100644', 'hello.txt', hello],
   ['100644', 'liar.txt', liar],
   ['100644', 'lost.txt', lost],
+  ['100644', 'main.rs', rust],
+  ['100644', 'notes.zzz', unknown],
 ]);
 const commit = commitOf(root, 'a commit');
 
@@ -123,6 +127,8 @@ beforeAll(async () => {
       // Blossom-style: with the header.
       [`tx${root.id}`, root.headed],
       [`tx${hello.id}`, hello.body],
+      [`tx${rust.id}`, rust.body],
+      [`tx${unknown.id}`, unknown.body],
       [`tx${liar.id}`, Buffer.from('not what the tag says\n')],
     ])
   );
@@ -143,7 +149,7 @@ beforeAll(async () => {
         ['d', 'smoke'],
         ['HEAD', 'ref: refs/heads/main'],
         ['refs/heads/main', commit.id],
-        ...[commit, root, hello, lost, liar].map((object) => [
+        ...[commit, root, hello, lost, liar, rust, unknown].map((object) => [
           'arweave',
           object.id,
           `tx${object.id}`,
@@ -215,6 +221,8 @@ describe('relay image conformance: /repo git pages in a browser', () => {
           'hello.txt',
           'liar.txt',
           'lost.txt',
+          'main.rs',
+          'notes.zzz',
         ]);
 
         // Everything the stub received came from the browser, which the
@@ -233,6 +241,56 @@ describe('relay image conformance: /repo git pages in a browser', () => {
         throw new Error(
           `${String(error)}\nthe browser saw:\n${seen.join('\n')}`
         );
+      } finally {
+        await context.close();
+      }
+    }
+  );
+
+  conformanceTest(
+    'a blob page highlights a known language in a separate module and leaves an unknown one plain; a tree page never loads it',
+    async () => {
+      const context = await browser.newContext({ ignoreHTTPSErrors: true });
+      try {
+        const page = await context.newPage();
+        const loaded: string[] = [];
+        page.on('response', (r) => loaded.push(r.url()));
+        const highlighter = () =>
+          loaded.filter((url) => url.includes('ui_highlight_web'));
+
+        await page.goto(`${repo}/blob/main/main.rs`);
+        await page.locator('#git pre[data-highlighted] span').first().waitFor();
+        expect(await page.locator('#git pre').textContent()).toBe(
+          '// hi\nfn main() {\n    let x = "s";\n}\n'
+        );
+        // Colour is set through the CSSOM: the page's policy refuses a
+        // `style` attribute, and a coloured run proves it was not refused.
+        const colours = await page
+          .locator('#git pre span')
+          .evaluateAll((spans) =>
+            spans.map((span) => getComputedStyle(span).color)
+          );
+        expect(new Set(colours).size).toBeGreaterThan(1);
+        expect(highlighter().length).toBeGreaterThan(0);
+
+        await page.goto(`${repo}/blob/main/notes.zzz`);
+        await page.locator('#git pre').waitFor();
+        // Give the highlighter time to have acted, were it going to.
+        await page.waitForTimeout(500);
+        expect(await page.locator('#git pre').textContent()).toBe(
+          'fn main() {}\n'
+        );
+        expect(await page.locator('#git pre span').count()).toBe(0);
+        expect(await page.locator('#git pre[data-highlighted]').count()).toBe(
+          0
+        );
+
+        loaded.length = 0;
+        await page.goto(`${repo}/tree/main`);
+        await page.locator('#git li').first().waitFor();
+        expect(highlighter()).toEqual([]);
+        expect(await page.content()).not.toContain('ui-highlight-web');
+        expect(await page.content()).not.toContain('ui_highlight_web');
       } finally {
         await context.close();
       }

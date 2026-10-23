@@ -40,6 +40,8 @@ const LIST_LIMIT: usize = 500;
 
 /// The manifest's name for the list page's script.
 const SCRIPT: &str = "ui-nip34-web.js";
+/// The manifest's name for the blob page's highlighter (#287).
+const HIGHLIGHT_SCRIPT: &str = "ui-highlight-web.js";
 
 /// What the list says when there are no assets to browse with.
 pub const UNAVAILABLE: &str = "git browsing unavailable";
