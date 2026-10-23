@@ -201,6 +201,9 @@ const EXPECTED_ROUTE_PRICES: Record<string, RoutePrice> = {
   'g.toon.relay.gas': 1000,
   'g.toon.echo': { base: 1, per_kib: 1 },
   'g.toon.workload-gateway.handover': 0,
+  'g.toon.blossom.upload': { base: 1000, per_kib: 10 },
+  'g.toon.blossom.mirror': 25000,
+  'g.toon.blossom.media': { base: 1000, per_kib: 10 },
 };
 
 // Each route must terminate at the relay endpoint that enforces that route's
@@ -221,6 +224,9 @@ const EXPECTED_ROUTE_HANDLER_URLS: Record<string, string> = {
   'g.toon.relay.gas': 'http://gas-web:3300/gas/execute',
   'g.toon.echo': 'http://echo-app:3000',
   'g.toon.workload-gateway.handover': 'http://gateway-gw:8081/handover',
+  'g.toon.blossom.upload': 'http://blossom:3001/upload',
+  'g.toon.blossom.mirror': 'http://blossom:3001/mirror',
+  'g.toon.blossom.media': 'http://blossom:3001/media',
 };
 
 // What [node] says about this node: the devnet's one connector, at the apex
@@ -234,6 +240,7 @@ const EXPECTED_NODE_ADDRESSES = [
   'g.toon.gas.quote',
   'g.toon.echo',
   'g.toon.workload-gateway',
+  'g.toon.blossom',
 ];
 const EXPECTED_HTTP_ENDPOINT = 'https://toonprotocol.dev/ilp';
 const EXPECTED_BTP_ENDPOINT = 'wss://toonprotocol.dev/ilp/btp';
@@ -243,7 +250,7 @@ const EXPECTED_BTP_ENDPOINT = 'wss://toonprotocol.dev/ilp/btp';
 // for what it forwards (connector#1230); its predecessor `rust-sha-6ea6009`
 // was the first to speak `[node]` (ADR 0050) and state a verified payment to
 // the app on delivery (ADR 0040).
-const EXPECTED_CONNECTOR_TAG = 'rust-2026.10.16.1';
+const EXPECTED_CONNECTOR_TAG = 'rust-2026.10.23.1';
 
 // The one file that may name a connector build. It used to be
 // deploy/Dockerfile's `ARG CONNECTOR_TAG`, back when this bundle published a
@@ -937,7 +944,7 @@ describe('the shared-edge overlay (docker-compose.shared-edge.yml, toon-protocol
   };
   // The devnet's one connector delivers to the other apps on their own edge
   // networks, as each app's own connector did before.
-  const APP_NETWORKS = ['edge-store', 'edge-gas', 'edge-gateway', 'edge-echo'];
+  const APP_NETWORKS = ['edge-store', 'edge-gas', 'edge-gateway', 'edge-echo', 'edge-blossom'];
 
   it('disables caddy, so the box never binds a host TLS port of its own once the shared edge fronts it', () => {
     const overlay = readSharedEdgeOverlay();

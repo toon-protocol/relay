@@ -80,8 +80,8 @@ What the overlay does:
   infra#24's edge config expects — see the table below — and both keep the
   bundle's own default network too (`networks: {default: {}, edge-relay:
   {...}}`), so they still reach each other exactly as they do today.
-- **Joins `connector` to `edge-store`, `edge-gas`, `edge-gateway` and
-  `edge-echo` too**, with no alias: it only dials out there, to the apps
+- **Joins `connector` to `edge-store`, `edge-gas`, `edge-gateway`,
+  `edge-echo` and `edge-blossom` too**, with no alias: it only dials out there, to the apps
   whose routes `connector.toml` terminates. The apps' own overlays put them
   on those networks under these aliases:
 
@@ -92,9 +92,12 @@ What the overlay does:
   | `g.toon.gas`, `g.toon.relay.gas` | `edge-gas` | `http://gas-web:3300/gas/execute` | `1000` |
   | `g.toon.echo` | `edge-echo` | `http://echo-app:3000` | `{ base = 1, per_kib = 1 }` |
   | `g.toon.workload-gateway.handover` | `edge-gateway` | `http://gateway-gw:8081/handover` | `0` |
+  | `g.toon.blossom.upload` | `edge-blossom` | `http://blossom:3001/upload` | `{ base = 1000, per_kib = 10 }` |
+  | `g.toon.blossom.mirror` | `edge-blossom` | `http://blossom:3001/mirror` | `25000` |
+  | `g.toon.blossom.media` | `edge-blossom` | `http://blossom:3001/media` | `{ base = 1000, per_kib = 10 }` |
 
   Handlers and prices are copied from each app's own
-  `deploy/connector.toml.template`, so a payer pays what it paid that app's
+  `deploy/connector.toml.template` (the blob app's `deploy/connector.toml`), so a payer pays what it paid that app's
   connector, less the hop fee of 1 the relay used to add.
 - **Adds a `mem_limit` to every service**, including the now-disabled `caddy`.
   The `connector` (`64m`) and `relay` (`192m`) numbers are **measured**, not

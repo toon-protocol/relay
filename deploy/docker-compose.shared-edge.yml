@@ -27,11 +27,11 @@
 #               `toonprotocol.dev/ilp` (and, while the old names are kept as
 #               aliases, `proxy.relay.devnet`), the connector's client edge.
 #               It is the devnet's ONE connector, so it also joins
-#               `edge-store`, `edge-gas`, `edge-gateway` and `edge-echo` —
-#               no alias, it is only a client there — to deliver to the
-#               store (`store-dvm`), gas station (`gas-web`), workload
-#               gateway (`gateway-gw`) and Echo Merchant (`echo-app`)
-#               routes connector.toml terminates. Stays on the default
+#               `edge-store`, `edge-gas`, `edge-gateway`, `edge-echo` and
+#               `edge-blossom` — no alias, it is only a client there — to
+#               deliver to the store (`store-dvm`), gas station
+#               (`gas-web`), workload gateway (`gateway-gw`), Echo Merchant
+#               (`echo-app`) and blob app (`blossom`) routes connector.toml terminates. Stays on the default
 #               network too: it still dials `relay:3100` for every write,
 #               exactly as it does today.
 #   relay       Joins `edge-relay` under the `relay-ws` alias — the shared
@@ -115,6 +115,8 @@ networks:
     external: true
   edge-echo:
     external: true
+  edge-blossom:
+    external: true
 
 services:
   caddy:
@@ -145,6 +147,7 @@ services:
       edge-gas: {} # gas-web:3300 — g.toon.gas, g.toon.gas.quote, g.toon.relay.gas
       edge-gateway: {} # gateway-gw:8081 — g.toon.workload-gateway.handover
       edge-echo: {} # echo-app:3000 — g.toon.echo
+      edge-blossom: {} # blossom:3001 — g.toon.blossom.upload, .mirror, .media
 
   anon:
     # Provisional: anon as a SOCKS client idles at roughly 20 to 40 MB. Replace
