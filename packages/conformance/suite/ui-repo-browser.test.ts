@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:https';
@@ -34,11 +35,12 @@ interface Received {
 const ALIAS = 'host.docker.internal';
 
 /**
- * An https server standing in for an Arweave gateway, serving `objects` by
- * path. It allows any origin (the browser fetches cross-origin) and records
- * every request, and the address of every connection, so a case can tell who
- * asked: the browser connects from loopback, the relay container from the
- * Docker bridge, even when its TLS handshake fails before any request.
+ * An https server standing in for an Arweave gateway or a Blossom server,
+ * serving `objects` by path. It allows any origin (the browser fetches
+ * cross-origin) and records every request, and the address of every
+ * connection, so a case can tell who asked: the browser connects from
+ * loopback, the relay container from the Docker bridge, even when its TLS
+ * handshake fails before any request.
  */
 async function stubGateway(objects: Map<string, Buffer>) {
   const directory = await mkdtemp(join(tmpdir(), 'stub-gateway-'));
@@ -98,16 +100,20 @@ async function stubGateway(objects: Map<string, Buffer>) {
   };
 }
 
-// A repository whose files are on the stub gateway, except one it lost and
-// one it answers wrongly.
+// A repository whose files are on the stub gateway, except one it lost, one
+// it answers wrongly, and one held only on the stub Blossom server.
 const hello = gitObject('blob', 'hello from the stub gateway\n');
 const lost = gitObject('blob', 'this object was never uploaded\n');
 const liar = gitObject('blob', 'what the liar should have served\n');
+// Held only on Blossom, under the sha256 of its object bytes (header included).
+const pooled = gitObject('blob', 'hello from the stub blossom server\n');
+const pooledBlobId = createHash('sha256').update(pooled.headed).digest('hex');
 // Entries in git's order, sorted by name.
 const root = treeOf([
   ['100644', 'hello.txt', hello],
   ['100644', 'liar.txt', liar],
   ['100644', 'lost.txt', lost],
+  ['100644', 'pooled.txt', pooled],
 ]);
 const commit = commitOf(root, 'a commit');
 
@@ -125,6 +131,7 @@ const next = commitOf(nextRoot, 'second commit', commit, 1700000100);
 
 let relay: RunningRelay;
 let gateway: Awaited<ReturnType<typeof stubGateway>>;
+let blossom: Awaited<ReturnType<typeof stubGateway>>;
 let browser: Browser;
 let repo: string;
 
@@ -142,8 +149,12 @@ beforeAll(async () => {
       [`tx${fresh.id}`, fresh.body],
     ])
   );
+  blossom = await stubGateway(new Map([[pooledBlobId, pooled.headed]]));
   relay = await startRelay(imageUnderTest(), {
-    env: { TOON_UI_ARWEAVE_GATEWAYS: gateway.url },
+    env: {
+      TOON_UI_ARWEAVE_GATEWAYS: gateway.url,
+      TOON_UI_BLOB_SERVERS: blossom.url,
+    },
   });
   const owner = generateSecretKey();
   await publishOk(
@@ -163,6 +174,7 @@ beforeAll(async () => {
         ...[commit, root, hello, lost, liar, next, nextRoot, hello2, fresh].map(
           (object) => ['arweave', object.id, `tx${object.id}`]
         ),
+        ['blossom', pooled.id, pooledBlobId],
       ],
     })
   );
@@ -176,17 +188,19 @@ afterAll(async () => {
   await browser?.close();
   await relay?.stop();
   await gateway?.stop();
+  await blossom?.stop();
 });
 
 describe('relay image conformance: /repo git pages in a browser', () => {
   conformanceTest(
-    'a blob page renders the file; a lost or wrong object shows "no longer held"; only the browser asks the gateway',
+    'a blob page renders the file; a lost or wrong object shows "no longer held"; a blob only on Blossom renders; only the browser asks the gateway or Blossom server',
     async () => {
       // Fetching the pages without a browser must not make the relay fetch.
       for (const path of ['tree/main', 'blob/main/hello.txt']) {
         expect((await fetch(`${repo}/${path}`)).status).toBe(200);
       }
       expect(gateway.connectedFrom).toEqual([]);
+      expect(blossom.connectedFrom).toEqual([]);
 
       const context = await browser.newContext({ ignoreHTTPSErrors: true });
       // What the browser saw, reported if the case fails: a page that never
@@ -204,13 +218,27 @@ describe('relay image conformance: /repo git pages in a browser', () => {
         page.on('response', (r) => seen.push(`${r.status()} ${r.url()}`));
         const asked: string[] = [];
         page.on('request', (request) => {
-          if (request.url().startsWith(gateway.url)) asked.push(request.url());
+          if (
+            request.url().startsWith(gateway.url) ||
+            request.url().startsWith(blossom.url)
+          )
+            asked.push(request.url());
         });
 
         await page.goto(`${repo}/blob/main/hello.txt`);
         await page.locator('#git pre').waitFor();
         expect(await page.locator('#git pre').textContent()).toBe(
           'hello from the stub gateway\n'
+        );
+
+        // A blob only on Blossom, fetched by its sha256, checked by sha1.
+        await page.goto(`${repo}/blob/main/pooled.txt`);
+        await page.locator('#git pre').waitFor();
+        expect(await page.locator('#git pre').textContent()).toBe(
+          'hello from the stub blossom server\n'
+        );
+        expect(blossom.received.map((r) => r.path)).toContain(
+          `/${pooledBlobId}`
         );
 
         await page.goto(`${repo}/blob/main/lost.txt`);
@@ -230,19 +258,25 @@ describe('relay image conformance: /repo git pages in a browser', () => {
           'hello.txt',
           'liar.txt',
           'lost.txt',
+          'pooled.txt',
         ]);
 
-        // Everything the stub received came from the browser, which the
+        // Everything the stubs received came from the browser, which the
         // browser itself saw and which carries the page's origin; no
         // connection came from the relay's container.
-        expect(gateway.received.length).toBeGreaterThan(0);
-        expect(new Set(gateway.connectedFrom)).toEqual(new Set(['127.0.0.1']));
-        for (const request of gateway.received) {
-          expect(request.origin).toBe(relay.readUrl);
-          expect(request.userAgent).toMatch(/Chrome/);
+        for (const stub of [gateway, blossom]) {
+          expect(stub.received.length).toBeGreaterThan(0);
+          expect(new Set(stub.connectedFrom)).toEqual(new Set(['127.0.0.1']));
+          for (const request of stub.received) {
+            expect(request.origin).toBe(relay.readUrl);
+            expect(request.userAgent).toMatch(/Chrome/);
+          }
         }
         expect(
-          new Set(gateway.received.map((r) => `${gateway.url}${r.path}`))
+          new Set([
+            ...gateway.received.map((r) => `${gateway.url}${r.path}`),
+            ...blossom.received.map((r) => `${blossom.url}${r.path}`),
+          ])
         ).toEqual(new Set(asked));
       } catch (error) {
         throw new Error(

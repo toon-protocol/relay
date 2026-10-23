@@ -93,12 +93,16 @@ fn is_blob_id(text: &str) -> bool {
 /// function.
 ///
 /// Per object, in order:
-/// 1. the 30618's `["arweave", <sha1>, <txId>, <gateway>…]` tag, against the
+/// 1. the 30618's `["blossom", <sha1>, <blob id>]` tag, against the
+///    announcement's `blossoms` servers;
+/// 2. the same blob against the operator's Blossom servers;
+/// 3. its `["arweave", <sha1>, <txId>, <gateway>…]` tag, against the
 ///    gateways that tag names;
-/// 2. its `["blossom", <sha1>, <blob id>]` tag, against the announcement's
-///    `blossoms` servers;
-/// 3. the same Arweave transaction against the operator's gateways;
-/// 4. the same blob against the operator's Blossom servers.
+/// 4. the same Arweave transaction against the operator's gateways.
+///
+/// Blossom comes first and Arweave is the durable fallback, because a Blossom
+/// blob expires (`docs/nips/nip-34-blossom.md`, "Coexistence with Arweave
+/// tags").
 ///
 /// Only `https` URLs are listed, and each once.
 pub(crate) fn candidates(
@@ -150,21 +154,17 @@ pub(crate) fn candidates(
                 urls.push(url);
             }
         };
-        if let Some((tx, gateways)) = &held.arweave {
-            gateways.iter().for_each(|gateway| add(join(gateway, tx)));
-        }
         if let Some(blob) = held.blossom {
             servers.iter().for_each(|server| add(join(server, blob)));
-        }
-        if let Some((tx, _)) = &held.arweave {
-            operator_gateways
-                .iter()
-                .for_each(|gateway| add(join(gateway, tx)));
-        }
-        if let Some(blob) = held.blossom {
             operator_servers
                 .iter()
                 .for_each(|server| add(join(server, blob)));
+        }
+        if let Some((tx, gateways)) = &held.arweave {
+            gateways.iter().for_each(|gateway| add(join(gateway, tx)));
+            operator_gateways
+                .iter()
+                .for_each(|gateway| add(join(gateway, tx)));
         }
         out.insert(object.to_owned(), urls);
     }
@@ -485,10 +485,10 @@ mod tests {
         assert_eq!(
             found[A],
             [
-                "https://own-gateway.test/tx1".to_owned(),
                 format!("https://blossom.test/{BLOB}"),
-                "https://arweave.test/tx1".to_owned(),
                 format!("https://default-blossom.test/{BLOB}"),
+                "https://own-gateway.test/tx1".to_owned(),
+                "https://arweave.test/tx1".to_owned(),
             ]
         );
         assert_eq!(
