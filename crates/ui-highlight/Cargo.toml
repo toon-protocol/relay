@@ -1,0 +1,17 @@
+[package]
+name = "ui-highlight"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+build = "build.rs"
+description = "Syntax highlighting as data, shared by the /repo blob page's WebAssembly module and the /social snippet pages"
+
+[lints]
+workspace = true
+
+[dependencies]
+syntect.workspace = true
+
+[build-dependencies]
+syntect = { workspace = true, features = ["yaml-load", "dump-create"] }

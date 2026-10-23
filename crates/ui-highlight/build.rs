@@ -1,5 +1,6 @@
-//! Compiles `syntaxes/` into the syntax set the module embeds. Done here,
-//! not at run time, so the browser parses nothing: it loads a ready set.
+//! Compiles `syntaxes/` into the syntax set the crate embeds. Done here,
+//! not at run time, so neither the browser nor the relay parses them: each
+//! loads a ready set.
 
 use std::path::PathBuf;
 
