@@ -529,10 +529,12 @@ language, `extension`, `runtime`, `license` and `dep` tags, its
 its `repo` tag read as a `30617:<pubkey>:<d>` address, an `naddr` or a
 `nostr://<npub>/…/<d>` URL (a NIP-05 name there is not resolved: that needs
 a fetch), else its `a` tag; a repo on this relay unfurls into its card, and
-an `https` URL is a plain link. The code is **not syntax-highlighted**:
-`/repo` colours a file with a WebAssembly module, and `/social` pages run no
-script; colouring on the server would put syntect in the relay and need a
-`style` attribute per run, which the pages' policy refuses.
+an `https` URL is a plain link. In a language the shared `ui-highlight`
+crate knows (the `l` tag, else the `extension` tag) the code is coloured on
+the server as `<span class="hl-…">` runs, styled by the same stylesheet rules
+as `/repo`'s blob pages; no `style` attribute and no script, so the pages'
+policy is unchanged. Any other language, or code over the size limit, stays
+plain escaped text.
 
 ### What a page loads
 

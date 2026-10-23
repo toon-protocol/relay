@@ -8,13 +8,10 @@
 //! be worth it, or this module failing to load leaves the plain text, which is
 //! what the page showed all along.
 //!
-//! [`highlight`] is plain Rust, so `cargo test` covers it natively; [`dom`] is
-//! the browser half.
+//! The highlighter is `ui-highlight`, plain Rust that `/social` shares; the
+//! colours are the shared stylesheet's classes. [`dom`] is the browser half.
 
 mod dom;
-mod highlight;
-
-pub use highlight::{MAX_BYTES, Run, extension, highlight, knows};
 
 use wasm_bindgen::prelude::wasm_bindgen;
 

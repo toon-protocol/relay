@@ -2,7 +2,7 @@
 # Standards: docs/rust-coding-standards.md.
 [workspace]
 resolver = "3"
-members = ["crates/git-objects", "crates/relay", "crates/relay-ui", "crates/ui-highlight-web", "crates/ui-markdown", "crates/ui-nip34", "crates/ui-nip34-web", "crates/ui-preview", "crates/ui-social", "crates/xtask"]
+members = ["crates/git-objects", "crates/relay", "crates/relay-ui", "crates/ui-highlight", "crates/ui-highlight-web", "crates/ui-markdown", "crates/ui-nip34", "crates/ui-nip34-web", "crates/ui-preview", "crates/ui-social", "crates/xtask"]
 
 [workspace.package]
 edition = "2024"
@@ -66,7 +66,7 @@ sha2 = "0.10"
 similar = { version = "2", default-features = false, features = ["text"] }
 # Syntax highlighting for blob pages (#287). `regex-fancy` is the pure Rust
 # regex engine: no onig, so no C and the crate builds for wasm32. The syntaxes
-# are compiled in by crates/ui-highlight-web/build.rs, not syntect's bundled
+# are compiled in by crates/ui-highlight/build.rs, not syntect's bundled
 # set, so only the languages the page highlights are shipped.
 syntect = { version = "5", default-features = false, features = ["parsing", "dump-load", "regex-fancy"] }
 tempfile = "3"
@@ -75,6 +75,7 @@ tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-threa
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "handshake"] }
 tower = { version = "0.5", features = ["util"] }
 trybuild = "1"
+ui-highlight = { path = "crates/ui-highlight" }
 ui-markdown = { path = "crates/ui-markdown" }
 ui-nip34 = { path = "crates/ui-nip34" }
 # Link preview cards for the app UIs: Open Graph images drawn from events.
@@ -89,11 +90,9 @@ wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = [
     "AbortController",
     "AbortSignal",
-    "CssStyleDeclaration",
     "Document",
     "Element",
     "Headers",
-    "HtmlElement",
     "MutationObserver",
     "MutationObserverInit",
     "Node",
