@@ -60,6 +60,30 @@ impl Links {
             .then(|| format!("{}/r/{}", App::Social.prefix(), address.path_segments()))
     }
 
+    /// A topic's page on `/social`, `/social/t/<topic>` (the topic lower
+    /// case, percent-encoded), if `/social` is on.
+    pub fn topic_path(&self, topic: &str) -> Option<String> {
+        self.apps.serves(App::Social).then(|| {
+            format!(
+                "{}/t/{}",
+                App::Social.prefix(),
+                percent_encode(&topic.trim().to_lowercase())
+            )
+        })
+    }
+
+    /// A topic as a chip: a link to its page when `/social` is on.
+    pub fn topic_chip(&self, topic: &str) -> String {
+        match self.topic_path(topic) {
+            Some(href) => format!(
+                "<a class=\"chip chip-topic\" href=\"{}\">{}</a>",
+                escape(&href),
+                escape(topic)
+            ),
+            None => format!("<span class=\"chip chip-topic\">{}</span>", escape(topic)),
+        }
+    }
+
     /// The repo's page on `/repo`, if `/repo` is on.
     pub fn repo_path(&self, address: &RepoAddress) -> Option<String> {
         self.apps.serves(App::Repo).then(|| address.repo_path())
@@ -221,10 +245,7 @@ impl RepoCard {
         if !topics.is_empty() {
             out.push_str("<div class=\"chips\">");
             for topic in topics {
-                out.push_str(&format!(
-                    "<span class=\"chip chip-topic\">{}</span>",
-                    escape(topic)
-                ));
+                out.push_str(&links.topic_chip(topic));
             }
             out.push_str("</div>");
         }
