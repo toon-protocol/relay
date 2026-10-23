@@ -324,6 +324,9 @@ async fn changed_files(
             }
         }
     }
+    if old_files.len() + new_files.len() > MAX_FILES {
+        return Ok(Err(()));
+    }
     Ok(Ok((old_files, new_files)))
 }
 
@@ -683,7 +686,7 @@ mod tests {
         assert_eq!(files[2].body, Body::Note("renamed without changes"));
         assert_eq!(files[3].body, Body::Diff("+new\n".into()));
 
-        // The root commit adds everything; losing a blob loses only its diff.
+        // Losing a blob loses only its diff.
         repo.forget(after);
         let view = commit(&repo.table, &repo.layout(PageKind::Commit, child, 0))
             .await
@@ -726,6 +729,22 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(view.files, Files::Unheld);
+    }
+
+    #[tokio::test]
+    async fn a_commit_over_the_file_limit_is_too_many_even_from_one_directory() {
+        let mut repo = Repo::default();
+        let names: Vec<String> = (0..=MAX_FILES).map(|n| format!("f{n}")).collect();
+        let entries: Vec<_> = names
+            .iter()
+            .map(|name| ("100644", name.as_str(), ObjectId::from_bytes([1; 20])))
+            .collect();
+        let root = repo.add(ObjectKind::Tree, tree(&entries));
+        let first = repo.commit(root, &[], 1, "many");
+        let view = commit(&repo.table, &repo.layout(PageKind::Commit, first, 0))
+            .await
+            .unwrap();
+        assert_eq!(view.files, Files::TooMany);
     }
 
     #[test]

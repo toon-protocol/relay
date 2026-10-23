@@ -29,6 +29,8 @@ fn a_rename_is_one_change_with_both_paths() {
 
 #[test]
 fn a_deletion_and_an_addition_of_different_content_stay_apart() {
+    // Only an exact content match is a rename, so a moved and edited file is
+    // a deletion and an addition.
     let changes = diff_files(&[file("old.txt", 1)], &[file("new.txt", 2)]);
     assert_eq!(
         changes,
@@ -37,14 +39,6 @@ fn a_deletion_and_an_addition_of_different_content_stay_apart() {
             FileChange::Deleted(file("old.txt", 1)),
         ]
     );
-}
-
-#[test]
-fn a_rename_that_also_edits_is_a_deletion_and_an_addition() {
-    // Only an exact content match is a rename.
-    let changes = diff_files(&[file("a", 1)], &[file("b", 2)]);
-    assert!(matches!(changes[0], FileChange::Deleted(_)));
-    assert!(matches!(changes[1], FileChange::Added(_)));
 }
 
 #[test]
@@ -101,7 +95,7 @@ fn deleting_every_line_is_all_deletes() {
 }
 
 #[test]
-fn a_renamed_file_that_is_edited_shows_a_line_diff() {
+fn an_edited_line_is_a_delete_then_an_insert_between_equal_lines() {
     let lines = diff_lines(b"a\nb\nc\n", b"a\nB\nc\n");
     let ops: Vec<_> = lines.iter().map(|l| (l.op, l.text.as_str())).collect();
     assert_eq!(
