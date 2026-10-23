@@ -599,7 +599,7 @@ a.avatar-link:hover { text-decoration: none; }
 .forked-from + .repo-desc { margin-top: 4px; }
 /* A green button in the repo header keeps its own text colour. */
 .repo-head a.btn-success { color: var(--success-fg); }
-.section-title { font-size: 16px; font-weight: 600; margin: 0; }
+.section-title { font-size: 18px; font-weight: 600; margin: 0; }
 .lineage-box { padding: 12px; overflow-x: auto; }
 .lineage { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .lineage .lineage { margin: 8px 0 0 11px; padding-left: 16px; border-left: 2px solid var(--border); }
@@ -703,7 +703,6 @@ mark.hl { background: var(--attention-bg); color: inherit; border-bottom: 2px so
 .event-title { font-size: 32px; line-height: 1.15; overflow-wrap: anywhere; }
 .event-hero-side { flex: 1 1 240px; display: flex; flex-direction: column; gap: 8px; color: var(--band-muted); }
 .event-hero-side .btn { justify-content: center; }
-[data-gallery] .section-title { font-size: 18px; }
 .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; margin-top: 12px; }
 .sub-card { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; color: var(--fg); min-width: 0; }
 .sub-card:hover { text-decoration: none; border-color: var(--muted-fg); }
@@ -754,3 +753,54 @@ mark.hl { background: var(--attention-bg); color: inherit; border-bottom: 2px so
 .message .text { font-size: 14px; }
 .message .quote { margin: 2px 0; padding-left: 8px; border-left: 2px solid var(--border); }
 .room-card .box-body p { margin: 0; }
+/* /social apps (NIP-82), bounties and goals, reports and the read-as lens. */
+.plain { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.chip-current { border-color: var(--fg); color: var(--fg); font-weight: 600; }
+.seg-links { display: inline-flex; flex-wrap: wrap; }
+.seg-links .seg { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); margin-left: -1px; }
+.seg-links .seg:first-child { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
+.seg-links .seg:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+.seg-links .seg:hover { background: var(--muted); text-decoration: none; }
+.seg-links .seg.current { background: var(--subtle); font-weight: 600; }
+.app-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.app-tile { display: flex; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); min-width: 0; }
+.app-tile .who { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.app-tile p { margin: 0; }
+.app-icon { flex-shrink: 0; width: 48px; height: 48px; border-radius: 12px; object-fit: cover; background: var(--accent-bg); color: var(--accent-fg); display: inline-flex; align-items: center; justify-content: center; font-weight: 600; }
+.app-icon-lg { width: 96px; height: 96px; border-radius: 22px; font-size: 28px; }
+.app-head { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; }
+.app-head .who { display: flex; flex-direction: column; gap: 6px; flex: 1 1 260px; min-width: 0; }
+.app-title { font-size: 28px; margin: 0; overflow-wrap: anywhere; }
+.shots { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.shots img { display: block; width: 100%; height: clamp(160px, 40vw, 260px); object-fit: cover; border-radius: 8px; background: var(--subtle); }
+.table-wrap { overflow-x: auto; }
+.data-table { width: 100%; min-width: 680px; border-collapse: collapse; font-size: 13px; }
+.data-table th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted-fg); padding: 8px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.data-table td { padding: 10px 12px; border-bottom: 1px solid var(--subtle); vertical-align: top; }
+.data-table tr:last-child td { border-bottom: 0; }
+details.older > summary { cursor: pointer; color: var(--muted-fg); font-size: 13px; }
+details.older > ul { margin-top: 8px; }
+.avatars { display: flex; flex-wrap: wrap; gap: 4px; }
+.avatars a:hover { text-decoration: none; }
+.split-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.split-list li { display: flex; justify-content: space-between; gap: 8px; }
+.viewer-inline { flex-wrap: wrap; }
+.viewer-inline .input { flex: 1 1 160px; min-width: 0; }
+.report-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 14px; border: 1px solid var(--attention-border); border-radius: var(--radius); background: var(--attention-bg); color: var(--attention-fg); }
+.report-banner .text { flex: 1 1 260px; min-width: 0; }
+.report-banner a { font-weight: 600; }
+.chip-open { background: var(--add-bg); border-color: var(--success); color: var(--add-fg); }
+.chip-claimed { background: var(--attention-bg); border-color: var(--attention-border); color: var(--attention-fg); }
+.chip-resolved { background: var(--done-bg); border-color: var(--done); color: var(--done); }
+.chip-report { background: var(--del-bg); border-color: var(--danger); color: var(--del-fg); }
+.bounty { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 14px 16px; border-top: 1px solid var(--border); }
+.bounty:first-child { border-top: 0; }
+.bounty .who { flex: 1 1 320px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.bounty .line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.bounty p { margin: 0; }
+.amount { display: flex; flex-direction: column; align-items: flex-end; min-width: 110px; font-size: 18px; }
+.report { padding: 12px 16px; }
+.report .by { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.report .who { display: flex; flex-direction: column; min-width: 0; }
+.report .line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.report .text { margin: 8px 0 0; overflow-wrap: anywhere; }

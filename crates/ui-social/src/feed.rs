@@ -25,6 +25,7 @@ use crate::kinds::{
     ANNOUNCEMENT, APP_HANDLER, ARTICLE, FOLLOWED_REPOS, FOLLOWS, GENERIC_REPOST, GIT_AUTHORS,
     ISSUE, NOTE, PULL_REQUEST, STATUS_APPLIED,
 };
+use crate::mute::Mutes;
 use crate::post::{self, View};
 use crate::ship;
 use crate::topics::{self, Catalog};
@@ -82,9 +83,18 @@ pub(crate) async fn everyone(State(pages): State<Pages>, RawQuery(query): RawQue
         filter = filter.until(until);
     }
     let events = pages.store.query(filter).await;
-    let intro = "<p class=\"muted small\">Everything builders posted to this relay: notes, launches, \
-                 articles, merges and new repos. Every post here was a paid write; this page writes nothing.</p>";
-    let body = feed_page(&pages, events, None, intro).await;
+    let lens = crate::viewer::as_key(query.as_deref());
+    let mutes = match &lens {
+        Some(key) => Mutes::load(&pages.store, key).await,
+        None => Mutes::default(),
+    };
+    let mut intro = "<p class=\"muted small\">Everything builders posted to this relay: notes, launches, \
+                 articles, merges and new repos. Every post here was a paid write; this page writes nothing.</p>"
+        .to_owned();
+    if let Some(key) = &lens {
+        intro.push_str(&muted_line(&pages, key, &mutes).await);
+    }
+    let body = feed_page(&pages, events, None, &intro, &mutes, lens.as_ref()).await;
     html(&pages, StatusCode::OK, "Social", None, &body)
 }
 
@@ -224,8 +234,35 @@ pub(crate) async fn following(
         repos.len(),
         if repos.len() == 1 { "repo" } else { "repos" },
     );
-    let body = feed_page(&pages, events, Some(&viewer), &intro).await;
+    let mutes = Mutes::load(store, &viewer).await;
+    let mut intro = intro;
+    intro.push_str(&muted_line(&pages, &viewer, &mutes).await);
+    let body = feed_page(&pages, events, Some(&viewer), &intro, &mutes, None).await;
     html(&pages, StatusCode::OK, "Following", Some(&viewer), &body)
+}
+
+/// Whether `viewer`'s mutes drop `event` from a feed: [`Mutes::hides`], or a
+/// boost of a repo whose owner is muted. A pure function.
+fn hidden(mutes: &Mutes, event: &Event) -> bool {
+    mutes.hides(event)
+        || (event.kind == Kind::from(GENERIC_REPOST)
+            && RepoAddress::tagged(event, "a")
+                .iter()
+                .any(|repo| mutes.hides_key(repo.owner())))
+}
+
+/// The line that says whose mute list a feed applies.
+async fn muted_line(pages: &Pages, viewer: &PublicKey, mutes: &Mutes) -> String {
+    let names = Profiles::load(&pages.store, &[*viewer]).await;
+    let (people, hashtags) = mutes.counts();
+    format!(
+        "<p class=\"muted small\" data-muted>Read as {}: what their mute list (NIP-51 kind 10000) \
+         names is left out here, {people} {} and {hashtags} {} among it. Only its public items are \
+         read.</p>",
+        chrome::name(names.names(), viewer),
+        if people == 1 { "person" } else { "people" },
+        if hashtags == 1 { "hashtag" } else { "hashtags" },
+    )
 }
 
 /// A feed's page: its tabs, its posts and the sidebar.
@@ -234,12 +271,19 @@ async fn feed_page(
     mut events: Vec<Event>,
     viewer: Option<&PublicKey>,
     intro: &str,
+    mutes: &Mutes,
+    lens: Option<&PublicKey>,
 ) -> String {
     let store = &pages.store;
     events.sort_by(|a, b| (b.created_at, a.id).cmp(&(a.created_at, b.id)));
     events.dedup_by_key(|event| event.id);
     let full = events.len() >= FEED_QUERY;
-    let shown: Vec<Event> = events.into_iter().filter(admits).take(SHOWN).collect();
+    let shown: Vec<Event> = events
+        .into_iter()
+        .filter(admits)
+        .filter(|event| !hidden(mutes, event))
+        .take(SHOWN)
+        .collect();
 
     // Everything the posts point at, read once.
     let mut repos: Vec<RepoAddress> = Vec::new();
@@ -348,9 +392,10 @@ async fn feed_page(
             None => PREFIX.to_owned(),
         };
         body.push_str(&format!(
-            "<div class=\"pager\"><a class=\"btn\" href=\"{}?until={}\">Older</a></div>",
+            "<div class=\"pager\"><a class=\"btn\" href=\"{}?until={}{}\">Older</a></div>",
             escape(&base),
-            oldest.created_at.as_secs().saturating_sub(1)
+            oldest.created_at.as_secs().saturating_sub(1),
+            escape(&crate::viewer::as_query(lens, false)),
         ));
     }
     body.push_str("</div><aside class=\"sidebar\">");

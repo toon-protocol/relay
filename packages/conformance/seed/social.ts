@@ -9,7 +9,9 @@
 // (suite/harness/profile-fixture.ts); then forks, site remixes, app handlers
 // and a web app listing (suite/harness/lineage-fixture.ts); then the devlog
 // fixture (suite/harness/devlog-fixture.ts): a series of articles with
-// highlights, comments and an embedded snippet.
+// highlights, comments and an embedded snippet; then an app listing with
+// releases, bounties, a goal, reports and a mute list
+// (suite/harness/social-apps-fixture.ts).
 //
 //   WRITE_URL=http://127.0.0.1:3100 READ_URL=http://127.0.0.1:7100 \
 //     pnpm exec tsx packages/conformance/seed/social.ts
@@ -31,6 +33,7 @@ import { profileFixture } from '../suite/harness/profile-fixture.js';
 import { lineageFixture } from '../suite/harness/lineage-fixture.js';
 import { devlogFixture } from '../suite/harness/devlog-fixture.js';
 import { socialEventsFixture } from '../suite/harness/social-events-fixture.js';
+import { socialAppsFixture } from '../suite/harness/social-apps-fixture.js';
 
 const writeUrl = process.env['WRITE_URL'] ?? 'http://127.0.0.1:3100';
 const readUrl = process.env['READ_URL'] ?? 'http://127.0.0.1:7100';
@@ -48,6 +51,8 @@ const lineage = lineageFixture(fixture, now, relayHost);
 const devlog = devlogFixture(fixture, now, relayHost);
 // Events, their badges and galleries, and their NIP-29 rooms.
 const eventsFixture = socialEventsFixture(now, fixture);
+// An app listing with releases, bounties, a goal, reports and a mute list.
+const apps = socialAppsFixture(fixture, now);
 const events = [
   ...fixture.events,
   ...trending.events,
@@ -55,6 +60,7 @@ const events = [
   ...lineage.events,
   ...devlog.events,
   ...eventsFixture.events,
+  ...apps.events,
 ];
 let stored = 0;
 for (const event of events) {
@@ -110,3 +116,14 @@ console.log(`live now:      ${readUrl}${eventsFixture.paths.buildNight}`);
 console.log(
   `room:          ${readUrl}/social/g/${eventsFixture.rooms.hackathon}`
 );
+console.log(`apps:          ${readUrl}/social/apps`);
+console.log(`app listing:   ${readUrl}${apps.appPath}`);
+console.log(
+  `  read as:     ${readUrl}${apps.appPath}?as=${fixture.npubs.ruth}`
+);
+console.log(`app set:       ${readUrl}/social/apps/sets/${apps.setNaddr}`);
+console.log(`bounties:      ${readUrl}/social/bounties`);
+console.log(
+  `reports:       ${readUrl}/social/r/${fixture.npubs.maya}/tidepool/reports?as=${fixture.npubs.ruth}`
+);
+console.log(`muted feed:    ${readUrl}/social?as=${fixture.npubs.dan}`);

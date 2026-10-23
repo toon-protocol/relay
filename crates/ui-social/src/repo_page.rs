@@ -217,7 +217,7 @@ pub(crate) async fn maker(
     Path((owner, d)): Path<(String, String)>,
     RawQuery(query): RawQuery,
 ) -> Response {
-    page(&pages, &owner, &d, Tab::Maker, viewer(query.as_deref())).await
+    page(&pages, &owner, &d, Tab::Maker, query.as_deref()).await
 }
 
 pub(crate) async fn tab(
@@ -226,26 +226,13 @@ pub(crate) async fn tab(
     RawQuery(query): RawQuery,
 ) -> Response {
     match Tab::from_slug(&tab) {
-        Some(tab) => page(&pages, &owner, &d, tab, viewer(query.as_deref())).await,
+        Some(tab) => page(&pages, &owner, &d, tab, query.as_deref()).await,
         None => not_found(&pages),
     }
 }
 
-/// The viewer `?as=<npub>` names, if the key reads.
-fn viewer(query: Option<&str>) -> Option<PublicKey> {
-    query?
-        .split('&')
-        .find_map(|pair| pair.strip_prefix("as="))
-        .and_then(parse_pubkey)
-}
-
-async fn page(
-    pages: &Pages,
-    owner: &str,
-    d: &str,
-    tab: Tab,
-    viewer: Option<PublicKey>,
-) -> Response {
+async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab, query: Option<&str>) -> Response {
+    let viewer = crate::viewer::as_key(query);
     let Some(repo) = parse_pubkey(owner).and_then(|owner| RepoAddress::new(owner, d)) else {
         return not_found(pages);
     };
@@ -312,10 +299,26 @@ async fn page(
         Tab::Followers => followers.as_slice(),
         _ => &[],
     };
+    // Trust and safety, releases, bounties and tips.
+    let follows: Option<HashSet<PublicKey>> = match &viewer {
+        Some(viewer) => Some(
+            crate::viewer::follows(store, viewer)
+                .await
+                .into_iter()
+                .collect(),
+        ),
+        None => None,
+    };
+    let report_targets = crate::reports::repo_targets(store, &card).await;
+    let found_reports = crate::reports::load(store, &report_targets).await;
+    let mut extras = crate::apps::repo_sidebar(store, &card).await;
+    extras.push_str(&crate::bounties::repo_sidebar(store, &repo).await);
     for key in listed
         .iter()
         .map(|event| event.pubkey)
         .chain(people.iter().map(|(key, _)| *key))
+        .chain(crate::tips::split_keys(card.announcement()))
+        .chain(viewer)
     {
         if !keys.contains(&key) {
             keys.push(key);
@@ -347,10 +350,26 @@ async fn page(
         Tab::Media => sections.media.len(),
         Tab::Snippets => sections.snippets.len(),
     };
-    let mut body = header(&view, &card, stars.len(), followers.len(), lineage.people());
     let base = links
         .social_path(&repo)
         .unwrap_or_else(|| format!("{PREFIX}/r/{}", repo.path_segments()));
+    let mut body = crate::reports::banner(
+        &found_reports,
+        &report_targets,
+        viewer.as_ref().zip(follows.as_ref()),
+        profiles.names(),
+        Some(&format!(
+            "{base}/reports{}",
+            crate::viewer::as_query(viewer.as_ref(), true)
+        )),
+    );
+    body.push_str(&header(
+        &view,
+        &card,
+        stars.len(),
+        followers.len(),
+        lineage.people(),
+    ));
     let mut tabs: Vec<chrome::Tab> = Vec::new();
     if let Some(code) = links.repo_path(&repo) {
         tabs.push(chrome::Tab::new("Code", icon::CODE, code));
@@ -432,26 +451,32 @@ async fn page(
         Tab::Snippets => body.push_str(&snippets(&view, &listed)),
     }
     body.push_str("</div>");
-    let mut extra = String::new();
+    let mut before = String::new();
     if tab == Tab::Forks {
-        extra.push_str(&lineage::remix_card(
+        before.push_str(&lineage::remix_card(
             &lineage,
             &card,
             &choices,
             &handler_profiles,
             &links,
         ));
-        extra.push_str(&lineage::glance(&lineage));
+        before.push_str(&lineage::glance(&lineage));
     }
-    extra.push_str(&handlers::open_in_card(
+    before.push_str(&handlers::open_in_card(
         &choices,
         &handler_profiles,
         &repo,
         links.relay_host(),
         viewer.is_some(),
     ));
-    let room = crate::rooms::repo_room_box(pages, &card).await;
-    body.push_str(&sidebar(&view, &card, &extra, &room));
+    let mut after = crate::rooms::repo_room_box(pages, &card).await;
+    after.push_str(&extras);
+    after.push_str(&crate::tips::split_card(
+        card.announcement(),
+        profiles.names(),
+        "the owner",
+    ));
+    body.push_str(&sidebar(&view, &card, &before, &after));
     body.push_str("</div>");
     html(
         pages,
@@ -641,9 +666,10 @@ fn writing(view: &View<'_>, repo: &RepoAddress, events: &[&Event]) -> String {
 }
 
 /// The sidebar: what the repo is and its live demo, where to clone it, the
-/// tab's own cards and the apps to open it in (`extra`), who keeps it, its
-/// Room box (`room`, or empty), and how to star or follow it from a client.
-fn sidebar(view: &View<'_>, card: &RepoCard, extra: &str, room: &str) -> String {
+/// tab's own cards and the apps to open it in (`before`), who keeps it, then
+/// its room, releases, bounties and tips (`after`), and how to star or follow
+/// it from a client.
+fn sidebar(view: &View<'_>, card: &RepoCard, before: &str, after: &str) -> String {
     let repo = card.address();
     let mut out = String::from("<aside class=\"sidebar\"><div><h2>About</h2>");
     match card.description() {
@@ -695,7 +721,7 @@ fn sidebar(view: &View<'_>, card: &RepoCard, extra: &str, room: &str) -> String 
         }
     }
     out.push_str("</div>");
-    out.push_str(extra);
+    out.push_str(before);
     out.push_str("<div><h3>Maintainers</h3><ul>");
     for key in card.authorized() {
         out.push_str(&format!(
@@ -705,7 +731,7 @@ fn sidebar(view: &View<'_>, card: &RepoCard, extra: &str, room: &str) -> String 
         ));
     }
     out.push_str("</ul></div>");
-    out.push_str(room);
+    out.push_str(after);
     out.push_str(&format!(
         "<div class=\"side-card\"><h2>Star or follow</h2><p class=\"muted small\">\
          This page writes nothing. From a Nostr client, a star is a kind 7 with content <code>+</code> \

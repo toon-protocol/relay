@@ -21,6 +21,7 @@ pub mod repo;
 mod threads;
 
 pub use git::{CONTENT_SECURITY_POLICY_VALUE as GIT_CONTENT_SECURITY_POLICY_VALUE, Defaults};
+pub use threads::{STATUS_KINDS, is_applied};
 
 use std::collections::HashMap;
 

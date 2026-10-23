@@ -123,6 +123,17 @@ fn resolve_status(authorized: &[PublicKey], target: &Event, statuses: &[Event]) 
     .unwrap_or(Status::Open)
 }
 
+/// The NIP-34 status kinds a reader honours: open, applied, closed, draft.
+pub const STATUS_KINDS: [u16; 4] = [STATUS_OPEN, STATUS_APPLIED, STATUS_CLOSED, STATUS_DRAFT];
+
+/// Whether `target`'s honoured status is applied (a merged change, a
+/// resolved issue): the newest of `statuses` that names it and comes from
+/// `authorized` or from the target's own author (ADR 0002, rule 3). A later
+/// reopen or close wins over an earlier resolve. A pure function.
+pub fn is_applied(authorized: &[PublicKey], target: &Event, statuses: &[Event]) -> bool {
+    resolve_status(authorized, target, statuses) == Status::Applied
+}
+
 fn coordinate(owner: &PublicKey, d: &str) -> String {
     format!("{ANNOUNCEMENT}:{}:{d}", owner.to_hex())
 }
@@ -857,6 +868,21 @@ mod tests {
             let events = [status(keys, kind, 10, &f.issue)];
             assert_eq!(resolve_status(&f.authorized, &f.issue, &events), want);
         }
+    }
+
+    #[test]
+    fn an_issue_is_applied_only_while_its_honoured_status_says_so() {
+        let f = fixture();
+        let resolved = status(&f.maintainer, STATUS_APPLIED, 10, &f.issue);
+        assert!(is_applied(
+            &f.authorized,
+            &f.issue,
+            std::slice::from_ref(&resolved)
+        ));
+        let forged = status(&f.stranger, STATUS_APPLIED, 10, &f.issue);
+        assert!(!is_applied(&f.authorized, &f.issue, &[forged]));
+        let reopened = status(&f.owner, STATUS_OPEN, 20, &f.issue);
+        assert!(!is_applied(&f.authorized, &f.issue, &[resolved, reopened]));
     }
 
     #[test]
