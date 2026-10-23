@@ -873,7 +873,11 @@ mod tests {
     fn an_issue_is_applied_only_while_its_honoured_status_says_so() {
         let f = fixture();
         let resolved = status(&f.maintainer, STATUS_APPLIED, 10, &f.issue);
-        assert!(is_applied(&f.authorized, &f.issue, &[resolved.clone()]));
+        assert!(is_applied(
+            &f.authorized,
+            &f.issue,
+            std::slice::from_ref(&resolved)
+        ));
         let forged = status(&f.stranger, STATUS_APPLIED, 10, &f.issue);
         assert!(!is_applied(&f.authorized, &f.issue, &[forged]));
         let reopened = status(&f.owner, STATUS_OPEN, 20, &f.issue);

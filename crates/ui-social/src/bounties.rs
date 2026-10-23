@@ -120,7 +120,7 @@ pub(crate) fn price(listing: &Event) -> Option<String> {
 /// A goal's target, from its `amount` in millisats. A pure function.
 pub(crate) fn target(goal: &Event) -> Option<String> {
     let millisats: u64 = first_tag(goal, "amount")?.trim().parse().ok()?;
-    Some(if millisats % 1_000 == 0 {
+    Some(if millisats.is_multiple_of(1_000) {
         format!("{} sats", grouped(millisats / 1_000))
     } else {
         format!("{} millisats", grouped(millisats))
@@ -132,7 +132,7 @@ fn grouped(value: u64) -> String {
     let digits = value.to_string();
     let mut out = String::new();
     for (at, digit) in digits.chars().enumerate() {
-        if at > 0 && (digits.len() - at) % 3 == 0 {
+        if at > 0 && (digits.len() - at).is_multiple_of(3) {
             out.push(',');
         }
         out.push(digit);
