@@ -143,6 +143,20 @@ pub(crate) fn source_names(source: &str, repo: &RepoAddress, nip05: Option<&str>
     who_matches && percent_decode(last) == repo.d()
 }
 
+/// The repo a `nostr://<npub>/[<relay>/]<d>` URL names, when its first part
+/// is an npub. A NIP-05 name in that place would need its `.well-known`
+/// document fetched to become a key, which the relay never does. A pure
+/// function.
+pub(crate) fn source_repo(source: &str) -> Option<RepoAddress> {
+    let rest = source.trim().strip_prefix("nostr://")?;
+    let parts: Vec<&str> = rest.trim_end_matches('/').split('/').collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    let owner = crate::parse_pubkey(parts.first()?)?;
+    RepoAddress::new(owner, &percent_decode(parts.last()?))
+}
+
 /// `%XX` escapes decoded; anything malformed is kept as written.
 fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
@@ -311,6 +325,22 @@ mod tests {
             None
         ));
         assert!(!source_names(&format!("nostr://{npub}"), &repo, None));
+    }
+
+    #[test]
+    fn a_source_url_with_an_npub_is_read_as_its_repo() {
+        let owner = Keys::generate().public_key();
+        let repo = RepoAddress::new(owner, "my repo").unwrap();
+        let npub = npub(&owner);
+        for url in [
+            format!("nostr://{npub}/relay.test/my%20repo"),
+            format!("nostr://{npub}/my%20repo/"),
+        ] {
+            assert_eq!(source_repo(&url), Some(repo.clone()), "{url}");
+        }
+        assert_eq!(source_repo("nostr://maya@tide.dev/my%20repo"), None);
+        assert_eq!(source_repo(&format!("nostr://{npub}")), None);
+        assert_eq!(source_repo("https://github.com/x/y"), None);
     }
 
     #[test]

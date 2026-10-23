@@ -34,6 +34,8 @@ pub(crate) const GIT_AUTHORS: u16 = 10_017;
 pub(crate) const SITE_ROOT: u16 = 15_128;
 /// NIP-23 long-form article.
 pub(crate) const ARTICLE: u16 = 30_023;
+/// NIP-51 curation set of articles: a series, when its author keeps one.
+pub(crate) const CURATION_SET: u16 = 30_004;
 /// NIP-89 application handler; Shakespeare's app event.
 pub(crate) const APP_HANDLER: u16 = 31_990;
 /// NIP-5A named site manifest.

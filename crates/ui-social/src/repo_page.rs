@@ -6,6 +6,7 @@
 //! | --------- | ----------- | -------------------------------------------------------------- |
 //! | Maker     | (none)      | posts about the repo by its owner and maintainers (ADR 0002)  |
 //! | Talk      | `/talk`     | everyone else's notes, threads, comments (`A`) and highlights |
+//! | Writing   | `/writing`  | articles (kind 30023) that `a`-tag it, by anyone               |
 //! | Stars     | `/stars`    | each key that starred it (kind 7 `+`, `a`, `k=30617`)          |
 //! | Followers | `/followers`| each key whose kind 10018 names it                             |
 //! | Media     | `/media`    | pictures and videos (kinds 20, 21, 22) that `a`-tag it         |
@@ -60,6 +61,7 @@ const SNIPPET_SCAN: usize = 500;
 enum Tab {
     Maker,
     Talk,
+    Writing,
     Stars,
     Followers,
     Media,
@@ -67,9 +69,10 @@ enum Tab {
 }
 
 impl Tab {
-    const ALL: [Tab; 6] = [
+    const ALL: [Tab; 7] = [
         Tab::Maker,
         Tab::Talk,
+        Tab::Writing,
         Tab::Stars,
         Tab::Followers,
         Tab::Media,
@@ -87,6 +90,7 @@ impl Tab {
         match self {
             Self::Maker => "",
             Self::Talk => "talk",
+            Self::Writing => "writing",
             Self::Stars => "stars",
             Self::Followers => "followers",
             Self::Media => "media",
@@ -98,6 +102,7 @@ impl Tab {
         match self {
             Self::Maker => "Maker",
             Self::Talk => "Talk",
+            Self::Writing => "Writing",
             Self::Stars => "Stars",
             Self::Followers => "Followers",
             Self::Media => "Media",
@@ -109,6 +114,7 @@ impl Tab {
         match self {
             Self::Maker => icon::SHIP,
             Self::Talk => icon::COMMENT,
+            Self::Writing => icon::BOOK,
             Self::Stars => icon::STAR,
             Self::Followers => icon::EYE,
             Self::Media => icon::IMAGE,
@@ -122,6 +128,7 @@ impl Tab {
 pub(crate) struct Sections {
     maker: Vec<Event>,
     talk: Vec<Event>,
+    writing: Vec<Event>,
     media: Vec<Event>,
     snippets: Vec<Event>,
 }
@@ -140,7 +147,8 @@ impl Sections {
 /// `events` about a repo, split: pictures and videos to Media, snippets to
 /// Snippets, the maker's notes, threads, comments, highlights, articles and
 /// app events to Maker, everyone else's notes, threads, comments and
-/// highlights to Talk. Boosts are counted nowhere. Each list is newest
+/// highlights to Talk, and every article (the maker's too) to Writing.
+/// Boosts are counted nowhere. Each list is newest
 /// first, each event once. A pure function.
 pub(crate) fn sections(events: Vec<Event>, is_maker: impl Fn(&PublicKey) -> bool) -> Sections {
     let mut events = events;
@@ -148,6 +156,9 @@ pub(crate) fn sections(events: Vec<Event>, is_maker: impl Fn(&PublicKey) -> bool
     events.dedup_by_key(|event| event.id);
     let mut sections = Sections::default();
     for event in events {
+        if event.kind.as_u16() == ARTICLE {
+            sections.writing.push(event.clone());
+        }
         match event.kind.as_u16() {
             PICTURE | VIDEO | SHORT_VIDEO => sections.media.push(event),
             SNIPPET => sections.snippets.push(event),
@@ -253,6 +264,7 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab) -> Response {
     let listed: Vec<&Event> = match tab {
         Tab::Maker => sections.maker.iter().collect(),
         Tab::Talk => sections.talk.iter().collect(),
+        Tab::Writing => sections.writing.iter().collect(),
         Tab::Media => sections.media.iter().collect(),
         Tab::Snippets => sections.snippets.iter().collect(),
         Tab::Stars | Tab::Followers => Vec::new(),
@@ -293,6 +305,7 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab) -> Response {
     let counts = |tab: Tab| match tab {
         Tab::Maker => sections.maker.len(),
         Tab::Talk => sections.talkers(),
+        Tab::Writing => sections.writing.len(),
         Tab::Stars => stars.len(),
         Tab::Followers => followers.len(),
         Tab::Media => sections.media.len(),
@@ -364,6 +377,7 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab) -> Response {
             "listed it",
             "No one follows this repo yet.",
         )),
+        Tab::Writing => body.push_str(&writing(&view, &repo, &listed)),
         Tab::Media => body.push_str(&media_grid(&view, &listed)),
         Tab::Snippets => body.push_str(&snippets(&view, &listed)),
     }
@@ -514,20 +528,33 @@ fn snippets(view: &View<'_>, events: &[&Event]) -> String {
         return out;
     }
     for event in events {
-        let language = first_tag(event, "l")
-            .map(|language| format!("<span class=\"chip\">{}</span>", escape(language)))
-            .unwrap_or_default();
-        out.push_str(&format!(
-            "<article class=\"box snippet\" data-id=\"{}\"><div class=\"box-header\">\
-             <span class=\"strong\">{}</span>{language}<span class=\"muted small\">by {} &middot; {}</span></div>\
-             <pre><code>{}</code></pre></article>",
-            event.id.to_hex(),
-            escape(first_tag(event, "name").unwrap_or("snippet")),
-            name(view.names, &event.pubkey),
-            ago(event.created_at),
-            escape(&event.content),
+        out.push_str(&crate::snippet::card(view, event));
+    }
+    out
+}
+
+/// Articles (NIP-23) that tag this repo, by anyone, the maker's marked:
+/// each links to the article reader.
+fn writing(view: &View<'_>, repo: &RepoAddress, events: &[&Event]) -> String {
+    let mut out = String::from(
+        "<p class=\"muted small\">Articles (kind 30023) that tag this repo: the makers' devlogs \
+         and everyone else's write-ups.</p>",
+    );
+    if events.is_empty() {
+        out.push_str(
+            "<div class=\"box\"><div class=\"empty\">No one has written about this repo yet.</div></div>",
+        );
+        return out;
+    }
+    out.push_str("<div class=\"feed\">");
+    for event in events {
+        out.push_str(&post::repo_post(
+            view,
+            event,
+            view.is_maker(repo, &event.pubkey),
         ));
     }
+    out.push_str("</div>");
     out
 }
 
@@ -630,6 +657,11 @@ mod tests {
         assert_eq!(split.maker[0].kind, Kind::from(ARTICLE), "newest first");
         assert_eq!(split.talk.len(), 3);
         assert_eq!(split.talkers(), 1, "one person, three posts");
+        assert_eq!(
+            split.writing.len(),
+            2,
+            "every article, the maker's and a fan's"
+        );
         assert_eq!(split.media.len(), 1);
         assert_eq!(split.snippets.len(), 1);
     }

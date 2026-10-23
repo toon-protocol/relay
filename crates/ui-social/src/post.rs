@@ -48,9 +48,16 @@ impl View<'_> {
     }
 }
 
-/// The page of one post.
+/// The page of one post: an article's reader, a snippet's page, else the
+/// post page.
 pub(crate) fn event_path(event: &Event) -> String {
-    format!("{PREFIX}/e/{}", event.id.to_hex())
+    match event.kind.as_u16() {
+        ARTICLE => crate::article::ArticleAddress::of(event)
+            .map(|address| address.path())
+            .unwrap_or_else(|| format!("{PREFIX}/e/{}", event.id.to_hex())),
+        kinds::SNIPPET => crate::snippet::path(event),
+        _ => format!("{PREFIX}/e/{}", event.id.to_hex()),
+    }
 }
 
 /// The person who wrote `event`, its chips, and when, linking to the post.

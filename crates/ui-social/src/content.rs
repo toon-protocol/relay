@@ -116,11 +116,18 @@ fn mention_html(
                     }
                     link
                 }
-                None => format!(
-                    "<span class=\"mono muted\">{}:{}</span>",
-                    coordinate.kind.as_u16(),
-                    escape(&coordinate.identifier)
-                ),
+                None => match crate::article::ArticleAddress::from_coordinate(&coordinate) {
+                    Some(article) => format!(
+                        "<a class=\"mono\" href=\"{}\">article:{}</a>",
+                        escape(&article.path()),
+                        escape(article.d())
+                    ),
+                    None => format!(
+                        "<span class=\"mono muted\">{}:{}</span>",
+                        coordinate.kind.as_u16(),
+                        escape(&coordinate.identifier)
+                    ),
+                },
             }
         }
     }
@@ -197,7 +204,13 @@ mod tests {
                 .html
                 .contains(&format!("href=\"/social/r/{}/gitsail\"", npub(&owner)))
         );
-        assert!(drawn.html.contains("30023:post"));
+        assert!(
+            drawn.html.contains(&format!(
+                "href=\"{}\">article:post</a>",
+                crate::article::ArticleAddress::new(owner, "post").path()
+            )),
+            "an article mention links to its reader"
+        );
     }
 
     #[test]

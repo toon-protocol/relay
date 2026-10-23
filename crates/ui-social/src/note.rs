@@ -2,13 +2,14 @@
 //! the post, the repo cards it unfurls and its replies. A ship post is drawn
 //! as a launch (proposal 3): its hero media, the repo card, buttons that
 //! are links, reactions counted by person, and a comment rail with the
-//! maker's replies marked.
+//! maker's replies marked. An article or a snippet named here is sent on to
+//! its own page (`/social/a/...`, `/social/s/...`).
 
 use std::collections::{HashMap, HashSet};
 
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
-use axum::response::Response;
+use axum::http::{StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use nostr::event::{Event, Kind};
 use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
@@ -16,7 +17,7 @@ use relay_ui::chrome::{Profiles, ago, avatar, escape, icon, name, plain_name, sv
 use ui_nip34::card::plural;
 use ui_nip34::repo::{RepoAddress, first_tag};
 
-use crate::kinds::{APP_HANDLER, ARTICLE, COMMENT, NOTE, REACTION};
+use crate::kinds::{APP_HANDLER, ARTICLE, COMMENT, NOTE, REACTION, SNIPPET};
 use crate::post::{self, View};
 use crate::ship::{self, Site};
 use crate::{PREFIX, Pages, content, event_by_id, html, load_cards, not_found, parse_event_id};
@@ -26,7 +27,7 @@ const LIMIT: usize = 2_000;
 
 /// The replies to `event`: kind 1 notes whose `e` tags name it (not as a
 /// mention) and NIP-22 comments whose root `E` names it, oldest first.
-async fn replies(store: &relay_ui::ReadOnlyStore, event: &Event) -> Vec<Event> {
+pub(crate) async fn replies(store: &relay_ui::ReadOnlyStore, event: &Event) -> Vec<Event> {
     let id = event.id.to_hex();
     let notes = store
         .query(
@@ -61,7 +62,7 @@ async fn replies(store: &relay_ui::ReadOnlyStore, event: &Event) -> Vec<Event> {
 }
 
 /// Whether a note's `e` tags name `id` other than as a mention.
-fn answers(note: &Event, id: &str) -> bool {
+pub(crate) fn answers(note: &Event, id: &str) -> bool {
     note.tags
         .iter()
         .map(|tag| tag.as_slice())
@@ -101,6 +102,14 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(target): Path<String>)
     let Some(event) = event_by_id(store, id).await else {
         return not_found(&pages);
     };
+    // An article and a snippet have pages of their own.
+    if matches!(event.kind.as_u16(), ARTICLE | SNIPPET) {
+        return (
+            StatusCode::SEE_OTHER,
+            [(header::LOCATION, post::event_path(&event))],
+        )
+            .into_response();
+    }
     let repos = post::repos_of(&event);
     let cards = load_cards(store, repos.clone()).await;
     let replies = replies(store, &event).await;
@@ -185,7 +194,7 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(target): Path<String>)
 }
 
 /// Reactions as chips, counted by person.
-fn tally_chips(reactions: &[Event]) -> String {
+pub(crate) fn tally_chips(reactions: &[Event]) -> String {
     let ranked = tally(reactions);
     if ranked.is_empty() {
         return String::new();
@@ -256,7 +265,7 @@ fn launch(view: &View<'_>, event: &Event, repo: &RepoAddress, reactions: &[Event
     out
 }
 
-/// Any other post: who, the text (an article's Markdown), its media and the
+/// Any other post: who, the text, its media and the
 /// cards of the repos it names.
 fn plain(view: &View<'_>, event: &Event, repos: &[RepoAddress], reactions: &[Event]) -> String {
     let mut out = format!(
@@ -273,35 +282,20 @@ fn plain(view: &View<'_>, event: &Event, repos: &[RepoAddress], reactions: &[Eve
             ""
         )
     );
-    if event.kind.as_u16() == ARTICLE {
-        if let Some(title) = first_tag(event, "title") {
-            out.push_str(&format!("<h1 class=\"page-title\">{}</h1>", escape(title)));
+    // An article is drawn by the reader (`crate::article`), not here.
+    let media = crate::media::imeta(event);
+    let hidden: Vec<String> = media.iter().map(|m| m.url().to_owned()).collect();
+    if let Some(title) = first_tag(event, "title") {
+        out.push_str(&format!("<h2 class=\"post-title\">{}</h2>", escape(title)));
+    }
+    let text = content::render(&event.content, &hidden, view.names);
+    out.push_str(&format!("<p class=\"text\">{}</p>", text.html.trim()));
+    if !media.is_empty() {
+        out.push_str("<div class=\"thumbs\">");
+        for item in &media {
+            out.push_str(&item.html(""));
         }
-        if let Some(image) = crate::media::image_tag(event) {
-            out.push_str(&image.html("hero"));
-        }
-        out.push_str(&format!(
-            "<div class=\"markdown\">{}</div>",
-            ui_markdown::to_html(&ui_markdown::parse(
-                &event.content,
-                ui_markdown::absolute_only
-            ))
-        ));
-    } else {
-        let media = crate::media::imeta(event);
-        let hidden: Vec<String> = media.iter().map(|m| m.url().to_owned()).collect();
-        if let Some(title) = first_tag(event, "title") {
-            out.push_str(&format!("<h2 class=\"post-title\">{}</h2>", escape(title)));
-        }
-        let text = content::render(&event.content, &hidden, view.names);
-        out.push_str(&format!("<p class=\"text\">{}</p>", text.html.trim()));
-        if !media.is_empty() {
-            out.push_str("<div class=\"thumbs\">");
-            for item in &media {
-                out.push_str(&item.html(""));
-            }
-            out.push_str("</div>");
-        }
+        out.push_str("</div>");
     }
     out.push_str(&post::cards_html(view, repos));
     out.push_str(&tally_chips(reactions));
@@ -310,7 +304,7 @@ fn plain(view: &View<'_>, event: &Event, repos: &[RepoAddress], reactions: &[Eve
 }
 
 /// The comment rail: the replies, the maker's marked.
-fn rail(view: &View<'_>, replies: &[Event], repo: Option<&RepoAddress>) -> String {
+pub(crate) fn rail(view: &View<'_>, replies: &[Event], repo: Option<&RepoAddress>) -> String {
     let mut out = format!(
         "<aside class=\"sidebar\"><div><h2>{} {}</h2><p class=\"muted small\">Replies to the post \
          (NIP-10) and comments on it (NIP-22). They are written in a client; each is a paid write.</p></div>\
@@ -320,25 +314,30 @@ fn rail(view: &View<'_>, replies: &[Event], repo: Option<&RepoAddress>) -> Strin
     );
     for reply in replies {
         let maker = repo.is_some_and(|repo| view.is_maker(repo, &reply.pubkey));
-        let text = content::render(&reply.content, &[], view.names);
-        out.push_str(&format!(
-            "<article class=\"reply\" data-id=\"{}\">{}<div class=\"body\"><div class=\"line\">{}{}\
-             <a class=\"muted small\" href=\"{}\">{}</a></div><p class=\"text\">{}</p></div></article>",
-            reply.id.to_hex(),
-            avatar(&plain_name(view.names, &reply.pubkey), true),
-            name(view.names, &reply.pubkey),
-            if maker {
-                " <span class=\"chip chip-maker\">Maker</span> "
-            } else {
-                " "
-            },
-            escape(&post::event_path(reply)),
-            ago(reply.created_at),
-            text.html.trim(),
-        ));
+        out.push_str(&reply_html(view, reply, maker));
     }
     out.push_str("</div></aside>");
     out
+}
+
+/// One reply or comment in a list, the maker's marked.
+pub(crate) fn reply_html(view: &View<'_>, reply: &Event, maker: bool) -> String {
+    let text = content::render(&reply.content, &[], view.names);
+    format!(
+        "<article class=\"reply\" data-id=\"{}\">{}<div class=\"body\"><div class=\"line\">{}{}\
+         <a class=\"muted small\" href=\"{}\">{}</a></div><p class=\"text\">{}</p></div></article>",
+        reply.id.to_hex(),
+        avatar(&plain_name(view.names, &reply.pubkey), true),
+        name(view.names, &reply.pubkey),
+        if maker {
+            " <span class=\"chip chip-maker\">Maker</span> "
+        } else {
+            " "
+        },
+        escape(&post::event_path(reply)),
+        ago(reply.created_at),
+        text.html.trim(),
+    )
 }
 
 #[cfg(test)]

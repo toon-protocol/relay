@@ -11,21 +11,28 @@
 //! - `/social/r/<npub>/<d>`: a repo's social page, with Maker, Talk, Stars,
 //!   Followers, Media and Snippets tabs ([`repo_page`]);
 //! - `/social/e/<id>`: one post, drawn as a launch when it is a ship post
-//!   ([`note`], [`ship`]).
+//!   ([`note`], [`ship`]);
+//! - `/social/a/<naddr>`: an article (NIP-23) with its series, highlights
+//!   and comments ([`article`], [`series`], [`highlights`]);
+//! - `/social/s/<id>`: a code snippet (NIP-C0) ([`snippet`]).
 //!
 //! A mention of a repo anywhere unfurls into `ui_nip34`'s repo card, and the
 //! page shell is `relay_ui::chrome`'s, so `/repo` and `/social` read as one
 //! site. Media a post names is loaded by the visitor's browser, never by the
 //! relay ([`media`]).
 
+mod article;
 mod content;
 mod feed;
+mod highlights;
 mod kinds;
 mod media;
 mod note;
 mod post;
 mod repo_page;
+mod series;
 mod ship;
+mod snippet;
 
 use std::collections::HashMap;
 
@@ -108,6 +115,9 @@ pub fn app(store: ReadOnlyStore, settings: Settings, apps: Apps) -> AppUi {
         .route("/social/r/{npub}/{d}", get(repo_page::maker))
         .route("/social/r/{npub}/{d}/{tab}", get(repo_page::tab))
         .route("/social/e/{id}", get(note::page))
+        .route("/social/a/{naddr}", get(article::by_naddr))
+        .route("/social/a/{npub}/{d}", get(article::by_key))
+        .route("/social/s/{id}", get(snippet::page))
         .fallback(fallback)
         .with_state(Pages {
             store,
