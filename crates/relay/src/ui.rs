@@ -14,6 +14,7 @@ use axum::http::Method;
 use nostr::event::Event;
 #[cfg(feature = "ui-repo")]
 use nostr::filter::Filter;
+use relay_ui::chrome::{App, Apps};
 use relay_ui::{AppUi, Assets};
 #[cfg(feature = "ui-repo")]
 use relay_ui::{EventSource, ReadOnlyStore};
@@ -53,9 +54,10 @@ pub(crate) fn enabled(
     assets: Option<&Assets>,
     sources: &ObjectSources<'_>,
 ) -> Result<Arc<[AppUi]>, RelayError> {
+    let on = Apps::new(apps.iter().filter_map(|name| App::from_name(name)));
     let mut uis = Vec::new();
     for app in apps {
-        match built(app, store, assets, sources) {
+        match built(app, store, assets, sources, &on) {
             Some(ui) => uis.push(ui),
             None => {
                 return Err(RelayError::InvalidSetting {
@@ -76,9 +78,10 @@ fn built(
     store: &Store,
     assets: Option<&Assets>,
     sources: &ObjectSources<'_>,
+    on: &Apps,
 ) -> Option<AppUi> {
     #[cfg(feature = "ui-repo")]
-    if name == "repo" {
+    if name == App::Repo.name() {
         return Some(ui_nip34::app(
             ReadOnlyStore::new(Reading(store.clone())),
             assets.cloned(),
@@ -86,6 +89,7 @@ fn built(
                 arweave_gateways: sources.arweave_gateways.to_vec(),
                 blob_servers: sources.blob_servers.to_vec(),
             },
+            on.clone(),
         ));
     }
     None

@@ -293,9 +293,10 @@ async fn page(
         store,
         assets,
         defaults,
+        apps,
     } = pages;
     let Ok(owner) = PublicKey::from_bech32(owner) else {
-        return not_found().await;
+        return not_found(&apps);
     };
     let announcements = store
         .query(
@@ -310,7 +311,7 @@ async fn page(
             .iter()
             .filter(|event| event.pubkey == owner && d_tag(event) == d),
     ) else {
-        return not_found().await;
+        return not_found(&apps);
     };
     let states = store
         .query(
@@ -321,7 +322,7 @@ async fn page(
         )
         .await;
     let Some(state) = honoured_state(announcement, &states) else {
-        return not_found().await;
+        return not_found(&apps);
     };
     let segments: Vec<String> = rest
         .split('/')
@@ -333,26 +334,26 @@ async fn page(
         // `/commit/<sha>` names its commit; no ref is involved.
         let id = rest.to_ascii_lowercase();
         if !is_object_id(&id) {
-            return not_found().await;
+            return not_found(&apps);
         }
         (id.clone(), id, &[])
     } else {
         if kind == PageKind::Commits && segments.is_empty() {
             default = default_segments(state);
             let Some(found) = resolve(state, &default) else {
-                return not_found().await;
+                return not_found(&apps);
             };
             found
         } else {
             let Some(found) = resolve(state, &segments) else {
-                return not_found().await;
+                return not_found(&apps);
             };
             found
         }
     };
     // A blob page with no file is not a page.
     if kind == PageKind::Blob && path.is_empty() {
-        return not_found().await;
+        return not_found(&apps);
     }
 
     let base = repo_path(&owner, d);
@@ -361,7 +362,7 @@ async fn page(
         PageKind::Tree | PageKind::Blob => Tab::Code,
         PageKind::Commits | PageKind::Commit => Tab::Commits,
     };
-    let mut body = repo_header(&owner, d, announcement, &names, tab);
+    let mut body = repo_header(&apps, &owner, d, announcement, &names, tab);
     match kind {
         PageKind::Tree | PageKind::Blob => {
             body.push_str("<div class=\"toolbar\"><div class=\"breadcrumb\">");
@@ -394,7 +395,7 @@ async fn page(
             format!("{} · {}", path.join("/"), repo_name(announcement))
         }
     };
-    let mut response = html(StatusCode::OK, &title, &body);
+    let mut response = html(&apps, StatusCode::OK, &title, &body);
     response.headers_mut().insert(
         header::CONTENT_SECURITY_POLICY,
         HeaderValue::from_static(CONTENT_SECURITY_POLICY_VALUE),
