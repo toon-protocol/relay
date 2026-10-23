@@ -2,7 +2,7 @@
 # Standards: docs/rust-coding-standards.md.
 [workspace]
 resolver = "3"
-members = ["crates/git-objects", "crates/relay", "crates/relay-ui", "crates/ui-highlight-web", "crates/ui-markdown", "crates/ui-nip34", "crates/ui-nip34-web", "crates/xtask"]
+members = ["crates/git-objects", "crates/relay", "crates/relay-ui", "crates/ui-highlight-web", "crates/ui-markdown", "crates/ui-nip34", "crates/ui-nip34-web", "crates/ui-social", "crates/xtask"]
 
 [workspace.package]
 edition = "2024"
@@ -70,6 +70,8 @@ tower = { version = "0.5", features = ["util"] }
 trybuild = "1"
 ui-markdown = { path = "crates/ui-markdown" }
 ui-nip34 = { path = "crates/ui-nip34" }
+# The /social app UI: the social NIPs, repos first.
+ui-social = { path = "crates/ui-social" }
 # The browser half of /repo (#283). The pin is exact and is the version of
 # the `wasm-bindgen-cli` crates/relay/Dockerfile installs: the generated glue
 # and the module must come from the same one (deploy/rust-workspace.test.ts).

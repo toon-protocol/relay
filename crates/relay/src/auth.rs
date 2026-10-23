@@ -85,7 +85,7 @@ impl AuthPolicy {
     /// authenticated: not a kind this policy restricts, and not a gift wrap
     /// only its recipients may read. What an app UI's page reads, since a
     /// page cannot sign in for its visitor.
-    #[cfg_attr(not(feature = "ui-repo"), allow(dead_code))]
+    #[cfg_attr(not(any(feature = "ui-repo", feature = "ui-social")), allow(dead_code))]
     pub(crate) fn shows_unauthenticated(&self, event: &Event) -> bool {
         !self.required_kinds.contains(&event.kind) && self.may_read(event, &HashSet::new())
     }

@@ -165,13 +165,20 @@ impl Relay {
             &config.ui_apps,
             &store,
             ui::assets(config.ui_assets_dir.as_deref()).as_ref(),
-            &ui::ObjectSources {
+            &ui::UiSettings {
                 arweave_gateways: &config.ui_arweave_gateways,
                 blob_servers: &config.ui_blob_servers,
-            },
-            &ui::Unauthenticated {
-                auth: auth.clone(),
-                groups: groups.as_ref().map(groups::GroupRules::view),
+                relay_host: config
+                    .ui_relay_url
+                    .as_deref()
+                    .or(config.subscribe.as_ref().map(|s| s.relay_url.as_str()))
+                    .and_then(ui::relay_host),
+                nsite_gateway: config.ui_nsite_gateway.as_deref(),
+                group_signer: config.nip29_groups.then_some(config.identity),
+                reads: ui::Unauthenticated {
+                    auth: auth.clone(),
+                    groups: groups.as_ref().map(groups::GroupRules::view),
+                },
             },
         )?;
         Ok(Self {

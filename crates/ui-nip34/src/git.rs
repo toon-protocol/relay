@@ -34,11 +34,14 @@ pub const CONTENT_SECURITY_POLICY_VALUE: &str =
     "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https:";
 
 /// The operator's default places for objects (`TOON_UI_ARWEAVE_GATEWAYS`,
-/// `TOON_UI_BLOB_SERVERS`), tried after those the repo's events name.
+/// `TOON_UI_BLOB_SERVERS`), tried after those the repo's events name, and
+/// the host visitors' clients reach this relay at (`TOON_UI_RELAY_URL`),
+/// the relay hint in a `nostr://` clone URL.
 #[derive(Clone, Debug, Default)]
 pub struct Defaults {
     pub arweave_gateways: Vec<String>,
     pub blob_servers: Vec<String>,
+    pub relay_host: Option<String>,
 }
 
 /// Which page: a directory listing, a file, a commit log or one commit.
@@ -293,9 +296,10 @@ async fn page(
         store,
         assets,
         defaults,
+        apps,
     } = pages;
     let Ok(owner) = PublicKey::from_bech32(owner) else {
-        return not_found().await;
+        return not_found(&apps);
     };
     let announcements = store
         .query(
@@ -310,7 +314,7 @@ async fn page(
             .iter()
             .filter(|event| event.pubkey == owner && d_tag(event) == d),
     ) else {
-        return not_found().await;
+        return not_found(&apps);
     };
     let states = store
         .query(
@@ -321,7 +325,7 @@ async fn page(
         )
         .await;
     let Some(state) = honoured_state(announcement, &states) else {
-        return not_found().await;
+        return not_found(&apps);
     };
     let segments: Vec<String> = rest
         .split('/')
@@ -333,35 +337,35 @@ async fn page(
         // `/commit/<sha>` names its commit; no ref is involved.
         let id = rest.to_ascii_lowercase();
         if !is_object_id(&id) {
-            return not_found().await;
+            return not_found(&apps);
         }
         (id.clone(), id, &[])
     } else {
         if kind == PageKind::Commits && segments.is_empty() {
             default = default_segments(state);
             let Some(found) = resolve(state, &default) else {
-                return not_found().await;
+                return not_found(&apps);
             };
             found
         } else {
             let Some(found) = resolve(state, &segments) else {
-                return not_found().await;
+                return not_found(&apps);
             };
             found
         }
     };
     // A blob page with no file is not a page.
     if kind == PageKind::Blob && path.is_empty() {
-        return not_found().await;
+        return not_found(&apps);
     }
 
     let base = repo_path(&owner, d);
-    let names = names(&store, &[owner]).await;
+    let names = names(&store, &crate::lineage::named_keys(announcement)).await;
     let tab = match kind {
         PageKind::Tree | PageKind::Blob => Tab::Code,
         PageKind::Commits | PageKind::Commit => Tab::Commits,
     };
-    let mut body = repo_header(&owner, d, announcement, &names, tab);
+    let mut body = repo_header(&apps, &owner, d, announcement, &names, tab);
     match kind {
         PageKind::Tree | PageKind::Blob => {
             body.push_str("<div class=\"toolbar\"><div class=\"breadcrumb\">");
@@ -394,7 +398,7 @@ async fn page(
             format!("{} · {}", path.join("/"), repo_name(announcement))
         }
     };
-    let mut response = html(StatusCode::OK, &title, &body);
+    let mut response = html(&apps, StatusCode::OK, &title, &body);
     response.headers_mut().insert(
         header::CONTENT_SECURITY_POLICY,
         HeaderValue::from_static(CONTENT_SECURITY_POLICY_VALUE),
@@ -531,6 +535,7 @@ mod tests {
                 "http://insecure.test".into(),
             ],
             blob_servers: vec!["https://default-blossom.test".into()],
+            relay_host: None,
         };
         let found = candidates(&announcement, &state, &defaults);
         assert_eq!(

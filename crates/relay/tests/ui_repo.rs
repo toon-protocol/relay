@@ -277,7 +277,7 @@ async fn git_pages_carry_ordered_candidates_and_their_own_policy() {
 async fn a_private_groups_events_never_reach_a_repo_page() {
     // A page cannot sign in for its visitor, so `/repo` reads the store as a
     // connection that has not authenticated would: an issue posted into a
-    // private NIP-29 group is left out, as a WebSocket read leaves it out.
+    // private NIP-29 group is left out, as `/social` leaves it out.
     let running =
         running_with(|name| (name == "TOON_NIP29_GROUPS").then(|| "true".to_owned())).await;
     let relay = &running.relay;
@@ -323,4 +323,71 @@ async fn a_private_groups_events_never_reach_a_repo_page() {
     let (status, _, page) = get(relay, &format!("{base}/issues/{}", private.id.to_hex())).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{page}");
     assert!(!page.contains("members-only"), "{page}");
+}
+
+#[tokio::test]
+async fn a_repo_without_a_clone_tag_is_cloned_over_nostr() {
+    // `/repo` offers the same `nostr://` clone line `/social` does, with
+    // the relay hint from TOON_UI_RELAY_URL.
+    let running =
+        running_with(|name| (name == "TOON_UI_RELAY_URL").then(|| "wss://relay.test".to_owned()))
+            .await;
+    let relay = &running.relay;
+    let owner = Keys::generate();
+    store(
+        relay,
+        &signed_by(&owner, 30_617, 10, &[&["d", "proj"], &["name", "proj"]]),
+    )
+    .await;
+    let npub = owner.public_key().to_bech32().unwrap();
+    let (status, _, page) = get(relay, &format!("/repo/{npub}/proj")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        page.contains(&format!("git clone nostr://{npub}/relay.test/proj")),
+        "{page}"
+    );
+    assert!(!page.contains("names no clone URL"), "{page}");
+}
+
+#[tokio::test]
+async fn an_issue_page_shows_the_note_its_honoured_status_carries() {
+    use nostr::event::{EventBuilder, FinalizeEvent, Kind, Tag};
+    use nostr::types::Timestamp;
+
+    let running = running().await;
+    let relay = &running.relay;
+    let owner = Keys::generate();
+    let repo = format!("30617:{}:proj", owner.public_key().to_hex());
+    store(
+        relay,
+        &signed_by(&owner, 30_617, 10, &[&["d", "proj"], &["name", "proj"]]),
+    )
+    .await;
+    let issue = signed_by(
+        &owner,
+        1621,
+        20,
+        &[&["a", &repo], &["subject", "Flaky on iOS"]],
+    );
+    store(relay, &issue).await;
+    let reopened = EventBuilder::new(Kind::from(1630), "Reopened: still flaky on iOS 18.")
+        .tags([
+            Tag::parse(["e", &issue.id.to_hex(), "", "root"]).unwrap(),
+            Tag::parse(["a", &repo]).unwrap(),
+        ])
+        .custom_created_at(Timestamp::from(30))
+        .finalize(&owner)
+        .unwrap();
+    store(relay, &reopened).await;
+
+    let npub = owner.public_key().to_bech32().unwrap();
+    let (status, _, page) = get(
+        relay,
+        &format!("/repo/{npub}/proj/issues/{}", issue.id.to_hex()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("data-status-note=\"open\""), "{page}");
+    assert!(page.contains("Reopened: still flaky on iOS 18."), "{page}");
+    assert!(page.contains("marked this open"), "{page}");
 }

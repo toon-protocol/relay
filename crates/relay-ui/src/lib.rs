@@ -5,8 +5,12 @@
 //! ask the store a [`Filter`] and read what comes back; it cannot write, and
 //! it cannot see how events are kept. The relay decides which apps are on and
 //! hands each its handle; this crate holds no relay code.
+//!
+//! [`chrome`] is what the apps' pages share, so they read as one site: the
+//! page shell and app switcher, the repo header's pieces, names and dates.
 
 mod assets;
+pub mod chrome;
 mod style;
 
 pub use assets::{Assets, CACHE_CONTROL_VALUE, MANIFEST_FILE};

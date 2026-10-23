@@ -11,8 +11,9 @@ separation is the whole design, and it is what makes this repo a reference for
 putting **any** app behind the connector: everything below the dashed line is
 the same for a relay, a file store, or an inference endpoint.
 
-The relay also serves read-only app UIs on its read port (for example `/repo` for
-NIP-34 git repos), built from its own store; it still speaks no ILP. Nostr decisions
+The relay also serves read-only app UIs on its read port (`/repo` for NIP-34 git
+repos, `/social` for the social NIPs with repos first), built from its own store; it
+still speaks no ILP. Nostr decisions
 are recorded in this repo's [`docs/adr/`](docs/adr/README.md); ILP and payment
 decisions stay in the connector's `docs/adr/`.
 
@@ -392,9 +393,11 @@ CLI flags override environment variables. `deploy/` sets these through
 | `TOON_NIP42_AUTH`                               | `false`   | Rust relay: `true` sends every connection a NIP-42 challenge and lists 42 in `supported_nips` |
 | `TOON_AUTH_REQUIRED_KINDS`                      | —         | Rust relay: comma-separated kinds a connection must `AUTH` to read (a `REQ` that could return one is closed `auth-required:`; the NIP-11 document does not list the kinds); implies `TOON_NIP42_AUTH` |
 | `TOON_NIP29_GROUPS`                             | `false`   | Rust relay: `true` keeps NIP-29 relay groups (membership and roles enforced on writes, metadata kinds 39000–39003 published, closed/private groups read only by an authenticated member), lists 29 in `supported_nips` and implies `TOON_NIP42_AUTH` |
-| `TOON_UI_APPS`                                  | `repo`    | Rust relay: comma-separated app UIs served on the read port (`GET`/`HEAD` under the app's prefix, with `Content-Security-Policy: default-src 'self'`); `repo` is the NIP-34 page at `/repo`. Empty serves none and returns every prefix to `426`. WebSocket, NIP-11 and `OPTIONS` are the relay's on every path |
+| `TOON_UI_APPS`                                  | `repo,social` | Rust relay: comma-separated app UIs served on the read port (`GET`/`HEAD` under the app's prefix, each with its own `Content-Security-Policy`, `default-src 'self'` at the least); `repo` is the NIP-34 pages at `/repo`, `social` the social pages at `/social` ([`docs/apps/social.md`](docs/apps/social.md)). Unset serves every app the build includes. Empty serves none and returns every prefix to `426`. WebSocket, NIP-11 and `OPTIONS` are the relay's on every path |
 | `TOON_UI_ARWEAVE_GATEWAYS`                      | —         | Rust relay: comma-separated `https` URLs a visitor's browser tries for a git object after the gateways the repo's own events name (`<gateway>/<txId>`). The relay only writes them into `/repo` tree and blob pages; it never contacts them |
 | `TOON_UI_BLOB_SERVERS`                          | —         | Rust relay: comma-separated `https` Blossom server URLs a visitor's browser tries after the announcement's `blossoms` (`<server>/<blob id>`), likewise |
+| `TOON_UI_RELAY_URL`                             | —         | Rust relay: the `ws://`, `wss://`, `http://` or `https://` URL visitors' clients reach this relay at. Its host is the relay hint in the `nostr://<npub>/<host>/<d>` clone URLs `/social` shows, and `/repo` shows for a repo with no `clone` tag; unset, the paid feed's `TOON_RELAY_URL` is used, and with neither the URL has no hint |
+| `TOON_UI_NSITE_GATEWAY`                         | —         | Rust relay: the `https` URL of one NIP-5A nsite gateway. `/social` links a repo's live demo (a site manifest whose `source` is the repo) through it; unset, no demo is linked. The relay never contacts it |
 | `TOON_NIP17_RECIPIENT_ONLY`                     | `false`   | Rust relay: `true` serves a kind 1059 gift wrap only to a connection that has proven (NIP-42) a key in one of its `p` tags, in every answer and live; a `REQ` naming 1059 from an unauthenticated connection is closed `auth-required:`, one naming no kinds is answered without the wraps; no operator exception; implies `TOON_NIP42_AUTH` |
 | `TOON_CONNECTOR_URL`                            | —         | the connector's `GET /ilp` this relay reads its write edge from     |
 | `TOON_WRITE_ILP_ADDRESS`                        | —         | which of that connector's routes reaches this relay's `POST /write` |
