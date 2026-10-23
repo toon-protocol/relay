@@ -34,13 +34,15 @@ use nostr::event::{Event, EventId, Kind};
 use nostr::filter::Filter;
 use nostr::key::PublicKey;
 use nostr::nips::nip19::{FromBech32, Nip19Coordinate};
-use relay_ui::chrome::{Apps, escape, names, npub, percent_encode, person, person_avatar};
+use relay_ui::chrome::{
+    Apps, Profiles, escape, names, npub, percent_encode, person, person_avatar,
+};
 use relay_ui::{AppUi, Assets, ReadOnlyStore};
 
 use markup::{Tab, ago, icon, ref_menu, repo_header, svg};
 use repo::{
-    ANNOUNCEMENT, STATE, authorized_authors, d_tag, first_tag, head_branch, honoured_state, newest,
-    owner_announcement, refs, repo_name, supersedes, tag_values,
+    ANNOUNCEMENT, RepoAddress, STATE, authorized_authors, d_tag, first_tag, head_branch,
+    honoured_state, newest, owner_announcement, refs, repo_name, supersedes, tag_values,
 };
 
 /// The mount prefix.
@@ -268,7 +270,17 @@ async fn home(
         (Some(state), Some(branch)) => body.push_str(&ref_menu(&base, "tree", branch, state)),
         _ => body.push_str("<span></span>"),
     }
-    body.push_str(&clone_menu(announcement));
+    let nip05 = Profiles::load(&store, &[owner]).await;
+    let nostr_urls = RepoAddress::new(owner, &d)
+        .map(|address| {
+            card::clone_urls(
+                &address,
+                defaults.relay_host.as_deref(),
+                nip05.nip05(&owner),
+            )
+        })
+        .unwrap_or_default();
+    body.push_str(&clone_menu(announcement, &nostr_urls));
     body.push_str("</div>");
     let mut csp = false;
     match (state, &default_branch) {
@@ -309,8 +321,10 @@ async fn home(
     response
 }
 
-/// The green Code button: the repo's clone URLs, in a panel.
-fn clone_menu(announcement: &Event) -> String {
+/// The green Code button: the repo's clone URLs, in a panel. A repo that
+/// names none is cloned over Nostr, by `nostr_urls` ([`card::clone_urls`]),
+/// as `/social` shows it.
+fn clone_menu(announcement: &Event, nostr_urls: &[(String, bool)]) -> String {
     let urls = tag_values(announcement, "clone");
     let mut out = format!(
         "<details class=\"menu\"><summary class=\"btn btn-success\">{}Code{}</summary>\
@@ -319,7 +333,21 @@ fn clone_menu(announcement: &Event) -> String {
         svg(icon::CHEVRON, "icon-sm caret"),
     );
     if urls.is_empty() {
-        out.push_str("<p class=\"muted small\">This repository names no clone URL.</p>");
+        for (url, claimed) in nostr_urls {
+            out.push_str(&format!(
+                "<code class=\"copy-field\">git clone {}</code>",
+                escape(url)
+            ));
+            if *claimed {
+                out.push_str(
+                    "<p class=\"muted small\">The NIP-05 name is the owner's claim; \
+                     this relay has not checked it.</p>",
+                );
+            }
+        }
+        if nostr_urls.is_empty() {
+            out.push_str("<p class=\"muted small\">This repository names no clone URL.</p>");
+        }
     }
     for url in urls {
         out.push_str(&format!(

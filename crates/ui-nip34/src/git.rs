@@ -34,11 +34,14 @@ pub const CONTENT_SECURITY_POLICY_VALUE: &str =
     "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https:";
 
 /// The operator's default places for objects (`TOON_UI_ARWEAVE_GATEWAYS`,
-/// `TOON_UI_BLOB_SERVERS`), tried after those the repo's events name.
+/// `TOON_UI_BLOB_SERVERS`), tried after those the repo's events name, and
+/// the host visitors' clients reach this relay at (`TOON_UI_RELAY_URL`),
+/// the relay hint in a `nostr://` clone URL.
 #[derive(Clone, Debug, Default)]
 pub struct Defaults {
     pub arweave_gateways: Vec<String>,
     pub blob_servers: Vec<String>,
+    pub relay_host: Option<String>,
 }
 
 /// Which page: a directory listing, a file, a commit log or one commit.
@@ -532,6 +535,7 @@ mod tests {
                 "http://insecure.test".into(),
             ],
             blob_servers: vec!["https://default-blossom.test".into()],
+            relay_host: None,
         };
         let found = candidates(&announcement, &state, &defaults);
         assert_eq!(

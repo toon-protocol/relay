@@ -322,7 +322,7 @@ Options (each flag beats its environment variable):
   --ui-blob-servers <urls>                 TOON_UI_BLOB_SERVERS (comma-separated https URLs of Blossom servers a browser
                                            tries after the ones a repo's own events name)
   --ui-relay-url <url>                     TOON_UI_RELAY_URL (the ws://, wss://, http:// or https:// URL visitors' clients
-                                           reach this relay at; its host is the relay hint in /social's nostr:// clone
+                                           reach this relay at; its host is the relay hint in the app UIs' nostr:// clone
                                            URLs; default TOON_RELAY_URL's when the live feed is sold)
   --ui-nsite-gateway <url>                 TOON_UI_NSITE_GATEWAY (the https URL of an nsite gateway /social links a
                                            repo's live demo through; unset, no demo is linked)

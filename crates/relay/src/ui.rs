@@ -165,6 +165,7 @@ fn built(
             ui_nip34::Defaults {
                 arweave_gateways: settings.arweave_gateways.to_vec(),
                 blob_servers: settings.blob_servers.to_vec(),
+                relay_host: settings.relay_host.clone(),
             },
             on.clone(),
         ));

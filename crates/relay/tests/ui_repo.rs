@@ -324,3 +324,27 @@ async fn a_private_groups_events_never_reach_a_repo_page() {
     assert_eq!(status, StatusCode::NOT_FOUND, "{page}");
     assert!(!page.contains("members-only"), "{page}");
 }
+
+#[tokio::test]
+async fn a_repo_without_a_clone_tag_is_cloned_over_nostr() {
+    // `/repo` offers the same `nostr://` clone line `/social` does, with
+    // the relay hint from TOON_UI_RELAY_URL.
+    let running =
+        running_with(|name| (name == "TOON_UI_RELAY_URL").then(|| "wss://relay.test".to_owned()))
+            .await;
+    let relay = &running.relay;
+    let owner = Keys::generate();
+    store(
+        relay,
+        &signed_by(&owner, 30_617, 10, &[&["d", "proj"], &["name", "proj"]]),
+    )
+    .await;
+    let npub = owner.public_key().to_bech32().unwrap();
+    let (status, _, page) = get(relay, &format!("/repo/{npub}/proj")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        page.contains(&format!("git clone nostr://{npub}/relay.test/proj")),
+        "{page}"
+    );
+    assert!(!page.contains("names no clone URL"), "{page}");
+}
