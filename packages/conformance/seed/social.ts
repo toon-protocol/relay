@@ -7,7 +7,9 @@
 // (suite/harness/trending-fixture.ts); then the builder profile's banner,
 // status, identities, pins, badge, year of activity and bot
 // (suite/harness/profile-fixture.ts); then forks, site remixes, app handlers
-// and a web app listing (suite/harness/lineage-fixture.ts).
+// and a web app listing (suite/harness/lineage-fixture.ts); then the devlog
+// fixture (suite/harness/devlog-fixture.ts): a series of articles with
+// highlights, comments and an embedded snippet.
 //
 //   WRITE_URL=http://127.0.0.1:3100 READ_URL=http://127.0.0.1:7100 \
 //     pnpm exec tsx packages/conformance/seed/social.ts
@@ -22,6 +24,7 @@ import { socialFixture } from '../suite/harness/social-fixture.js';
 import { trendingFixture } from '../suite/harness/trending-fixture.js';
 import { profileFixture } from '../suite/harness/profile-fixture.js';
 import { lineageFixture } from '../suite/harness/lineage-fixture.js';
+import { devlogFixture } from '../suite/harness/devlog-fixture.js';
 
 const writeUrl = process.env['WRITE_URL'] ?? 'http://127.0.0.1:3100';
 const readUrl = process.env['READ_URL'] ?? 'http://127.0.0.1:7100';
@@ -35,11 +38,14 @@ const trending = trendingFixture(fixture, now);
 const profile = profileFixture(fixture, now);
 // Forks, site remixes, NIP-89 app handlers and a web app listing.
 const lineage = lineageFixture(fixture, now, relayHost);
+// A devlog series with highlights, comments and an embedded snippet.
+const devlog = devlogFixture(fixture, now, relayHost);
 const events = [
   ...fixture.events,
   ...trending.events,
   ...profile.events,
   ...lineage.events,
+  ...devlog.events,
 ];
 let stored = 0;
 for (const event of events) {
@@ -81,4 +87,11 @@ console.log(
 );
 console.log(
   `open in, as iris: ${readUrl}/social/r/${fixture.npubs.maya}/tidepool?as=${fixture.npubs.iris}`
+);
+console.log(
+  `article:       ${readUrl}/social/a/${devlog.articles.cache.naddr}`
+);
+console.log(`snippet:       ${readUrl}/social/s/${devlog.named.snippet.id}`);
+console.log(
+  `writing:       ${readUrl}/social/r/${fixture.npubs.maya}/tidepool/writing`
 );

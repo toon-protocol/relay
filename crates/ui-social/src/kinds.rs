@@ -44,6 +44,8 @@ pub(crate) const SITE_ROOT: u16 = 15_128;
 pub(crate) const ARTICLE: u16 = 30_023;
 /// NIP-89 handler recommendation.
 pub(crate) const HANDLER_RECOMMENDATION: u16 = 31_989;
+/// NIP-51 curation set of articles: a series, when its author keeps one.
+pub(crate) const CURATION_SET: u16 = 30_004;
 /// NIP-89 application handler; Shakespeare's app event.
 pub(crate) const APP_HANDLER: u16 = 31_990;
 /// Software application (nips#1336, the "NIP-82" draft: an open PR, not a
