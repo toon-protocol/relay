@@ -267,9 +267,13 @@ describe('relay image conformance: /repo git pages in a browser', () => {
         // `style` attribute, and a coloured run proves it was not refused.
         const colours = await page
           .locator('#git pre span')
-          .evaluateAll((spans) =>
-            spans.map((span) => getComputedStyle(span).color)
-          );
+          .evaluateAll((spans) => {
+            // Runs in the browser; the suite's tsconfig has no DOM lib.
+            const browser = globalThis as unknown as {
+              getComputedStyle(el: unknown): { color: string };
+            };
+            return spans.map((span) => browser.getComputedStyle(span).color);
+          });
         expect(new Set(colours).size).toBeGreaterThan(1);
         expect(highlighter().length).toBeGreaterThan(0);
 
