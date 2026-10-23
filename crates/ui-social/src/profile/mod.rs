@@ -468,8 +468,19 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
         }
     }
 
+    // A tip split the person wrote on their kind 0 (NIP-57 `zap` tags),
+    // shown as text: TOON cannot send a tip yet.
+    let metadata = newest(
+        lists
+            .iter()
+            .filter(|event| event.pubkey == key && event.kind == Kind::from(0)),
+    );
+    names_wanted.extend(metadata.map(crate::tips::split_keys).unwrap_or_default());
     let profiles = Profiles::load(store, &names_wanted).await;
-    body.push_str(&sidebar(&who, profiles.names()));
+    let tips = metadata
+        .map(|event| crate::tips::split_card(event, profiles.names(), "this person"))
+        .unwrap_or_default();
+    body.push_str(&sidebar(&who, profiles.names(), &tips));
     body.push_str(&format!("<div class=\"profile-main\">{main}</div></div>"));
     let title = who
         .meta
@@ -554,7 +565,7 @@ fn banner(meta: &Metadata) -> String {
 }
 
 /// The left column: the person, their claims, counts and badges.
-fn sidebar(who: &Who, names: &HashMap<PublicKey, String>) -> String {
+fn sidebar(who: &Who, names: &HashMap<PublicKey, String>, tips: &str) -> String {
     let key = &who.key;
     let npub = npub(key);
     let shown = who
@@ -668,6 +679,7 @@ fn sidebar(who: &Who, names: &HashMap<PublicKey, String>) -> String {
              that defined it. Select one to see its issuer.</p></section>",
         );
     }
+    out.push_str(tips);
     out.push_str("</aside>");
     out
 }

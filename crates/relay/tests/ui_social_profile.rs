@@ -358,3 +358,34 @@ async fn with_social_off_repo_names_people_without_a_link() {
     assert_eq!(status, StatusCode::OK);
     assert!(!home.contains("person-link"), "{home}");
 }
+
+#[tokio::test]
+async fn a_profile_shows_the_tip_split_its_kind_0_names_as_text() {
+    let running = running_with(|_| None).await;
+    let relay = &running.relay;
+    let (maya, kofi) = (Keys::generate(), Keys::generate());
+    let now = Timestamp::now().as_secs();
+    store(relay, &event(&kofi, 0, now - 20, r#"{"name":"Kofi"}"#, &[])).await;
+    store(
+        relay,
+        &event(
+            &maya,
+            0,
+            now - 10,
+            r#"{"name":"Maya"}"#,
+            &[
+                &["zap", &maya.public_key().to_hex(), "wss://r.test", "3"],
+                &["zap", &kofi.public_key().to_hex(), "wss://r.test", "1"],
+            ],
+        ),
+    )
+    .await;
+    let (status, page) = get(relay, &format!("/social/p/{}", npub(&maya))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("data-tip-split"), "{page}");
+    assert!(page.contains("Tip split (set by this person)"), "{page}");
+    assert!(page.contains("Kofi"), "{page}");
+    assert!(page.contains("25%") && page.contains("75%"), "{page}");
+    let (_, plain) = get(relay, &format!("/social/p/{}", npub(&kofi))).await;
+    assert!(!plain.contains("data-tip-split"), "no zap tags, no card");
+}

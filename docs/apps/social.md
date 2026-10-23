@@ -662,7 +662,9 @@ writes** for an ILP payment to a pubkey, taggable to a repo, which the relay
 stores and shows as a claim (or as connector-stated, if the connector states
 it) and never verifies. Until then, a repo announcement or app that carries
 NIP-57 `zap` split tags shows them as text, **"Tip split (set by the
-owner)"**, with each share computed as NIP-57 Appendix G says.
+owner)"**, with each share computed as NIP-57 Appendix G says. A person's
+kind 0 with `zap` tags shows the same on their profile, "Tip split (set by
+this person)".
 
 ### Reports and mutes
 
