@@ -421,11 +421,7 @@ pub(crate) async fn rank(
 /// Whether `mutes` drops `repo`: its owner is muted, or one of its own
 /// topics is a muted hashtag. A pure function.
 pub(crate) fn muted_repo(mutes: &Mutes, catalog: &Catalog, repo: &RepoAddress) -> bool {
-    mutes.hides_key(repo.owner())
-        || catalog
-            .own_topics(repo)
-            .iter()
-            .any(|topic| mutes.hides_hashtag(topic))
+    mutes.hides_repo(repo, &catalog.own_topics(repo))
 }
 
 /// Distinct stargazers and distinct forks of each of `repos`: two queries.

@@ -15,8 +15,7 @@ use nostr::event::{Event, EventId, Kind};
 use nostr::filter::Filter;
 use nostr::key::PublicKey;
 use relay_ui::ReadOnlyStore;
-use ui_nip34::card::RepoCard;
-use ui_nip34::repo::{RepoAddress, newest, topics};
+use ui_nip34::repo::{RepoAddress, newest};
 
 use crate::kinds::MUTE_LIST;
 
@@ -129,15 +128,10 @@ impl Mutes {
         self.words.iter().any(|word| text.contains(word.as_str()))
     }
 
-    /// Whether a list drops a repo: its owner is muted, or the announcement
-    /// carries a muted topic. `card` is the repo's, when it is loaded.
-    pub(crate) fn hides_repo(&self, repo: &RepoAddress, card: Option<&RepoCard>) -> bool {
-        self.hides_key(repo.owner())
-            || card.is_some_and(|card| {
-                topics(card.announcement())
-                    .iter()
-                    .any(|topic| self.hides_hashtag(topic))
-            })
+    /// Whether a list drops a repo: its owner is muted, or one of `topics`
+    /// (the owner's own, from its announcement) is a muted hashtag.
+    pub(crate) fn hides_repo(&self, repo: &RepoAddress, topics: &[String]) -> bool {
+        self.hides_key(repo.owner()) || topics.iter().any(|topic| self.hides_hashtag(topic))
     }
 }
 
@@ -196,7 +190,7 @@ mod tests {
         let repo = RepoAddress::new(owner.public_key(), "r").unwrap();
         let other = RepoAddress::new(Keys::generate().public_key(), "r").unwrap();
         let mutes = Mutes::from_list(&list);
-        assert!(mutes.hides_repo(&repo, None));
-        assert!(!mutes.hides_repo(&other, None));
+        assert!(mutes.hides_repo(&repo, &[]));
+        assert!(!mutes.hides_repo(&other, &[]));
     }
 }

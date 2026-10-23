@@ -331,11 +331,8 @@ pub(crate) fn reply_html(view: &View<'_>, reply: &Event, maker: bool) -> String 
          <a class=\"muted small\" href=\"{}\">{}</a></div><p class=\"text\">{}</p></div></article>",
         reply.id.to_hex(),
         person_avatar(view.links.apps(), view.names, &reply.pubkey, true),
-        format!(
-            "{}{}",
-            person(view.links.apps(), view.names, &reply.pubkey),
-            relay_ui::chrome::bot_chip(view.bots, &reply.pubkey)
-        ),
+        person(view.links.apps(), view.names, &reply.pubkey)
+            + relay_ui::chrome::bot_chip(view.bots, &reply.pubkey),
         if maker {
             " <span class=\"chip chip-maker\">Maker</span> "
         } else {
