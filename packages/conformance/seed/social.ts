@@ -6,7 +6,8 @@
 // month of stars, forks, topic labels and NIP-85 ranks for /social/trending
 // (suite/harness/trending-fixture.ts); then the builder profile's banner,
 // status, identities, pins, badge, year of activity and bot
-// (suite/harness/profile-fixture.ts).
+// (suite/harness/profile-fixture.ts); then forks, site remixes, app handlers
+// and a web app listing (suite/harness/lineage-fixture.ts).
 //
 //   WRITE_URL=http://127.0.0.1:3100 READ_URL=http://127.0.0.1:7100 \
 //     pnpm exec tsx packages/conformance/seed/social.ts
@@ -20,6 +21,7 @@
 import { socialFixture } from '../suite/harness/social-fixture.js';
 import { trendingFixture } from '../suite/harness/trending-fixture.js';
 import { profileFixture } from '../suite/harness/profile-fixture.js';
+import { lineageFixture } from '../suite/harness/lineage-fixture.js';
 
 const writeUrl = process.env['WRITE_URL'] ?? 'http://127.0.0.1:3100';
 const readUrl = process.env['READ_URL'] ?? 'http://127.0.0.1:7100';
@@ -31,7 +33,14 @@ const fixture = socialFixture(now, relayHost);
 const trending = trendingFixture(fixture, now);
 // A banner, status, identities, pins, a badge, a year of activity, a bot.
 const profile = profileFixture(fixture, now);
-const events = [...fixture.events, ...trending.events, ...profile.events];
+// Forks, site remixes, NIP-89 app handlers and a web app listing.
+const lineage = lineageFixture(fixture, now, relayHost);
+const events = [
+  ...fixture.events,
+  ...trending.events,
+  ...profile.events,
+  ...lineage.events,
+];
 let stored = 0;
 for (const event of events) {
   const response = await fetch(`${writeUrl}/write`, {
@@ -67,3 +76,9 @@ console.log(`topics:        ${readUrl}/social/t`);
 console.log(`a topic:       ${readUrl}/social/t/built-with%3Aclaude`);
 console.log(`profile:       ${readUrl}/social/p/${fixture.npubs.maya}`);
 console.log(`a bot:         ${readUrl}/social/p/${profile.bot.npub}`);
+console.log(
+  `forks:         ${readUrl}/social/r/${fixture.npubs.maya}/tidepool/forks`
+);
+console.log(
+  `open in, as iris: ${readUrl}/social/r/${fixture.npubs.maya}/tidepool?as=${fixture.npubs.iris}`
+);

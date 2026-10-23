@@ -159,7 +159,9 @@ describe('relay image conformance: the /social app UI', () => {
       expect(has(snippets.text, named.snippet.id)).toBe(true);
       expect(snippets.text).toContain('harmonic.rs');
 
-      expect((await page(`${base}/forks`)).status).toBe(404);
+      // The Forks tab is ui-social-lineage.test.ts's; an unknown tab is not.
+      expect((await page(`${base}/forks`)).status).toBe(200);
+      expect((await page(`${base}/lineage`)).status).toBe(404);
       const naddr = nip19.naddrEncode({
         kind: 30617,
         pubkey: fixture.pubkeys.maya,

@@ -245,7 +245,8 @@ struct Repo {
     d: String,
     announcement: Event,
     authorized: Vec<PublicKey>,
-    /// The owner's display name, for the header.
+    /// The owner's display name, and the fork parent's owner's, for the
+    /// header.
     names: HashMap<PublicKey, String>,
     /// The apps the relay serves, for the header's links.
     apps: Apps,
@@ -255,7 +256,7 @@ impl Repo {
     async fn resolve(store: &ReadOnlyStore, apps: &Apps, npub: &str, d: &str) -> Option<Self> {
         let (owner, announcement) = resolve_repo(store, npub, d).await?;
         let authorized = authorized_authors(&announcement);
-        let names = names(store, &[owner]).await;
+        let names = names(store, &crate::lineage::named_keys(&announcement)).await;
         Some(Self {
             owner,
             d: d.to_owned(),

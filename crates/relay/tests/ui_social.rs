@@ -213,6 +213,7 @@ async fn the_social_pages_read_written_events() {
             "",
             &[
                 &["d", "tidepool"],
+                &["path", "/index.html", &"f".repeat(64)],
                 &[
                     "source",
                     &format!("nostr://{}/relay.test/tidepool", npub(&owner)),
@@ -316,8 +317,16 @@ async fn the_social_pages_read_written_events() {
             StatusCode::OK
         );
     }
+    let forks = get(relay, &format!("{base}/forks")).await;
+    assert_eq!(forks.status, StatusCode::OK);
+    assert!(
+        forks
+            .text
+            .contains("No forks or remixes of this repo on this relay yet.")
+    );
+    assert!(forks.text.contains("public and permanent"));
     assert_eq!(
-        get(relay, &format!("{base}/forks")).await.status,
+        get(relay, &format!("{base}/lineage")).await.status,
         StatusCode::NOT_FOUND
     );
 
@@ -379,4 +388,158 @@ async fn with_social_off_repo_draws_no_link_to_it() {
         get(relay, "/social").await.status,
         StatusCode::UPGRADE_REQUIRED
     );
+}
+
+#[tokio::test]
+async fn forks_remixes_and_open_in_are_read_from_written_events() {
+    let running = running_with(|name| match name {
+        "TOON_UI_RELAY_URL" => Some("wss://relay.test".to_owned()),
+        "TOON_UI_NSITE_GATEWAY" => Some("https://nsite.test".to_owned()),
+        _ => None,
+    })
+    .await;
+    let relay = &running.relay;
+    let (noaa, maya, ruth, dan, leo) = (
+        Keys::generate(),
+        Keys::generate(),
+        Keys::generate(),
+        Keys::generate(),
+        Keys::generate(),
+    );
+    let (builder, viewer) = (Keys::generate(), Keys::generate());
+    let now = Timestamp::now().as_secs();
+    let origin = format!("30617:{}:harmonics", noaa.public_key().to_hex());
+    let tidepool = format!("30617:{}:tidepool", maya.public_key().to_hex());
+    let euc = "c".repeat(40);
+    let upstream = format!("{origin}|https://code.test/harmonics.git");
+    let announcements: [(&Keys, &str, Vec<Vec<&str>>); 4] = [
+        (&noaa, "harmonics", vec![]),
+        (
+            &maya,
+            "tidepool",
+            vec![vec!["u", &upstream], vec!["r", &euc, "euc"]],
+        ),
+        (&ruth, "tidepool", vec![vec!["u", &tidepool]]),
+        (&dan, "tidepool-nz", vec![vec!["r", &euc, "euc"]]),
+    ];
+    for (keys, d, extra) in &announcements {
+        let d_tag = ["d", *d];
+        let mut tags: Vec<&[&str]> = vec![&d_tag];
+        tags.extend(extra.iter().map(Vec::as_slice));
+        store(relay, &event(keys, 30_617, now - 100, "", &tags)).await;
+    }
+    // Maya's site, and Leo's remix of it.
+    let site = format!("35128:{}:tidepool", maya.public_key().to_hex());
+    let source = format!("nostr://{}/relay.test/tidepool", npub(&maya));
+    store(
+        relay,
+        &event(
+            &maya,
+            35_128,
+            now - 90,
+            "",
+            &[
+                &["d", "tidepool"],
+                &["path", "/index.html", &"f".repeat(64)],
+                &["source", &source],
+            ],
+        ),
+    )
+    .await;
+    store(
+        relay,
+        &event(
+            &leo,
+            35_128,
+            now - 80,
+            "",
+            &[
+                &["d", "surfcast"],
+                &["a", &site],
+                &["A", &site],
+                &["title", "surfcast"],
+                &["path", "/index.html", &"e".repeat(64)],
+            ],
+        ),
+    )
+    .await;
+    // A builder that clones nostr:// repos, recommended by someone the
+    // viewer follows.
+    let handler = event(
+        &builder,
+        31_990,
+        now - 70,
+        r#"{"name":"Shakespeare"}"#,
+        &[
+            &["d", "sk"],
+            &["k", "30617"],
+            &["web", "https://shakespeare.diy/<bech32>", "naddr"],
+        ],
+    );
+    store(relay, &handler).await;
+    let handler_a = format!("31990:{}:sk", builder.public_key().to_hex());
+    store(
+        relay,
+        &event(
+            &dan,
+            31_989,
+            now - 60,
+            "",
+            &[&["d", "30617"], &["a", &handler_a]],
+        ),
+    )
+    .await;
+    store(
+        relay,
+        &event(
+            &viewer,
+            3,
+            now - 50,
+            "",
+            &[&["p", &dan.public_key().to_hex()]],
+        ),
+    )
+    .await;
+
+    let base = format!("/social/r/{}/tidepool", npub(&maya));
+    let forks = get(relay, &format!("{base}/forks?as={}", npub(&viewer))).await;
+    assert_eq!(forks.status, StatusCode::OK);
+    let html = &forks.text;
+    assert!(!html.contains("<script"));
+    // The origin, this repo, Ruth's fork, Leo's remix, Dan's same first commit.
+    for needle in [
+        format!("data-repo-node=\"{origin}\""),
+        format!(
+            "data-repo-node=\"30617:{}:tidepool\"",
+            ruth.public_key().to_hex()
+        ),
+        format!("data-site=\"35128:{}:surfcast\"", leo.public_key().to_hex()),
+        format!(
+            "data-repo-node=\"30617:{}:tidepool-nz\"",
+            dan.public_key().to_hex()
+        ),
+    ] {
+        assert!(html.contains(&needle), "{needle}");
+    }
+    assert!(html.contains("aria-current=\"true\""));
+    assert!(html.contains(">same first commit<"));
+    assert!(
+        html.contains("Forks<span class=\"count\">3</span>"),
+        "ruth, dan and leo"
+    );
+    assert!(html.contains(&format!("Forked from <a href=\"{base}/forks\">")));
+    // Remix and Open in, from the recommended handler, the naddr filled in.
+    assert!(html.contains("https://shakespeare.diy/clone?url=nostr%3A%2F%2F"));
+    assert!(html.contains("href=\"https://shakespeare.diy/naddr1"));
+    assert!(html.contains("1 you follow"));
+    assert!(html.contains("public and permanent"));
+    // The tab links keep the viewer.
+    assert!(html.contains(&format!("{base}/talk?as={}", npub(&viewer))));
+
+    // /repo says what it was forked from too.
+    let home = get(relay, &format!("/repo/{}/tidepool", npub(&maya))).await;
+    assert!(home.text.contains(&format!(
+        "Forked from <a href=\"/repo/{}/harmonics\">",
+        npub(&noaa)
+    )));
 }

@@ -16,9 +16,10 @@ use relay_ui::chrome::{Profiles, ago, escape, icon, person, person_avatar, svg};
 use ui_nip34::card::plural;
 use ui_nip34::repo::{RepoAddress, first_tag};
 
+use crate::demo;
 use crate::kinds::{APP_HANDLER, ARTICLE, COMMENT, NOTE, REACTION};
 use crate::post::{self, View};
-use crate::ship::{self, Site};
+use crate::ship;
 use crate::{PREFIX, Pages, content, event_by_id, html, load_cards, not_found, parse_event_id};
 
 /// The most replies or reactions the page reads.
@@ -141,21 +142,9 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(target): Path<String>)
         gateway: pages.gateway(),
     };
     let ship = view.ship(&event);
-    let mut demos: HashMap<RepoAddress, Site> = HashMap::new();
-    if let Some(repo) = &ship
-        && pages.gateway().is_some()
-    {
-        let site = match ship::app_site(&event) {
-            Some(site) => Some(site),
-            None => match cards.get(repo) {
-                Some(card) => ship::demo(store, card).await,
-                None => None,
-            },
-        };
-        if let Some(site) = site {
-            demos.insert(repo.clone(), site);
-        }
-    }
+    let launches: Vec<(&Event, RepoAddress)> =
+        ship.iter().map(|repo| (&event, repo.clone())).collect();
+    let demos = demo::for_cards(store, &cards, &launches, pages.gateway()).await;
     let view = View {
         demos: &demos,
         ..view
@@ -251,7 +240,7 @@ fn launch(view: &View<'_>, event: &Event, repo: &RepoAddress, reactions: &[Event
         let text = content::render(&event.content, &hidden, view.names);
         out.push_str(&format!("<p class=\"text\">{}</p>", text.html.trim()));
     }
-    out.push_str(&post::cards_html(view, std::slice::from_ref(repo)));
+    out.push_str(&post::launch_card(view, repo));
     out.push_str(&tally_chips(reactions));
     out
 }

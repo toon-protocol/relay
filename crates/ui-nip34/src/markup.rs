@@ -40,6 +40,16 @@ pub(crate) fn repo_header(
 ) -> String {
     let base = repo_path(owner, d);
     let mut out = chrome::repo_title(&name(names, owner), repo_name(announcement), &base, "");
+    if let Some(parent) = crate::lineage::ForkOf::of(announcement) {
+        let parent = parent.address();
+        out.push_str(&format!(
+            "<p class=\"forked-from\">{}Forked from <a href=\"{}\">{} / {}</a></p>",
+            svg(icon::FORK, "icon-sm"),
+            escape(&parent.repo_path()),
+            name(names, parent.owner()),
+            escape(parent.d()),
+        ));
+    }
     if let Some(description) = first_tag(announcement, "description")
         .map(str::trim)
         .filter(|text| !text.is_empty())
@@ -168,5 +178,39 @@ mod tests {
             crate::npub(&owner.public_key())
         )));
         assert!(!header(&Apps::new([App::Repo])).contains("/social"));
+    }
+
+    #[test]
+    fn a_fork_says_what_it_was_forked_from() {
+        let (owner, parent) = (Keys::generate(), Keys::generate());
+        let parent_d = "harmonics";
+        let announcement = EventBuilder::new(Kind::from(30_617), "")
+            .tags([
+                Tag::parse(["d", "r"]).unwrap(),
+                Tag::parse([
+                    "u".to_owned(),
+                    format!(
+                        "30617:{}:{parent_d}|https://git.test/h.git",
+                        parent.public_key().to_hex()
+                    ),
+                ])
+                .unwrap(),
+            ])
+            .finalize(&owner)
+            .unwrap();
+        let names = HashMap::from([(parent.public_key(), "noaa".to_owned())]);
+        let header = repo_header(
+            &Apps::new([App::Repo]),
+            &owner.public_key(),
+            "r",
+            &announcement,
+            &names,
+            Tab::Code,
+        );
+        assert!(header.contains(&format!(
+            "Forked from <a href=\"/repo/{}/harmonics\">",
+            crate::npub(&parent.public_key())
+        )));
+        assert!(header.contains(">noaa</span> / harmonics</a>"));
     }
 }

@@ -42,8 +42,13 @@ pub(crate) const GIT_AUTHORS: u16 = 10_017;
 pub(crate) const SITE_ROOT: u16 = 15_128;
 /// NIP-23 long-form article.
 pub(crate) const ARTICLE: u16 = 30_023;
+/// NIP-89 handler recommendation.
+pub(crate) const HANDLER_RECOMMENDATION: u16 = 31_989;
 /// NIP-89 application handler; Shakespeare's app event.
 pub(crate) const APP_HANDLER: u16 = 31_990;
+/// Software application (nips#1336, the "NIP-82" draft: an open PR, not a
+/// merged NIP; the kind is in the index's table with no NIP named).
+pub(crate) const SOFTWARE_APP: u16 = 32_267;
 /// NIP-5A named site manifest.
 pub(crate) const SITE_NAMED: u16 = 35_128;
 

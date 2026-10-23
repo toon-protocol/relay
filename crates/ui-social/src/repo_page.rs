@@ -8,15 +8,21 @@
 //! | Talk      | `/talk`     | everyone else's notes, threads, comments (`A`) and highlights |
 //! | Stars     | `/stars`    | each key that starred it (kind 7 `+`, `a`, `k=30617`)          |
 //! | Followers | `/followers`| each key whose kind 10018 names it                             |
+//! | Forks     | `/forks`    | forks (NIP-34 `u`), site remixes (NIP-5A `a`/`A`) ([`lineage`]) |
 //! | Media     | `/media`    | pictures and videos (kinds 20, 21, 22) that `a`-tag it         |
 //! | Snippets  | `/snippets` | code snippets (kind 1337) that `a`-tag it or name it in `repo` |
 //!
 //! Counts are of people where people are what is counted (stars, followers,
-//! talk), and the store has already applied every NIP-09 deletion.
+//! talk, forks), and the store has already applied every NIP-09 deletion.
+//!
+//! `?as=<npub>` names a viewer, whose follows rank the "Open in…" apps
+//! ([`crate::handlers`]); the tab links carry it.
+//!
+//! [`lineage`]: crate::lineage
 
 use std::collections::HashSet;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, RawQuery, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use nostr::event::{Event, Kind};
@@ -27,14 +33,16 @@ use relay_ui::chrome::{self, Profiles, ago, avatar, escape, icon, name, plain_na
 use ui_nip34::card::{self, RepoCard, clone_urls, plural};
 use ui_nip34::repo::{RepoAddress, first_tag, tag_values, topics};
 
+use crate::demo::{self, Demo};
 use crate::kinds::{
     APP_HANDLER, ARTICLE, COMMENT, GENERIC_REPOST, HIGHLIGHT, NOTE, PICTURE, SHORT_VIDEO, SNIPPET,
     THREAD, VIDEO,
 };
+use crate::lineage::{self, Lineage};
 use crate::media;
 use crate::post::{self, View};
-use crate::ship::{self, Site};
 use crate::{PREFIX, Pages, html, not_found, parse_pubkey};
+use crate::{handlers, ship};
 
 /// The kinds that name a repo in an `a` tag and appear on its page.
 const TAGGED_KINDS: [u16; 11] = [
@@ -62,16 +70,18 @@ enum Tab {
     Talk,
     Stars,
     Followers,
+    Forks,
     Media,
     Snippets,
 }
 
 impl Tab {
-    const ALL: [Tab; 6] = [
+    const ALL: [Tab; 7] = [
         Tab::Maker,
         Tab::Talk,
         Tab::Stars,
         Tab::Followers,
+        Tab::Forks,
         Tab::Media,
         Tab::Snippets,
     ];
@@ -89,6 +99,7 @@ impl Tab {
             Self::Talk => "talk",
             Self::Stars => "stars",
             Self::Followers => "followers",
+            Self::Forks => "forks",
             Self::Media => "media",
             Self::Snippets => "snippets",
         }
@@ -100,6 +111,7 @@ impl Tab {
             Self::Talk => "Talk",
             Self::Stars => "Stars",
             Self::Followers => "Followers",
+            Self::Forks => "Forks",
             Self::Media => "Media",
             Self::Snippets => "Snippets",
         }
@@ -111,6 +123,7 @@ impl Tab {
             Self::Talk => icon::COMMENT,
             Self::Stars => icon::STAR,
             Self::Followers => icon::EYE,
+            Self::Forks => icon::FORK,
             Self::Media => icon::IMAGE,
             Self::Snippets => icon::CODE,
         }
@@ -191,21 +204,37 @@ pub(crate) async fn redirect(State(pages): State<Pages>, Path(target): Path<Stri
 pub(crate) async fn maker(
     State(pages): State<Pages>,
     Path((owner, d)): Path<(String, String)>,
+    RawQuery(query): RawQuery,
 ) -> Response {
-    page(&pages, &owner, &d, Tab::Maker).await
+    page(&pages, &owner, &d, Tab::Maker, viewer(query.as_deref())).await
 }
 
 pub(crate) async fn tab(
     State(pages): State<Pages>,
     Path((owner, d, tab)): Path<(String, String, String)>,
+    RawQuery(query): RawQuery,
 ) -> Response {
     match Tab::from_slug(&tab) {
-        Some(tab) => page(&pages, &owner, &d, tab).await,
+        Some(tab) => page(&pages, &owner, &d, tab, viewer(query.as_deref())).await,
         None => not_found(&pages),
     }
 }
 
-async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab) -> Response {
+/// The viewer `?as=<npub>` names, if the key reads.
+fn viewer(query: Option<&str>) -> Option<PublicKey> {
+    query?
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("as="))
+        .and_then(parse_pubkey)
+}
+
+async fn page(
+    pages: &Pages,
+    owner: &str,
+    d: &str,
+    tab: Tab,
+    viewer: Option<PublicKey>,
+) -> Response {
     let Some(repo) = parse_pubkey(owner).and_then(|owner| RepoAddress::new(owner, d)) else {
         return not_found(pages);
     };
@@ -249,13 +278,22 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab) -> Response {
     let stars = card::stargazers(store, &repo).await;
     let followers = card::followers(store, &repo).await;
 
+    let lineage = Lineage::load(store, &card).await;
+    let (choices, handler_profiles) = handlers::load(store, viewer.as_ref()).await;
+
     let mut keys: Vec<PublicKey> = card.authorized().to_vec();
+    if let Some(parent) = card.fork_of() {
+        keys.push(*parent.address().owner());
+    }
+    if tab == Tab::Forks {
+        keys.extend(lineage.keys());
+    }
     let listed: Vec<&Event> = match tab {
         Tab::Maker => sections.maker.iter().collect(),
         Tab::Talk => sections.talk.iter().collect(),
         Tab::Media => sections.media.iter().collect(),
         Tab::Snippets => sections.snippets.iter().collect(),
-        Tab::Stars | Tab::Followers => Vec::new(),
+        Tab::Stars | Tab::Followers | Tab::Forks => Vec::new(),
     };
     let people = match tab {
         Tab::Stars => stars.as_slice(),
@@ -272,15 +310,12 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab) -> Response {
         }
     }
     let profiles = Profiles::load(store, &keys).await;
-    let demo = match pages.gateway() {
-        Some(_) => ship::demo(store, &card).await,
-        None => None,
-    };
+    let demo = demo::load(store, &card, pages.gateway()).await;
     let links = pages.links();
     let cards = std::collections::HashMap::from([(repo.clone(), card.clone())]);
-    let demos: std::collections::HashMap<RepoAddress, Site> = demo
+    let demos: std::collections::HashMap<RepoAddress, Demo> = demo
         .iter()
-        .map(|site| (repo.clone(), site.clone()))
+        .map(|demo| (repo.clone(), demo.clone()))
         .collect();
     let view = View {
         links: &links,
@@ -295,10 +330,11 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab) -> Response {
         Tab::Talk => sections.talkers(),
         Tab::Stars => stars.len(),
         Tab::Followers => followers.len(),
+        Tab::Forks => lineage.people(),
         Tab::Media => sections.media.len(),
         Tab::Snippets => sections.snippets.len(),
     };
-    let mut body = header(&view, &card, stars.len(), followers.len());
+    let mut body = header(&view, &card, stars.len(), followers.len(), lineage.people());
     let base = links
         .social_path(&repo)
         .unwrap_or_else(|| format!("{PREFIX}/r/{}", repo.path_segments()));
@@ -306,11 +342,15 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab) -> Response {
     if let Some(code) = links.repo_path(&repo) {
         tabs.push(chrome::Tab::new("Code", icon::CODE, code));
     }
+    let as_viewer = viewer
+        .as_ref()
+        .map(|viewer| format!("?as={}", chrome::npub(viewer)))
+        .unwrap_or_default();
     for each in Tab::ALL {
         let href = if each == Tab::Maker {
-            base.clone()
+            format!("{base}{as_viewer}")
         } else {
-            format!("{base}/{}", each.slug())
+            format!("{base}/{}{as_viewer}", each.slug())
         };
         tabs.push(
             chrome::Tab::new(each.label(), each.icon(), href)
@@ -364,24 +404,58 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab) -> Response {
             "listed it",
             "No one follows this repo yet.",
         )),
+        Tab::Forks => body.push_str(&lineage::tab(
+            &lineage,
+            &card,
+            view.demo_url(&repo).as_deref(),
+            &lineage::Draw {
+                links: &links,
+                names: profiles.names(),
+                gateway: pages.gateway(),
+            },
+        )),
         Tab::Media => body.push_str(&media_grid(&view, &listed)),
         Tab::Snippets => body.push_str(&snippets(&view, &listed)),
     }
     body.push_str("</div>");
-    body.push_str(&sidebar(&view, &card));
+    let mut extra = String::new();
+    if tab == Tab::Forks {
+        extra.push_str(&lineage::remix_card(
+            &lineage,
+            &card,
+            &choices,
+            &handler_profiles,
+            &links,
+        ));
+        extra.push_str(&lineage::glance(&lineage));
+    }
+    extra.push_str(&handlers::open_in_card(
+        &choices,
+        &handler_profiles,
+        &repo,
+        links.relay_host(),
+        viewer.is_some(),
+    ));
+    body.push_str(&sidebar(&view, &card, &extra));
     body.push_str("</div>");
     html(
         pages,
         StatusCode::OK,
         &format!("{} · {}", card.name(), tab.label()),
-        None,
+        viewer.as_ref(),
         &body,
     )
 }
 
-/// The repo's header: owner / name, the star and follow counts, the live
-/// demo, its description and topics.
-fn header(view: &View<'_>, card: &RepoCard, stars: usize, followers: usize) -> String {
+/// The repo's header: owner / name, the star, follow and fork counts, the
+/// live demo, what it was forked from, its description and topics.
+fn header(
+    view: &View<'_>,
+    card: &RepoCard,
+    stars: usize,
+    followers: usize,
+    forks: usize,
+) -> String {
     let repo = card.address();
     let base = view
         .links
@@ -389,10 +463,12 @@ fn header(view: &View<'_>, card: &RepoCard, stars: usize, followers: usize) -> S
         .unwrap_or_else(|| format!("{PREFIX}/r/{}", repo.path_segments()));
     let mut actions = format!(
         "<span class=\"actions\"><a class=\"btn\" href=\"{0}/stars\">{1}Stars<span class=\"count\">{stars}</span></a>\
-         <a class=\"btn\" href=\"{0}/followers\">{2}Followers<span class=\"count\">{followers}</span></a>",
+         <a class=\"btn\" href=\"{0}/followers\">{2}Followers<span class=\"count\">{followers}</span></a>\
+         <a class=\"btn\" href=\"{0}/forks\">{3}Forks<span class=\"count\">{forks}</span></a>",
         escape(&base),
         svg(icon::STAR, "icon-sm"),
         svg(icon::EYE, "icon-sm"),
+        svg(icon::FORK, "icon-sm"),
     );
     if let Some(url) = view.demo_url(repo) {
         actions.push_str(&format!(
@@ -408,6 +484,14 @@ fn header(view: &View<'_>, card: &RepoCard, stars: usize, followers: usize) -> S
         &base,
         &actions,
     );
+    if let Some(title) = card.fork_title() {
+        out.push_str(&format!(
+            "<p class=\"forked-from\">{}Forked from <a href=\"{}/forks\">{}</a></p>",
+            svg(icon::FORK, "icon-sm"),
+            escape(&base),
+            escape(&title)
+        ));
+    }
     if let Some(description) = card.description() {
         out.push_str(&format!(
             "<p class=\"repo-desc\">{}</p>",
@@ -528,14 +612,22 @@ fn snippets(view: &View<'_>, events: &[&Event]) -> String {
     out
 }
 
-/// The sidebar: what the repo is, where to clone it, who keeps it, and how
-/// to star or follow it from a client.
-fn sidebar(view: &View<'_>, card: &RepoCard) -> String {
+/// The sidebar: what the repo is and its live demo, where to clone it, the
+/// tab's own cards and the apps to open it in (`extra`), who keeps it, and
+/// how to star or follow it from a client.
+fn sidebar(view: &View<'_>, card: &RepoCard, extra: &str) -> String {
     let repo = card.address();
     let mut out = String::from("<aside class=\"sidebar\"><div><h2>About</h2>");
     match card.description() {
         Some(description) => out.push_str(&format!("<p>{}</p>", escape(description))),
         None => out.push_str("<p class=\"muted\"><em>No description provided.</em></p>"),
+    }
+    if let Some(url) = view.demo_url(repo) {
+        out.push_str(&format!(
+            "<p class=\"demo-link\">{}<a class=\"truncate\" href=\"{1}\" rel=\"noopener noreferrer\" data-demo>{1}</a></p>",
+            svg(icon::PLAY, "icon-sm"),
+            escape(&url)
+        ));
     }
     let web: Vec<&String> = tag_values(card.announcement(), "web")
         .iter()
@@ -574,7 +666,9 @@ fn sidebar(view: &View<'_>, card: &RepoCard) -> String {
             out.push_str("<p class=\"muted small\">The NIP-05 name is the owner's claim; this relay has not checked it.</p>");
         }
     }
-    out.push_str("</div><div><h3>Maintainers</h3><ul>");
+    out.push_str("</div>");
+    out.push_str(extra);
+    out.push_str("<div><h3>Maintainers</h3><ul>");
     for key in card.authorized() {
         out.push_str(&format!(
             "<li>{} {}</li>",
@@ -660,6 +754,7 @@ mod tests {
             }
         }
         assert_eq!(Tab::from_slug(""), None);
-        assert_eq!(Tab::from_slug("forks"), None);
+        assert_eq!(Tab::from_slug("forks"), Some(Tab::Forks));
+        assert_eq!(Tab::from_slug("lineage"), None);
     }
 }

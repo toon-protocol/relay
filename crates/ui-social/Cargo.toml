@@ -14,6 +14,7 @@ axum.workspace = true
 nostr.workspace = true
 relay-ui.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 ui-markdown.workspace = true
 ui-nip34.workspace = true
 

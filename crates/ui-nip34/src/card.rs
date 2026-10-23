@@ -16,6 +16,7 @@ use nostr::types::Timestamp;
 use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{self, App, Apps, Profiles, ago, escape, icon, npub, percent_encode, svg};
 
+use crate::lineage::ForkOf;
 use crate::repo::{
     ANNOUNCEMENT, RepoAddress, STATE, authorized_authors, first_tag, head_branch, honoured_state,
     owner_announcement, repo_name, topics,
@@ -88,6 +89,12 @@ impl Links {
     pub fn repo_path(&self, address: &RepoAddress) -> Option<String> {
         self.apps.serves(App::Repo).then(|| address.repo_path())
     }
+
+    /// Where a link to the repo goes: its social page, else its `/repo` page.
+    pub fn repo_link(&self, address: &RepoAddress) -> Option<String> {
+        self.social_path(address)
+            .or_else(|| self.repo_path(address))
+    }
 }
 
 /// A repository as a card shows it, loaded from the store.
@@ -103,6 +110,9 @@ pub struct RepoCard {
     open_pulls: usize,
     /// The honoured state's time and default branch, if one is held.
     last_move: Option<(Timestamp, String)>,
+    /// What the announcement's `u` tag says it was forked from, and the
+    /// parent's name when this relay holds its announcement.
+    fork_of: Option<(ForkOf, Option<String>)>,
 }
 
 impl RepoCard {
@@ -134,7 +144,30 @@ impl RepoCard {
         let followers = followers(store, address).await.len();
         let (open_issues, open_pulls) =
             crate::threads::open_counts(store, &address.coordinate(), &authorized).await;
-        let profiles = Profiles::load(store, &authorized).await;
+        let fork_of = match ForkOf::of(&announcement) {
+            Some(parent) => {
+                let parents = store
+                    .query(
+                        Filter::new()
+                            .kind(Kind::from(ANNOUNCEMENT))
+                            .author(*parent.address().owner())
+                            .identifier(parent.address().d()),
+                    )
+                    .await;
+                let name =
+                    owner_announcement(parent.address().owner(), parent.address().d(), &parents)
+                        .map(|parent| repo_name(parent).to_owned());
+                Some((parent, name))
+            }
+            None => None,
+        };
+        let mut keys = authorized.clone();
+        if let Some((parent, _)) = &fork_of
+            && !keys.contains(parent.address().owner())
+        {
+            keys.push(*parent.address().owner());
+        }
+        let profiles = Profiles::load(store, &keys).await;
         Some(Self {
             address: address.clone(),
             announcement,
@@ -145,6 +178,26 @@ impl RepoCard {
             open_issues,
             open_pulls,
             last_move,
+            fork_of,
+        })
+    }
+
+    /// A card read from `announcement` alone: no stars, followers, threads
+    /// or ref moves, no profiles, and no parent name. For a reader that has
+    /// nothing else, and for tests of what is drawn from a card.
+    pub fn from_announcement(announcement: &Event) -> Option<Self> {
+        let address = RepoAddress::of(announcement)?;
+        Some(Self {
+            address,
+            announcement: announcement.clone(),
+            authorized: authorized_authors(announcement),
+            profiles: Profiles::default(),
+            stars: 0,
+            followers: 0,
+            open_issues: 0,
+            open_pulls: 0,
+            last_move: None,
+            fork_of: ForkOf::of(announcement).map(|parent| (parent, None)),
         })
     }
 
@@ -208,6 +261,22 @@ impl RepoCard {
             .map(|(at, branch)| (*at, branch.as_str()))
     }
 
+    /// What the repo says it was forked from (NIP-34 `u` tag), if anything.
+    pub fn fork_of(&self) -> Option<&ForkOf> {
+        self.fork_of.as_ref().map(|(parent, _)| parent)
+    }
+
+    /// The parent's `owner / name`: its name when this relay holds its
+    /// announcement, else its `d`; the owner by profile name.
+    pub fn fork_title(&self) -> Option<String> {
+        let (parent, name) = self.fork_of.as_ref()?;
+        Some(format!(
+            "{} / {}",
+            chrome::shown_name(self.profiles.names(), parent.address().owner()),
+            name.as_deref().unwrap_or(parent.address().d())
+        ))
+    }
+
     /// `owner / name`, the owner by profile name.
     pub fn title(&self) -> String {
         format!(
@@ -219,6 +288,13 @@ impl RepoCard {
 
     /// The card's HTML.
     pub fn render(&self, links: &Links) -> String {
+        self.render_with_demo(links, None)
+    }
+
+    /// The card's HTML, with a Live demo button to `demo` when the repo has
+    /// one (the app that draws the card finds it: NIP-5A sites are not
+    /// `/repo`'s).
+    pub fn render_with_demo(&self, links: &Links, demo: Option<&str>) -> String {
         let owner = self.address.owner();
         let href = links
             .social_path(&self.address)
@@ -238,6 +314,16 @@ impl RepoCard {
             None => out.push_str(&format!("<span>{title}</span>")),
         }
         out.push_str("<span class=\"pill\">Public</span></div>");
+        if let Some(title) = self.fork_title() {
+            out.push_str(&format!(
+                "<p class=\"forked-from small\">{}Forked from {}</p>",
+                svg(icon::FORK, "icon-sm"),
+                self.fork_of()
+                    .and_then(|parent| links.repo_link(parent.address()))
+                    .map(|href| format!("<a href=\"{}\">{}</a>", escape(&href), escape(&title)))
+                    .unwrap_or_else(|| escape(&title)),
+            ));
+        }
         if let Some(description) = self.description() {
             out.push_str(&format!("<p>{}</p>", escape(description)));
         }
@@ -287,6 +373,13 @@ impl RepoCard {
         }
         out.push_str("</div>");
         let mut buttons = String::new();
+        if let Some(url) = demo {
+            buttons.push_str(&format!(
+                "<a class=\"btn btn-success\" href=\"{}\" rel=\"noopener noreferrer\" data-demo>{}Live demo</a>",
+                escape(url),
+                svg(icon::PLAY, "icon-sm")
+            ));
+        }
         if let Some(path) = links.repo_path(&self.address) {
             buttons.push_str(&format!(
                 "<a class=\"btn\" href=\"{}\">{}Open repo</a>",

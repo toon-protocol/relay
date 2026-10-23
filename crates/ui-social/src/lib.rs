@@ -9,7 +9,8 @@
 //!   and new repos ([`feed`]), and `/social/following/<npub>` for the people
 //!   and repos one key follows (kinds 3, 10017 and 10018);
 //! - `/social/r/<npub>/<d>`: a repo's social page, with Maker, Talk, Stars,
-//!   Followers, Media and Snippets tabs ([`repo_page`]);
+//!   Followers, Forks, Media and Snippets tabs ([`repo_page`]; Forks is
+//!   [`lineage`]), a live demo ([`demo`]) and "Open in…" apps ([`handlers`]);
 //! - `/social/e/<id>`: one post, drawn as a launch when it is a ship post
 //!   ([`note`], [`ship`]);
 //! - `/social/trending`: repos ranked by distinct people per window, by a
@@ -25,8 +26,11 @@
 //! relay ([`media`]).
 
 mod content;
+mod demo;
 mod feed;
+mod handlers;
 mod kinds;
+mod lineage;
 mod media;
 mod note;
 mod post;

@@ -535,6 +535,7 @@ a.chip:hover { text-decoration: none; color: var(--fg); }
 .meta a.chip-topic { color: var(--accent-fg); }
 .meta a.chip-topic.on { color: var(--bg); }
 .ranked .trend-title { font-size: 14px; }
+
 /* A link on a person's name or avatar, to their /social profile. */
 a.person-link { color: inherit; }
 a.person-link:hover .strong { color: var(--link); text-decoration: underline; }
@@ -590,3 +591,25 @@ a.avatar-link:hover { text-decoration: none; }
 .legend { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
 .activity-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 16px; }
 .activity-row .what { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+
+/* Forks and remixes: a lineage drawn as nested lists, and the line under a
+   fork's title. */
+.forked-from { display: flex; align-items: center; gap: 6px; margin: -8px 0 0; color: var(--muted-fg); }
+.repo-card .forked-from { margin: 0; }
+.forked-from + .repo-desc { margin-top: 4px; }
+/* A green button in the repo header keeps its own text colour. */
+.repo-head a.btn-success { color: var(--success-fg); }
+.section-title { font-size: 16px; font-weight: 600; margin: 0; }
+.lineage-box { padding: 12px; overflow-x: auto; }
+.lineage { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.lineage .lineage { margin: 8px 0 0 11px; padding-left: 16px; border-left: 2px solid var(--border); }
+.lineage .node {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 8px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); min-width: 0;
+}
+.lineage .node .muted { overflow-wrap: anywhere; }
+.lineage .node.here { border-color: var(--link); background: var(--accent-bg); }
+.chip-here { background: var(--accent-bg); border-color: var(--link); color: var(--accent-fg); }
+.demo-link { display: flex; align-items: center; gap: 6px; min-width: 0; }
+@media (max-width: 543px) { .lineage .lineage { margin-left: 4px; padding-left: 10px; } }
+.side-card .links { display: flex; flex-wrap: wrap; gap: 8px; }

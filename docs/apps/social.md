@@ -10,7 +10,9 @@ Sources, in order of authority:
 
 - The NIPs each section names (NIP-01, -02, -10, -18, -22, -23, -24, -25,
   -27, -32, -38, -39, -51, -56, -58, -5A, -68, -71, -84, -85, -89, -92, -C0,
-  -7D), and TOON's draft NIP-C1 ([`../nips/nip-c1.md`](../nips/nip-c1.md)).
+  -7D), NIP-34 for forks, and TOON's draft NIP-C1
+  ([`../nips/nip-c1.md`](../nips/nip-c1.md)). NIP-5A, NIP-89 and NIP-34's
+  fork tags were read at nostr-protocol/nips@d47a2ec.
 - [`git.md`](git.md) — repositories themselves (NIP-34) and whose repo state
   a reader honours.
 - [ADR 0001](../adr/0001-app-uis-live-on-the-relay.md) — the relay's UIs read
@@ -111,15 +113,130 @@ that tags the repo **and** the NIP-5A site it deployed:
 
 ### A live demo
 
-A repo's live demo is a NIP-5A site manifest (kind 35128, or the root site
-15128) signed by an authorized author whose `source` tag is the repo's
-`nostr://` URL, `nostr://<owner npub>/<relay host>/<d>` (the relay hint is
-optional; the owner's NIP-05 name may stand for the npub). A Shakespeare app
-event names its site in its `a` tag instead. The relay serves nothing of the
-site: `/social` links it through the operator's gateway
-(`TOON_UI_NSITE_GATEWAY`) as `https://<pubkey in base36><d>.<gateway host>/`
-(a root site: `https://<npub>.<gateway host>/`), and shows no demo when no
-gateway is set.
+A repo's live demo is the maker's to name: only an event signed by the owner
+or a maintainer counts. Every page (the repo card, the repo page's header and
+About, a launch) uses the same rule, first match wins:
+
+1. a launch that is a Shakespeare app event (kind 31990) names its site in an
+   `a` tag, and an authorized author signed that site;
+2. else the newest NIP-5A site manifest (kind 35128, or the root site 15128)
+   with at least one `path` tag whose `source` tag is a `nostr://` clone URL
+   of the repo in any of NIP-34's forms: `nostr://<naddr>`,
+   `nostr://<npub>/[<relay>/]<d>`, or the owner's NIP-05 name in place of
+   the npub (`domain` alone meaning `_@domain`);
+3. else the newest app event that `a`-tags the repo: a kind 31990 naming a
+   site, as in 1, or a kind 32267 software application with an `https`
+   `url` tag. Kind 32267 is the "NIP-82" draft, **nips#1336, an open PR,
+   not a merged NIP**.
+
+```json
+{
+  "kind": 35128,
+  "tags": [
+    ["d", "tidepool"],
+    ["path", "/index.html", "<sha256>"],
+    ["x", "<aggregate sha256>", "aggregate"],
+    ["source", "nostr://<owner npub>/relay.example.com/tidepool"]
+  ]
+}
+```
+
+The relay serves nothing of the site: `/social` links it through the
+operator's gateway (`TOON_UI_NSITE_GATEWAY`) in NIP-5A's canonical forms,
+`https://<pubkey in base36><d>.<gateway host>/` for a named site (the base36
+key is always the 50 characters the NIP names; `d` must match
+`^[a-z0-9-]{1,13}$` and not end in `-`, or there is no link) and
+`https://<npub>.<gateway host>/` for a root site. With no gateway set, a
+site is no demo; a kind 32267's `url` is linked as it is either way.
+
+### Forks and remixes
+
+A fork or a remix is written by whoever made the copy, in their own events.
+Nothing about it is the original maker's to approve, and nothing is a write
+by this page. **Forks and remixes are public and permanent**: a NIP-09
+deletion request removes one from this relay, but other relays may keep it.
+
+**Fork a repo (NIP-34).** Announce your copy as your own kind 30617 with a
+`u` tag naming the repo you forked, and the git URL you cloned it from after
+a `|`. Keep the parent's earliest unique commit in an `r … euc` tag unless
+your fork has diverged for good (then NIP-34 says to use the first commit
+after the fork):
+
+```json
+{
+  "kind": 30617,
+  "tags": [
+    ["d", "tidepool"],
+    ["name", "tidepool"],
+    ["description", "Fixes for New Zealand stations."],
+    ["u", "30617:<parent owner pubkey>:tidepool|nostr://<parent npub>/relay.example.com/tidepool", "wss://relay.example.com", "<parent owner pubkey>"],
+    ["r", "<earliest unique commit>", "euc"]
+  ]
+}
+```
+
+A repo that has the same `euc` commit and no `u` tag is still shown, apart,
+as "same first commit": the same project announced again, or a fork that did
+not say so.
+
+**Remix a site (NIP-5A).** Copy the site's manifest (`path` tags, and
+`title`, `description`, `source` and `app` where they still apply), name the
+site you copied in exactly one `a` tag and the origin of the lineage in
+exactly one `A` tag. Copying straight from the original, both name it;
+copying a copy, `A` is the parent's `A`, unchanged. Point `source` at your
+own repo if your remix has one, so the remix links to its code:
+
+```json
+{
+  "kind": 35128,
+  "tags": [
+    ["d", "surfcast"],
+    ["a", "35128:<parent site pubkey>:tidepool"],
+    ["A", "35128:<origin site pubkey>:tidepool"],
+    ["path", "/index.html", "<sha256>"],
+    ["x", "<aggregate sha256>", "aggregate"],
+    ["source", "nostr://<your npub>/relay.example.com/surfcast"]
+  ]
+}
+```
+
+A root site's address is `15128:<pubkey>:` (NIP-01's form for a replaceable
+event). A copy whose files hash to its parent's NIP-5A aggregate is shown as
+an **identical copy**. The page computes the aggregate itself from the
+`path` tags (SHA-256 of the sorted `<sha256> <path>\n` lines); the `x` tag a
+copier wrote is only how a lookalike is found. A site with the repo's own
+aggregate, another author and no `a` or `A` tag is shown as **same site**,
+an uncredited copy.
+
+### Open in… (NIP-89)
+
+An app that can show a repository announces a kind 31990 handler that
+declares `k` `30617` and a `web` URL template for an `naddr`; anyone who uses
+it recommends it with a kind 31989 whose `d` is `30617`:
+
+```json
+{ "kind": 31990, "content": "{\"name\":\"gitworkshop\"}",
+  "tags": [["d", "repos"], ["k", "30617"], ["web", "https://gitworkshop.example/<bech32>", "naddr"]] }
+{ "kind": 31989,
+  "tags": [["d", "30617"], ["a", "31990:<app pubkey>:repos", "wss://relay.example.com", "web"]] }
+```
+
+The repo page lists only handlers someone recommends (NIP-89 warns against
+trusting bare 31990s), ranked by the distinct people who recommend them,
+each person's newest 31989 only. With `?as=<npub>` the viewer and the people
+the viewer follows (kind 3 and kind 10017 `p` tags) count first. The page
+uses the `web` tag marked `naddr`, else the generic one with no entity type,
+only over `https`, and fills NIP-89's `<bech32>` placeholder (`<nip19>` is
+read the same way) with the repo's `naddr`, with this relay as its hint.
+
+**The Remix rule.** NIP-89 has no way for a handler to say it can clone a
+repository, so a **Remix** link is drawn only for a recommended handler
+whose `web` template is on a host the relay's code knows clones `nostr://`
+repos, and nothing else. Today that list is one entry: `shakespeare.diy`,
+whose `/clone?url=` page takes a `nostr://` URI; the link is
+`https://shakespeare.diy/clone?url=<percent-encoded nostr:// clone URL>`.
+Adding a builder is a code change citing where that builder accepts
+`nostr://` (`crates/ui-social/src/handlers.rs`, `CLONERS`).
 
 ## Reading in a browser: the relay's `/social` pages
 
@@ -127,7 +244,8 @@ gateway is set.
 | --- | --- | --- |
 | `/social` | Everyone here: notes that start a conversation, repo boosts, launches, articles, merges, new repos; `?until=<unix>` pages back | kinds 1, 16, 30023, 31990, 1631, 30617 |
 | `/social/following/<npub>` | What that key follows; the top bar's form gets here | its kind 3 and 10017 `p` tags (their posts), its 10018 `a` tags (posts, issues and pull requests on those repos) |
-| `/social/r/<npub>/<d>` | The repo as a profile; tabs `/talk`, `/stars`, `/followers`, `/media`, `/snippets` | `{"#a":[A]}`, `{"kinds":[1111],"#A":[A]}`, kind 7 and 10018 by `#a`, recent 1337s for a `repo` tag |
+| `/social/r/<npub>/<d>` | The repo as a profile; tabs `/talk`, `/stars`, `/followers`, `/forks`, `/media`, `/snippets`; `?as=<npub>` ranks "Open in…" by that key's follows | `{"#a":[A]}`, `{"kinds":[1111],"#A":[A]}`, kind 7 and 10018 by `#a`, recent 1337s for a `repo` tag, kinds 31989 (`#d` 30617) and 31990 (`#k` 30617) |
+| `/social/r/<npub>/<d>/forks` | Forks and remixes as a tree, and repos with the same first commit | up to 2,000 kind 30617s (the `u` value holds a URL, so it is scanned, not indexed) plus `#r` the `euc` commit; the repo's sites' copies by `#A`/`#a`, lookalikes by `#x` |
 | `/social/r/<naddr>` | A redirect to the repo's page | — |
 | `/social/e/<id>` | One post (hex, `note` or `nevent`) with its replies; a launch when it is one | the event, kind 1 replies by `e`, kind 1111 by `E`, kind 7 reactions by `e` |
 | `/social/p/<npub>` | A builder's profile; tabs `/repos`, `/starred`, `/posts` | see [The builder profile](#the-builder-profile) |
@@ -147,9 +265,22 @@ because the relay never fetches the `.well-known` document that would prove it.
 **The repo page's tabs.** Maker lists posts about the repo by authorized
 authors (notes, threads, comments, highlights, articles, app events); Talk
 lists everyone else's notes, threads, comments and highlights, and counts the
-people; Stars and Followers list each key once, newest first; Media lists
-pictures and videos; Snippets lists code snippets. Code goes back to `/repo`,
+people; Stars and Followers list each key once, newest first; Forks draws the
+lineage (below); Media lists pictures and videos; Snippets lists code
+snippets. Code goes back to `/repo`,
 and `/repo`'s repository header has a Social tab back here.
+
+**The Forks tab.** Nested lists, drawn on the server: the chain of parents up
+to the origin (at most four), each parent's other forks, this repo marked,
+and its forks three levels down (at most 25 per repo, then "and N more").
+The remixes of this repo's sites hang under it, each with a Try it link
+through the gateway and a link to the code its `source` names. Repos with
+the same first commit and no `u` tag are listed apart. The tab's count is
+people: the distinct keys that forked or copied the repo or its sites, its
+makers left out. The repo header (here and on `/repo`) and the repo card say
+"Forked from owner / name". The sidebar adds the lineage at a glance, the
+Remix card (the Remix rule above, then how to fork with git) and the public
+and permanent note.
 
 **Trending today.** The feed sidebar's top five of `/social/trending`'s
 ranking over the last 24 hours (below); on a following feed it is weighted by
@@ -333,4 +464,7 @@ topic labels, a report and NIP-85 ranks for `/social/trending` and `/social/t`
 (its cases are `suite/ui-social-trending.test.ts`). The profile's extra
 events (a banner, a status, identities, pins, a badge, a year of activity, a
 bot) are `suite/harness/profile-fixture.ts`, which
-`suite/ui-social-profile.test.ts` and the seed load after it. Its media are placeholder images from picsum.photos, which your browser loads.
+`suite/ui-social-profile.test.ts` and the seed load after it. Forks, remixes,
+handlers and an app listing are `suite/harness/lineage-fixture.ts` (its cases
+are `suite/ui-social-lineage.test.ts`). Its media are placeholder images from
+picsum.photos, which your browser loads.

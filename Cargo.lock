@@ -1880,6 +1880,7 @@ dependencies = [
  "nostr",
  "relay-ui",
  "serde_json",
+ "sha2",
  "tokio",
  "tower",
  "ui-markdown",
