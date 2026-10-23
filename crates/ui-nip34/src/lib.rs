@@ -32,10 +32,10 @@ use nostr::event::{Event, EventId, Kind};
 use nostr::filter::Filter;
 use nostr::key::PublicKey;
 use nostr::nips::nip19::{FromBech32, Nip19Coordinate};
-use relay_ui::chrome::{Apps, escape, names, npub, percent_encode};
+use relay_ui::chrome::{Apps, escape, names, npub, percent_encode, person, person_avatar};
 use relay_ui::{AppUi, Assets, ReadOnlyStore};
 
-use markup::{Tab, ago, avatar, icon, name, plain_name, ref_menu, repo_header, svg};
+use markup::{Tab, ago, icon, ref_menu, repo_header, svg};
 use repo::{
     ANNOUNCEMENT, STATE, authorized_authors, d_tag, first_tag, head_branch, honoured_state, newest,
     owner_announcement, refs, repo_name, supersedes, tag_values,
@@ -201,7 +201,7 @@ async fn list(
             }
             body.push_str(&format!(
                 "<div class=\"meta\">{}<span>Updated {}</span></div></li>",
-                name(&names, &repo.pubkey),
+                person(&apps, &names, &repo.pubkey),
                 ago(repo.created_at),
             ));
         }
@@ -295,7 +295,7 @@ async fn home(
             .push_str("<div class=\"box\"><div class=\"empty\">No refs published yet.</div></div>"),
     }
     body.push_str("</div>");
-    body.push_str(&about(&owner, announcement, state, &authors, &names));
+    body.push_str(&about(&apps, &owner, announcement, state, &authors, &names));
     body.push_str("</div>");
     let mut response = html(&apps, StatusCode::OK, repo_name(announcement), &body);
     if csp {
@@ -334,6 +334,7 @@ fn clone_menu(announcement: &Event) -> String {
 
 /// The sidebar: what the repo is, its refs, its links and who keeps it.
 fn about(
+    apps: &Apps,
     owner: &PublicKey,
     announcement: &Event,
     state: Option<&Event>,
@@ -385,8 +386,8 @@ fn about(
     for key in std::iter::once(owner).chain(authors.iter().filter(|key| *key != owner)) {
         out.push_str(&format!(
             "<li>{} {}</li>",
-            avatar(&plain_name(names, key), true),
-            name(names, key)
+            person_avatar(apps, names, key, true),
+            person(apps, names, key)
         ));
     }
     out.push_str("</ul></div></aside>");

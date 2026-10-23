@@ -12,7 +12,7 @@ use axum::response::Response;
 use nostr::event::{Event, Kind};
 use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
-use relay_ui::chrome::{Profiles, ago, avatar, escape, icon, name, plain_name, svg};
+use relay_ui::chrome::{Profiles, ago, escape, icon, person, person_avatar, svg};
 use ui_nip34::card::plural;
 use ui_nip34::repo::{RepoAddress, first_tag};
 
@@ -219,8 +219,8 @@ fn launch(view: &View<'_>, event: &Event, repo: &RepoAddress, reactions: &[Event
         post::ship_chips(event),
         ago(event.created_at),
         escape(&post::ship_title(event)),
-        avatar(&plain_name(view.names, &event.pubkey), false),
-        name(view.names, &event.pubkey),
+        person_avatar(view.links.apps(), view.names, &event.pubkey, false),
+        person(view.links.apps(), view.names, &event.pubkey),
     );
     if let Some((hero, rest)) = media.split_first() {
         out.push_str(&hero.html("hero"));
@@ -325,8 +325,8 @@ fn rail(view: &View<'_>, replies: &[Event], repo: Option<&RepoAddress>) -> Strin
             "<article class=\"reply\" data-id=\"{}\">{}<div class=\"body\"><div class=\"line\">{}{}\
              <a class=\"muted small\" href=\"{}\">{}</a></div><p class=\"text\">{}</p></div></article>",
             reply.id.to_hex(),
-            avatar(&plain_name(view.names, &reply.pubkey), true),
-            name(view.names, &reply.pubkey),
+            person_avatar(view.links.apps(), view.names, &reply.pubkey, true),
+            person(view.links.apps(), view.names, &reply.pubkey),
             if maker {
                 " <span class=\"chip chip-maker\">Maker</span> "
             } else {

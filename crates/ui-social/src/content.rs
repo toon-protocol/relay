@@ -84,7 +84,7 @@ fn mention_html(
             .cloned()
             .unwrap_or_else(|| format!("{}…", &npub(&key)[..12]));
         format!(
-            "<a class=\"strong\" href=\"{PREFIX}/following/{0}\" title=\"{0}\">@{1}</a>",
+            "<a class=\"strong\" href=\"{PREFIX}/p/{0}\" title=\"{0}\">@{1}</a>",
             npub(&key),
             escape(&shown)
         )

@@ -15,7 +15,9 @@
 //! - `/social/trending`: repos ranked by distinct people per window, by a
 //!   formula the page prints ([`trending`]);
 //! - `/social/t` and `/social/t/<topic>`: topics, from repos' `t` tags and
-//!   NIP-32 labels ([`topics`]).
+//!   NIP-32 labels ([`topics`]);
+//! - `/social/p/<npub>`: a builder's profile, with Pinned, Repositories,
+//!   Starred and Posts tabs and a year of activity ([`profile`]).
 //!
 //! A mention of a repo anywhere unfurls into `ui_nip34`'s repo card, and the
 //! page shell is `relay_ui::chrome`'s, so `/repo` and `/social` read as one
@@ -28,6 +30,7 @@ mod kinds;
 mod media;
 mod note;
 mod post;
+mod profile;
 mod repo_page;
 mod ship;
 mod topics;
@@ -117,6 +120,8 @@ pub fn app(store: ReadOnlyStore, settings: Settings, apps: Apps) -> AppUi {
         .route("/social/trending", get(trending::page))
         .route("/social/t", get(topics::index))
         .route("/social/t/{topic}", get(topics::page))
+        .route("/social/p/{npub}", get(profile::overview))
+        .route("/social/p/{npub}/{tab}", get(profile::tab))
         .fallback(fallback)
         .with_state(Pages {
             store,

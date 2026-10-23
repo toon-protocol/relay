@@ -4,7 +4,9 @@
 // post with screenshots, mentions by naddr, a boost, comments, a thread, a
 // highlight, an article, a picture, a snippet, an issue and a merge; then a
 // month of stars, forks, topic labels and NIP-85 ranks for /social/trending
-// (suite/harness/trending-fixture.ts).
+// (suite/harness/trending-fixture.ts); then the builder profile's banner,
+// status, identities, pins, badge, year of activity and bot
+// (suite/harness/profile-fixture.ts).
 //
 //   WRITE_URL=http://127.0.0.1:3100 READ_URL=http://127.0.0.1:7100 \
 //     pnpm exec tsx packages/conformance/seed/social.ts
@@ -17,6 +19,7 @@
 // READ_URL) is what the fixture's site manifest names as its relay.
 import { socialFixture } from '../suite/harness/social-fixture.js';
 import { trendingFixture } from '../suite/harness/trending-fixture.js';
+import { profileFixture } from '../suite/harness/profile-fixture.js';
 
 const writeUrl = process.env['WRITE_URL'] ?? 'http://127.0.0.1:3100';
 const readUrl = process.env['READ_URL'] ?? 'http://127.0.0.1:7100';
@@ -26,7 +29,9 @@ const now = Math.floor(Date.now() / 1000);
 const fixture = socialFixture(now, relayHost);
 // A month of activity for /social/trending and the topic pages.
 const trending = trendingFixture(fixture, now);
-const events = [...fixture.events, ...trending.events];
+// A banner, status, identities, pins, a badge, a year of activity, a bot.
+const profile = profileFixture(fixture, now);
+const events = [...fixture.events, ...trending.events, ...profile.events];
 let stored = 0;
 for (const event of events) {
   const response = await fetch(`${writeUrl}/write`, {
@@ -60,3 +65,5 @@ console.log(
 );
 console.log(`topics:        ${readUrl}/social/t`);
 console.log(`a topic:       ${readUrl}/social/t/built-with%3Aclaude`);
+console.log(`profile:       ${readUrl}/social/p/${fixture.npubs.maya}`);
+console.log(`a bot:         ${readUrl}/social/p/${profile.bot.npub}`);

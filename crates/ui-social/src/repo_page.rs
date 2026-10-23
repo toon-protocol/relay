@@ -23,7 +23,7 @@ use nostr::event::{Event, Kind};
 use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use nostr::types::Timestamp;
-use relay_ui::chrome::{self, Profiles, ago, avatar, escape, icon, name, npub, plain_name, svg};
+use relay_ui::chrome::{self, Profiles, ago, avatar, escape, icon, name, plain_name, svg};
 use ui_nip34::card::{self, RepoCard, clone_urls, plural};
 use ui_nip34::repo::{RepoAddress, first_tag, tag_values, topics};
 
@@ -403,7 +403,7 @@ fn header(view: &View<'_>, card: &RepoCard, stars: usize, followers: usize) -> S
     }
     actions.push_str("</span>");
     let mut out = chrome::repo_title(
-        &name(card.profiles().names(), repo.owner()),
+        &chrome::person(view.links.apps(), card.profiles().names(), repo.owner()),
         card.name(),
         &base,
         &actions,
@@ -442,7 +442,7 @@ fn posts(view: &View<'_>, events: &[&Event], maker: bool, note: &str, empty: &st
     out
 }
 
-/// People, each linking to their following feed.
+/// People, each linking to their profile.
 fn people_grid(
     view: &View<'_>,
     people: &[(PublicKey, Timestamp)],
@@ -460,9 +460,9 @@ fn people_grid(
     out.push_str("<div class=\"people\">");
     for (key, at) in people {
         out.push_str(&format!(
-            "<a class=\"person\" href=\"{PREFIX}/following/{}\">{}<span class=\"who\">{}\
+            "<a class=\"person\" href=\"{}\">{}<span class=\"who\">{}\
              <span class=\"muted small\">{verb} {}</span></span></a>",
-            npub(key),
+            chrome::profile_path(key),
             avatar(&plain_name(view.names, key), false),
             name(view.names, key),
             ago(*at),
@@ -480,7 +480,7 @@ fn media_grid(view: &View<'_>, events: &[&Event]) -> String {
             figures.push_str(&format!(
                 "<figure>{}<figcaption>{} &middot; <a class=\"muted\" href=\"{}\">{}</a></figcaption></figure>",
                 item.html(""),
-                name(view.names, &event.pubkey),
+                chrome::person(view.links.apps(), view.names, &event.pubkey),
                 escape(&post::event_path(event)),
                 first_tag(event, "title")
                     .map(escape)
@@ -520,7 +520,7 @@ fn snippets(view: &View<'_>, events: &[&Event]) -> String {
              <pre><code>{}</code></pre></article>",
             event.id.to_hex(),
             escape(first_tag(event, "name").unwrap_or("snippet")),
-            name(view.names, &event.pubkey),
+            chrome::person(view.links.apps(), view.names, &event.pubkey),
             ago(event.created_at),
             escape(&event.content),
         ));
@@ -578,8 +578,8 @@ fn sidebar(view: &View<'_>, card: &RepoCard) -> String {
     for key in card.authorized() {
         out.push_str(&format!(
             "<li>{} {}</li>",
-            avatar(&plain_name(card.profiles().names(), key), true),
-            name(card.profiles().names(), key)
+            chrome::person_avatar(view.links.apps(), card.profiles().names(), key, true),
+            chrome::person(view.links.apps(), card.profiles().names(), key)
         ));
     }
     out.push_str(&format!(
@@ -640,7 +640,7 @@ mod tests {
         assert!(snippet_names(
             &tagged(&format!(
                 "nostr://{}/relay.test/r",
-                npub(&owner.public_key())
+                chrome::npub(&owner.public_key())
             )),
             &repo,
             None

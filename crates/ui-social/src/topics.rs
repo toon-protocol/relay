@@ -25,7 +25,7 @@ use nostr::event::{Event, Kind};
 use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use relay_ui::chrome::{
-    self, Profiles, avatar, escape, icon, npub, percent_encode, plain_name, svg,
+    self, Profiles, avatar, escape, icon, percent_encode, plain_name, svg,
 };
 use ui_nip34::card::{Links, plural};
 use ui_nip34::repo::{
@@ -479,8 +479,8 @@ fn row(
                 .iter()
                 .map(|key| {
                     format!(
-                        "<a href=\"{PREFIX}/following/{}\" data-labeller>{}</a>",
-                        npub(key),
+                        "<a class=\"person-link\" href=\"{}\" data-labeller>{}</a>",
+                        chrome::profile_path(key),
                         chrome::name(names, key)
                     )
                 })
@@ -546,8 +546,8 @@ pub(crate) fn built_by(names: &HashMap<PublicKey, String>, makers: &[PublicKey])
     let mut out = String::from("<span class=\"built-by\">Built by");
     for key in makers.iter().take(4) {
         out.push_str(&format!(
-            "<a href=\"{PREFIX}/following/{}\" title=\"{}\">{}</a>",
-            npub(key),
+            "<a class=\"avatar-link\" href=\"{}\" title=\"{}\">{}</a>",
+            chrome::profile_path(key),
             escape(&plain_name(names, key)),
             avatar(&plain_name(names, key), true)
         ));
