@@ -7,8 +7,10 @@
 //! hands each its handle; this crate holds no relay code.
 
 mod assets;
+mod style;
 
 pub use assets::{Assets, CACHE_CONTROL_VALUE, MANIFEST_FILE};
+pub use style::{STYLESHEET, stylesheet_name, stylesheet_response};
 
 use std::convert::Infallible;
 use std::future::Future;

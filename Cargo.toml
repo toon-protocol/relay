@@ -2,7 +2,7 @@
 # Standards: docs/rust-coding-standards.md.
 [workspace]
 resolver = "3"
-members = ["crates/git-objects", "crates/relay", "crates/relay-ui", "crates/ui-highlight-web", "crates/ui-nip34", "crates/ui-nip34-web", "crates/xtask"]
+members = ["crates/git-objects", "crates/relay", "crates/relay-ui", "crates/ui-highlight-web", "crates/ui-markdown", "crates/ui-nip34", "crates/ui-nip34-web", "crates/xtask"]
 
 [workspace.package]
 edition = "2024"
@@ -44,6 +44,10 @@ hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
 # deploy/rust-workspace.test.ts keeps it out. The pin is exact because the
 # store holds this crate's reading of a filter and an event.
 nostr = { version = "=0.45.4", default-features = false, features = ["std", "nip06"] }
+# Markdown for READMEs and threads (crates/ui-markdown). No `html` feature:
+# the crate writes its own HTML from a tree of fixed tags, and raw HTML in a
+# document is shown as text.
+pulldown-cmark = { version = "0.13", default-features = false }
 # The app UIs the relay serves on its read port (#276).
 relay-ui = { path = "crates/relay-ui" }
 # `bundled`: SQLite is compiled in, so the image stays one static binary.
@@ -64,6 +68,7 @@ tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-threa
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "handshake"] }
 tower = { version = "0.5", features = ["util"] }
 trybuild = "1"
+ui-markdown = { path = "crates/ui-markdown" }
 ui-nip34 = { path = "crates/ui-nip34" }
 # The browser half of /repo (#283). The pin is exact and is the version of
 # the `wasm-bindgen-cli` crates/relay/Dockerfile installs: the generated glue
@@ -89,5 +94,6 @@ web-sys = { version = "0.3", features = [
     "RequestInit",
     "RequestMode",
     "Response",
+    "Text",
     "Window",
 ] }

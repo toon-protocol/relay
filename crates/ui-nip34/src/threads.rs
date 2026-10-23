@@ -1,6 +1,8 @@
 //! A repository's issues and patches/PRs: lists, threads and honoured status.
 
-use axum::extract::{Path, State};
+use std::collections::HashMap;
+
+use axum::extract::{Path, RawQuery, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use nostr::event::{Event, EventId, Kind};
@@ -8,9 +10,10 @@ use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use relay_ui::ReadOnlyStore;
 
+use super::markup::{Tab, ago, avatar, icon, name, plain_name, repo_header, svg};
 use super::{
-    ANNOUNCEMENT, authorized_authors, escape, first_tag, html, names, newest, not_found, person,
-    repo_name, repo_path, resolve_repo,
+    ANNOUNCEMENT, authorized_authors, escape, first_tag, html, names, newest, not_found, repo_path,
+    resolve_repo,
 };
 
 const ISSUE: u16 = 1621;
@@ -51,10 +54,51 @@ impl Status {
         match self {
             Self::Open => "open",
             Self::Applied if target.kind == Kind::from(ISSUE) => "resolved",
-            Self::Applied => "applied/merged",
+            Self::Applied => "merged",
             Self::Closed => "closed",
             Self::Draft => "draft",
         }
+    }
+
+    /// Whether the thread is still under the Open tab.
+    fn is_open(self) -> bool {
+        matches!(self, Self::Open | Self::Draft)
+    }
+
+    /// The stylesheet's colour class.
+    fn class(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Applied => "done",
+            Self::Closed => "closed",
+            Self::Draft => "draft",
+        }
+    }
+
+    fn icon(self, target: &Event) -> &'static str {
+        let issue = target.kind == Kind::from(ISSUE);
+        match (self, issue) {
+            (Self::Open | Self::Draft, true) => icon::ISSUE,
+            (Self::Applied, true) => icon::ISSUE_DONE,
+            (Self::Closed, true) => icon::ISSUE_CLOSED,
+            (Self::Open | Self::Draft, false) => icon::PULL,
+            (Self::Applied, false) => icon::MERGED,
+            (Self::Closed, false) => icon::PULL_CLOSED,
+        }
+    }
+
+    /// The round badge a thread's page shows.
+    fn badge(self, target: &Event) -> String {
+        let label = self.label(target);
+        let mut word = label.to_owned();
+        if let Some(first) = word.get_mut(..1) {
+            first.make_ascii_uppercase();
+        }
+        format!(
+            "<span class=\"state {}\" data-status=\"{label}\">{}{word}</span>",
+            self.class(),
+            svg(self.icon(target), "icon-sm"),
+        )
     }
 }
 
@@ -154,17 +198,21 @@ struct Repo {
     d: String,
     announcement: Event,
     authorized: Vec<PublicKey>,
+    /// The owner's display name, for the header.
+    names: HashMap<PublicKey, String>,
 }
 
 impl Repo {
     async fn resolve(store: &ReadOnlyStore, npub: &str, d: &str) -> Option<Self> {
         let (owner, announcement) = resolve_repo(store, npub, d).await?;
         let authorized = authorized_authors(&announcement);
+        let names = names(store, &[owner]).await;
         Some(Self {
             owner,
             d: d.to_owned(),
             announcement,
             authorized,
+            names,
         })
     }
 
@@ -176,13 +224,8 @@ impl Repo {
         coordinate(&self.owner, &self.d)
     }
 
-    fn header(&self, title: &str) -> String {
-        format!(
-            "<p><a href=\"{}\">{}</a></p><h1>{}</h1>",
-            escape(&self.base()),
-            escape(repo_name(&self.announcement)),
-            escape(title)
-        )
+    fn header(&self, tab: Tab) -> String {
+        repo_header(&self.owner, &self.d, &self.announcement, &self.names, tab)
     }
 
     /// The events of `kinds` that name this repo.
@@ -220,35 +263,131 @@ fn title_of(event: &Event) -> String {
     title.chars().take(120).collect()
 }
 
+/// The labels of a thread: its `t` tags, but for the markers a patch
+/// series uses.
+fn labels(event: &Event) -> Vec<&str> {
+    event
+        .tags
+        .iter()
+        .map(|tag| tag.as_slice())
+        .filter_map(|tag| match tag {
+            [name, value, ..] if name == "t" => Some(value.as_str()),
+            _ => None,
+        })
+        .filter(|label| !matches!(*label, "root" | "root-revision" | "revision-root"))
+        .collect()
+}
+
+fn label_pills(event: &Event) -> String {
+    labels(event)
+        .iter()
+        .map(|label| {
+            format!(
+                "<span class=\"pill pill-secondary\">{}</span>",
+                escape(label)
+            )
+        })
+        .collect()
+}
+
+/// Whether `?state=closed` asks for the closed tab.
+fn wants_closed(query: Option<&str>) -> bool {
+    query
+        .into_iter()
+        .flat_map(|query| query.split('&'))
+        .any(|pair| pair == "state=closed")
+}
+
+#[allow(clippy::too_many_arguments)]
 fn thread_list(
-    heading: &str,
     repo: &Repo,
+    tab: Tab,
     section: &str,
+    noun: &str,
     threads: &[(&Event, Status)],
-    empty: &str,
+    names: &HashMap<PublicKey, String>,
+    closed: bool,
 ) -> String {
-    let mut body = repo.header(heading);
-    if threads.is_empty() {
-        body.push_str(&format!("<p>{}</p>", escape(empty)));
+    let mut body = repo.header(tab);
+    let base = repo.base();
+    let open_count = threads
+        .iter()
+        .filter(|(_, status)| status.is_open())
+        .count();
+    let closed_count = threads.len() - open_count;
+    let (open_icon, closed_icon) = if section == "issues" {
+        (icon::ISSUE, icon::ISSUE_DONE)
     } else {
-        body.push_str("<ul>");
-        for (event, status) in threads {
+        (icon::PULL, icon::MERGED)
+    };
+    body.push_str(&format!(
+        "<div class=\"box\"><div class=\"box-header\"><nav class=\"state-tabs\">\
+         <a class=\"{open_class}\" href=\"{base}/{section}\">{open_icon}{open_count} Open</a>\
+         <a class=\"{closed_class}\" href=\"{base}/{section}?state=closed\">{closed_icon}{closed_count} Closed</a></nav></div>",
+        open_class = if closed { "" } else { "current" },
+        closed_class = if closed { "current" } else { "" },
+        base = escape(&base),
+        open_icon = svg(open_icon, ""),
+        closed_icon = svg(closed_icon, ""),
+    ));
+    let shown: Vec<_> = threads
+        .iter()
+        .filter(|(_, status)| status.is_open() != closed)
+        .collect();
+    if shown.is_empty() {
+        body.push_str(&format!(
+            "<div class=\"empty\">No {} {noun}.</div>",
+            if closed { "closed" } else { "open" }
+        ));
+    } else {
+        body.push_str("<ul class=\"rows\">");
+        for (event, status) in shown {
+            let verb = if section == "issues" {
+                "opened"
+            } else {
+                "proposed"
+            };
             body.push_str(&format!(
-                "<li><a href=\"{}/{section}/{}\">{}</a> [{}]</li>",
-                escape(&repo.base()),
+                "<li class=\"thread-row\" data-status=\"{}\">{}<div>\
+                 <a class=\"title\" href=\"{}/{section}/{}\">{}</a><span class=\"labels\">{}</span>\
+                 <div class=\"meta\"><span class=\"mono\">{}</span><span>{verb} {} by {}</span>{}</div></div></li>",
+                status.label(event),
+                svg(status.icon(event), status.class()),
+                escape(&base),
                 event.id.to_hex(),
                 escape(&title_of(event)),
-                status.label(event)
+                label_pills(event),
+                &event.id.to_hex()[..7],
+                ago(event.created_at),
+                name(names, &event.pubkey),
+                if *status == Status::Draft {
+                    "<span class=\"pill\">Draft</span>"
+                } else {
+                    ""
+                },
             ));
         }
         body.push_str("</ul>");
     }
+    body.push_str("</div>");
     body
+}
+
+/// The authors of `events`, once each.
+fn authors_of(events: &[&Event]) -> Vec<PublicKey> {
+    let mut authors: Vec<PublicKey> = Vec::new();
+    for event in events {
+        if !authors.contains(&event.pubkey) {
+            authors.push(event.pubkey);
+        }
+    }
+    authors
 }
 
 pub(super) async fn issues(
     State(super::Pages { store, .. }): State<super::Pages>,
     Path((npub, d)): Path<(String, String)>,
+    RawQuery(query): RawQuery,
 ) -> Response {
     let Some(repo) = Repo::resolve(&store, &npub, &d).await else {
         return not_found().await;
@@ -260,14 +399,24 @@ pub(super) async fn issues(
         .collect();
     sort_newest_first(&mut issues);
     let statuses = statuses_of(&store, &repo.authorized, &issues).await;
+    let names = names(&store, &authors_of(&issues)).await;
     let threads: Vec<_> = issues.into_iter().zip(statuses).collect();
-    let body = thread_list("Issues", &repo, "issues", &threads, "No issues.");
+    let body = thread_list(
+        &repo,
+        Tab::Issues,
+        "issues",
+        "issues",
+        &threads,
+        &names,
+        wants_closed(query.as_deref()),
+    );
     html(StatusCode::OK, "Issues", &body)
 }
 
 pub(super) async fn pulls(
     State(super::Pages { store, .. }): State<super::Pages>,
     Path((npub, d)): Path<(String, String)>,
+    RawQuery(query): RawQuery,
 ) -> Response {
     let Some(repo) = Repo::resolve(&store, &npub, &d).await else {
         return not_found().await;
@@ -287,13 +436,16 @@ pub(super) async fn pulls(
         .collect();
     sort_newest_first(&mut pulls);
     let statuses = statuses_of(&store, &repo.authorized, &pulls).await;
+    let names = names(&store, &authors_of(&pulls)).await;
     let threads: Vec<_> = pulls.into_iter().zip(statuses).collect();
     let body = thread_list(
-        "Patches and pull requests",
         &repo,
+        Tab::Pulls,
         "pulls",
+        "patches or pull requests",
         &threads,
-        "No patches or pull requests.",
+        &names,
+        wants_closed(query.as_deref()),
     );
     html(StatusCode::OK, "Patches and pull requests", &body)
 }
@@ -338,45 +490,135 @@ async fn comments(store: &ReadOnlyStore, target: &Event) -> Vec<Event> {
     found
 }
 
+/// Markdown from someone else, as safe HTML.
+fn markdown(text: &str) -> String {
+    format!(
+        "<div class=\"markdown small-text\">{}</div>",
+        ui_markdown::to_html(&ui_markdown::parse(text, ui_markdown::absolute_only))
+    )
+}
+
+/// A patch, its lines coloured as a diff's.
+fn diff(text: &str) -> String {
+    let mut out = String::from("<pre class=\"diff\">");
+    for line in text.split_inclusive('\n') {
+        // `-- ` above a patch's trailer is format-patch's signature line.
+        let class = if line.starts_with("+++") || line.starts_with("---") || line.trim_end() == "--"
+        {
+            ""
+        } else if line.starts_with('+') {
+            "add"
+        } else if line.starts_with('-') {
+            "del"
+        } else if line.starts_with("@@") {
+            "hunk"
+        } else {
+            ""
+        };
+        out.push_str(&format!("<span class=\"{class}\">{}</span>", escape(line)));
+    }
+    out.push_str("</pre>");
+    out
+}
+
+/// One comment: the avatar, then a card with who and when above the text.
+fn comment(names: &HashMap<PublicKey, String>, event: &Event, verb: &str, text: &str) -> String {
+    format!(
+        "<div class=\"comment\">{}<div class=\"card\"><div class=\"card-head\">{}\
+         <span class=\"muted\">{verb} {}</span></div>{text}</div></div>",
+        avatar(&plain_name(names, &event.pubkey), false),
+        name(names, &event.pubkey),
+        ago(event.created_at),
+    )
+}
+
 fn thread_body(
     repo: &Repo,
     target: &Event,
     status: Status,
-    names: &std::collections::HashMap<PublicKey, String>,
-    extra: &str,
+    names: &HashMap<PublicKey, String>,
+    side: &str,
     comments: &[Event],
 ) -> String {
-    let (content_label, back) = match target.kind.as_u16() {
-        ISSUE => ("Description", ("issues", "All issues")),
-        PATCH => ("Patch", ("pulls", "All patches and pull requests")),
-        _ => ("Description", ("pulls", "All patches and pull requests")),
+    let (tab, noun, back) = match target.kind.as_u16() {
+        ISSUE => (Tab::Issues, "issue", "issues"),
+        PATCH => (Tab::Pulls, "patch", "pulls"),
+        _ => (Tab::Pulls, "pull request", "pulls"),
     };
-    let mut body = repo.header(&title_of(target));
+    let mut body = repo.header(tab);
     body.push_str(&format!(
-        "<p>Status: <strong>{}</strong></p><p>By {}</p>{extra}\
-         <h2>{}</h2><pre>{}</pre><h2>Comments</h2>",
-        status.label(target),
-        person(names, &target.pubkey),
-        escape(content_label),
-        escape(&target.content)
+        "<div class=\"thread-head\"><h1>{} <span class=\"num\">{}</span></h1>\
+         <div class=\"by\">{}<span>{} opened this {noun} {} &middot; {} comment{}</span></div></div>",
+        escape(&title_of(target)),
+        &target.id.to_hex()[..7],
+        status.badge(target),
+        name(names, &target.pubkey),
+        ago(target.created_at),
+        comments.len(),
+        if comments.len() == 1 { "" } else { "s" },
     ));
-    if comments.is_empty() {
-        body.push_str("<p>No comments.</p>");
+    body.push_str("<div class=\"split\"><div class=\"main\"><div class=\"comments\">");
+    let opening = if target.kind == Kind::from(PATCH) {
+        diff(&target.content)
+    } else if target.content.trim().is_empty() {
+        "<div class=\"card-body muted\"><em>No description provided.</em></div>".to_owned()
     } else {
-        for comment in comments {
-            body.push_str(&format!(
-                "<div><p>{}</p><pre>{}</pre></div>",
-                person(names, &comment.pubkey),
-                escape(&comment.content)
-            ));
-        }
+        format!(
+            "<div class=\"card-body\">{}</div>",
+            markdown(&target.content)
+        )
+    };
+    body.push_str(&comment(names, target, "opened", &opening));
+    for reply in comments {
+        body.push_str(&comment(
+            names,
+            reply,
+            "commented",
+            &format!(
+                "<div class=\"card-body\">{}</div>",
+                markdown(&reply.content)
+            ),
+        ));
+    }
+    body.push_str("</div>");
+    if target.kind != Kind::from(ISSUE) {
+        let (class, path, text) = match status {
+            Status::Applied => (
+                "done",
+                icon::MERGED,
+                "This change was applied and the thread closed.",
+            ),
+            Status::Closed => ("closed", icon::PULL_CLOSED, "Closed without being applied."),
+            Status::Open | Status::Draft => (
+                "open",
+                icon::PULL,
+                "Open. A maintainer applies it from their own machine, then publishes its status.",
+            ),
+        };
+        body.push_str(&format!(
+            "<div class=\"callout {class}\">{}<div class=\"text\">{text}</div></div>",
+            svg(path, &format!("icon-lg {class}")),
+        ));
     }
     body.push_str(&format!(
-        "<p><a href=\"{}/{}\">{}</a></p>",
+        "<p class=\"muted\"><a href=\"{}/{back}\">&larr; All {}</a></p></div>",
         escape(&repo.base()),
-        back.0,
-        escape(back.1)
+        if back == "issues" {
+            "issues"
+        } else {
+            "patches and pull requests"
+        }
     ));
+    body.push_str("<aside class=\"sidebar narrow\"><div><h3>Labels</h3>");
+    let pills = label_pills(target);
+    if pills.is_empty() {
+        body.push_str("<p class=\"muted small\">None yet</p>");
+    } else {
+        body.push_str(&format!("<div class=\"labels\">{pills}</div>"));
+    }
+    body.push_str("</div>");
+    body.push_str(side);
+    body.push_str("</aside></div>");
     body
 }
 
@@ -413,15 +655,19 @@ pub(super) async fn pull(
     let people: Vec<PublicKey> = people(&pull, &comments);
     let names = names(&store, &people).await;
 
-    let mut extra = String::new();
+    let mut facts: Vec<(&str, String)> = Vec::new();
     if pull.kind == Kind::from(PULL_REQUEST) {
-        for (heading, tag) in [("Clone", "clone"), ("Merge base", "merge-base")] {
+        for (heading, tag) in [
+            ("Branch", "branch-name"),
+            ("Clone", "clone"),
+            ("Merge base", "merge-base"),
+        ] {
             if let Some(value) = first_tag(&pull, tag) {
-                extra.push_str(&format!("<p>{heading}: <code>{}</code></p>", escape(value)));
+                facts.push((heading, value.to_owned()));
             }
         }
         if let Some(tip) = first_tag(&pull, "c") {
-            extra.push_str(&format!("<p>Tip: <code>{}</code></p>", escape(tip)));
+            facts.push(("Tip", tip.to_owned()));
         }
         // Only the PR's own author moves its tip.
         let updates = store
@@ -444,20 +690,24 @@ pub(super) async fn pull(
         if let Some(latest) = newest(updates.iter().copied())
             && let Some(tip) = first_tag(latest, "c")
         {
-            extra.push_str(&format!("<p>Latest tip: <code>{}</code></p>", escape(tip)));
+            facts.push(("Latest tip", tip.to_owned()));
         }
-        if !updates.is_empty() {
-            let mut ordered = updates.clone();
-            ordered.sort_by_key(|update| (update.created_at, update.id));
-            extra.push_str("<h2>Updates</h2><ul>");
-            for update in ordered {
-                extra.push_str(&format!(
-                    "<li><code>{}</code></li>",
-                    escape(first_tag(update, "c").unwrap_or("(no tip)"))
-                ));
-            }
-            extra.push_str("</ul>");
+        let mut ordered = updates.clone();
+        ordered.sort_by_key(|update| (update.created_at, update.id));
+        for (index, update) in ordered.iter().enumerate() {
+            facts.push((
+                if index == 0 { "Updates" } else { "" },
+                first_tag(update, "c").unwrap_or("(no tip)").to_owned(),
+            ));
         }
+    }
+    let mut extra = String::new();
+    if !facts.is_empty() {
+        extra.push_str("<div><h3>Details</h3><dl class=\"kv\">");
+        for (heading, value) in facts {
+            extra.push_str(&format!("<dt>{heading}</dt><dd>{}</dd>", escape(&value)));
+        }
+        extra.push_str("</dl></div>");
     }
     let body = thread_body(&repo, &pull, status, &names, &extra, &comments);
     html(StatusCode::OK, &title_of(&pull), &body)

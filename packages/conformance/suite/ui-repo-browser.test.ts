@@ -245,15 +245,15 @@ describe('relay image conformance: /repo git pages in a browser', () => {
         });
 
         await page.goto(`${repo}/blob/main/hello.txt`);
-        await page.locator('#git pre').waitFor();
-        expect(await page.locator('#git pre').textContent()).toBe(
+        await page.locator('#git pre.blob-code').waitFor();
+        expect(await page.locator('#git pre.blob-code').textContent()).toBe(
           'hello from the stub gateway\n'
         );
 
         // A blob only on Blossom, fetched by its sha256, checked by sha1.
         await page.goto(`${repo}/blob/main/pooled.txt`);
-        await page.locator('#git pre').waitFor();
-        expect(await page.locator('#git pre').textContent()).toBe(
+        await page.locator('#git pre.blob-code').waitFor();
+        expect(await page.locator('#git pre.blob-code').textContent()).toBe(
           'hello from the stub blossom server\n'
         );
         expect(blossom.received.map((r) => r.path)).toContain(
@@ -272,8 +272,10 @@ describe('relay image conformance: /repo git pages in a browser', () => {
         );
 
         await page.goto(`${repo}/tree/main`);
-        await page.locator('#git li').first().waitFor();
-        expect(await page.locator('#git li').allTextContents()).toEqual([
+        await page.locator('#git li.file-row').first().waitFor();
+        expect(
+          await page.locator('#git li.file-row').allTextContents()
+        ).toEqual([
           'hello.txt',
           'liar.txt',
           'lost.txt',
@@ -321,14 +323,17 @@ describe('relay image conformance: /repo git pages in a browser', () => {
           loaded.filter((url) => url.includes('ui_highlight_web'));
 
         await page.goto(`${repo}/blob/main/main.rs`);
-        await page.locator('#git pre[data-highlighted] span').first().waitFor();
-        expect(await page.locator('#git pre').textContent()).toBe(
+        await page
+          .locator('#git pre.blob-code[data-highlighted] span')
+          .first()
+          .waitFor();
+        expect(await page.locator('#git pre.blob-code').textContent()).toBe(
           '// hi\nfn main() {\n    let x = "s";\n}\n'
         );
         // Colour is set through the CSSOM: the page's policy refuses a
         // `style` attribute, and a coloured run proves it was not refused.
         const colours = await page
-          .locator('#git pre span')
+          .locator('#git pre.blob-code span')
           .evaluateAll((spans) => {
             // Runs in the browser; the suite's tsconfig has no DOM lib.
             const browser = globalThis as unknown as {
@@ -340,20 +345,20 @@ describe('relay image conformance: /repo git pages in a browser', () => {
         expect(highlighter().length).toBeGreaterThan(0);
 
         await page.goto(`${repo}/blob/main/notes.zzz`);
-        await page.locator('#git pre').waitFor();
+        await page.locator('#git pre.blob-code').waitFor();
         // Give the highlighter time to have acted, were it going to.
         await page.waitForTimeout(500);
-        expect(await page.locator('#git pre').textContent()).toBe(
+        expect(await page.locator('#git pre.blob-code').textContent()).toBe(
           'fn main() {}\n'
         );
-        expect(await page.locator('#git pre span').count()).toBe(0);
-        expect(await page.locator('#git pre[data-highlighted]').count()).toBe(
-          0
-        );
+        expect(await page.locator('#git pre.blob-code span').count()).toBe(0);
+        expect(
+          await page.locator('#git pre.blob-code[data-highlighted]').count()
+        ).toBe(0);
 
         loaded.length = 0;
         await page.goto(`${repo}/tree/main`);
-        await page.locator('#git li').first().waitFor();
+        await page.locator('#git li.file-row').first().waitFor();
         expect(highlighter()).toEqual([]);
         expect(await page.content()).not.toContain('ui-highlight-web');
         expect(await page.content()).not.toContain('ui_highlight_web');
@@ -376,15 +381,31 @@ describe('relay image conformance: /repo git pages in a browser', () => {
         page.on('pageerror', (e) => seen.push(`page error: ${e.message}`));
 
         await page.goto(`${repo}/commit/${next.id}`);
-        await page.locator('#git h3').first().waitFor();
-        expect(await page.locator('#git h3').allTextContents()).toEqual([
+        await page.locator('#git .diff-file').first().waitFor();
+        // Runs in the browser; the suite's tsconfig has no DOM lib.
+        type DiffFile = {
+          dataset: { status: string };
+          querySelector(selector: string): { textContent: string };
+        };
+        expect(
+          await page
+            .locator('#git .diff-file')
+            .evaluateAll((files) =>
+              (files as unknown as DiffFile[]).map(
+                (file) =>
+                  `${file.dataset.status}: ${file.querySelector('.file-name').textContent}`
+              )
+            )
+        ).toEqual([
           'added: fresh.txt',
           'modified: hello.txt',
           'deleted: liar.txt',
           'renamed: lost.txt -> moved.txt',
         ]);
-        const diffs = await page.locator('#git pre').allTextContents();
-        expect(diffs[0]).toBe('second commit\n');
+        expect(await page.locator('#git h2').textContent()).toBe(
+          'second commit'
+        );
+        const diffs = await page.locator('#git pre.diff').allTextContents();
         expect(diffs).toContain('+a new file\n');
         expect(diffs).toContain(
           '-hello from the stub gateway\n+hello again from the stub gateway\n'
@@ -400,8 +421,8 @@ describe('relay image conformance: /repo git pages in a browser', () => {
         ).toBe(1);
 
         await page.goto(`${repo}/commits/next`);
-        await page.locator('#git li').first().waitFor();
-        const rows = await page.locator('#git li').allTextContents();
+        await page.locator('#git li.commit-row').first().waitFor();
+        const rows = await page.locator('#git li.commit-row').allTextContents();
         expect(rows).toHaveLength(2);
         expect(rows[0]).toContain('second commit');
         expect(rows[1]).toContain('a commit');

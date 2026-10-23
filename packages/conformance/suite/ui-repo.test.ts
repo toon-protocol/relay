@@ -184,12 +184,32 @@ describe('relay image conformance: the /repo app UI', () => {
       expect(html).toContain('A &lt;script&gt;alert(1)&lt;/script&gt; repo');
       expect(html).toContain('Ada Owner');
       expect(html).toContain(nip19.npubEncode(pubkeyOf(maintainer)));
-      expect(html).toContain('<a href="https://example.test/proj.git"');
+      // Clone URLs are text to copy, never links.
+      expect(html).toContain('git clone https://example.test/proj.git');
       expect(html).not.toContain('href="javascript:');
-      expect(html).toContain('Default branch: <code>main</code>');
-      expect(html).toContain('refs/heads/main');
+      // The branch menu lists the honoured refs; HEAD's branch is current.
+      expect(html).toContain('<a class="menu-item current" href="');
+      expect(html).toContain(`${home}/tree/main"`);
       expect(html).not.toContain('evil');
-      expect(html).not.toContain('<script');
+      // Like rig-web's, the home page lists the files and README, so it is a
+      // git page: the browser half fills it and may fetch over https.
+      expect(page.headers.get('content-security-policy')).toBe(
+        "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https:"
+      );
+      expect(html).toContain('id="git" data-git=');
+      for (const [, src] of html.matchAll(/<script[^>]*src="([^"]*)"/g)) {
+        expect(src).toMatch(/^\/repo\/assets\//);
+      }
+      expect(html).not.toContain('<script>');
+      // Every page links the stylesheet, which is served immutable.
+      const sheet = /<link rel="stylesheet" href="([^"]+)">/.exec(html)?.[1];
+      expect(sheet).toMatch(/^\/repo\/assets\/style\.[0-9a-f]{16}\.css$/);
+      const css = await fetch(`${relay.readUrl}${sheet}`);
+      expect(css.status).toBe(200);
+      expect(css.headers.get('content-type')).toBe('text/css; charset=utf-8');
+      expect(css.headers.get('cache-control')).toBe(
+        'public, max-age=31536000, immutable'
+      );
 
       const naddr = nip19.naddrEncode({
         kind: 30617,
@@ -359,17 +379,22 @@ describe('relay image conformance: the /repo app UI', () => {
       expect(home.text).toContain('/issues"');
       expect(home.text).toContain('/pulls"');
 
+      // Open threads by default, the others under ?state=closed, as rig-web.
       const issues = await get('/issues');
       expect(issues.status).toBe(200);
-      expect(issues.text).toContain(`/issues/${issue.id}"`);
-      expect(issues.text).toContain('Crash &lt;b&gt;on start&lt;/b&gt;');
-      expect(issues.text).toContain('[resolved]');
       expect(issues.text).toContain(`/issues/${other.id}"`);
-      expect(issues.text).toContain('[open]');
+      expect(issues.text).toContain('data-status="open"');
+      expect(issues.text).not.toContain(`/issues/${issue.id}"`);
+      expect(issues.text).toContain('1 Open');
+      expect(issues.text).toContain('1 Closed');
+      const closedIssues = await get('/issues?state=closed');
+      expect(closedIssues.text).toContain(`/issues/${issue.id}"`);
+      expect(closedIssues.text).toContain('Crash &lt;b&gt;on start&lt;/b&gt;');
+      expect(closedIssues.text).toContain('data-status="resolved"');
 
       const thread = await get(`/issues/${issue.id}`);
       expect(thread.status).toBe(200);
-      expect(thread.text).toContain('Status: <strong>resolved</strong>');
+      expect(thread.text).toContain('data-status="resolved"');
       expect(thread.text).toContain('Broken &lt;script&gt;');
       expect(thread.text).toContain(nip19.npubEncode(pubkeyOf(author)));
       expect(thread.text.indexOf('nip22 comment')).toBeGreaterThan(0);
@@ -377,25 +402,28 @@ describe('relay image conformance: the /repo app UI', () => {
         thread.text.indexOf('nip22 comment')
       );
       const ignored = await get(`/issues/${other.id}`);
-      expect(ignored.text).toContain('Status: <strong>open</strong>');
+      expect(ignored.text).toContain('data-status="open"');
 
       const pulls = await get('/pulls');
       expect(pulls.status).toBe(200);
-      expect(pulls.text).toContain(`/pulls/${patch.id}"`);
       expect(pulls.text).toContain(`/pulls/${pr.id}"`);
-      expect(pulls.text).not.toContain(`/pulls/${reply.id}`);
       expect(pulls.text).toContain('A pull request');
+      const closedPulls = await get('/pulls?state=closed');
+      expect(closedPulls.text).toContain(`/pulls/${patch.id}"`);
+      for (const list of [pulls, closedPulls]) {
+        expect(list.text).not.toContain(`/pulls/${reply.id}`);
+      }
 
       const patchPage = await get(`/pulls/${patch.id}`);
       expect(patchPage.status).toBe(200);
       expect(patchPage.text).toContain('+&lt;script&gt;evil()&lt;/script&gt;');
       // The patch's own author closed it.
-      expect(patchPage.text).toContain('Status: <strong>closed</strong>');
+      expect(patchPage.text).toContain('data-status="closed"');
 
       const prPage = await get(`/pulls/${pr.id}`);
       expect(prPage.status).toBe(200);
-      expect(prPage.text).toContain('Latest tip: <code>' + 'd'.repeat(40));
-      expect(prPage.text).toContain('Status: <strong>open</strong>');
+      expect(prPage.text).toContain('<dt>Latest tip</dt><dd>' + 'd'.repeat(40));
+      expect(prPage.text).toContain('data-status="open"');
 
       // Not the right kind, malformed, unknown, or another route's id.
       for (const path of [

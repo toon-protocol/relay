@@ -2,8 +2,9 @@
 //! code draws.
 
 use git_objects::{ObjectId, ObjectKind, TreeEntry};
+use ui_markdown::Node;
 
-use crate::history::{self, CommitView, Log};
+use crate::history::{self, CommitView, Log, commit_href, when};
 use crate::object::{Error, Fetch, load};
 use crate::{Layout, PageKind};
 
@@ -16,13 +17,52 @@ pub struct Row {
     pub is_dir: bool,
 }
 
+/// The commit a listing is at, for the bar above it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Head {
+    pub id: ObjectId,
+    pub href: String,
+    /// The first line of the message.
+    pub summary: String,
+    /// The author's name alone.
+    pub author: String,
+    pub date: String,
+}
+
+/// A directory's README, as the listing shows it below the files.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Readme {
+    pub name: String,
+    pub body: Document,
+}
+
+/// A text file as a page reads it: Markdown is drawn, anything else is not.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Document {
+    Markdown(Vec<Node>),
+    Plain(String),
+    /// The README is named but could not be had.
+    Unheld,
+}
+
+/// A directory: its entries, the commit, and its README if it has one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Listing {
+    pub rows: Vec<Row>,
+    pub head: Head,
+    pub readme: Option<Readme>,
+}
+
 /// What fills the page's content area.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Content {
     /// A directory.
-    Tree(Vec<Row>),
-    /// A file that is text.
-    Text(String),
+    Tree(Listing),
+    /// A file that is text, and its Markdown drawn if it is Markdown.
+    Text {
+        text: String,
+        markdown: Option<Vec<Node>>,
+    },
     /// A file that is not, with its size in bytes.
     Binary(usize),
     /// An object on the way, or the file itself, could not be had.
@@ -77,12 +117,116 @@ fn rows(layout: &Layout, entries: &[TreeEntry]) -> Vec<Row> {
     rows
 }
 
-/// A file's content as the page shows it.
-fn file(bytes: &[u8]) -> Content {
-    match core::str::from_utf8(bytes) {
-        Ok(text) if !text.contains('\0') => Content::Text(text.to_owned()),
-        _ => Content::Binary(bytes.len()),
+fn is_markdown(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    [".md", ".markdown", ".mdown", ".mkd"]
+        .iter()
+        .any(|extension| lower.ends_with(extension))
+}
+
+/// Whether a directory entry is the README a listing shows.
+fn is_readme(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    [
+        "readme",
+        "readme.md",
+        "readme.markdown",
+        "readme.txt",
+        "readme.rst",
+    ]
+    .contains(&lower.as_str())
+}
+
+/// Where a link in a document in `directory` goes: a page of this repo at
+/// the same ref for a relative path, the address itself for an absolute
+/// one, and nowhere for any other scheme.
+fn document_link(layout: &Layout, directory: &[String], url: &str) -> Option<String> {
+    if url.starts_with('#') || ui_markdown::scheme(url).is_some() {
+        return ui_markdown::absolute_only(url);
     }
+    if url.starts_with("//") {
+        return None;
+    }
+    let path = url.split(['#', '?']).next().unwrap_or_default();
+    let mut segments: Vec<&str> = if path.starts_with('/') {
+        Vec::new()
+    } else {
+        directory.iter().map(String::as_str).collect()
+    };
+    for segment in path.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            other => segments.push(other),
+        }
+    }
+    let page = if path.ends_with('/') || segments.is_empty() {
+        "tree"
+    } else {
+        "blob"
+    };
+    Some(address(layout, page, &segments))
+}
+
+/// `text` read as a document in `directory`.
+fn document(layout: &Layout, directory: &[String], name: &str, text: &str) -> Document {
+    if is_markdown(name) {
+        Document::Markdown(ui_markdown::parse(text, |url| {
+            document_link(layout, directory, url)
+        }))
+    } else {
+        Document::Plain(text.to_owned())
+    }
+}
+
+fn text_of(bytes: &[u8]) -> Option<&str> {
+    core::str::from_utf8(bytes)
+        .ok()
+        .filter(|text| !text.contains('\0'))
+}
+
+/// A file's content as the page shows it.
+fn file(layout: &Layout, bytes: &[u8]) -> Content {
+    match text_of(bytes) {
+        Some(text) => {
+            let (name, directory) = layout
+                .path
+                .split_last()
+                .map_or(("", &[][..]), |(name, directory)| {
+                    (name.as_str(), directory)
+                });
+            let markdown = match document(layout, directory, name, text) {
+                Document::Markdown(nodes) => Some(nodes),
+                Document::Plain(_) | Document::Unheld => None,
+            };
+            Content::Text {
+                text: text.to_owned(),
+                markdown,
+            }
+        }
+        None => Content::Binary(bytes.len()),
+    }
+}
+
+/// The README among `entries`, fetched and read, if there is one.
+async fn readme(fetch: &impl Fetch, layout: &Layout, entries: &[TreeEntry]) -> Option<Readme> {
+    let entry = entries
+        .iter()
+        .filter(|entry| !entry.is_tree() && !entry.is_gitlink() && is_readme(&entry.name))
+        .min_by_key(|entry| !is_markdown(&entry.name))?;
+    let body = match load(fetch, layout, entry.id, ObjectKind::Blob).await {
+        Ok(object) => match object.blob().ok().and_then(text_of) {
+            Some(text) => document(layout, &layout.path, &entry.name, text),
+            None => Document::Unheld,
+        },
+        Err(_) => Document::Unheld,
+    };
+    Some(Readme {
+        name: entry.name.clone(),
+        body,
+    })
 }
 
 /// Walks from the commit to what the layout's path names, fetching each
@@ -102,8 +246,17 @@ async fn walk(fetch: &impl Fetch, layout: &Layout) -> Result<Content, Error> {
         PageKind::Tree | PageKind::Blob => {}
     }
     let id = |text: &str| ObjectId::from_hex(text).map_err(|_| Error::Unheld);
-    let commit = load(fetch, layout, id(&layout.commit)?, ObjectKind::Commit).await?;
-    let mut tree_id = commit.parse_commit().map_err(|_| Error::Unheld)?.tree;
+    let commit_id = id(&layout.commit)?;
+    let commit = load(fetch, layout, commit_id, ObjectKind::Commit).await?;
+    let commit = commit.parse_commit().map_err(|_| Error::Unheld)?;
+    let head = Head {
+        id: commit_id,
+        href: commit_href(layout, &commit_id),
+        summary: commit.message.lines().next().unwrap_or_default().to_owned(),
+        author: commit.author.name.clone(),
+        date: when(&commit.author),
+    };
+    let mut tree_id = commit.tree;
     let (last, directories) = match (layout.kind, layout.path.split_last()) {
         (PageKind::Blob, Some((last, directories))) => (Some(last), directories),
         _ => (None, layout.path.as_slice()),
@@ -122,7 +275,11 @@ async fn walk(fetch: &impl Fetch, layout: &Layout) -> Result<Content, Error> {
     let tree = load(fetch, layout, tree_id, ObjectKind::Tree).await?;
     let entries = tree.parse_tree().map_err(|_| Error::Unheld)?.entries;
     let Some(last) = last else {
-        return Ok(Content::Tree(rows(layout, &entries)));
+        return Ok(Content::Tree(Listing {
+            rows: rows(layout, &entries),
+            head,
+            readme: readme(fetch, layout, &entries).await,
+        }));
     };
     let Some(entry) = entries
         .iter()
@@ -131,7 +288,7 @@ async fn walk(fetch: &impl Fetch, layout: &Layout) -> Result<Content, Error> {
         return Ok(Content::NoSuchPath);
     };
     let blob = load(fetch, layout, entry.id, ObjectKind::Blob).await?;
-    Ok(file(blob.blob().map_err(|_| Error::Unheld)?))
+    Ok(file(layout, blob.blob().map_err(|_| Error::Unheld)?))
 }
 
 #[cfg(test)]
@@ -211,9 +368,16 @@ mod tests {
     async fn a_tree_lists_directories_first_and_links_by_ref_and_path() {
         let (repo, ..) = repo();
         let content = build(&repo.table, &repo.layout(PageKind::Tree, &[])).await;
-        let Content::Tree(rows) = content else {
+        let Content::Tree(Listing { rows, head, readme }) = content else {
             panic!("{content:?}")
         };
+        assert_eq!(head.summary, "msg");
+        assert_eq!(head.author, "A");
+        let readme = readme.expect("README is listed");
+        assert_eq!(
+            (readme.name.as_str(), readme.body),
+            ("README", Document::Plain("read me\n".into()))
+        );
         let names: Vec<_> = rows.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(names, ["src", "README", "data.bin", "vendor"]);
         assert_eq!(
@@ -226,7 +390,10 @@ mod tests {
         );
         assert_eq!(rows[3].href, None);
         let sub = build(&repo.table, &repo.layout(PageKind::Tree, &["src"])).await;
-        let Content::Tree(rows) = sub else { panic!() };
+        let Content::Tree(Listing { rows, readme, .. }) = sub else {
+            panic!()
+        };
+        assert_eq!(readme, None);
         assert_eq!(
             rows[0].href.as_deref(),
             Some("/repo/npub1x/proj/blob/feature/x/src/main.rs")
@@ -241,7 +408,13 @@ mod tests {
             &repo.layout(PageKind::Blob, &["src", "main.rs"]),
         )
         .await;
-        assert_eq!(text, Content::Text("fn main() {}\n".into()));
+        assert_eq!(
+            text,
+            Content::Text {
+                text: "fn main() {}\n".into(),
+                markdown: None
+            }
+        );
         let binary = build(&repo.table, &repo.layout(PageKind::Blob, &["data.bin"])).await;
         assert_eq!(binary, Content::Binary(3));
     }
@@ -268,11 +441,64 @@ mod tests {
         }
         let missing = build(&repo.table, &repo.layout(PageKind::Blob, &["README"])).await;
         assert_eq!(missing, Content::Unheld);
-        // The tree listing never needed the blobs.
+        // The tree listing still renders; only its README is not held.
         let listing = build(&repo.table, &repo.layout(PageKind::Tree, &[])).await;
-        assert!(matches!(listing, Content::Tree(_)));
+        let Content::Tree(listing) = listing else {
+            panic!("{listing:?}")
+        };
+        assert_eq!(listing.rows.len(), 4);
+        assert_eq!(listing.readme.unwrap().body, Document::Unheld);
         // A different file is unaffected.
         let other = build(&repo.table, &repo.layout(PageKind::Blob, &["data.bin"])).await;
         assert_eq!(other, Content::Binary(3));
+    }
+
+    #[test]
+    fn a_documents_relative_links_stay_in_the_repo_at_its_ref() {
+        let (repo, ..) = repo();
+        let layout = repo.layout(PageKind::Blob, &["docs", "guide.md"]);
+        let directory = ["docs".to_owned()];
+        let at = |url: &str| document_link(&layout, &directory, url);
+        let base = "/repo/npub1x/proj";
+        assert_eq!(
+            at("a.md").as_deref(),
+            Some(&*format!("{base}/blob/feature/x/docs/a.md"))
+        );
+        assert_eq!(
+            at("../README.md#usage").as_deref(),
+            Some(&*format!("{base}/blob/feature/x/README.md"))
+        );
+        assert_eq!(
+            at("/src/").as_deref(),
+            Some(&*format!("{base}/tree/feature/x/src"))
+        );
+        assert_eq!(at("https://x.test/").as_deref(), Some("https://x.test/"));
+        assert_eq!(at("#top").as_deref(), Some("#top"));
+        assert_eq!(at("javascript:alert(1)"), None);
+        assert_eq!(at("//elsewhere.test/x"), None);
+    }
+
+    #[tokio::test]
+    async fn a_markdown_file_is_drawn_as_well_as_shown() {
+        let (mut repo, ..) = repo();
+        let doc = repo.add(ObjectKind::Blob, b"# Hi\n\n[next](b.md)\n".to_vec());
+        let root = repo.add(ObjectKind::Tree, tree(&[("100644", "a.md", doc)]));
+        let commit =
+            format!("tree {root}\nauthor A <a@x> 1 +0000\ncommitter A <a@x> 1 +0000\n\nmsg\n");
+        repo.commit = repo.add(ObjectKind::Commit, commit.into_bytes());
+        let content = build(&repo.table, &repo.layout(PageKind::Blob, &["a.md"])).await;
+        let Content::Text {
+            text,
+            markdown: Some(nodes),
+        } = content
+        else {
+            panic!("{content:?}")
+        };
+        assert_eq!(text, "# Hi\n\n[next](b.md)\n");
+        assert_eq!(
+            ui_markdown::to_html(&nodes),
+            "<h1>Hi</h1><p><a href=\"/repo/npub1x/proj/blob/feature/x/b.md\" \
+             rel=\"nofollow noopener\">next</a></p>"
+        );
     }
 }

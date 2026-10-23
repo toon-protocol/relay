@@ -17,10 +17,13 @@ use nostr::key::PublicKey;
 use nostr::nips::nip19::FromBech32;
 use serde_json::json;
 
+use relay_ui::Assets;
+
+use crate::markup::{Tab, ref_menu, repo_header};
 use crate::{
     ANNOUNCEMENT, HIGHLIGHT_SCRIPT, PREFIX, Pages, SCRIPT, STATE, UNAVAILABLE, authorized_authors,
-    d_tag, escape, honoured_state, html, newest, not_found, percent_encode, repo_name, repo_path,
-    tag_values,
+    d_tag, escape, head_branch, honoured_state, html, names, newest, not_found, percent_encode,
+    refs, repo_name, repo_path, tag_values,
 };
 
 /// What a git page may load: its own origin, its own WebAssembly, and `https`
@@ -180,19 +183,13 @@ pub(crate) fn resolve<'a>(
     state: &Event,
     segments: &'a [String],
 ) -> Option<(String, String, &'a [String])> {
+    let held = refs(state);
     let commit_of = |name: &str| {
         ["refs/heads/", "refs/tags/"].iter().find_map(|prefix| {
             let wanted = format!("{prefix}{name}");
-            state
-                .tags
-                .iter()
-                .map(|tag| tag.as_slice())
-                .find_map(|tag| match tag {
-                    [tag_name, commit, ..] if *tag_name == wanted && is_object_id(commit) => {
-                        Some(commit.clone())
-                    }
-                    _ => None,
-                })
+            held.iter()
+                .find(|(ref_name, commit)| *ref_name == wanted && is_object_id(commit))
+                .map(|(_, commit)| (*commit).to_owned())
         })
     };
     (1..=segments.len()).rev().find_map(|count| {
@@ -273,13 +270,8 @@ fn page_number(query: Option<&str>) -> usize {
 
 /// The branch the state's `HEAD` names, as the segments of its ref name.
 fn default_segments(state: &Event) -> Vec<String> {
-    let head = tag_values(state, "HEAD")
-        .first()
-        .cloned()
-        .unwrap_or_default();
-    let head = head.strip_prefix("ref: ").unwrap_or(&head);
-    let head = head.strip_prefix("refs/heads/").unwrap_or(head);
-    head.split('/')
+    head_branch(state)
+        .split('/')
         .filter(|segment| !segment.is_empty())
         .map(str::to_owned)
         .collect()
@@ -364,6 +356,54 @@ async fn page(
     }
 
     let base = repo_path(&owner, d);
+    let names = names(&store, &[owner]).await;
+    let tab = match kind {
+        PageKind::Tree | PageKind::Blob => Tab::Code,
+        PageKind::Commits | PageKind::Commit => Tab::Commits,
+    };
+    let mut body = repo_header(&owner, d, announcement, &names, tab);
+    match kind {
+        PageKind::Tree | PageKind::Blob => {
+            body.push_str("<div class=\"toolbar\"><div class=\"breadcrumb\">");
+            body.push_str(&ref_menu(&base, "tree", &ref_name, state));
+            body.push_str(&breadcrumb(&base, &ref_name, path, repo_name(announcement)));
+            body.push_str("</div></div>");
+        }
+        PageKind::Commits => {
+            body.push_str("<div class=\"toolbar\">");
+            body.push_str(&ref_menu(&base, "commits", &ref_name, state));
+            body.push_str("</div>");
+        }
+        PageKind::Commit => {}
+    }
+    body.push_str(&mount(
+        assets.as_ref(),
+        kind,
+        &base,
+        &ref_name,
+        &commit,
+        path,
+        page_no,
+        &candidates(announcement, state, &defaults),
+    ));
+    let title = match kind {
+        PageKind::Commit => format!("{} · commit {}", repo_name(announcement), &commit[..7]),
+        PageKind::Commits => format!("Commits · {}", repo_name(announcement)),
+        PageKind::Tree | PageKind::Blob if path.is_empty() => repo_name(announcement).to_owned(),
+        PageKind::Tree | PageKind::Blob => {
+            format!("{} · {}", path.join("/"), repo_name(announcement))
+        }
+    };
+    let mut response = html(StatusCode::OK, &title, &body);
+    response.headers_mut().insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(CONTENT_SECURITY_POLICY_VALUE),
+    );
+    response
+}
+
+/// `name / dir / file`, every part but a file linking to its listing.
+fn breadcrumb(base: &str, ref_name: &str, path: &[String], repo: &str) -> String {
     let location = |count: usize| {
         let mut href = format!(
             "{base}/tree/{}",
@@ -379,70 +419,67 @@ async fn page(
         }
         href
     };
-    let mut body = format!(
-        "<h1>{}</h1><p>{} at <code>{}</code> (<code>{}</code>)</p><p>{}",
-        link(&base, repo_name(announcement)),
-        match kind {
-            PageKind::Tree => "Tree",
-            PageKind::Blob => "File",
-            PageKind::Commits => "Commits",
-            PageKind::Commit => "Commit",
-        },
-        escape(&ref_name),
-        escape(&commit),
-        link(&location(0), repo_name(announcement)),
-    );
+    let mut out = if path.is_empty() {
+        format!("<span class=\"here\">{}</span>", escape(repo))
+    } else {
+        link(&location(0), repo)
+    };
     for (index, segment) in path.iter().enumerate() {
-        body.push_str(" / ");
-        if index + 1 == path.len() && kind == PageKind::Blob {
-            body.push_str(&escape(segment));
+        out.push_str("<span class=\"sep\">/</span>");
+        if index + 1 == path.len() {
+            out.push_str(&format!("<span class=\"here\">{}</span>", escape(segment)));
         } else {
-            body.push_str(&link(&location(index + 1), segment));
+            out.push_str(&link(&location(index + 1), segment));
         }
     }
-    body.push_str("</p>");
+    out
+}
 
+/// The element the browser half fills, with the layout it reads, and the
+/// modules that fill it; or, with no built assets, a box saying git browsing
+/// is unavailable.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn mount(
+    assets: Option<&Assets>,
+    kind: PageKind,
+    base: &str,
+    ref_name: &str,
+    commit: &str,
+    path: &[String],
+    page_no: usize,
+    objects: &BTreeMap<String, Vec<String>>,
+) -> String {
+    let Some(script) = assets.and_then(|assets| assets.url(PREFIX, SCRIPT)) else {
+        return format!("<div class=\"box\"><div class=\"empty\">{UNAVAILABLE}</div></div>");
+    };
+    let layout = json!({
+        "kind": kind.name(),
+        "base": base,
+        "ref": ref_name,
+        "commit": commit,
+        "path": path,
+        "page": page_no,
+        "objects": objects,
+    });
+    let mut out = format!(
+        "<div id=\"git\" data-git=\"{}\"><div class=\"box\"><div class=\"empty\">Loading&hellip;</div></div></div>\
+         <noscript><p class=\"muted\">This page needs JavaScript to fetch the repository's files.</p></noscript>\
+         <script type=\"module\" src=\"{}\"></script>",
+        escape(&layout.to_string()),
+        escape(&script)
+    );
     // The highlighter is its own module and only a file page loads it: a tree
     // page never names it. Without it (or if it fails to load) the file shows
     // as plain text.
-    let highlight = assets
-        .as_ref()
-        .filter(|_| kind == PageKind::Blob)
-        .and_then(|assets| assets.url(PREFIX, HIGHLIGHT_SCRIPT));
-    match assets.and_then(|assets| assets.url(PREFIX, SCRIPT)) {
-        Some(script) => {
-            let layout = json!({
-                "kind": kind.name(),
-                "base": base,
-                "ref": ref_name,
-                "commit": commit,
-                "path": path,
-                "page": page_no,
-                "objects": candidates(announcement, state, &defaults),
-            });
-            body.push_str(&format!(
-                "<main id=\"git\" data-git=\"{}\">Loading&hellip;</main>\
-                 <noscript><p>This page needs JavaScript to fetch the repository's files.</p></noscript>\
-                 <script type=\"module\" src=\"{}\"></script>",
-                escape(&layout.to_string()),
-                escape(&script)
-            ));
-            if let Some(highlight) = highlight {
-                body.push_str(&format!(
-                    "<script type=\"module\" src=\"{}\"></script>",
-                    escape(&highlight)
-                ));
-            }
-        }
-        None => body.push_str(&format!("<p>{UNAVAILABLE}</p>")),
+    if kind == PageKind::Blob
+        && let Some(highlight) = assets.and_then(|assets| assets.url(PREFIX, HIGHLIGHT_SCRIPT))
+    {
+        out.push_str(&format!(
+            "<script type=\"module\" src=\"{}\"></script>",
+            escape(&highlight)
+        ));
     }
-    let title = format!("{} {}", repo_name(announcement), path.join("/"));
-    let mut response = html(StatusCode::OK, &title, &body);
-    response.headers_mut().insert(
-        header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(CONTENT_SECURITY_POLICY_VALUE),
-    );
-    response
+    out
 }
 
 #[cfg(test)]
@@ -545,5 +582,30 @@ mod tests {
         let (name, commit, rest) = resolve(&state, &segments).unwrap();
         assert_eq!((name.as_str(), commit.as_str(), rest.len()), (B, B, 1));
         assert!(resolve(&state, &path(&["nope", "a"])).is_none());
+    }
+
+    #[test]
+    fn rigs_legacy_ref_tags_are_read_and_the_nip_shape_wins() {
+        let state = sign(
+            STATE,
+            &[
+                &["d", "r"],
+                &["r", "refs/heads/main", A],
+                &["r", "refs/heads/dev", A],
+                &["refs/heads/dev", B],
+                &["r", "HEAD", "refs/heads/dev"],
+                &["refs/tags/v1^{}", A],
+            ],
+        );
+        let path = |parts: &[&str]| parts.iter().map(|p| (*p).to_owned()).collect::<Vec<_>>();
+        assert_eq!(resolve(&state, &path(&["main"])).unwrap().1, A);
+        assert_eq!(resolve(&state, &path(&["dev"])).unwrap().1, B);
+        assert_eq!(default_segments(&state), ["dev"]);
+        assert_eq!(
+            refs(&state),
+            [("refs/heads/dev", B), ("refs/heads/main", A)]
+        );
+        let bare = sign(STATE, &[&["d", "r"]]);
+        assert_eq!(default_segments(&bare), ["main"]);
     }
 }

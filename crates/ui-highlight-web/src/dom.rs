@@ -68,7 +68,7 @@ pub(crate) fn watch() {
 /// Whether the page now holds a file (highlighted or left plain): the watch
 /// is over.
 fn colour(document: &Document, root: &Element, extension: &str) -> bool {
-    let Ok(Some(pre)) = root.query_selector("pre") else {
+    let Ok(Some(pre)) = root.query_selector("pre.blob-code") else {
         return false;
     };
     let Some(text) = pre.text_content() else {
