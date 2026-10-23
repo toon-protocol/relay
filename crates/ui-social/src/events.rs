@@ -774,7 +774,7 @@ pub(crate) async fn page(
         body.push_str("</div>");
     }
     body.push_str(&format!(
-        "<p class=\"muted small\">A submission is a repo (kind 30617) or a ship post (a kind 1 tagged \
+        "<p class=\"muted small wrap-anywhere\">A submission is a repo (kind 30617) or a ship post (a kind 1 tagged \
          <code>ship</code> or with media, or a kind 31990 app) that names this event in an <code>a</code> \
          tag: <code>{}</code>. This is a convention of this relay's pages; NIP-52 itself links events to \
          calendars, not projects to events.</p></section>",
