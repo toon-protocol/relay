@@ -244,10 +244,10 @@ async fn git_pages_carry_ordered_candidates_and_their_own_policy() {
         assert_eq!(
             layout["objects"][&commit],
             serde_json::json!([
-                "https://own-gateway.test/tx1",
                 format!("https://own-blossom.test/{blob}"),
-                "https://operator-gateway.test/tx1",
                 format!("https://operator-blossom.test/{blob}"),
+                "https://own-gateway.test/tx1",
+                "https://operator-gateway.test/tx1",
             ])
         );
     }
