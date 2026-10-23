@@ -608,15 +608,12 @@ describe('relay image conformance: the /repo app UI', () => {
           ).toBe(404);
         }
         // The log's page number reaches the layout, and nonsense is page 0.
-        const layoutOf = async (path: string) => {
-          const html = await (
-            await fetch(`${configured.readUrl}${home}/${path}`)
-          ).text();
-          const attribute = /data-git="([^"]*)"/.exec(html)?.[1] ?? '';
-          return JSON.parse(attribute.replaceAll('&quot;', '"'));
-        };
-        expect((await layoutOf('commits/feature/x?page=2')).page).toBe(2);
-        expect((await layoutOf('commits/feature/x?page=-1')).page).toBe(0);
+        const pageOf = async (path: string) =>
+          layoutOf(
+            await (await fetch(`${configured.readUrl}${home}/${path}`)).text()
+          ).page;
+        expect(await pageOf('commits/feature/x?page=2')).toBe(2);
+        expect(await pageOf('commits/feature/x?page=-1')).toBe(0);
       } finally {
         await configured.stop();
       }
