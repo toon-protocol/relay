@@ -51,6 +51,21 @@ async function page(path: string): Promise<Page> {
 
 const has = (text: string, id: string) => text.includes(`data-id="${id}"`);
 
+/**
+ * The articles a page links to the reader, as `<pubkey>:<d>`. An naddr's
+ * TLVs may come in any order, so links are compared decoded.
+ */
+function readerLinks(text: string): string[] {
+  return [...text.matchAll(/href="\/social\/a\/(naddr1[0-9a-z]+)"/g)].flatMap(
+    ([, naddr]) => {
+      const decoded = nip19.decode(naddr ?? '');
+      return decoded.type === 'naddr' && decoded.data.kind === 30023
+        ? [`${decoded.data.pubkey}:${decoded.data.identifier}`]
+        : [];
+    }
+  );
+}
+
 describe('relay image conformance: /social articles, series, highlights and snippets', () => {
   conformanceTest(
     'an article is read with its cover, series, author, repo and Markdown',
@@ -126,8 +141,8 @@ describe('relay image conformance: /social articles, series, highlights and snip
   conformanceTest(
     'every spelling of an article reaches the reader, and articles link to it',
     async () => {
-      const { named, articles } = devlog;
-      const path = `/social/a/${articles.cache.naddr}`;
+      const { named } = devlog;
+      const cache = `${social.pubkeys.maya}:tidepool-cache`;
       const byKey = await page(`/social/a/${social.npubs.maya}/tidepool-cache`);
       expect(byKey.status).toBe(200);
       expect(has(byKey.text, named.cache.id)).toBe(true);
@@ -135,20 +150,21 @@ describe('relay image conformance: /social articles, series, highlights and snip
         redirect: 'manual',
       });
       expect(moved.status).toBe(303);
-      expect(moved.headers.get('location')).toBe(path);
+      const location = moved.headers.get('location') ?? '';
+      expect(readerLinks(`href="${location}"`)).toEqual([cache]);
 
       const feed = await page('/social');
-      expect(feed.text).toContain(`href="${path}"`);
+      expect(readerLinks(feed.text)).toContain(cache);
       const base = `/social/r/${social.npubs.maya}/tidepool`;
       const maker = await page(base);
-      expect(maker.text).toContain(`href="${path}"`);
+      expect(readerLinks(maker.text)).toContain(cache);
       // Writing holds every article on the repo, the fan's too.
       const writing = await page(`${base}/writing`);
       expect(writing.status).toBe(200);
       expect(has(writing.text, named.cache.id)).toBe(true);
       expect(has(writing.text, named.review.id)).toBe(true);
-      expect(writing.text).toContain(
-        `href="/social/a/${nip19.naddrEncode({ kind: 30023, pubkey: social.pubkeys.dan, identifier: 'a-week-with-tidepool' })}"`
+      expect(readerLinks(writing.text)).toContain(
+        `${social.pubkeys.dan}:a-week-with-tidepool`
       );
       expect(has(maker.text, named.review.id)).toBe(false);
     }
