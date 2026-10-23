@@ -10,3 +10,4 @@ that cites one by number means that one.
 | --- | --- |
 | [0001](0001-app-uis-live-on-the-relay.md) | App UIs live on the relay |
 | [0002](0002-readers-honour-repo-state-only-from-authorized-authors.md) | Readers honour repo state only from authorized authors |
+| [0005](0005-social-pages-load-https-media.md) | /social pages let the browser load https media |

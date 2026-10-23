@@ -277,7 +277,7 @@ async fn git_pages_carry_ordered_candidates_and_their_own_policy() {
 async fn a_private_groups_events_never_reach_a_repo_page() {
     // A page cannot sign in for its visitor, so `/repo` reads the store as a
     // connection that has not authenticated would: an issue posted into a
-    // private NIP-29 group is left out, as a WebSocket read leaves it out.
+    // private NIP-29 group is left out, as `/social` leaves it out.
     let running =
         running_with(|name| (name == "TOON_NIP29_GROUPS").then(|| "true".to_owned())).await;
     let relay = &running.relay;

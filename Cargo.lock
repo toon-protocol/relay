@@ -1287,6 +1287,7 @@ dependencies = [
  "tower",
  "trybuild",
  "ui-nip34",
+ "ui-social",
 ]
 
 [[package]]
@@ -1869,6 +1870,21 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "ui-social"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "nostr",
+ "relay-ui",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tower",
+ "ui-markdown",
+ "ui-nip34",
 ]
 
 [[package]]

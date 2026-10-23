@@ -303,17 +303,40 @@ fn is_void(tag: &str) -> bool {
     matches!(tag, "br" | "hr")
 }
 
+/// Where a text node sits in the tree, for a caller that draws text itself.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Place {
+    /// Inside a link: another link here would nest one in the other.
+    pub in_link: bool,
+    /// Inside inline code or a code block: the text is code, not prose.
+    pub in_code: bool,
+}
+
 /// The tree as HTML, every text and attribute escaped.
 pub fn to_html(nodes: &[Node]) -> String {
+    to_html_with(nodes, &mut |text, _| escape(text))
+}
+
+/// The tree as HTML, each text node written by `text`, which is told where
+/// the node sits. Its contract: what it returns is HTML that holds the
+/// node's text escaped (it may wrap parts of it in elements of its own, such
+/// as a mention's link or a highlight's mark). Tags and attributes are
+/// written as [`to_html`] writes them.
+pub fn to_html_with(nodes: &[Node], text: &mut impl FnMut(&str, Place) -> String) -> String {
     let mut out = String::new();
-    write_html(&mut out, nodes);
+    write_html(&mut out, nodes, Place::default(), text);
     out
 }
 
-fn write_html(out: &mut String, nodes: &[Node]) {
+fn write_html(
+    out: &mut String,
+    nodes: &[Node],
+    place: Place,
+    text: &mut impl FnMut(&str, Place) -> String,
+) {
     for node in nodes {
         match node {
-            Node::Text(text) => out.push_str(&escape(text)),
+            Node::Text(words) => out.push_str(&text(words, place)),
             Node::Element(element) => {
                 out.push('<');
                 out.push_str(element.tag);
@@ -325,7 +348,11 @@ fn write_html(out: &mut String, nodes: &[Node]) {
                 }
                 out.push('>');
                 if !is_void(element.tag) {
-                    write_html(out, &element.children);
+                    let inner = Place {
+                        in_link: place.in_link || element.tag == "a",
+                        in_code: place.in_code || matches!(element.tag, "code" | "pre"),
+                    };
+                    write_html(out, &element.children, inner, text);
                     out.push_str("</");
                     out.push_str(element.tag);
                     out.push('>');
@@ -411,6 +438,35 @@ mod tests {
     fn text_is_escaped() {
         assert_eq!(html("a & b < c"), "<p>a &amp; b &lt; c</p>");
         assert_eq!(html("`<b>`"), "<p><code>&lt;b&gt;</code></p>");
+    }
+
+    #[test]
+    fn a_text_writer_is_told_whether_its_text_is_a_link_or_code() {
+        let nodes = parse(
+            "plain [linked](https://x.test) `code`\n\n```\nblock\n```\n",
+            absolute_only,
+        );
+        let mut seen = Vec::new();
+        let out = to_html_with(&nodes, &mut |text, place| {
+            seen.push((text.to_owned(), place));
+            escape(&text.to_uppercase())
+        });
+        assert!(out.contains("<p>PLAIN <a href"), "{out}");
+        assert!(out.contains(">LINKED</a>"), "{out}");
+        assert!(out.contains("<code>CODE</code>"), "{out}");
+        let place = |text: &str| seen.iter().find(|(t, _)| t == text).map(|(_, p)| *p);
+        assert_eq!(place("plain "), Some(Place::default()));
+        let link = Place {
+            in_link: true,
+            in_code: false,
+        };
+        assert_eq!(place("linked"), Some(link));
+        let code = Place {
+            in_link: false,
+            in_code: true,
+        };
+        assert_eq!(place("block\n"), Some(code));
+        assert_eq!(to_html(&nodes), to_html_with(&nodes, &mut |t, _| escape(t)));
     }
 
     #[test]

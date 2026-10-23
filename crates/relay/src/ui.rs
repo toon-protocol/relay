@@ -1,23 +1,24 @@
 //! The app UIs on the read port (#276): which are on, the read-only handle
 //! each is built from, and which one a request belongs to.
 
-#[cfg(feature = "ui-repo")]
+#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
 use std::collections::HashSet;
-#[cfg(feature = "ui-repo")]
+#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
 use std::future::Future;
 use std::path::Path;
-#[cfg(feature = "ui-repo")]
+#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
 use std::pin::Pin;
 use std::sync::Arc;
 
 use axum::extract::Request;
 use axum::http::Method;
-#[cfg(feature = "ui-repo")]
+#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
 use nostr::event::Event;
-#[cfg(feature = "ui-repo")]
+#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
 use nostr::filter::Filter;
+use relay_ui::chrome::{App, Apps};
 use relay_ui::{AppUi, Assets};
-#[cfg(feature = "ui-repo")]
+#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
 use relay_ui::{EventSource, ReadOnlyStore};
 
 use crate::auth::AuthPolicy;
@@ -29,9 +30,9 @@ use crate::{Relay, RelayError, Store};
 /// visitor, so every app UI reads the store as such a connection would: a
 /// private or closed NIP-29 group's events, a private group's metadata, the
 /// kinds the operator restricts and gift wraps meant for their recipients
-/// alone are left out.
+/// alone are left out, on `/repo` as on `/social`.
 #[derive(Debug, Clone, Default)]
-#[cfg_attr(not(feature = "ui-repo"), allow(dead_code))]
+#[cfg_attr(not(any(feature = "ui-repo", feature = "ui-social")), allow(dead_code))]
 pub(crate) struct Unauthenticated {
     /// NIP-42's policy, while it is on.
     pub(crate) auth: Option<AuthPolicy>,
@@ -39,7 +40,7 @@ pub(crate) struct Unauthenticated {
     pub(crate) groups: Option<GroupView>,
 }
 
-#[cfg(feature = "ui-repo")]
+#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
 impl Unauthenticated {
     /// Whether such a connection may be shown `event`.
     fn may_read(&self, event: &Event) -> bool {
@@ -55,13 +56,13 @@ impl Unauthenticated {
 
 /// The store as an app UI sees it: queries, and nothing else, answered as
 /// to a connection that has not authenticated.
-#[cfg(feature = "ui-repo")]
+#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
 struct Reading {
     store: Store,
     rules: Unauthenticated,
 }
 
-#[cfg(feature = "ui-repo")]
+#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
 impl EventSource for Reading {
     fn query(&self, filter: Filter) -> Pin<Box<dyn Future<Output = Vec<Event>> + Send + '_>> {
         Box::pin(async move {
@@ -78,7 +79,7 @@ impl EventSource for Reading {
 }
 
 /// The read-only handle every app UI is built from: `store` under `rules`.
-#[cfg(feature = "ui-repo")]
+#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
 fn reading(store: &Store, rules: &Unauthenticated) -> ReadOnlyStore {
     ReadOnlyStore::new(Reading {
         store: store.clone(),
@@ -86,27 +87,51 @@ fn reading(store: &Store, rules: &Unauthenticated) -> ReadOnlyStore {
     })
 }
 
-/// The operator's default places for a browser to look for git objects
-/// (`TOON_UI_ARWEAVE_GATEWAYS`, `TOON_UI_BLOB_SERVERS`). The relay only
-/// writes them into pages; it never contacts them.
-pub(crate) struct ObjectSources<'a> {
+/// What the operator told the app UIs. The relay only writes these into
+/// pages; it never contacts any of them.
+pub(crate) struct UiSettings<'a> {
+    /// Default places for a browser to look for git objects
+    /// (`TOON_UI_ARWEAVE_GATEWAYS`, `TOON_UI_BLOB_SERVERS`).
     pub(crate) arweave_gateways: &'a [String],
     pub(crate) blob_servers: &'a [String],
+    /// The host visitors' clients reach this relay at, for `nostr://` clone
+    /// URLs (`TOON_UI_RELAY_URL`, else the paid feed's `TOON_RELAY_URL`).
+    pub(crate) relay_host: Option<String>,
+    /// The nsite gateway a live demo is linked through
+    /// (`TOON_UI_NSITE_GATEWAY`).
+    pub(crate) nsite_gateway: Option<&'a str>,
+    /// The relay's key when it keeps NIP-29 groups (`TOON_NIP29_GROUPS`):
+    /// the key their metadata is signed with.
+    #[cfg_attr(not(feature = "ui-social"), allow(dead_code))]
+    pub(crate) group_signer: Option<nostr::key::PublicKey>,
+    /// What every app UI may read ([`Unauthenticated`]).
+    pub(crate) reads: Unauthenticated,
+}
+
+/// The host and port (when one is given) of a URL configuration has already
+/// checked: what a `nostr://` URL names as its relay hint.
+pub(crate) fn relay_host(url: &str) -> Option<String> {
+    let uri = url.parse::<hyper::Uri>().ok()?;
+    let host = uri.host()?.to_ascii_lowercase();
+    Some(match uri.port_u16() {
+        Some(port) => format!("{host}:{port}"),
+        None => host,
+    })
 }
 
 /// The app UIs named in `apps` (`TOON_UI_APPS`), each over a read-only handle
-/// to `store` that answers under `reads`. A name this build has no app for is refused: the feature that
+/// to `store`. A name this build has no app for is refused: the feature that
 /// holds it was left out.
 pub(crate) fn enabled(
     apps: &[String],
     store: &Store,
     assets: Option<&Assets>,
-    sources: &ObjectSources<'_>,
-    reads: &Unauthenticated,
+    settings: &UiSettings<'_>,
 ) -> Result<Arc<[AppUi]>, RelayError> {
+    let on = Apps::new(apps.iter().filter_map(|name| App::from_name(name)));
     let mut uis = Vec::new();
     for app in apps {
-        match built(app, store, assets, sources, reads) {
+        match built(app, store, assets, settings, &on) {
             Some(ui) => uis.push(ui),
             None => {
                 return Err(RelayError::InvalidSetting {
@@ -121,23 +146,42 @@ pub(crate) fn enabled(
 }
 
 /// The app UI called `name`, if this build includes it.
-#[cfg_attr(not(feature = "ui-repo"), allow(unused_variables))]
+#[cfg_attr(
+    not(all(feature = "ui-repo", feature = "ui-social")),
+    allow(unused_variables)
+)]
 fn built(
     name: &str,
     store: &Store,
     assets: Option<&Assets>,
-    sources: &ObjectSources<'_>,
-    reads: &Unauthenticated,
+    settings: &UiSettings<'_>,
+    on: &Apps,
 ) -> Option<AppUi> {
     #[cfg(feature = "ui-repo")]
-    if name == "repo" {
+    if name == App::Repo.name() {
         return Some(ui_nip34::app(
-            reading(store, reads),
+            reading(store, &settings.reads),
             assets.cloned(),
             ui_nip34::Defaults {
-                arweave_gateways: sources.arweave_gateways.to_vec(),
-                blob_servers: sources.blob_servers.to_vec(),
+                arweave_gateways: settings.arweave_gateways.to_vec(),
+                blob_servers: settings.blob_servers.to_vec(),
             },
+            on.clone(),
+        ));
+    }
+    #[cfg(feature = "ui-social")]
+    if name == App::Social.name() {
+        let mut social = ui_social::Settings::new(
+            settings.relay_host.clone(),
+            settings.nsite_gateway.map(str::to_owned),
+        );
+        if let Some(signer) = settings.group_signer {
+            social = social.with_group_signer(signer);
+        }
+        return Some(ui_social::app(
+            reading(store, &settings.reads),
+            social,
+            on.clone(),
         ));
     }
     None
@@ -166,5 +210,23 @@ impl Relay {
             return None;
         }
         self.uis.iter().find(|ui| ui.serves(request.uri().path()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_relay_hint_is_the_urls_host_and_any_port_it_names() {
+        assert_eq!(
+            relay_host("wss://Relay.Example/").as_deref(),
+            Some("relay.example")
+        );
+        assert_eq!(
+            relay_host("ws://localhost:7100").as_deref(),
+            Some("localhost:7100")
+        );
+        assert_eq!(relay_host("not a url"), None);
     }
 }

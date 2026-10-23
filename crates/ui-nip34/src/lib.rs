@@ -13,11 +13,15 @@
 //! relay never fetches a git object. A blob page also loads the highlighter
 //! (`ui-highlight-web`, #287), its own module, which no other page names.
 
+pub mod card;
 mod git;
+pub mod lineage;
 mod markup;
+pub mod repo;
 mod threads;
 
 pub use git::{CONTENT_SECURITY_POLICY_VALUE as GIT_CONTENT_SECURITY_POLICY_VALUE, Defaults};
+pub use threads::{STATUS_KINDS, is_applied};
 
 use std::collections::HashMap;
 
@@ -29,18 +33,19 @@ use axum::routing::get;
 use nostr::event::{Event, EventId, Kind};
 use nostr::filter::Filter;
 use nostr::key::PublicKey;
-use nostr::nips::nip19::{FromBech32, Nip19Coordinate, ToBech32};
+use nostr::nips::nip19::{FromBech32, Nip19Coordinate};
+use relay_ui::chrome::{Apps, escape, names, npub, percent_encode, person, person_avatar};
 use relay_ui::{AppUi, Assets, ReadOnlyStore};
 
-use markup::{Tab, ago, avatar, icon, name, plain_name, ref_menu, repo_header, svg};
+use markup::{Tab, ago, icon, ref_menu, repo_header, svg};
+use repo::{
+    ANNOUNCEMENT, STATE, authorized_authors, d_tag, first_tag, head_branch, honoured_state, newest,
+    owner_announcement, refs, repo_name, supersedes, tag_values,
+};
 
 /// The mount prefix.
 pub const PREFIX: &str = "/repo";
 
-/// NIP-34 repository announcement.
-const ANNOUNCEMENT: u16 = 30_617;
-/// NIP-34 repository state.
-const STATE: u16 = 30_618;
 /// The most announcements the list reads.
 const LIST_LIMIT: usize = 500;
 
@@ -58,11 +63,13 @@ struct Pages {
     store: ReadOnlyStore,
     assets: Option<Assets>,
     defaults: Defaults,
+    apps: Apps,
 }
 
-/// The app UI over `store`, with the built `assets` if the relay has them and
-/// the operator's `defaults` for where a browser looks for git objects.
-pub fn app(store: ReadOnlyStore, assets: Option<Assets>, defaults: Defaults) -> AppUi {
+/// The app UI over `store`, with the built `assets` if the relay has them,
+/// the operator's `defaults` for where a browser looks for git objects, and
+/// the `apps` the relay serves (for the switcher and the links to `/social`).
+pub fn app(store: ReadOnlyStore, assets: Option<Assets>, defaults: Defaults, apps: Apps) -> AppUi {
     let router = Router::new()
         .route(PREFIX, get(list))
         .route(&format!("{PREFIX}/assets/{{name}}"), get(asset))
@@ -77,11 +84,12 @@ pub fn app(store: ReadOnlyStore, assets: Option<Assets>, defaults: Defaults) -> 
         .route("/repo/{npub}/{d}/issues/{id}", get(threads::issue))
         .route("/repo/{npub}/{d}/pulls", get(threads::pulls))
         .route("/repo/{npub}/{d}/pulls/{id}", get(threads::pull))
-        .fallback(not_found)
+        .fallback(fallback)
         .with_state(Pages {
             store,
             assets,
             defaults,
+            apps,
         });
     AppUi::new(PREFIX, router)
 }
@@ -96,135 +104,6 @@ async fn asset(State(pages): State<Pages>, Path(name): Path<String>) -> Response
     }
 }
 
-/// The values of the first tag called `name`, after the name.
-fn tag_values<'a>(event: &'a Event, name: &str) -> &'a [String] {
-    event
-        .tags
-        .iter()
-        .map(|tag| tag.as_slice())
-        .find(|tag| tag.first().is_some_and(|first| first == name))
-        .map_or(&[], |tag| &tag[1..])
-}
-
-fn first_tag<'a>(event: &'a Event, name: &str) -> Option<&'a str> {
-    tag_values(event, name).first().map(String::as_str)
-}
-
-fn d_tag(event: &Event) -> &str {
-    first_tag(event, "d").unwrap_or("")
-}
-
-/// Whether `candidate` is a newer replacement than `held`: later, and on a
-/// `created_at` tie the lowest event id (ADR 0002).
-fn supersedes(candidate: &Event, held: &Event) -> bool {
-    (candidate.created_at, held.id) > (held.created_at, candidate.id)
-}
-
-/// The newest of `events`, or none.
-fn newest<'a>(events: impl IntoIterator<Item = &'a Event>) -> Option<&'a Event> {
-    events
-        .into_iter()
-        .fold(None, |held: Option<&Event>, candidate| match held {
-            Some(held) if !supersedes(candidate, held) => Some(held),
-            _ => Some(candidate),
-        })
-}
-
-/// The refs a repo state names, `(name, commit)`, in both shapes a state is
-/// written in (rig's rule, rig#156): NIP-34's `["refs/heads/main", <sha>]`,
-/// and the legacy `["r", "refs/heads/main", <sha>]` that every repo pushed by
-/// the rig CLI carries. When both name a ref, NIP-34's wins. A peeled tag
-/// (`refs/tags/v1^{}`) is not a ref. A pure function.
-pub(crate) fn refs(state: &Event) -> Vec<(&str, &str)> {
-    let is_ref = |name: &str| {
-        (name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
-            && !name.ends_with("^{}")
-    };
-    let mut found: Vec<(&str, &str)> = Vec::new();
-    for tag in state.tags.iter().map(|tag| tag.as_slice()) {
-        if let [name, commit, ..] = tag
-            && is_ref(name)
-            && !found.iter().any(|(held, _)| held == name)
-        {
-            found.push((name, commit));
-        }
-    }
-    for tag in state.tags.iter().map(|tag| tag.as_slice()) {
-        if let [marker, name, commit, ..] = tag
-            && marker == "r"
-            && is_ref(name)
-            && !found.iter().any(|(held, _)| held == name)
-        {
-            found.push((name, commit));
-        }
-    }
-    found
-}
-
-/// The branch a repo state's `HEAD` names: NIP-34's `["HEAD", "ref:
-/// refs/heads/main"]`, else rig's `["r", "HEAD", …]`, else `main` as rig-web
-/// assumed. A pure function.
-pub(crate) fn head_branch(state: &Event) -> String {
-    let nip = first_tag(state, "HEAD");
-    let legacy = state
-        .tags
-        .iter()
-        .map(|tag| tag.as_slice())
-        .find_map(|tag| match tag {
-            [marker, head, value, ..] if marker == "r" && head == "HEAD" => Some(value.as_str()),
-            _ => None,
-        });
-    nip.or(legacy)
-        .map(|head| {
-            let head = head.strip_prefix("ref:").unwrap_or(head).trim();
-            head.strip_prefix("refs/heads/").unwrap_or(head).to_owned()
-        })
-        .filter(|head| !head.is_empty())
-        .unwrap_or_else(|| "main".to_owned())
-}
-
-/// The pubkeys whose repo state is honoured: the owner and the maintainers
-/// in the owner's own announcement (ADR 0002). A pure function.
-fn authorized_authors(announcement: &Event) -> Vec<PublicKey> {
-    let mut authors = vec![announcement.pubkey];
-    for value in tag_values(announcement, "maintainers") {
-        if let Ok(key) = PublicKey::from_hex(value)
-            && !authors.contains(&key)
-        {
-            authors.push(key);
-        }
-    }
-    authors
-}
-
-/// The honoured repo state among `states` for `announcement`: the newest
-/// signed by an authorized author (ADR 0002). A pure function.
-fn honoured_state<'a>(announcement: &Event, states: &'a [Event]) -> Option<&'a Event> {
-    let authors = authorized_authors(announcement);
-    let d = d_tag(announcement);
-    newest(
-        states
-            .iter()
-            .filter(|state| state.kind == Kind::from(STATE))
-            .filter(|state| authors.contains(&state.pubkey) && d_tag(state) == d),
-    )
-}
-
-fn escape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for character in text.chars() {
-        match character {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            other => out.push(other),
-        }
-    }
-    out
-}
-
 /// A link target is only followed if it is `http(s)`.
 fn link(url: &str) -> String {
     if url.starts_with("https://") || url.starts_with("http://") {
@@ -237,66 +116,27 @@ fn link(url: &str) -> String {
     }
 }
 
-fn percent_encode(text: &str) -> String {
-    let mut out = String::new();
-    for byte in text.bytes() {
-        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
-            out.push(char::from(byte));
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
-}
-
-fn npub(key: &PublicKey) -> String {
-    let Ok(npub) = key.to_bech32();
-    npub
-}
-
 fn repo_path(owner: &PublicKey, d: &str) -> String {
     format!("{PREFIX}/{}/{}", npub(owner), percent_encode(d))
 }
 
-fn html(status: StatusCode, title: &str, body: &str) -> Response {
-    (status, Html(markup::page(title, body))).into_response()
+fn html(apps: &Apps, status: StatusCode, title: &str, body: &str) -> Response {
+    (status, Html(markup::page(apps, title, body))).into_response()
 }
 
-async fn not_found() -> Response {
+async fn fallback(State(pages): State<Pages>) -> Response {
+    not_found(&pages.apps)
+}
+
+fn not_found(apps: &Apps) -> Response {
     html(
+        apps,
         StatusCode::NOT_FOUND,
         "Not found",
         "<div class=\"box\"><div class=\"empty\"><h2>Not found</h2>\
          <p>Nothing on this relay lives at this address.</p>\
          <p><a href=\"/repo\">All repositories</a></p></div></div>",
     )
-}
-
-/// Display names from kind 0 profiles, by pubkey.
-async fn names(store: &ReadOnlyStore, keys: &[PublicKey]) -> HashMap<PublicKey, String> {
-    if keys.is_empty() {
-        return HashMap::new();
-    }
-    let profiles = store
-        .query(Filter::new().kind(Kind::Metadata).authors(keys.to_vec()))
-        .await;
-    let mut names = HashMap::new();
-    for key in keys {
-        let Some(profile) = newest(profiles.iter().filter(|event| event.pubkey == *key)) else {
-            continue;
-        };
-        let Ok(serde_json::Value::Object(fields)) = serde_json::from_str(&profile.content) else {
-            continue;
-        };
-        let name = ["display_name", "name"]
-            .iter()
-            .filter_map(|field| fields.get(*field).and_then(|value| value.as_str()))
-            .find(|name| !name.trim().is_empty());
-        if let Some(name) = name {
-            names.insert(*key, name.trim().to_owned());
-        }
-    }
-    names
 }
 
 /// The newest announcement for each `(pubkey, d)`.
@@ -315,13 +155,14 @@ fn latest_announcements(events: &[Event]) -> Vec<&Event> {
     latest
 }
 
-fn repo_name(announcement: &Event) -> &str {
-    first_tag(announcement, "name")
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| d_tag(announcement))
-}
-
-async fn list(State(Pages { store, assets, .. }): State<Pages>) -> Response {
+async fn list(
+    State(Pages {
+        store,
+        assets,
+        apps,
+        ..
+    }): State<Pages>,
+) -> Response {
     let events = store
         .query(
             Filter::new()
@@ -362,7 +203,7 @@ async fn list(State(Pages { store, assets, .. }): State<Pages>) -> Response {
             }
             body.push_str(&format!(
                 "<div class=\"meta\">{}<span>Updated {}</span></div></li>",
-                name(&names, &repo.pubkey),
+                person(&apps, &names, &repo.pubkey),
                 ago(repo.created_at),
             ));
         }
@@ -375,7 +216,7 @@ async fn list(State(Pages { store, assets, .. }): State<Pages>) -> Response {
         )),
         None => body.push_str(&format!("<p class=\"muted small\">{UNAVAILABLE}</p>")),
     }
-    html(StatusCode::OK, "Repositories", &body)
+    html(&apps, StatusCode::OK, "Repositories", &body)
 }
 
 /// The repo at `/repo/<npub>/<d>`: its owner and the owner's latest
@@ -394,32 +235,17 @@ async fn resolve_repo(store: &ReadOnlyStore, npub: &str, d: &str) -> Option<(Pub
     Some((owner, announcement.clone()))
 }
 
-/// The repo's announcement among `announcements`: the newest `owner` signed
-/// for `d`. Another key's announcement for the same `d` never stands in for
-/// it, so its `maintainers` are never honoured (ADR 0002). A pure function.
-fn owner_announcement<'a>(
-    owner: &PublicKey,
-    d: &str,
-    announcements: &'a [Event],
-) -> Option<&'a Event> {
-    newest(
-        announcements
-            .iter()
-            .filter(|event| event.kind == Kind::from(ANNOUNCEMENT))
-            .filter(|event| event.pubkey == *owner && d_tag(event) == d),
-    )
-}
-
 async fn home(
     State(Pages {
         store,
         assets,
         defaults,
+        apps,
     }): State<Pages>,
     Path((owner, d)): Path<(String, String)>,
 ) -> Response {
     let Some((owner, announcement)) = resolve_repo(&store, &owner, &d).await else {
-        return not_found().await;
+        return not_found(&apps);
     };
     let announcement = &announcement;
     let authors = authorized_authors(announcement);
@@ -432,10 +258,10 @@ async fn home(
         )
         .await;
     let state = honoured_state(announcement, &states);
-    let names = names(&store, &authors).await;
+    let names = names(&store, &lineage::named_keys(announcement)).await;
     let base = repo_path(&owner, &d);
 
-    let mut body = repo_header(&owner, &d, announcement, &names, Tab::Code);
+    let mut body = repo_header(&apps, &owner, &d, announcement, &names, Tab::Code);
     body.push_str("<div class=\"split\"><div class=\"main\"><div class=\"toolbar\">");
     let default_branch = state.map(head_branch);
     match (state, &default_branch) {
@@ -471,9 +297,9 @@ async fn home(
             .push_str("<div class=\"box\"><div class=\"empty\">No refs published yet.</div></div>"),
     }
     body.push_str("</div>");
-    body.push_str(&about(&owner, announcement, state, &authors, &names));
+    body.push_str(&about(&apps, &owner, announcement, state, &authors, &names));
     body.push_str("</div>");
-    let mut response = html(StatusCode::OK, repo_name(announcement), &body);
+    let mut response = html(&apps, StatusCode::OK, repo_name(announcement), &body);
     if csp {
         response.headers_mut().insert(
             header::CONTENT_SECURITY_POLICY,
@@ -510,6 +336,7 @@ fn clone_menu(announcement: &Event) -> String {
 
 /// The sidebar: what the repo is, its refs, its links and who keeps it.
 fn about(
+    apps: &Apps,
     owner: &PublicKey,
     announcement: &Event,
     state: Option<&Event>,
@@ -561,8 +388,8 @@ fn about(
     for key in std::iter::once(owner).chain(authors.iter().filter(|key| *key != owner)) {
         out.push_str(&format!(
             "<li>{} {}</li>",
-            avatar(&plain_name(names, key), true),
-            name(names, key)
+            person_avatar(apps, names, key, true),
+            person(apps, names, key)
         ));
     }
     out.push_str("</ul></div></aside>");
@@ -576,14 +403,14 @@ fn moved(path: &str) -> Response {
 /// `/repo/<naddr>` and `/repo/<event-id>`: a redirect to the repo's canonical
 /// path.
 async fn redirect(
-    State(Pages { store, .. }): State<Pages>,
+    State(Pages { store, apps, .. }): State<Pages>,
     Path(target): Path<String>,
 ) -> Response {
     if let Ok(address) = Nip19Coordinate::from_bech32(&target) {
         if address.kind == Kind::from(ANNOUNCEMENT) {
             return moved(&repo_path(&address.public_key, &address.identifier));
         }
-        return not_found().await;
+        return not_found(&apps);
     }
     let id = EventId::from_hex(&target).ok().or_else(|| {
         // `nevent` and `note` carry an id too.
@@ -594,11 +421,11 @@ async fn redirect(
         }
     });
     let Some(id) = id else {
-        return not_found().await;
+        return not_found(&apps);
     };
     let events = store.query(Filter::new().id(id)).await;
     let Some(event) = events.iter().find(|event| event.id == id) else {
-        return not_found().await;
+        return not_found(&apps);
     };
     if event.kind == Kind::from(ANNOUNCEMENT) {
         return moved(&repo_path(&event.pubkey, d_tag(event)));
@@ -617,7 +444,7 @@ async fn redirect(
             return moved(&repo_path(&owner, d));
         }
     }
-    not_found().await
+    not_found(&apps)
 }
 
 #[cfg(test)]
