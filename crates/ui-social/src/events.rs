@@ -629,7 +629,7 @@ pub(crate) async fn page(
         .await;
     let mut found = calendar::newest_each(&found);
     found.retain(|event| event.d() == d && *event.author() == author);
-    found.sort_by(|a, b| b.event().created_at.cmp(&a.event().created_at));
+    found.sort_by_key(|event| std::cmp::Reverse(event.event().created_at));
     let Some(event) = found.into_iter().next() else {
         return not_found(&pages);
     };

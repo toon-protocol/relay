@@ -299,7 +299,7 @@ async fn in_room(store: &ReadOnlyStore, id: &str, kind: u16, limit: usize) -> Ve
         .into_iter()
         .filter(|event| first_tag(event, "h") == Some(id))
         .collect();
-    events.sort_by(|a, b| (a.created_at, a.id).cmp(&(b.created_at, b.id)));
+    events.sort_by_key(|event| (event.created_at, event.id));
     events.dedup_by_key(|event| event.id);
     let skip = events.len().saturating_sub(limit);
     events.split_off(skip)
