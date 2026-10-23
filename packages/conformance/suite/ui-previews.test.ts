@@ -40,7 +40,7 @@ afterAll(async () => {
 /** The `content` of the `<meta>` called `name`, unescaped of `&amp;`. */
 function meta(html: string, name: string): string | undefined {
   const match = new RegExp(
-    `<meta (?:property|name)="${name.replace(/[.:]/g, '\\$&')}" content="([^"]*)">`
+    `<meta (?:property|name)="${name.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')}" content="([^"]*)">`
   ).exec(html);
   return match?.[1]?.replace(/&amp;/g, '&');
 }
