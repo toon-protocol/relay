@@ -953,7 +953,7 @@ fn other_rankings(
                 None,
                 Some(&provider.key)
             )),
-            chrome::name(names, &provider.key),
+            escape(&plain_name(names, &provider.key)),
             provider.ranks.len(),
             plural(provider.ranks.len(), "repo", "repos"),
             ago(provider.newest),

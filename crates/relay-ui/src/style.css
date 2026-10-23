@@ -501,7 +501,7 @@ a.chip:hover { text-decoration: none; color: var(--fg); }
 .trend-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; padding: 16px; border-top: 1px solid var(--border); }
 .trend-row:first-child { border-top: 0; }
 .trend-rank { width: 24px; font-family: var(--mono); font-size: 16px; color: var(--muted-fg); }
-.trend-main { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.trend-main { flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .trend-main p { margin: 0; }
 .trend-title { font-size: 18px; overflow-wrap: anywhere; }
 .trend-title .strong { color: inherit; }
@@ -522,3 +522,6 @@ a.chip:hover { text-decoration: none; color: var(--fg); }
 .bullets { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
 .sidebar ul.bullets { list-style: disc; padding-left: 18px; }
 .topic-index { gap: 8px; }
+.meta a.chip-topic { color: var(--accent-fg); }
+.meta a.chip-topic.on { color: var(--bg); }
+.ranked .trend-title { font-size: 14px; }
