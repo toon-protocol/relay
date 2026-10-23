@@ -240,7 +240,7 @@ pub(crate) async fn following(
     let intro = format!(
         "<p class=\"muted small\">What {} follows: {} {} (kind 3 and 10017) and {} {} (kind 10018). \
          This page writes nothing; follows are changed in a client.</p>",
-        chrome::name(names.names(), &viewer),
+        chrome::person(&pages.apps, names.names(), &viewer),
         people.len(),
         if people.len() == 1 {
             "person"

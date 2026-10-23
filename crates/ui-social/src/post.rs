@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use nostr::event::Event;
 use nostr::key::PublicKey;
-use relay_ui::chrome::{ago, avatar, escape, icon, name, plain_name, svg};
+use relay_ui::chrome::{ago, escape, icon, person, person_avatar, svg};
 use ui_nip34::card::{Links, RepoCard};
 use ui_nip34::repo::{RepoAddress, first_tag};
 
@@ -57,11 +57,10 @@ pub(crate) fn event_path(event: &Event) -> String {
 pub(crate) fn by_line(view: &View<'_>, event: &Event, chips: &str, context: &str) -> String {
     format!(
         "<div class=\"by\">{}<div class=\"who\"><div class=\"line\">\
-         <a href=\"{PREFIX}/following/{}\">{}</a>{chips}</div>\
+         {}{chips}</div>\
          <span class=\"muted small\"><a class=\"muted\" href=\"{}\">{}</a>{}</span></div></div>",
-        avatar(&plain_name(view.names, &event.pubkey), false),
-        relay_ui::chrome::npub(&event.pubkey),
-        name(view.names, &event.pubkey),
+        person_avatar(view.links.apps(), view.names, &event.pubkey, false),
+        person(view.links.apps(), view.names, &event.pubkey),
         escape(&event_path(event)),
         ago(event.created_at),
         if context.is_empty() {
@@ -300,7 +299,7 @@ pub(crate) fn repost_card(view: &View<'_>, event: &Event) -> Option<String> {
         "<article class=\"post\" data-kind=\"16\" data-id=\"{}\"><p class=\"context\">{}{} boosted a repo &middot; {}</p>{}</article>",
         event.id.to_hex(),
         svg(icon::REPOST, ""),
-        name(view.names, &event.pubkey),
+        person(view.links.apps(), view.names, &event.pubkey),
         ago(event.created_at),
         card.render(view.links),
     ))
@@ -389,8 +388,8 @@ pub(crate) fn merged_row(
         status.id.to_hex(),
         svg(icon::MERGED, "icon-sm"),
         escape(&card.title()),
-        name(view.names, &status.pubkey),
-        name(view.names, &target.pubkey),
+        person(view.links.apps(), view.names, &status.pubkey),
+        person(view.links.apps(), view.names, &target.pubkey),
         ago(status.created_at),
     ))
 }
@@ -421,7 +420,7 @@ pub(crate) fn thread_row(view: &View<'_>, event: &Event) -> Option<String> {
         event.kind.as_u16(),
         event.id.to_hex(),
         svg(glyph, "open"),
-        name(view.names, &event.pubkey),
+        person(view.links.apps(), view.names, &event.pubkey),
         escape(&card.title()),
         ago(event.created_at),
     ))
@@ -438,7 +437,7 @@ pub(crate) fn announced_card(view: &View<'_>, event: &Event) -> Option<String> {
         "<article class=\"post\" data-kind=\"30617\" data-id=\"{}\"><p class=\"context\">{}{} published a repository &middot; {}</p>{}</article>",
         event.id.to_hex(),
         svg(icon::REPO, ""),
-        name(view.names, &event.pubkey),
+        person(view.links.apps(), view.names, &event.pubkey),
         ago(event.created_at),
         card.render(view.links),
     ))
