@@ -1,0 +1,24 @@
+[package]
+name = "ui-highlight-web"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+build = "build.rs"
+description = "Syntax highlighting for the /repo blob page: a WebAssembly module loaded on blob pages only"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+syntect.workspace = true
+wasm-bindgen.workspace = true
+web-sys.workspace = true
+
+[build-dependencies]
+syntect = { workspace = true, features = ["yaml-load", "dump-create"] }

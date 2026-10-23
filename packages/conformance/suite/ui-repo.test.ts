@@ -518,14 +518,17 @@ describe('relay image conformance: the /repo app UI', () => {
           expect(policy).toContain("connect-src 'self' https:");
           expect(policy).not.toContain('unsafe-inline');
           const html = await response.text();
-          // One script, loaded from the manifest, and no inline code.
+          // Module scripts loaded from the manifest, and no inline code: the
+          // app on every page, and the highlighter on a blob page alone.
           const scripts = [...html.matchAll(/<script\b[^>]*>/gi)].map(
             (m) => m[0]
           );
-          expect(scripts).toHaveLength(1);
-          expect(scripts[0]).toMatch(
-            /^<script type="module" src="\/repo\/assets\/[\w.-]+\.js">$/
-          );
+          expect(scripts).toHaveLength(page === 'blob' ? 2 : 1);
+          for (const script of scripts) {
+            expect(script).toMatch(
+              /^<script type="module" src="\/repo\/assets\/[\w.-]+\.js">$/
+            );
+          }
           expect(html).not.toMatch(/\son\w+=/);
           const layout = layoutOf(html);
           expect(layout.kind).toBe(page);

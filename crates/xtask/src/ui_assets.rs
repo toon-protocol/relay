@@ -3,7 +3,7 @@
 //! `manifest.json` from logical names to hashed ones (the folder
 //! `TOON_UI_ASSETS_DIR` points the relay at).
 //!
-//! Per crate `<name>` (`ui-nip34-web`), the manifest has:
+//! Per crate `<name>` (`ui-nip34-web`, `ui-highlight-web`), the manifest has:
 //! - `<name>.wasm`: the module;
 //! - `<name>.glue.js`: wasm-bindgen's loader, rewritten to fetch the hashed
 //!   module;
@@ -58,7 +58,7 @@ fn io(action: &'static str, path: &Path) -> impl FnOnce(std::io::Error) -> UiAss
 }
 
 /// The WebAssembly crates, by package name.
-const WEB_CRATES: &[&str] = &["ui-nip34-web"];
+const WEB_CRATES: &[&str] = &["ui-highlight-web", "ui-nip34-web"];
 
 const TARGET: &str = "wasm32-unknown-unknown";
 

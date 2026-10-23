@@ -8,7 +8,8 @@
 //! half (`ui-nip34-web`, built by `cargo xtask ui-assets`) from
 //! `/repo/assets/` when the relay has its assets. The tree and blob pages
 //! (`git`) are layouts the browser half fills in: the relay never fetches a
-//! git object.
+//! git object. A blob page also loads the highlighter (`ui-highlight-web`,
+//! #287), its own module, which no other page names.
 
 mod git;
 mod threads;
@@ -40,6 +41,8 @@ const LIST_LIMIT: usize = 500;
 
 /// The manifest's name for the list page's script.
 const SCRIPT: &str = "ui-nip34-web.js";
+/// The manifest's name for the blob page's highlighter (#287).
+const HIGHLIGHT_SCRIPT: &str = "ui-highlight-web.js";
 
 /// What the list says when there are no assets to browse with.
 pub const UNAVAILABLE: &str = "git browsing unavailable";

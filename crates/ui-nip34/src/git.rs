@@ -18,8 +18,9 @@ use nostr::nips::nip19::FromBech32;
 use serde_json::json;
 
 use crate::{
-    ANNOUNCEMENT, PREFIX, Pages, SCRIPT, STATE, UNAVAILABLE, authorized_authors, d_tag, escape,
-    honoured_state, html, newest, not_found, percent_encode, repo_name, repo_path, tag_values,
+    ANNOUNCEMENT, HIGHLIGHT_SCRIPT, PREFIX, Pages, SCRIPT, STATE, UNAVAILABLE, authorized_authors,
+    d_tag, escape, honoured_state, html, newest, not_found, percent_encode, repo_name, repo_path,
+    tag_values,
 };
 
 /// What a git page may load: its own origin, its own WebAssembly, and `https`
@@ -401,6 +402,13 @@ async fn page(
     }
     body.push_str("</p>");
 
+    // The highlighter is its own module and only a file page loads it: a tree
+    // page never names it. Without it (or if it fails to load) the file shows
+    // as plain text.
+    let highlight = assets
+        .as_ref()
+        .filter(|_| kind == PageKind::Blob)
+        .and_then(|assets| assets.url(PREFIX, HIGHLIGHT_SCRIPT));
     match assets.and_then(|assets| assets.url(PREFIX, SCRIPT)) {
         Some(script) => {
             let layout = json!({
@@ -419,6 +427,12 @@ async fn page(
                 escape(&layout.to_string()),
                 escape(&script)
             ));
+            if let Some(highlight) = highlight {
+                body.push_str(&format!(
+                    "<script type=\"module\" src=\"{}\"></script>",
+                    escape(&highlight)
+                ));
+            }
         }
         None => body.push_str(&format!("<p>{UNAVAILABLE}</p>")),
     }

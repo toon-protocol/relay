@@ -152,10 +152,11 @@ async fn git_pages_carry_ordered_candidates_and_their_own_policy() {
     let assets = tempfile::tempdir().expect("a temp dir");
     std::fs::write(
         assets.path().join("manifest.json"),
-        r#"{"ui-nip34-web.js":"boot.abc.js"}"#,
+        r#"{"ui-nip34-web.js":"boot.abc.js","ui-highlight-web.js":"hl.def.js"}"#,
     )
     .expect("manifest");
     std::fs::write(assets.path().join("boot.abc.js"), "//").expect("js");
+    std::fs::write(assets.path().join("hl.def.js"), "//").expect("js");
     let assets_dir = assets.path().to_string_lossy().into_owned();
     let running = common::running_with(|name| match name {
         "TOON_UI_ASSETS_DIR" => Some(assets_dir.clone()),
@@ -223,7 +224,18 @@ async fn git_pages_carry_ordered_candidates_and_their_own_policy() {
             html.contains("<script type=\"module\" src=\"/repo/assets/boot.abc.js\">"),
             "{html}"
         );
-        assert_eq!(html.matches("<script").count(), 1, "{html}");
+        // The highlighter is the blob page's alone (#287): a tree page does
+        // not reference it.
+        assert_eq!(
+            html.contains("/repo/assets/hl.def.js"),
+            kind == "blob",
+            "{html}"
+        );
+        assert_eq!(
+            html.matches("<script").count(),
+            if kind == "blob" { 2 } else { 1 },
+            "{html}"
+        );
         let layout = html
             .split("data-git=\"")
             .nth(1)

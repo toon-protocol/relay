@@ -1,0 +1,19 @@
+%YAML 1.2
+---
+# Written for this crate: syntect cannot read the `extends` the Sublime
+# Packages TypeScript syntax is built on, so this is JavaScript's syntax with
+# the words TypeScript adds on top.
+name: TypeScript
+scope: source.ts
+file_extensions:
+  - ts
+  - mts
+  - cts
+
+contexts:
+  main:
+    - match: '\b(?:interface|type|enum|namespace|declare|abstract|implements|readonly|public|private|protected|keyof|infer|satisfies|asserts|is)\b'
+      scope: storage.type.ts
+    - match: '\b(?:string|number|boolean|any|unknown|never|void|object|symbol|bigint)\b'
+      scope: support.type.builtin.ts
+    - include: scope:source.js
