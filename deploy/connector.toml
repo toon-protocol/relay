@@ -86,6 +86,7 @@ addresses = [
   "g.toon.gas.quote",
   "g.toon.echo",
   "g.toon.workload-gateway",
+  "g.toon.blossom",
 ]
 http_endpoint = "https://toonprotocol.dev/ilp"
 btp_endpoint = "wss://toonprotocol.dev/ilp/btp"
@@ -197,6 +198,26 @@ price = { base = 1, per_kib = 1 }
 prefix = "g.toon.workload-gateway.handover"
 handler_url = "http://gateway-gw:8081/handover"
 price = 0
+
+# The blob app (toon-protocol/blossom), from its deploy/connector.toml: one
+# route per handler, since a handler carries one price. Upload and media are
+# 1000 plus 10 per KiB; mirror is flat, buying a blob up to the app's mirror
+# size limit. Port 3001 is the app's write port, published on no host port:
+# its free reads (port 3000) go through the edge at blossom.devnet.
+[[routes]]
+prefix = "g.toon.blossom.upload"
+handler_url = "http://blossom:3001/upload"
+price = { base = 1000, per_kib = 10 }
+
+[[routes]]
+prefix = "g.toon.blossom.mirror"
+handler_url = "http://blossom:3001/mirror"
+price = 25000
+
+[[routes]]
+prefix = "g.toon.blossom.media"
+handler_url = "http://blossom:3001/media"
+price = { base = 1000, per_kib = 10 }
 
 # ── Getting paid ─────────────────────────────────────────────────────────────
 # Every channel is an x402 batch-settlement channel now (connector ADR 0075):
