@@ -40,10 +40,11 @@ use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors, first_tag, n
 use crate::kinds::{ARTICLE, FOLLOWED_REPOS, FOLLOWS, NOTE, REACTION};
 use crate::mute::Mutes;
 use crate::post::{self, View};
-use crate::{PREFIX, Pages, content, html, load_cards, not_found, parse_pubkey};
+use crate::{PREFIX, Pages, content, html_with, load_cards, not_found, parse_pubkey};
 use activity::Graph;
 use badges::Badge;
 use identity::{Identity, Metadata, Status};
+use relay_ui::meta::Preview;
 
 /// GitWorkshop's pinned repositories list: ordered `a` tags to the key's
 /// own repos. Not in the NIPs (`docs/social-for-builders-ux.md` §8).
@@ -309,25 +310,7 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
         )
         .await;
     let who = who(pages, key, &lists, now).await;
-
-    let mut announcements = store
-        .query(
-            Filter::new()
-                .kind(Kind::from(ANNOUNCEMENT))
-                .author(key)
-                .limit(LIMIT),
-        )
-        .await;
-    announcements.extend(
-        store
-            .query(
-                Filter::new()
-                    .kind(Kind::from(ANNOUNCEMENT))
-                    .limit(MAINTAINER_SCAN),
-            )
-            .await,
-    );
-    let kept = kept_repos(&key, &announcements);
+    let kept = load_kept(store, &key).await;
     let reactions = store
         .query(
             Filter::new()
@@ -485,19 +468,90 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
         .unwrap_or_default();
     body.push_str(&sidebar(&who, profiles.names(), &tips));
     body.push_str(&format!("<div class=\"profile-main\">{main}</div></div>"));
-    let title = who
-        .meta
-        .name
-        .clone()
-        .unwrap_or_else(|| format!("{}…", &npub(&key)[..12]));
-    html(
+    let title = shown(&who.meta, &key);
+    let preview = Preview::new(
+        title.clone(),
+        who.meta
+            .about
+            .clone()
+            .filter(|about| !about.trim().is_empty())
+            .unwrap_or_else(|| format!("{title} builds in public on TOON.")),
+    )
+    .kind("profile")
+    .at(base.clone())
+    .image(crate::og::profile_path(&key), title.clone());
+    html_with(
         pages,
-        crate::Nav::Other,
-        StatusCode::OK,
+        (crate::Nav::Other, StatusCode::OK),
         &format!("{title} · {}", tab.label()),
         None,
         &body,
+        &preview,
     )
+}
+
+/// The name a profile goes by: its own, else the start of its npub.
+fn shown(meta: &Metadata, key: &PublicKey) -> String {
+    meta.name
+        .clone()
+        .unwrap_or_else(|| format!("{}…", &npub(key)[..12]))
+}
+
+/// The repos `key` keeps on this relay ([`kept_repos`]), read from the
+/// store.
+async fn load_kept(store: &relay_ui::ReadOnlyStore, key: &PublicKey) -> Vec<(RepoAddress, Role)> {
+    let mut announcements = store
+        .query(
+            Filter::new()
+                .kind(Kind::from(ANNOUNCEMENT))
+                .author(*key)
+                .limit(LIMIT),
+        )
+        .await;
+    announcements.extend(
+        store
+            .query(
+                Filter::new()
+                    .kind(Kind::from(ANNOUNCEMENT))
+                    .limit(MAINTAINER_SCAN),
+            )
+            .await,
+    );
+    kept_repos(key, &announcements)
+}
+
+/// `key`'s profile as its link preview draws it, counted as the profile
+/// page counts: the repos it keeps and the people whose follow list names
+/// it. None when the store holds neither a kind 0 by the key nor a repo it
+/// keeps: a key this relay knows nothing about has no card.
+pub(crate) async fn preview(
+    store: &relay_ui::ReadOnlyStore,
+    key: PublicKey,
+) -> Option<ui_preview::Profile> {
+    let profiles = store
+        .query(Filter::new().author(key).kind(Kind::Metadata).limit(LIMIT))
+        .await;
+    let kept = load_kept(store, &key).await;
+    if profiles.is_empty() && kept.is_empty() {
+        return None;
+    }
+    let meta = identity::metadata(&key, &profiles);
+    let follow_lists = store
+        .query(
+            Filter::new()
+                .kind(Kind::from(FOLLOWS))
+                .custom_tag(SingleLetterTag::LOWERCASE_P, key.to_hex())
+                .limit(FOLLOWER_LIMIT),
+        )
+        .await;
+    Some(ui_preview::Profile {
+        name: shown(&meta, &key),
+        nip05: meta.nip05.clone(),
+        about: meta.about.clone(),
+        repos: kept.len(),
+        followers: followers(&key, &follow_lists),
+        bot: meta.bot,
+    })
 }
 
 /// The sidebar's facts about `key`, read from `lists` (everything the key

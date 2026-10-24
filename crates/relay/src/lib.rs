@@ -161,6 +161,10 @@ impl Relay {
             auth.clone(),
             groups.as_ref().map(groups::GroupRules::view),
         );
+        let relay_url = config
+            .ui_relay_url
+            .as_deref()
+            .or(config.subscribe.as_ref().map(|s| s.relay_url.as_str()));
         let uis = ui::enabled(
             &config.ui_apps,
             &store,
@@ -168,11 +172,8 @@ impl Relay {
             &ui::UiSettings {
                 arweave_gateways: &config.ui_arweave_gateways,
                 blob_servers: &config.ui_blob_servers,
-                relay_host: config
-                    .ui_relay_url
-                    .as_deref()
-                    .or(config.subscribe.as_ref().map(|s| s.relay_url.as_str()))
-                    .and_then(ui::relay_host),
+                relay_host: relay_url.and_then(ui::relay_host),
+                public_url: ui::public_url(config.ui_public_url.as_deref(), relay_url),
                 nsite_gateway: config.ui_nsite_gateway.as_deref(),
                 group_signer: config.nip29_groups.then_some(config.identity),
                 reads: ui::Unauthenticated {

@@ -17,6 +17,7 @@ use nostr::event::Event;
 #[cfg(any(feature = "ui-repo", feature = "ui-social"))]
 use nostr::filter::Filter;
 use relay_ui::chrome::{App, Apps};
+use relay_ui::meta::PublicUrl;
 use relay_ui::{AppUi, Assets};
 #[cfg(any(feature = "ui-repo", feature = "ui-social"))]
 use relay_ui::{EventSource, ReadOnlyStore};
@@ -97,6 +98,9 @@ pub(crate) struct UiSettings<'a> {
     /// The host visitors' clients reach this relay at, for `nostr://` clone
     /// URLs (`TOON_UI_RELAY_URL`, else the paid feed's `TOON_RELAY_URL`).
     pub(crate) relay_host: Option<String>,
+    /// The `https` origin pages name their link previews at
+    /// (`TOON_UI_PUBLIC_URL`, else [`public_url`]'s fallback).
+    pub(crate) public_url: Option<PublicUrl>,
     /// The nsite gateway a live demo is linked through
     /// (`TOON_UI_NSITE_GATEWAY`).
     pub(crate) nsite_gateway: Option<&'a str>,
@@ -119,6 +123,16 @@ pub(crate) fn relay_host(url: &str) -> Option<String> {
     })
 }
 
+/// The origin link previews are named at: `public_url` (`TOON_UI_PUBLIC_URL`,
+/// which configuration has checked), else the `https` origin a secure
+/// `relay_url` implies (`wss://host` is `https://host`), else none, and
+/// pages name no preview image.
+pub(crate) fn public_url(public_url: Option<&str>, relay_url: Option<&str>) -> Option<PublicUrl> {
+    public_url
+        .and_then(PublicUrl::parse)
+        .or_else(|| relay_url.and_then(PublicUrl::from_relay_url))
+}
+
 /// The app UIs named in `apps` (`TOON_UI_APPS`), each over a read-only handle
 /// to `store`. A name this build has no app for is refused: the feature that
 /// holds it was left out.
@@ -128,7 +142,8 @@ pub(crate) fn enabled(
     assets: Option<&Assets>,
     settings: &UiSettings<'_>,
 ) -> Result<Arc<[AppUi]>, RelayError> {
-    let on = Apps::new(apps.iter().filter_map(|name| App::from_name(name)));
+    let on = Apps::new(apps.iter().filter_map(|name| App::from_name(name)))
+        .with_public_url(settings.public_url.clone());
     let mut uis = Vec::new();
     for app in apps {
         match built(app, store, assets, settings, &on) {
@@ -229,5 +244,22 @@ mod tests {
             Some("localhost:7100")
         );
         assert_eq!(relay_host("not a url"), None);
+    }
+
+    #[test]
+    fn the_public_url_is_the_setting_else_a_secure_relay_urls_origin() {
+        let origin = |public: Option<&str>, relay: Option<&str>| {
+            public_url(public, relay).map(|url| url.origin().to_owned())
+        };
+        assert_eq!(
+            origin(Some("https://ui.example"), Some("wss://relay.example")).as_deref(),
+            Some("https://ui.example")
+        );
+        assert_eq!(
+            origin(None, Some("wss://relay.example/")).as_deref(),
+            Some("https://relay.example")
+        );
+        assert_eq!(origin(None, Some("ws://localhost:7100")), None);
+        assert_eq!(origin(None, None), None);
     }
 }

@@ -200,8 +200,13 @@ const UI_NSITE_GATEWAY: Setting = Setting {
     env: "TOON_UI_NSITE_GATEWAY",
 };
 
+const UI_PUBLIC_URL: Setting = Setting {
+    flag: "--ui-public-url",
+    env: "TOON_UI_PUBLIC_URL",
+};
+
 /// The flags that take a value, and the ones that stand alone.
-const VALUE_FLAGS: [&str; 34] = [
+const VALUE_FLAGS: [&str; 35] = [
     MNEMONIC.flag,
     SECRET_KEY.flag,
     READ_PORT.flag,
@@ -236,6 +241,7 @@ const VALUE_FLAGS: [&str; 34] = [
     UI_BLOB_SERVERS.flag,
     UI_RELAY_URL.flag,
     UI_NSITE_GATEWAY.flag,
+    UI_PUBLIC_URL.flag,
 ];
 const SWITCH_FLAGS: [&str; 8] = [
     DEV_MODE.flag,
@@ -326,6 +332,9 @@ Options (each flag beats its environment variable):
                                            URLs; default TOON_RELAY_URL's when the live feed is sold)
   --ui-nsite-gateway <url>                 TOON_UI_NSITE_GATEWAY (the https URL of an nsite gateway /social links a
                                            repo's live demo through; unset, no demo is linked)
+  --ui-public-url <url>                    TOON_UI_PUBLIC_URL (the https origin visitors reach the app UIs at, which
+                                           link previews name absolutely; default the https origin of a wss:// or
+                                           https:// TOON_UI_RELAY_URL; unset, pages name no preview image)
   --blocked-event-ids <ids>                TOON_BLOCKED_EVENT_IDS (comma-separated)
   --subscribe-ilp-address <addr>           TOON_SUBSCRIBE_ILP_ADDRESS (sells the live feed)
   --broadcast-price <n>                    TOON_BROADCAST_PRICE (what one broadcast event costs)
@@ -467,6 +476,10 @@ pub struct Config {
     /// if given: `/social` names its host in `nostr://` clone URLs. The paid
     /// feed's `TOON_RELAY_URL` stands in when this is unset.
     pub ui_relay_url: Option<String>,
+    /// The `https` origin visitors reach the app UIs at
+    /// (`TOON_UI_PUBLIC_URL`), which link previews name absolutely. Unset,
+    /// the origin of a secure `TOON_UI_RELAY_URL` stands in.
+    pub ui_public_url: Option<String>,
     /// The nsite gateway (`TOON_UI_NSITE_GATEWAY`) a repo's live demo is
     /// linked through. The relay only writes it into pages.
     pub ui_nsite_gateway: Option<String>,
@@ -706,6 +719,18 @@ impl Config {
         let ui_arweave_gateways = sources.https_urls(&UI_ARWEAVE_GATEWAYS)?;
         let ui_blob_servers = sources.https_urls(&UI_BLOB_SERVERS)?;
         let ui_relay_url = sources.relay_url(&UI_RELAY_URL)?;
+        let ui_public_url = match sources.text(&UI_PUBLIC_URL) {
+            None => None,
+            Some((name, value)) => Some(
+                relay_ui::meta::PublicUrl::parse(&value)
+                    .map(|url| url.origin().to_owned())
+                    .ok_or(RelayError::InvalidSetting {
+                        name,
+                        expected: "an https:// origin, with no path",
+                        value,
+                    })?,
+            ),
+        };
         let ui_nsite_gateway = match sources.https_urls(&UI_NSITE_GATEWAY)?.as_slice() {
             [] => None,
             [gateway] => Some(gateway.clone()),
@@ -778,6 +803,7 @@ impl Config {
             ui_arweave_gateways,
             ui_blob_servers,
             ui_relay_url,
+            ui_public_url,
             ui_nsite_gateway,
         })))
     }

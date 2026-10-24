@@ -2,7 +2,7 @@
 # Standards: docs/rust-coding-standards.md.
 [workspace]
 resolver = "3"
-members = ["crates/git-objects", "crates/relay", "crates/relay-ui", "crates/ui-highlight", "crates/ui-highlight-web", "crates/ui-markdown", "crates/ui-nip34", "crates/ui-nip34-web", "crates/ui-social", "crates/xtask"]
+members = ["crates/git-objects", "crates/relay", "crates/relay-ui", "crates/ui-highlight", "crates/ui-highlight-web", "crates/ui-markdown", "crates/ui-nip34", "crates/ui-nip34-web", "crates/ui-preview", "crates/ui-social", "crates/xtask"]
 
 [workspace.package]
 edition = "2024"
@@ -37,6 +37,10 @@ futures-util = { version = "0.3", default-features = false, features = ["sink"] 
 http-body-util = "0.1"
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
+# Link preview cards (crates/ui-preview): SVG drawn by the relay, rasterised
+# to PNG. `text` only: no system fonts (the font is bundled), no memory-mapped
+# fonts and no raster images, so a card can never embed a picture.
+resvg = { version = "0.48", default-features = false, features = ["text"] }
 # The protocol crate: events, filters and matching one against the other.
 # NIP-01 messages and subscriptions are the relay's own
 # (crates/relay/src/session.rs). The relay was built on nostr-sdk's
@@ -55,6 +59,9 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha1 = "0.10"
+# Glyph advances, to wrap a preview card's text before resvg draws it: the
+# font reader resvg itself uses, so it is compiled once.
+skrifa = { version = "0.44", default-features = false, features = ["std"] }
 sha2 = "0.10"
 similar = { version = "2", default-features = false, features = ["text"] }
 # Syntax highlighting for blob pages (#287). `regex-fancy` is the pure Rust
@@ -71,6 +78,8 @@ trybuild = "1"
 ui-highlight = { path = "crates/ui-highlight" }
 ui-markdown = { path = "crates/ui-markdown" }
 ui-nip34 = { path = "crates/ui-nip34" }
+# Link preview cards for the app UIs: Open Graph images drawn from events.
+ui-preview = { path = "crates/ui-preview" }
 # The /social app UI: the social NIPs, repos first.
 ui-social = { path = "crates/ui-social" }
 # The browser half of /repo (#283). The pin is exact and is the version of

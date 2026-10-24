@@ -21,7 +21,9 @@ use crate::demo;
 use crate::kinds::{APP_HANDLER, ARTICLE, COMMENT, NOTE, REACTION, SNIPPET};
 use crate::post::{self, View};
 use crate::ship;
-use crate::{PREFIX, Pages, content, event_by_id, html, load_cards, not_found, parse_event_id};
+use crate::{
+    PREFIX, Pages, content, event_by_id, html_with, load_cards, not_found, parse_event_id,
+};
 
 /// The most replies or reactions the page reads.
 const LIMIT: usize = 2_000;
@@ -186,13 +188,28 @@ pub(crate) async fn page(
             .map(str::to_owned)
             .unwrap_or_else(|| content::first_line(&event.content, 80)),
     };
-    html(
+    let shown = if title.is_empty() { "Post" } else { &title };
+    let by = relay_ui::chrome::shown_name(profiles.names(), &event.pubkey);
+    let mut preview = relay_ui::meta::Preview::new(
+        format!("{shown} · {by}"),
+        if event.content.trim().is_empty() {
+            format!("A post by {by} on TOON.")
+        } else {
+            event.content.clone()
+        },
+    )
+    .kind("article")
+    .at(post::event_path(&event));
+    if ship.is_some() {
+        preview = preview.image(crate::og::ship_path(&event.id), shown.to_owned());
+    }
+    html_with(
         &pages,
-        crate::Nav::Other,
-        StatusCode::OK,
-        if title.is_empty() { "Post" } else { &title },
+        (crate::Nav::Other, StatusCode::OK),
+        shown,
         None,
         &body,
+        &preview,
     )
 }
 

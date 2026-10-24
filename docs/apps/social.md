@@ -553,6 +553,50 @@ profile's `picture`, so reading a feed does not load a picture per person.
 A profile page loads one image the person chose: their `banner`.
 `/repo`'s pages keep their stricter policy.
 
+### Link previews
+
+A `/social` link posted on X, Discord, Slack, Bluesky or anything else that
+reads Open Graph unfurls into a card. Every page's `<head>` carries
+`og:title`, `og:description` (plain text, cut to 200 characters), `og:type`,
+`og:site_name`, `og:url`, `og:image` with its `type`, `width`, `height` and
+`alt`, and `twitter:card` (`summary_large_image`), `twitter:title`,
+`twitter:description` and `twitter:image`.
+
+The image is a 1200×630 PNG **the relay draws itself**, from its own store,
+with no outbound fetch (ADR 0006; ADR 0001 stands). It is text and plain
+shapes in the pages' light colours, in the bundled Inter font (SIL Open Font
+License 1.1, `crates/ui-preview/fonts/OFL.txt`); it never holds a picture,
+so an avatar is initials as on the pages, and a character Inter cannot draw
+(CJK, emoji) is left out of the image:
+
+| Image                             | Named by                     | Shows                                                                  |
+| --------------------------------- | ---------------------------- | ---------------------------------------------------------------------- |
+| `/social/og/r/<npub>/<d>.png`     | the repo page, every tab     | owner, name, description, up to four topics, stars, followers and forks counted as the page counts them |
+| `/social/og/p/<npub>.png`         | the profile                  | name, the NIP-05 claim (never called verified), about, repos kept, followers, a `bot` chip for `bot: true` |
+| `/social/og/e/<id>.png`           | a ship post                  | "Shipped", the headline, then the repo's name, description and counts |
+| `/social/og/a/<npub>/<d>.png`     | an article                   | its title, author and summary                                          |
+| `/social/og/site.png`             | every other page             | "TOON Social" and what it is                                           |
+
+A path naming something the relay does not hold is `404`, and so is a post
+that is not a ship post (its page names the site card). An image is served
+`Content-Type: image/png`, with no authentication and the default policy
+(`default-src 'self'`): nothing about a page's policy is loosened for it.
+
+**Cost is bounded.** An image's `ETag` is a hash of what it shows, so it
+changes when a count does and a crawler asking again with `If-None-Match`
+gets `304`; `Cache-Control: public, max-age=600`. Drawn images are kept in a
+cache of at most 512 images and 32 MiB, least recently used out first, and
+at most two are drawn at once (on blocking threads, about 20 ms each); a
+request past that is `503` with `Retry-After`. Every text is cut before it
+is measured, so neither the SVG nor the time to draw it grows with the
+events.
+
+**The public origin.** Open Graph wants absolute URLs, so the pages need to
+know where they are reached: `TOON_UI_PUBLIC_URL` (an `https` origin), else
+the `https` origin of a `wss://` or `https://` `TOON_UI_RELAY_URL`. With
+neither, a page still states its title and description but names no image
+and no `og:url`, rather than a relative URL a crawler would drop.
+
 ## Events and rooms
 
 Launch days, hackathons and the rooms builders talk in. Every NIP here is a

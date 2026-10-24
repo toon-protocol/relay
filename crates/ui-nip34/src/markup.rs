@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use nostr::event::Event;
 use nostr::key::PublicKey;
 use relay_ui::chrome::{self, App, Apps};
+use relay_ui::meta::Preview;
 
 pub(crate) use relay_ui::chrome::{ago, avatar, icon, name, plain_name, svg};
 
@@ -16,6 +17,11 @@ use crate::{escape, first_tag, repo_name, repo_path};
 /// The whole page: the shared shell, with `/repo`'s bar and `body`.
 pub(crate) fn page(apps: &Apps, title: &str, body: &str) -> String {
     chrome::page(apps, App::Repo, title, "", body)
+}
+
+/// [`page`], with what it tells a link unfurler.
+pub(crate) fn page_with(apps: &Apps, title: &str, body: &str, preview: &Preview) -> String {
+    chrome::page_with(apps, App::Repo, title, "", body, preview)
 }
 
 /// The tab a repo page is under.

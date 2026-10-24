@@ -29,7 +29,8 @@
 //!
 //! A mention of a repo anywhere unfurls into `ui_nip34`'s repo card, and the
 //! page shell is `relay_ui::chrome`'s, so `/repo` and `/social` read as one
-//! site. Media a post names is loaded by the visitor's browser, never by the
+//! site. A link to a repo, a profile, a ship post or an article posted
+//! elsewhere unfurls into a card image the relay draws ([`og`]). Media a post names is loaded by the visitor's browser, never by the
 //! relay ([`media`]).
 
 mod apps;
@@ -49,6 +50,7 @@ mod live;
 mod media;
 mod mute;
 mod note;
+mod og;
 mod post;
 mod profile;
 mod repo_page;
@@ -76,9 +78,11 @@ use nostr::filter::Filter;
 use nostr::key::PublicKey;
 use nostr::nips::nip19::{FromBech32, Nip19};
 use relay_ui::chrome::{self, App, Apps, escape, npub};
+use relay_ui::meta::Preview;
 use relay_ui::{AppUi, ReadOnlyStore};
 use ui_nip34::card::{Links, RepoCard};
 use ui_nip34::repo::RepoAddress;
+use ui_preview::Previews;
 
 /// The mount prefix.
 pub const PREFIX: &str = "/social";
@@ -132,6 +136,8 @@ struct Pages {
     apps: Apps,
     /// This relay's NIP-29 groups, when it keeps them.
     groups: Option<rooms::Groups>,
+    /// Link preview cards drawn so far ([`og`]).
+    previews: Previews,
 }
 
 impl Pages {
@@ -142,6 +148,11 @@ impl Pages {
 
     fn gateway(&self) -> Option<&str> {
         self.settings.nsite_gateway.as_deref()
+    }
+
+    /// The host a preview card's footer names.
+    fn card_host(&self) -> Option<String> {
+        ui_preview::footer_host(&self.apps, self.settings.relay_host.as_deref())
     }
 }
 
@@ -154,6 +165,11 @@ pub fn app(store: ReadOnlyStore, settings: Settings, apps: Apps) -> AppUi {
     let router = Router::new()
         .route(PREFIX, get(feed::everyone))
         .route("/social/assets/{name}", get(asset))
+        .route("/social/og/site.png", get(og::site))
+        .route("/social/og/r/{npub}/{file}", get(og::repo))
+        .route("/social/og/p/{file}", get(og::profile))
+        .route("/social/og/e/{file}", get(og::ship))
+        .route("/social/og/a/{npub}/{file}", get(og::article))
         .route("/social/following", get(feed::viewer))
         .route("/social/following/{npub}", get(feed::following))
         .route("/social/r/{target}", get(repo_page::redirect))
@@ -185,6 +201,7 @@ pub fn app(store: ReadOnlyStore, settings: Settings, apps: Apps) -> AppUi {
             settings,
             apps,
             groups,
+            previews: Previews::new(),
         });
     AppUi::new(PREFIX, router)
 }
@@ -268,14 +285,34 @@ fn html(
     viewer: Option<&PublicKey>,
     body: &str,
 ) -> Response {
+    html_with(
+        pages,
+        (nav, status),
+        title,
+        viewer,
+        body,
+        &Preview::default(),
+    )
+}
+
+/// [`html`], with what the page tells a link unfurler ([`og`]).
+fn html_with(
+    pages: &Pages,
+    (nav, status): (Nav, StatusCode),
+    title: &str,
+    viewer: Option<&PublicKey>,
+    body: &str,
+    preview: &Preview,
+) -> Response {
     let mut response = (
         status,
-        Html(chrome::page(
+        Html(chrome::page_with(
             &pages.apps,
             App::Social,
             title,
             &header(viewer, nav),
             body,
+            preview,
         )),
     )
         .into_response();

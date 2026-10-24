@@ -284,6 +284,17 @@ services:
       TOON_RELAY_NAME: ${RELAY_NAME:-}
       TOON_RELAY_DESCRIPTION: ${RELAY_DESCRIPTION:-}
       TOON_RELAY_CONTACT: ${RELAY_CONTACT:-}
+      # ── The app UIs' public names ────────────────────────────────────────
+      # Where visitors reach this relay: READ_HOST, through Caddy. The relay
+      # only writes these into pages and never contacts them. The relay URL's
+      # host is the relay hint in the nostr:// clone URLs /repo and /social
+      # show (without it a clone URL names no relay). The public URL is the
+      # https origin a page's Open Graph and X card tags name its link
+      # preview image at (ADR 0006); without it a shared link unfurls with
+      # no image. Both default to the devnet box's name: a box on another
+      # name sets RELAY_UI_RELAY_URL and RELAY_UI_PUBLIC_URL in .env.
+      TOON_UI_RELAY_URL: ${RELAY_UI_RELAY_URL:-wss://relay.toonprotocol.dev}
+      TOON_UI_PUBLIC_URL: ${RELAY_UI_PUBLIC_URL:-https://relay.toonprotocol.dev}
     volumes:
       # events.db. Named so it has a name an operator can find and a stray
       # `docker volume prune` — which reaps unused ANONYMOUS volumes — cannot

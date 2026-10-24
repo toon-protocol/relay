@@ -17,6 +17,7 @@ use nostr::nips::nip19::ToBech32;
 use nostr::types::Timestamp;
 
 use crate::ReadOnlyStore;
+use crate::meta::{Preview, PublicUrl};
 
 /// An app UI the relay can serve, by the name `TOON_UI_APPS` gives it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -69,11 +70,13 @@ impl App {
 }
 
 /// The apps the relay serves: what the switcher offers and which cross-links
-/// a page may draw. A link to an app that is off would answer `426`, so a
-/// page asks [`Apps::serves`] before drawing one.
+/// a page may draw, and the public origin they are reached at when the
+/// operator has said it. A link to an app that is off would answer `426`, so
+/// a page asks [`Apps::serves`] before drawing one.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Apps {
     on: Vec<App>,
+    public_url: Option<PublicUrl>,
 }
 
 impl Apps {
@@ -85,12 +88,25 @@ impl Apps {
                 .into_iter()
                 .filter(|app| on.contains(app))
                 .collect(),
+            public_url: None,
         }
+    }
+
+    /// The same apps, reached at `public_url` (`TOON_UI_PUBLIC_URL`), which
+    /// pages name absolutely to link unfurlers ([`crate::meta`]).
+    pub fn with_public_url(mut self, public_url: Option<PublicUrl>) -> Self {
+        self.public_url = public_url;
+        self
     }
 
     /// Whether `app` is served.
     pub fn serves(&self, app: App) -> bool {
         self.on.contains(&app)
+    }
+
+    /// The `https` origin visitors reach the apps at, if known.
+    pub fn public_url(&self) -> Option<&PublicUrl> {
+        self.public_url.as_ref()
     }
 }
 
@@ -176,13 +192,27 @@ pub fn npub(key: &PublicKey) -> String {
 /// more than one app is on) and `header` after it, then `body`. `app` is the
 /// app drawing the page; its stylesheet is served under its own prefix.
 pub fn page(apps: &Apps, app: App, title: &str, header: &str, body: &str) -> String {
+    page_with(apps, app, title, header, body, &Preview::default())
+}
+
+/// [`page`], telling link unfurlers what `preview` says about it: Open
+/// Graph and X card tags in the head ([`crate::meta`]).
+pub fn page_with(
+    apps: &Apps,
+    app: App,
+    title: &str,
+    header: &str,
+    body: &str,
+    preview: &Preview,
+) -> String {
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-         <title>{}</title><link rel=\"stylesheet\" href=\"{}/assets/{}\"></head>\
+         <title>{}</title>{}<link rel=\"stylesheet\" href=\"{}/assets/{}\"></head>\
          <body><header class=\"topbar\"><div class=\"container\">{}{header}</div></header>\
          <main class=\"container stack\">{body}</main></body></html>",
         escape(title),
+        preview.tags(title, app, apps),
         app.prefix(),
         crate::stylesheet_name(),
         switcher(apps, app),
