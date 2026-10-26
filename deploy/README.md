@@ -12,6 +12,7 @@ first `docker compose up`. This page is the reference for what each file is.
 | `.env.example`       | Copy to `.env`. Four required values; the rest have defaults.                                                                                                                          |
 | `docker-compose.shared-edge.yml` | Overlay: this node behind the devnet host's shared edge instead of its own Caddy. See "The shared-edge overlay" below.                                                     |
 | `runtime-peerings.sh` | Signed operator writes that peer this hub toward a node that joined it, and take a peering away. See "Forwarded legs" below. |
+| `tip-peering-policy.md` | Who may ask this hub to peer toward their node to be tipped, what it deposits, the fee it charges on tips, and when an idle peering is dropped. |
 | `bundle.test.ts`     | Fails the build if the privacy invariant, the prices, the settlement deployment, the pin, or the shared-edge overlay's own properties ever drift.                                      |
 
 ## Overlays
@@ -417,6 +418,9 @@ SIGN_WRITE=./sign-write.sh ./runtime-peerings.sh node <id> http://<56 chars>.any
   g.toon.<segment>.<app> <deposit> <app price + 1>
 SIGN_WRITE=./sign-write.sh ./runtime-peerings.sh remove <id> g.toon.<segment>.<app>
 ```
+
+Peering toward a node so it can be tipped follows the published
+[tip peering policy](tip-peering-policy.md), with `runtime-peerings.sh tip`.
 
 The opening deposit and its gas come from this node's EVM settlement key. Keep
 that key holding Base Sepolia ETH: the same key lands what the relay is paid,

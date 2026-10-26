@@ -930,6 +930,61 @@ describe('runtime-peerings.sh', () => {
       'DELETE /peers/demo',
     ]);
   });
+
+  it('peers toward a tip recipient on the published policy for `tip` (deploy/tip-peering-policy.md)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'runtime-peerings-'));
+    const calls = join(dir, 'calls');
+    const stub = join(dir, 'sign-write.sh');
+    // Records each write's method, path and body.
+    writeFileSync(
+      stub,
+      `#!/bin/sh\nshift 2; echo "$2 $4 $6" >> ${calls}\n`
+    );
+    chmodSync(stub, 0o755);
+    writeFileSync(join(dir, 'key'), '00'.repeat(32));
+    const url = `http://${'a'.repeat(56)}.anyone/ilp`;
+    execFileSync(
+      resolve(REPO_ROOT, 'deploy/runtime-peerings.sh'),
+      ['tip', 'alice', url, 'g.toon.0123456789abcdef.tip'],
+      {
+        env: {
+          ...process.env,
+          SIGN_WRITE: stub,
+          OPERATOR_WRITE_KEY: join(dir, 'key'),
+        },
+      }
+    );
+    const [peer, route] = readFileSync(calls, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => {
+        const [method, path, body] = line.split(' ');
+        return { method, path, body: JSON.parse(body ?? 'null') };
+      });
+    // 1 USDC deposited per recipient, a flat fee of 1 per tip packet, and
+    // tips above 0.1 USDC split into several packets.
+    expect(peer).toEqual({
+      method: 'POST',
+      path: '/peers',
+      body: {
+        id: 'alice',
+        url,
+        fee: 1,
+        max_packet_amount: 100000,
+        chain: 'evm',
+        deposit: 1000000,
+      },
+    });
+    expect(route).toEqual({
+      method: 'POST',
+      path: '/routes/peers',
+      body: {
+        prefix: 'g.toon.0123456789abcdef.tip',
+        peer_id: 'alice',
+        price: 1,
+      },
+    });
+  });
 });
 
 describe('the shared-edge overlay (docker-compose.shared-edge.yml, toon-protocol/relay#166)', () => {

@@ -25,6 +25,12 @@
 #       node's `toon route list`. <price> is what a payer pays this hub for
 #       the route: the app's price plus this hop's fee of 1.
 #
+#   ./runtime-peerings.sh tip <id> <url> <prefix>
+#       a peering toward a tip recipient's node, on the published policy
+#       (tip-peering-policy.md): 1 USDC deposited, a fee of 1 per tip
+#       packet, at most 0.1 USDC in one packet. <prefix> is the address the
+#       recipient's tip route (kind 10850) names as its ilp_address.
+#
 #   ./runtime-peerings.sh remove <id> <prefix>
 #       take a node's route and peering away again
 #
@@ -93,13 +99,21 @@ case ${1:-} in
         peer "$2" "$3" evm "$5"
         route "$4" "$2" "$6"
         ;;
+    tip)
+        # A tip arrives from a joined node, as a peer, and the route's price
+        # caps only a client-edge packet (connector ADR 0029), so the price
+        # is the hop's fee alone.
+        [ $# -eq 4 ] || { sed -n '28,32p' "$0"; exit 2; }
+        peer "$2" "$3" evm 1000000 1 100000
+        route "$4" "$2" 1
+        ;;
     remove)
-        [ $# -eq 3 ] || { sed -n '28,29p' "$0"; exit 2; }
+        [ $# -eq 3 ] || { sed -n '34,35p' "$0"; exit 2; }
         write DELETE "/routes/peers/$3"
         write DELETE "/peers/$2"
         ;;
     *)
-        sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,47p' "$0" | sed 's/^# \{0,1\}//'
         exit 2
         ;;
 esac
