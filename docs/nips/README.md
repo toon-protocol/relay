@@ -8,3 +8,9 @@ A NIP here describes **wire shapes**: event kinds, tags and their meaning. How t
 reads them, or what it serves, is a decision and belongs in [`../adr/`](../adr/README.md).
 How to author or read one app's events for people and skills is a guide and belongs in
 [`../apps/`](../apps/README.md).
+
+## Drafts
+
+- [`nip-34-blossom.md`](nip-34-blossom.md): git objects on Blossom.
+- [`nip-c1.md`](nip-c1.md): Nostr CI.
+- [`nip-tips.md`](nip-tips.md): tips on TOON, with the tip route (10850), tip receipt (9850) and tip acknowledgement (9851).

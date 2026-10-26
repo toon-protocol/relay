@@ -715,18 +715,18 @@ produce, and the relay never checks a payment.
 
 ### Tips: the gap
 
-There is no tip button, on purpose. The Nostr shape for tipping is NIP-57
-zaps, and they are out on TOON: a zap receipt is written by the recipient's
-Lightning server, not by the payer, and nothing on TOON carries Lightning. The
-relay must not validate a payment either; payment checks live only in the
-connector. What would close the gap is a NIP for a **receipt the payer
-writes** for an ILP payment to a pubkey, taggable to a repo, which the relay
-stores and shows as a claim (or as connector-stated, if the connector states
-it) and never verifies. Until then, a repo announcement or app that carries
-NIP-57 `zap` split tags shows them as text, **"Tip split (set by the
-owner)"**, with each share computed as NIP-57 Appendix G says. A person's
-kind 0 with `zap` tags shows the same on their profile, "Tip split (set by
-this person)".
+There is no tip button yet. NIP-57 zaps are out on TOON: a zap receipt is written by the
+recipient's Lightning server, and nothing on TOON carries Lightning. The relay must not
+validate a payment either; payment checks live only in the connector. Tips are specified in
+[`docs/nips/nip-tips.md`](../nips/nip-tips.md): the recipient signs a tip route (10850), the
+payer seals a tip receipt (9850) into the payment and never publishes it, and the recipient
+publishes a tip acknowledgement (9851). Readers count only acknowledgements, and the amount that
+arrived ([ADR 0007](../adr/0007-readers-count-a-tip-only-when-its-recipient-acknowledged-it.md)).
+The pages do not draw tips yet.
+
+A repo announcement or app that carries NIP-57 `zap` split tags shows them as text, **"Tip split
+(set by the owner)"**, with each share computed as NIP-57 Appendix G says. A person's kind 0
+with `zap` tags shows the same on their profile, "Tip split (set by this person)".
 
 ### Reports and mutes
 
