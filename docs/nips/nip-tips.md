@@ -28,7 +28,7 @@ Cashu token. Neither is reused (see [Relation to other NIPs](#relation-to-other-
 Nothing a payer can publish proves that a tip happened: the ILP fulfilment derives from a secret
 the payer seals, so the payer can forge it, and the connector states a payment only to the app it
 terminates at. Only the recipient's node knows that a tip arrived and how much of it did. So the
-payer's event is a claim carried to the recipient, and the recipient's event is what readers
+payer's event is only the payer's word, carried to the recipient, and the recipient's event is what readers
 count.
 
 ## Kinds
@@ -111,8 +111,7 @@ A regular event the payer signs. It says who is tipped, what for, and how much w
     ["p", "<recipient pubkey>"],
     ["a", "30617:<owner pubkey>:tidepool"],
     ["e", "<goal 9041 event id>"],
-    ["amount", "2500000", "USDC", "6"],
-    ["anon"]
+    ["amount", "2500000", "USDC", "6"]
   ],
   "content": "Thanks for the release."
 }
@@ -162,7 +161,7 @@ event, and the only one a reader counts.
 | `receipt` | yes | The id of the tip receipt, for deduplication. |
 
 The author of the acknowledgement is the recipient; no tag repeats that. Two acknowledgements by
-the same author with the same `receipt` value are one tip, and a reader counts the first.
+the same author with the same `receipt` value are one tip.
 
 ## Reader rule
 
@@ -212,8 +211,6 @@ Payment checks live only in the connector.
   the roles (the sender writes the record, the recipient marks it received) and the replaceable
   recipient-signed discovery event.
 - **NIP-75 (zap goals).** A goal (9041) is tipped with an `e` tag. Its `amount` is in millisats
-  upstream; on TOON a goal states its target in the unit its readers sum (a TOON convention),
-  and `closed_at` bounds which acknowledgements count (by `created_at`).
-- **NIP-99 (classified listings).** A bounty (30402) is tipped with an `a` tag; paid is the
-  acknowledged sum against the listing's `price`.
+  upstream; on TOON a goal states its target in the unit its readers sum (a TOON convention).
+- **NIP-99 (classified listings).** A bounty (30402) is tipped with an `a` tag.
 - **NIP-34 (repositories).** A repo (30617) is tipped with an `a` tag.
