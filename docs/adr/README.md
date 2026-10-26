@@ -12,3 +12,4 @@ that cites one by number means that one.
 | [0002](0002-readers-honour-repo-state-only-from-authorized-authors.md) | Readers honour repo state only from authorized authors |
 | [0005](0005-social-pages-load-https-media.md) | /social pages let the browser load https media |
 | [0006](0006-the-relay-draws-link-preview-cards.md) | The relay draws link preview cards |
+| [0007](0007-readers-count-a-tip-only-when-its-recipient-acknowledged-it.md) | Readers count a tip only when its recipient acknowledged it |
