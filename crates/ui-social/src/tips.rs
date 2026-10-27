@@ -9,7 +9,7 @@
 //! payer, and nothing here carries Lightning), and the relay must not check
 //! a payment: that is the connector's alone. So a page shows a split the
 //! owner wrote as text, "Tip split (set by the owner)", and nothing that
-//! looks like a button. `docs/apps/social.md` says what would close the gap.
+//! looks like a button. `docs/apps/social.md` says how the pages draw tips.
 
 use std::collections::{HashMap, HashSet};
 
@@ -18,12 +18,10 @@ use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{escape, name};
+use ui_nip34::card::plural;
+use ui_nip34::repo::first_tag;
 
-/// The tip NIP's tip acknowledgement, signed by the recipient.
-pub(crate) const ACKNOWLEDGEMENT: u16 = 9_851;
-
-/// The tip NIP's tip route, a replaceable event the recipient signs.
-const ROUTE: u16 = 10_850;
+use crate::kinds::{TIP_ACKNOWLEDGEMENT, TIP_ROUTE};
 
 /// The most acknowledgements one page reads.
 const LIMIT: usize = 5_000;
@@ -128,33 +126,25 @@ impl Totals {
 
 /// The tips ADR 0007 counts for `subject` out of `events`: only kind 9851
 /// signed by `recipient`; the amount that arrived, summed per unit and never
-/// converted; one tip per `receipt` (the earliest acknowledgement of it,
-/// ties by id); payers counted only where named by a `p` tag. Anything else
+/// converted; one tip per `receipt` (the earliest whole acknowledgement of
+/// it, ties by id); payers counted only where named by a `p` tag. Anything else
 /// in `events` changes no figure. A pure function.
 pub(crate) fn tally(events: &[Event], recipient: &PublicKey, subject: &Subject) -> Totals {
-    let mut acks: Vec<(&Event, &str)> = events
+    let mut acks: Vec<(&Event, &str, (u128, Unit))> = events
         .iter()
-        .filter(|ack| ack.kind == Kind::from(ACKNOWLEDGEMENT) && ack.pubkey == *recipient)
+        .filter(|ack| ack.kind == Kind::from(TIP_ACKNOWLEDGEMENT) && ack.pubkey == *recipient)
         .filter(|ack| subject.is_tipped_by(ack))
         .filter_map(|ack| {
-            let receipt = ack.tags.iter().find_map(|tag| match tag.as_slice() {
-                [name, receipt, ..] if name == "receipt" && !receipt.is_empty() => {
-                    Some(receipt.as_str())
-                }
-                _ => None,
-            })?;
-            Some((ack, receipt))
+            let receipt = first_tag(ack, "receipt").filter(|receipt| !receipt.is_empty())?;
+            Some((ack, receipt, amount_of(ack)?))
         })
         .collect();
-    acks.sort_by_key(|(a, _)| (a.created_at, a.id));
+    acks.sort_by_key(|(a, _, _)| (a.created_at, a.id));
     let mut receipts: HashSet<&str> = HashSet::new();
     let mut payers: HashSet<PublicKey> = HashSet::new();
     let mut per_unit: Vec<(Unit, u128)> = Vec::new();
     let mut tips = 0;
-    for (ack, receipt) in acks {
-        let Some((base, unit)) = amount_of(ack) else {
-            continue;
-        };
+    for (ack, receipt, (base, unit)) in acks {
         if !receipts.insert(receipt) {
             continue;
         }
@@ -163,11 +153,7 @@ pub(crate) fn tally(events: &[Event], recipient: &PublicKey, subject: &Subject) 
             Some((_, total)) => *total = total.saturating_add(base),
             None => per_unit.push((unit, base)),
         }
-        let named = ack.tags.iter().find_map(|tag| match tag.as_slice() {
-            [name, key, ..] if name == "p" => PublicKey::from_hex(key).ok(),
-            _ => None,
-        });
-        payers.extend(named);
+        payers.extend(first_tag(ack, "p").and_then(|key| PublicKey::from_hex(key).ok()));
     }
     per_unit.sort();
     Totals {
@@ -185,7 +171,7 @@ pub(crate) async fn totals(
     subject: &Subject,
 ) -> Totals {
     let filter = Filter::new()
-        .kind(Kind::from(ACKNOWLEDGEMENT))
+        .kind(Kind::from(TIP_ACKNOWLEDGEMENT))
         .author(*recipient)
         .limit(LIMIT);
     let filter = match subject {
@@ -203,7 +189,12 @@ pub(crate) async fn totals(
 /// details are the payer's to read from the connector.
 pub(crate) async fn route_card(store: &ReadOnlyStore, key: &PublicKey) -> String {
     let routes = store
-        .query(Filter::new().kind(Kind::from(ROUTE)).author(*key).limit(1))
+        .query(
+            Filter::new()
+                .kind(Kind::from(TIP_ROUTE))
+                .author(*key)
+                .limit(1),
+        )
         .await;
     let tagged = |event: &Event, wanted: &str| {
         event.tags.iter().map(|tag| tag.as_slice()).any(
@@ -225,7 +216,7 @@ pub(crate) async fn route_card(store: &ReadOnlyStore, key: &PublicKey) -> String
         .to_owned()
 }
 
-/// A sidebar card with the tips received, or nothing when none counted.
+/// A card with the tips received, or nothing when none counted.
 pub(crate) fn received_card(totals: &Totals) -> String {
     if totals.is_empty() {
         return String::new();
@@ -244,11 +235,7 @@ pub(crate) fn received_card(totals: &Totals) -> String {
          different units are not added.</p></div>",
         totals.payers,
         totals.payers,
-        if totals.payers == 1 {
-            "payer"
-        } else {
-            "payers"
-        },
+        plural(totals.payers, "payer", "payers"),
     ));
     out
 }
@@ -346,6 +333,7 @@ pub(crate) fn split_keys(event: &Event) -> Vec<PublicKey> {
 mod tests {
     use nostr::event::{EventBuilder, FinalizeEvent, Kind, Tag};
     use nostr::key::Keys;
+    use nostr::types::Timestamp;
 
     use super::*;
 
@@ -502,6 +490,29 @@ mod tests {
         let totals = tally(&events, &owner.public_key(), &Subject::Person);
         assert_eq!(totals.tips, 1);
         assert_eq!(totals.per_unit[0].1, 100);
+    }
+
+    #[test]
+    fn the_earliest_whole_acknowledgement_of_a_receipt_is_the_one_counted() {
+        let owner = Keys::generate();
+        let at = |seconds: u64, amount: &[&str]| {
+            EventBuilder::new(Kind::from(9851), "")
+                .tags([
+                    Tag::parse(amount.to_vec()).unwrap(),
+                    Tag::parse(["receipt", "same"]).unwrap(),
+                ])
+                .custom_created_at(Timestamp::from(seconds))
+                .finalize(&owner)
+                .unwrap()
+        };
+        let events = [
+            at(3, &["amount", "300", "USDC", "6"]),
+            at(2, &["amount", "200", "USDC", "6"]),
+            // Earliest, but not a whole amount: not a tip, and it shadows none.
+            at(1, &["amount", "100"]),
+        ];
+        let totals = tally(&events, &owner.public_key(), &Subject::Person);
+        assert_eq!((totals.tips, totals.per_unit[0].1), (1, 200));
     }
 
     #[test]

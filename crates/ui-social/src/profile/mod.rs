@@ -455,7 +455,7 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
     }
 
     // A tip split the person wrote on their kind 0 (NIP-57 `zap` tags),
-    // shown as text: TOON cannot send a tip yet.
+    // shown as text: this page cannot send a tip.
     let metadata = newest(
         lists
             .iter()
@@ -463,10 +463,9 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
     );
     names_wanted.extend(metadata.map(crate::tips::split_keys).unwrap_or_default());
     let profiles = Profiles::load(store, &names_wanted).await;
-    let tips = metadata
+    let mut tips = metadata
         .map(|event| crate::tips::split_card(event, profiles.names(), "this person"))
         .unwrap_or_default();
-    let mut tips = tips;
     tips.push_str(&crate::tips::route_card(store, &key).await);
     tips.push_str(&crate::tips::received_card(
         &crate::tips::totals(store, &key, &crate::tips::Subject::Person).await,

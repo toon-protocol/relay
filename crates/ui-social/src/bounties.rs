@@ -41,6 +41,9 @@ use crate::{PREFIX, Pages, html, load_cards};
 /// The most listings or goals one query reads.
 const LIMIT: usize = 500;
 
+/// The most goals the page shows, and so counts the tips of.
+const GOALS_SHOWN: usize = 10;
+
 /// Where a bounty stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Status {
@@ -501,7 +504,7 @@ fn progress(goal: &Event, tips: &Totals) -> String {
         escape(&unit.show(raised)),
         escape(&unit.show(target)),
         tips.payers,
-        if tips.payers == 1 { "payer" } else { "payers" },
+        plural(tips.payers, "payer", "payers"),
     )
 }
 
@@ -525,12 +528,13 @@ fn payout(listing: &Event, tips: &Totals) -> String {
         .filter(|(unit, _)| unit.code.eq_ignore_ascii_case(currency))
         .map(|(unit, total)| unit.show(*total))
         .collect();
+    // Two scales of one code are two units: listed, never added.
     if paid.is_empty() {
         return String::new();
     }
     format!(
         "<span class=\"strong\" data-paid>{}</span><span class=\"muted small\">paid</span>",
-        escape(&paid.join(" + "))
+        escape(&paid.join(", "))
     )
 }
 
@@ -586,7 +590,7 @@ pub(crate) async fn page(State(pages): State<Pages>, RawQuery(query): RawQuery) 
         }
     }
     let mut raised: HashMap<EventId, Totals> = HashMap::new();
-    for (goal, _) in goals.iter().take(10) {
+    for (goal, _) in goals.iter().take(GOALS_SHOWN) {
         let tips = crate::tips::totals(store, &goal.pubkey, &Subject::Event(goal.id)).await;
         raised.insert(goal.id, tips);
     }
@@ -656,7 +660,7 @@ pub(crate) async fn page(State(pages): State<Pages>, RawQuery(query): RawQuery) 
              kind 9041) names a repo here yet.</p></div>",
         );
     }
-    for (goal, goal_repo) in goals.iter().take(10) {
+    for (goal, goal_repo) in goals.iter().take(GOALS_SHOWN) {
         body.push_str(&goal_card(
             &pages,
             goal,
