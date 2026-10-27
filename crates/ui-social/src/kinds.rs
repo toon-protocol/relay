@@ -66,6 +66,11 @@ pub(crate) const SOFTWARE_RELEASE: u16 = 30_063;
 pub(crate) const APP_SET: u16 = 30_267;
 /// NIP-99 classified listing.
 pub(crate) const CLASSIFIED: u16 = 30_402;
+/// The tip NIP's (`docs/nips/nip-tips.md`) tip acknowledgement, signed by the
+/// recipient.
+pub(crate) const TIP_ACKNOWLEDGEMENT: u16 = 9_851;
+/// The tip NIP's tip route, a replaceable event the recipient signs.
+pub(crate) const TIP_ROUTE: u16 = 10_850;
 
 pub(crate) use ui_nip34::card::FOLLOWED_REPOS;
 pub(crate) use ui_nip34::repo::ANNOUNCEMENT;

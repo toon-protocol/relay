@@ -178,8 +178,11 @@ pub(crate) async fn page(
         query.as_deref(),
     )
     .await;
+    let tips = crate::tips::received_card(
+        &crate::tips::totals(store, &event.pubkey, &crate::tips::Subject::Event(event.id)).await,
+    );
     body.push_str(&format!(
-        "<div class=\"split\"><div class=\"main\">{main}</div>{}</div>",
+        "<div class=\"split\"><div class=\"main\">{main}{tips}</div>{}</div>",
         rail(&view, &replies, maker_of)
     ));
     let title = match &ship {

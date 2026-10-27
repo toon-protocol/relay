@@ -472,6 +472,14 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab, query: Option<&str>
     ));
     let mut after = crate::rooms::repo_room_box(pages, &card).await;
     after.push_str(&extras);
+    after.push_str(&crate::tips::received_card(
+        &crate::tips::totals(
+            store,
+            repo.owner(),
+            &crate::tips::Subject::Address(repo.coordinate()),
+        )
+        .await,
+    ));
     after.push_str(&crate::tips::split_card(
         card.announcement(),
         profiles.names(),

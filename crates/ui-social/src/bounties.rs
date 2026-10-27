@@ -34,11 +34,15 @@ use ui_nip34::repo::{RepoAddress, first_tag, supersedes};
 use crate::apps::Address;
 use crate::content::{clip, first_line};
 use crate::kinds::{CLASSIFIED, ISSUE, ZAP_GOAL};
+use crate::tips::{Subject, Totals};
 use crate::viewer::param;
 use crate::{PREFIX, Pages, html, load_cards};
 
 /// The most listings or goals one query reads.
 const LIMIT: usize = 500;
+
+/// The most goals the page shows, and so counts the tips of.
+const GOALS_SHOWN: usize = 10;
 
 /// Where a bounty stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,8 +121,12 @@ pub(crate) fn price(listing: &Event) -> Option<String> {
     Some(out)
 }
 
-/// A goal's target, from its `amount` in millisats. A pure function.
+/// A goal's target: its `amount` with a unit (the tip NIP's convention), else
+/// in millisats (NIP-75). A pure function.
 pub(crate) fn target(goal: &Event) -> Option<String> {
+    if let Some((base, unit)) = crate::tips::amount_of(goal) {
+        return Some(unit.show(base));
+    }
     let millisats: u64 = first_tag(goal, "amount")?.trim().parse().ok()?;
     Some(if millisats.is_multiple_of(1_000) {
         format!("{} sats", grouped(millisats / 1_000))
@@ -315,6 +323,7 @@ fn row(
     bounty: &Bounty,
     cards: &HashMap<RepoAddress, RepoCard>,
     names: &HashMap<PublicKey, String>,
+    tips: &Totals,
 ) -> String {
     let links = pages.links();
     let listing = &bounty.listing;
@@ -388,7 +397,7 @@ fn row(
                 escape(&price)
             ),
             None => "<span class=\"muted small\">no price given</span>".to_owned(),
-        },
+        } + &payout(listing, tips),
     )
 }
 
@@ -423,6 +432,7 @@ fn goal_card(
     repo: &RepoAddress,
     card: Option<&RepoCard>,
     names: &HashMap<PublicKey, String>,
+    tips: &Totals,
 ) -> String {
     let links = pages.links();
     let label = card
@@ -459,15 +469,73 @@ fn goal_card(
             relay_ui::chrome::date(closes)
         ));
     }
+    out.push_str(&progress(goal, tips));
     out.push_str(&format!(
-        "<p class=\"muted small\">Set by {} &middot; {}</p><p class=\"muted small\" data-no-progress>\
-         Progress is not shown. NIP-75 tallies Lightning zap receipts (kind 9735), which TOON does \
-         not produce, and this relay never checks a payment. A count would need a receipt the payer \
-         writes, which no NIP defines yet.</p></div>",
+        "<p class=\"muted small\">Set by {} &middot; {}</p></div>",
         name(names, &goal.pubkey),
         ago(goal.created_at),
     ));
     out
+}
+
+/// A goal's progress: the tips its author acknowledged toward it, in the
+/// unit of its target (ADR 0007). Other units are not added. A goal with no
+/// unit, or with no counted tip, shows no bar.
+fn progress(goal: &Event, tips: &Totals) -> String {
+    let Some((target, unit)) = crate::tips::amount_of(goal) else {
+        return "<p class=\"muted small\" data-no-progress>No progress: this goal states no unit \
+                for its target, so no tip can be added to it.</p>"
+            .to_owned();
+    };
+    let raised = tips.in_unit(&unit);
+    if raised == 0 {
+        return "<p class=\"muted small\" data-no-progress>No tip acknowledged toward this goal \
+                yet.</p>"
+            .to_owned();
+    }
+    let percent = raised
+        .saturating_mul(100)
+        .checked_div(target)
+        .map_or(100, |percent| percent.min(100));
+    format!(
+        "<p data-progress=\"{raised}\"><span class=\"strong\">{}</span> of {}</p>\
+         <progress max=\"100\" value=\"{percent}\"></progress>\
+         <p class=\"muted small\">{} named {}. What arrived, as the goal's author acknowledged it.</p>",
+        escape(&unit.show(raised)),
+        escape(&unit.show(target)),
+        tips.payers,
+        plural(tips.payers, "payer", "payers"),
+    )
+}
+
+/// What was paid toward a bounty: acknowledged arrivals in the unit of its
+/// price, or nothing.
+fn payout(listing: &Event, tips: &Totals) -> String {
+    let Some(currency) = listing
+        .tags
+        .iter()
+        .map(|tag| tag.as_slice())
+        .find_map(|tag| match tag {
+            [name, _, currency, ..] if name == "price" => Some(currency.trim()),
+            _ => None,
+        })
+    else {
+        return String::new();
+    };
+    let paid: Vec<String> = tips
+        .per_unit
+        .iter()
+        .filter(|(unit, _)| unit.code.eq_ignore_ascii_case(currency))
+        .map(|(unit, total)| unit.show(*total))
+        .collect();
+    // Two scales of one code are two units: listed, never added.
+    if paid.is_empty() {
+        return String::new();
+    }
+    format!(
+        "<span class=\"strong\" data-paid>{}</span><span class=\"muted small\">paid</span>",
+        escape(&paid.join(", "))
+    )
 }
 
 /// `/social/bounties`: every bounty, `?status=` one status, `?repo=` one
@@ -506,6 +574,26 @@ pub(crate) async fn page(State(pages): State<Pages>, RawQuery(query): RawQuery) 
     }
     let profiles = Profiles::load(store, &keys).await;
     let names = profiles.names();
+
+    // What each bounty's poster acknowledged toward it, and each goal's
+    // author toward the goal (ADR 0007).
+    let mut paid: HashMap<EventId, Totals> = HashMap::new();
+    for bounty in &shown {
+        if let Some(address) = Address::of(&bounty.listing) {
+            let tips = crate::tips::totals(
+                store,
+                &bounty.listing.pubkey,
+                &Subject::Address(address.coordinate()),
+            )
+            .await;
+            paid.insert(bounty.listing.id, tips);
+        }
+    }
+    let mut raised: HashMap<EventId, Totals> = HashMap::new();
+    for (goal, _) in goals.iter().take(GOALS_SHOWN) {
+        let tips = crate::tips::totals(store, &goal.pubkey, &Subject::Event(goal.id)).await;
+        raised.insert(goal.id, tips);
+    }
 
     let scope = repo
         .as_ref()
@@ -560,7 +648,8 @@ pub(crate) async fn page(State(pages): State<Pages>, RawQuery(query): RawQuery) 
     } else {
         body.push_str("<div class=\"box bounties\">");
         for bounty in &shown {
-            body.push_str(&row(&pages, bounty, &cards, names));
+            let tips = paid.get(&bounty.listing.id).cloned().unwrap_or_default();
+            body.push_str(&row(&pages, bounty, &cards, names, &tips));
         }
         body.push_str("</div>");
     }
@@ -571,13 +660,14 @@ pub(crate) async fn page(State(pages): State<Pages>, RawQuery(query): RawQuery) 
              kind 9041) names a repo here yet.</p></div>",
         );
     }
-    for (goal, goal_repo) in goals.iter().take(10) {
+    for (goal, goal_repo) in goals.iter().take(GOALS_SHOWN) {
         body.push_str(&goal_card(
             &pages,
             goal,
             goal_repo,
             cards.get(goal_repo),
             names,
+            &raised.get(&goal.id).cloned().unwrap_or_default(),
         ));
     }
     body.push_str(
