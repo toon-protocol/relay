@@ -406,6 +406,131 @@ async fn bounties_resolve_with_their_issue_and_goals_show_no_progress() {
 }
 
 #[tokio::test]
+async fn acknowledged_tips_show_as_goal_progress_bounty_payouts_and_repo_totals() {
+    let running = running_with(|_| None).await;
+    let relay = &running.relay;
+    let (maya, dan, stranger) = (Keys::generate(), Keys::generate(), Keys::generate());
+    let now = Timestamp::now().as_secs();
+    let repo = format!("30617:{}:tidepool", maya.public_key().to_hex());
+    store(
+        relay,
+        &event(
+            &maya,
+            30_617,
+            now - 100,
+            "",
+            &[&["d", "tidepool"], &["name", "tidepool"]],
+        ),
+    )
+    .await;
+    let goal = event(
+        &maya,
+        9041,
+        now - 90,
+        "Fund tide data",
+        &[&["amount", "10000000", "USDC", "6"], &["a", &repo]],
+    );
+    store(relay, &goal).await;
+    let bounty = event(
+        &maya,
+        30_402,
+        now - 80,
+        "",
+        &[
+            &["d", "b1"],
+            &["title", "Wind overlays"],
+            &["t", "bounty"],
+            &["price", "50", "USDC"],
+            &["a", &repo],
+        ],
+    );
+    store(relay, &bounty).await;
+    let bounty_coordinate = format!("30402:{}:b1", maya.public_key().to_hex());
+    let payer = dan.public_key().to_hex();
+    let goal_id = goal.id.to_hex();
+    for (signer, tags) in [
+        (
+            &maya,
+            vec![
+                vec!["e", &goal_id],
+                vec!["amount", "2500000", "USDC", "6"],
+                vec!["p", &payer],
+                vec!["receipt", "r1"],
+            ],
+        ),
+        (
+            &maya,
+            vec![
+                vec!["e", &goal_id],
+                vec!["amount", "1000000", "USDC", "6"],
+                vec!["receipt", "r2"],
+            ],
+        ),
+        (
+            &maya,
+            vec![
+                vec!["e", &goal_id],
+                vec!["amount", "1000000", "USDC", "6"],
+                vec!["receipt", "r2"],
+            ],
+        ),
+        (
+            &maya,
+            vec![
+                vec!["e", &goal_id],
+                vec!["amount", "900", "EUR", "2"],
+                vec!["receipt", "r3"],
+            ],
+        ),
+        (
+            &stranger,
+            vec![
+                vec!["e", &goal_id],
+                vec!["amount", "9000000", "USDC", "6"],
+                vec!["receipt", "r4"],
+            ],
+        ),
+        (
+            &maya,
+            vec![
+                vec!["a", &bounty_coordinate],
+                vec!["amount", "5000000", "USDC", "6"],
+                vec!["receipt", "r5"],
+            ],
+        ),
+        (
+            &maya,
+            vec![
+                vec!["a", &repo],
+                vec!["amount", "4000000", "USDC", "6"],
+                vec!["p", &payer],
+                vec!["receipt", "r6"],
+            ],
+        ),
+    ] {
+        let tags: Vec<&[&str]> = tags.iter().map(Vec::as_slice).collect();
+        store(relay, &event(signer, 9851, now - 10, "", &tags)).await;
+    }
+
+    let (_, page) = get(relay, "/social/bounties").await;
+    assert!(page.contains("data-progress=\"3500000\""), "{page}");
+    assert!(page.contains("3.5 USDC"), "{page}");
+    assert!(page.contains("1 named payer"), "{page}");
+    assert!(
+        !page.contains("9 USDC"),
+        "a stranger's acknowledgement counts for nothing"
+    );
+    assert!(page.contains("data-paid"), "{page}");
+    assert!(page.contains("5 USDC"), "{page}");
+
+    let repo_page = get(relay, &format!("/social/r/{}/tidepool", npub(&maya)))
+        .await
+        .1;
+    assert!(repo_page.contains("data-tips-received"), "{repo_page}");
+    assert!(repo_page.contains("4 USDC"), "{repo_page}");
+}
+
+#[tokio::test]
 async fn reports_raise_a_banner_only_through_the_lens_and_mutes_thin_the_feed() {
     let running = running_with(|_| None).await;
     let relay = &running.relay;

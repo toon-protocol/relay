@@ -709,20 +709,29 @@ kind 1631; else **Claimed** when the listing's NIP-99 `status` is `sold` (or
 checks it. A repo's page counts the open bounties naming it.
 
 A goal is a NIP-75 kind 9041 with an `a` tag naming the repo. The page shows
-its description and its target (`amount`, in millisats) and **no progress**:
-NIP-75 tallies Lightning zap receipts (kind 9735), which TOON does not
-produce, and the relay never checks a payment.
+its description and its target (`amount`: a tip NIP unit `["amount", n, code,
+scale]`, else millisats) and, when the target has a unit, its **progress**:
+the tip acknowledgements (9851) the goal's author signed for it, summed in the
+target's unit against the target. Without a unit or without a counted tip the
+card says so and draws no bar.
 
-### Tips: the gap
+### Tips
 
-There is no tip button yet. NIP-57 zaps are out on TOON: a zap receipt is written by the
+There is no tip button: app UIs on the relay are read-only. NIP-57 zaps are out on TOON: a zap receipt is written by the
 recipient's Lightning server, and nothing on TOON carries Lightning. The relay must not
 validate a payment either; payment checks live only in the connector. Tips are specified in
 [`docs/nips/nip-tips.md`](../nips/nip-tips.md): the recipient signs a tip route (10850), the
 payer seals a tip receipt (9850) into the payment and never publishes it, and the recipient
 publishes a tip acknowledgement (9851). Readers count only acknowledgements, and the amount that
 arrived ([ADR 0007](../adr/0007-readers-count-a-tip-only-when-its-recipient-acknowledged-it.md)).
-The pages do not draw tips yet.
+
+The pages draw what recipients acknowledged, following ADR 0007: only a kind 9851 signed by the
+tipped item's recipient counts (a repo's owner, a note's, goal's or bounty's author, the
+profile's key), the amount is what arrived, summed per unit and never converted, two
+acknowledgements of one `receipt` are one tip, and a payer is counted only where an
+acknowledgement names one. Repo, note and profile pages show **Tips received** (a total per
+unit and the named payers); a goal shows progress; a bounty shows what was **paid** in the
+unit of its price; a profile with a complete tip route (10850) says **Can be tipped**.
 
 A repo announcement or app that carries NIP-57 `zap` split tags shows them as text, **"Tip split
 (set by the owner)"**, with each share computed as NIP-57 Appendix G says. A person's kind 0

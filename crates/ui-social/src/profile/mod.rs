@@ -466,6 +466,11 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
     let tips = metadata
         .map(|event| crate::tips::split_card(event, profiles.names(), "this person"))
         .unwrap_or_default();
+    let mut tips = tips;
+    tips.push_str(&crate::tips::route_card(store, &key).await);
+    tips.push_str(&crate::tips::received_card(
+        &crate::tips::totals(store, &key, &crate::tips::Subject::Person).await,
+    ));
     body.push_str(&sidebar(&who, profiles.names(), &tips));
     body.push_str(&format!("<div class=\"profile-main\">{main}</div></div>"));
     let title = shown(&who.meta, &key);
