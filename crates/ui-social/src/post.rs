@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 
 use nostr::event::Event;
 use nostr::key::PublicKey;
-use relay_ui::chrome::{ago, escape, icon, person, person_avatar, svg};
+use relay_ui::chrome::{ago, escape, icon, person, svg};
 use ui_nip34::card::{self, Extras, Links, RepoCard};
 use ui_nip34::repo::{RepoAddress, first_tag};
 
@@ -97,7 +97,7 @@ pub(crate) fn by_line(view: &View<'_>, event: &Event, chips: &str, context: &str
         "<div class=\"by\">{}<div class=\"who\"><div class=\"line\">\
          {}{}{chips}</div>\
          <span class=\"muted small\"><a class=\"muted\" href=\"{}\">{}</a>{}</span></div></div>",
-        person_avatar(view.links.apps(), view.names, &event.pubkey, false),
+        relay_ui::chrome::person_picture_avatar(&event.pubkey, false),
         person(view.links.apps(), view.names, &event.pubkey),
         relay_ui::chrome::bot_chip(view.bots, &event.pubkey),
         escape(&event_path(event)),

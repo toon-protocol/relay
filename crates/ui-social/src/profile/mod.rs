@@ -33,7 +33,7 @@ use nostr::event::{Event, EventId, Kind};
 use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use nostr::types::Timestamp;
-use relay_ui::chrome::{self, Profiles, ago, avatar, date, escape, icon, name, npub, svg};
+use relay_ui::chrome::{self, Profiles, ago, date, escape, icon, name, npub, svg};
 use ui_nip34::card::{self, Links, RepoCard, plural};
 use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors, first_tag, newest, topics};
 
@@ -638,7 +638,7 @@ fn sidebar(who: &Who, names: &HashMap<PublicKey, String>, tips: &str) -> String 
     let mut out = format!(
         "<aside class=\"profile-side\"><div class=\"profile-avatar\">{}</div><div>\
          <h1 class=\"profile-name\">{}{}</h1>",
-        avatar(&shown, false),
+        relay_ui::chrome::picture_avatar(key, false),
         escape(&shown),
         if who.meta.bot {
             " <span class=\"chip chip-bot\" title=\"Its profile says its posts are wholly or partly \

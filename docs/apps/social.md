@@ -417,8 +417,8 @@ links here, and `/repo` links a repo's owner and maintainers here when
   NIP-24 `banner` (an `https` image the visitor's browser loads, like a
   post's media) and `bot` (a "bot" chip when it is `true`, the JSON
   boolean only; the same chip follows the key's name in every by-line on
-  `/social`: posts, replies, articles). The avatar stays initials, as
-  everywhere.
+  `/social`: posts, replies, articles). The avatar is the profile's `picture` over
+  the key's identicon (ADR 0008).
 - the NIP-05 name, shown as **unverified**: the relay never fetches the
   `.well-known` document.
 - NIP-38 statuses (kind 30315), newest per `d`, `general` first; one that is
@@ -548,10 +548,10 @@ so the visitor's **browser** loads the images and videos a post names, from
 wherever the post says, over `https` only. The relay itself never fetches them
 (ADR 0001). Pages send `Referrer-Policy: no-referrer` (and each `<img>` says
 so too), so a media host is not told which post was read, and a video is not
-requested until it is played (`preload="none"`). Avatars are initials, never a
-profile's `picture`, so reading a feed does not load a picture per person.
-A profile page loads one image the person chose: their `banner`.
-`/repo`'s pages keep their stricter policy.
+requested until it is played (`preload="none"`). An avatar is the key's identicon with
+its `picture` over it (ADR 0008), loaded lazily, so reading a feed does contact
+the hosts people chose. A profile page also loads their `banner`. `/repo`'s
+pages keep their stricter policy and draw identicons alone.
 
 ### Link previews
 

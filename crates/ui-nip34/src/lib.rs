@@ -19,6 +19,7 @@ pub mod lineage;
 mod markup;
 mod og;
 pub mod repo;
+mod search;
 mod threads;
 
 pub use git::{CONTENT_SECURITY_POLICY_VALUE as GIT_CONTENT_SECURITY_POLICY_VALUE, Defaults};
@@ -27,7 +28,7 @@ pub use threads::{STATUS_KINDS, is_applied};
 use std::collections::HashMap;
 
 use axum::Router;
-use axum::extract::{Path, State};
+use axum::extract::{Path, RawQuery, State};
 use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
@@ -36,11 +37,13 @@ use nostr::filter::Filter;
 use nostr::key::PublicKey;
 use nostr::nips::nip19::{FromBech32, Nip19Coordinate};
 use relay_ui::chrome::{
-    Apps, Profiles, escape, names, npub, percent_encode, person, person_avatar, shown_name,
+    Apps, Profiles, escape, names, npub, param, percent_encode, person, person_avatar, shown_name,
 };
 use relay_ui::meta::Preview;
 use relay_ui::{AppUi, Assets, ReadOnlyStore};
 use ui_preview::Previews;
+
+use search::Sort;
 
 use markup::{Tab, ago, icon, ref_menu, repo_header, svg};
 use repo::{
@@ -53,6 +56,11 @@ pub const PREFIX: &str = "/repo";
 
 /// The most announcements the list reads.
 const LIST_LIMIT: usize = 500;
+
+/// The most topics the search offers as filters.
+const TOPIC_LIMIT: usize = 12;
+/// The most topics one result shows.
+const ROW_TOPIC_LIMIT: usize = 5;
 
 /// The manifest's name for the list page's script.
 const SCRIPT: &str = "ui-nip34-web.js";
@@ -75,7 +83,7 @@ struct Pages {
 
 /// The app UI over `store`, with the built `assets` if the relay has them,
 /// the operator's `defaults` for where a browser looks for git objects, and
-/// the `apps` the relay serves (for the switcher and the links to `/social`).
+/// the `apps` the relay serves (for the site bar and the links to `/social`).
 pub fn app(store: ReadOnlyStore, assets: Option<Assets>, defaults: Defaults, apps: Apps) -> AppUi {
     let router = Router::new()
         .route(PREFIX, get(list))
@@ -176,6 +184,142 @@ fn latest_announcements(events: &[Event]) -> Vec<&Event> {
     latest
 }
 
+/// What a visitor asked the list for.
+struct Asked {
+    query: String,
+    topic: Option<String>,
+    sort: Sort,
+    sort_named: bool,
+}
+
+impl Asked {
+    /// The list's address with this query and topic, and `sort` if named.
+    fn path(&self, topic: Option<&str>, sort: Option<&str>) -> String {
+        let query = self.query.trim();
+        let pairs: Vec<String> = [("q", Some(query)), ("topic", topic), ("sort", sort)]
+            .into_iter()
+            .filter_map(|(name, value)| {
+                let value = value.filter(|value| !value.is_empty())?;
+                Some(format!("{name}={}", percent_encode(value)))
+            })
+            .collect();
+        if pairs.is_empty() {
+            PREFIX.to_owned()
+        } else {
+            format!("{PREFIX}?{}", pairs.join("&"))
+        }
+    }
+}
+
+/// The search form and the most used topics, the asked one marked.
+fn search_hero(asked: &Asked, repos: &[&Event]) -> String {
+    let sort = asked.sort_named.then_some(match asked.sort {
+        Sort::Updated => "updated",
+        Sort::Name => "name",
+        Sort::Best => "best",
+    });
+    let mut topics = String::new();
+    for (topic, count) in search::top_topics(repos, TOPIC_LIMIT) {
+        let on = asked.topic.as_deref() == Some(topic.as_str());
+        topics.push_str(&format!(
+            "<a class=\"chip chip-topic{}\" href=\"{}\"{}>{} <span class=\"count\">{count}</span></a>",
+            if on { " on" } else { "" },
+            escape(&asked.path((!on).then_some(topic.as_str()), sort)),
+            if on { " aria-current=\"true\"" } else { "" },
+            escape(&topic),
+        ));
+    }
+    if !topics.is_empty() {
+        topics = format!(
+            "<div class=\"chips search-topics\" aria-label=\"Filter by topic\">{topics}</div>"
+        );
+    }
+    let hidden = asked
+        .topic
+        .as_deref()
+        .map(|topic| {
+            format!(
+                "<input type=\"hidden\" name=\"topic\" value=\"{}\">",
+                escape(topic)
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "<section class=\"search-hero\"><h1>Repositories</h1>\
+         <p>Git repositories published to this relay as Nostr events.</p>\
+         <form class=\"search-box\" role=\"search\" method=\"get\" action=\"{PREFIX}\">\
+         <div class=\"search-field\">{}<input class=\"input\" type=\"search\" name=\"q\" value=\"{}\" \
+         placeholder=\"Search by name, topic, owner or npub\" aria-label=\"Search repositories\" \
+         autocomplete=\"off\"></div>{hidden}<button class=\"btn\" type=\"submit\">Search</button></form>{topics}</section>",
+        svg(icon::SEARCH, ""),
+        escape(&asked.query),
+    )
+}
+
+/// The order links over the results; best match only when there is a query.
+fn sort_links(asked: &Asked, searching: bool) -> String {
+    let mut out = String::from("<nav class=\"seg-group\" aria-label=\"Sort\">");
+    for (sort, slug, label) in [
+        (Sort::Best, "best", "Best match"),
+        (Sort::Updated, "updated", "Recently updated"),
+        (Sort::Name, "name", "Name"),
+    ] {
+        if sort == Sort::Best && !searching {
+            continue;
+        }
+        let here = sort == asked.sort;
+        out.push_str(&format!(
+            "<a class=\"seg{}\" href=\"{}\"{}>{label}</a>",
+            if here { " on" } else { "" },
+            escape(&asked.path(asked.topic.as_deref(), Some(slug))),
+            if here { " aria-current=\"true\"" } else { "" },
+        ));
+    }
+    out.push_str("</nav>");
+    out
+}
+
+/// One repository in the results, its matches marked.
+fn result_row(
+    repo: &Event,
+    asked: &Asked,
+    words: &[String],
+    apps: &Apps,
+    names: &HashMap<PublicKey, String>,
+) -> String {
+    let mut out = format!(
+        "<li class=\"repo-row\">{}<div class=\"repo-row-main\"><div class=\"title\"><a href=\"{}\">{}</a>\
+         <span class=\"pill\">Public</span></div>",
+        person_avatar(apps, &repo.pubkey, false),
+        escape(&repo_path(&repo.pubkey, d_tag(repo))),
+        search::highlight(repo_name(repo), words),
+    );
+    if let Some(description) = first_tag(repo, "description")
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        out.push_str(&format!("<p>{}</p>", search::highlight(description, words)));
+    }
+    let topics = search::topics(repo);
+    if !topics.is_empty() {
+        out.push_str("<div class=\"chips\">");
+        for topic in topics.iter().take(ROW_TOPIC_LIMIT) {
+            out.push_str(&format!(
+                "<a class=\"chip chip-topic\" href=\"{}\">{}</a>",
+                escape(&asked.path(Some(topic), None)),
+                escape(topic),
+            ));
+        }
+        out.push_str("</div>");
+    }
+    out.push_str(&format!(
+        "<div class=\"meta\">{}<span>Updated {}</span></div></div></li>",
+        person(apps, names, &repo.pubkey),
+        ago(repo.created_at),
+    ));
+    out
+}
+
 async fn list(
     State(Pages {
         store,
@@ -183,7 +327,28 @@ async fn list(
         apps,
         ..
     }): State<Pages>,
+    RawQuery(raw): RawQuery,
 ) -> Response {
+    let query = param(raw.as_deref(), "q").unwrap_or_default();
+    // A pasted repo address goes straight to the repo.
+    let pasted = query.trim();
+    let pasted = pasted.strip_prefix("nostr:").unwrap_or(pasted);
+    if let Ok(address) = Nip19Coordinate::from_bech32(pasted)
+        && address.kind == Kind::from(ANNOUNCEMENT)
+    {
+        return moved(&repo_path(&address.public_key, &address.identifier));
+    }
+    let words = search::words(&query);
+    let searching = !words.is_empty();
+    let sort_name = param(raw.as_deref(), "sort");
+    let asked = Asked {
+        topic: param(raw.as_deref(), "topic")
+            .map(|topic| topic.trim().to_lowercase())
+            .filter(|topic| !topic.is_empty()),
+        sort: Sort::asked(sort_name.as_deref(), searching),
+        sort_named: sort_name.is_some(),
+        query,
+    };
     let events = store
         .query(
             Filter::new()
@@ -194,39 +359,43 @@ async fn list(
     let repos = latest_announcements(&events);
     let owners: Vec<PublicKey> = repos.iter().map(|repo| repo.pubkey).collect();
     let names = names(&store, &owners).await;
-    let mut body = String::from("<h1 class=\"page-title\">Repositories</h1>");
+    let found = search::find(&repos, &names, &words, asked.topic.as_deref(), asked.sort);
+    let mut body = search_hero(&asked, &repos);
     if repos.is_empty() {
         body.push_str(
             "<div class=\"box\"><div class=\"empty\">No repositories on this relay.</div></div>",
         );
-    } else {
+    } else if found.is_empty() {
         body.push_str(&format!(
-            "<div class=\"box\"><div class=\"box-header strong\">{} {}</div><ul class=\"rows\">",
+            "<div class=\"box\"><div class=\"empty search-empty\"><h2>No repositories match “{}”</h2>\
+             <p>Try fewer words, a topic, or the owner's npub. Search covers repositories on this \
+             relay only.</p><p><a href=\"{PREFIX}\">See all {} repositories</a></p></div></div>",
+            escape(asked.query.trim()),
             repos.len(),
-            if repos.len() == 1 {
-                "repository"
-            } else {
-                "repositories"
-            }
         ));
-        for repo in repos {
-            body.push_str(&format!(
-                "<li class=\"repo-row\"><div class=\"title\"><a href=\"{}\">{}</a>\
-                 <span class=\"pill\">Public</span></div>",
-                escape(&repo_path(&repo.pubkey, d_tag(repo))),
-                escape(repo_name(repo)),
-            ));
-            if let Some(description) = first_tag(repo, "description")
-                .map(str::trim)
-                .filter(|text| !text.is_empty())
-            {
-                body.push_str(&format!("<p>{}</p>", escape(description)));
-            }
-            body.push_str(&format!(
-                "<div class=\"meta\">{}<span>Updated {}</span></div></li>",
-                person(&apps, &names, &repo.pubkey),
-                ago(repo.created_at),
-            ));
+    } else {
+        let noun = if found.len() == 1 {
+            "repository"
+        } else {
+            "repositories"
+        };
+        let mut heading = format!("{} {noun}", found.len());
+        if searching {
+            heading.push_str(&format!(" for “{}”", escape(asked.query.trim())));
+        }
+        if let Some(topic) = &asked.topic {
+            heading.push_str(&format!(" in {}", escape(topic)));
+        }
+        if searching || asked.topic.is_some() {
+            heading.push_str(&format!(" <a class=\"small\" href=\"{PREFIX}\">Clear</a>"));
+        }
+        body.push_str(&format!(
+            "<div class=\"box\"><div class=\"box-header results-head\">\
+             <div class=\"strong\">{heading}</div>{}</div><ul class=\"rows\">",
+            sort_links(&asked, searching),
+        ));
+        for repo in found {
+            body.push_str(&result_row(repo, &asked, &words, &apps, &names));
         }
         body.push_str("</ul></div>");
     }
@@ -463,7 +632,7 @@ fn about(
     for key in std::iter::once(owner).chain(authors.iter().filter(|key| *key != owner)) {
         out.push_str(&format!(
             "<li>{} {}</li>",
-            person_avatar(apps, names, key, true),
+            person_avatar(apps, key, true),
             person(apps, names, key)
         ));
     }

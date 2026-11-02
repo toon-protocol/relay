@@ -30,7 +30,7 @@ use axum::response::Response;
 use nostr::event::{Event, Kind};
 use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
-use relay_ui::chrome::{self, Profiles, avatar, escape, icon, percent_encode, plain_name, svg};
+use relay_ui::chrome::{self, Profiles, escape, icon, percent_encode, plain_name, svg};
 use ui_nip34::card::{Links, plural};
 use ui_nip34::repo::{
     ANNOUNCEMENT, RepoAddress, authorized_authors, first_tag, repo_name, supersedes, topics,
@@ -622,7 +622,7 @@ pub(crate) fn built_by(names: &HashMap<PublicKey, String>, makers: &[PublicKey])
             "<a class=\"avatar-link\" href=\"{}\" title=\"{}\">{}</a>",
             chrome::profile_path(key),
             escape(&plain_name(names, key)),
-            avatar(&plain_name(names, key), true)
+            relay_ui::chrome::picture_avatar(key, true)
         ));
     }
     out.push_str("</span>");

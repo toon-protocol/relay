@@ -23,7 +23,7 @@ use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use nostr::nips::nip19::{FromBech32, Nip19Coordinate};
 use nostr::types::Timestamp;
-use relay_ui::chrome::{self, Profiles, avatar, escape, icon, name, npub, plain_name, svg};
+use relay_ui::chrome::{self, Profiles, escape, icon, name, npub, plain_name, svg};
 use ui_nip34::card::plural;
 use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress};
 
@@ -801,7 +801,7 @@ pub(crate) async fn page(
             body.push_str(&format!(
                 "<li><a href=\"{}\">{} {}</a>{}</li>",
                 chrome::profile_path(key),
-                avatar(&plain_name(names, key), true),
+                relay_ui::chrome::picture_avatar(key, true),
                 name(names, key),
                 role.as_deref()
                     .map(|role| format!(" <span class=\"muted small\">{}</span>", escape(role)))

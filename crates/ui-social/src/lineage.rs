@@ -345,21 +345,14 @@ fn list(items: &[String]) -> String {
 }
 
 /// One node of the tree: its chip, who, what, and a note.
-fn node(
-    chip: &str,
-    here: bool,
-    who: &PublicKey,
-    title: &str,
-    note: &str,
-    draw: &Draw<'_>,
-) -> String {
+fn node(chip: &str, here: bool, who: &PublicKey, title: &str, note: &str) -> String {
     format!(
         "<div class=\"node{}\"{}><span class=\"chip{}\">{}</span>{}{}{}</div>",
         if here { " here" } else { "" },
         if here { " aria-current=\"true\"" } else { "" },
         if here { " chip-here" } else { "" },
         escape(chip),
-        chrome::person_avatar(draw.links.apps(), draw.names, who, true),
+        relay_ui::chrome::person_picture_avatar(who, true),
         title,
         if note.is_empty() {
             String::new()
@@ -425,7 +418,6 @@ fn repo_node(
         address.owner(),
         &title,
         &note.join(" &middot; "),
-        draw,
     )
 }
 
@@ -484,14 +476,7 @@ fn site_node(lineage: &Lineage, site: &Event, chip: &str, note: &str, draw: &Dra
             escape(&url)
         ));
     }
-    node(
-        chip,
-        false,
-        &site.pubkey,
-        &title,
-        &notes.join(" &middot; "),
-        draw,
-    )
+    node(chip, false, &site.pubkey, &title, &notes.join(" &middot; "))
 }
 
 /// The forks of `address`, `depth` levels down, as list items.

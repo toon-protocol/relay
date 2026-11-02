@@ -7,7 +7,7 @@
 //! hands each its handle; this crate holds no relay code.
 //!
 //! [`chrome`] is what the apps' pages share, so they read as one site: the
-//! page shell and app switcher, the repo header's pieces, names and dates.
+//! page shell and site bar, the repo header's pieces, names and dates.
 //! [`meta`] is what the shell tells a link unfurler: Open Graph and X card
 //! tags naming the card image a page has.
 

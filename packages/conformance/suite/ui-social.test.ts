@@ -72,9 +72,9 @@ describe('relay image conformance: the /social app UI', () => {
       expect(css.headers.get('cache-control')).toBe(
         'public, max-age=31536000, immutable'
       );
-      // One switcher across the apps.
-      expect(feed.text).toContain('class="app-link" href="/repo"');
-      expect(feed.text).toContain('class="app-link current" href="/social"');
+      // One site bar across the apps.
+      expect(feed.text).toContain('class="navlink" href="/repo"');
+      expect(feed.text).toContain('class="navlink current" href="/social"');
     }
   );
 
@@ -221,14 +221,14 @@ describe('relay image conformance: the /social app UI', () => {
   );
 
   conformanceTest(
-    '/repo links to /social and the switcher offers both',
+    '/repo links to /social and the site bar offers both',
     async () => {
       const home = await fetch(
         `${relay.readUrl}/repo/${fixture.npubs.maya}/tidepool`
       );
       const html = await home.text();
       expect(html).toContain(`href="/social/r/${fixture.npubs.maya}/tidepool"`);
-      expect(html).toContain('class="app-link" href="/social"');
+      expect(html).toContain('class="navlink" href="/social"');
     }
   );
 
