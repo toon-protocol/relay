@@ -39,7 +39,7 @@ use nostr::nips::nip01::Coordinate;
 use nostr::nips::nip19::{Nip19Coordinate, ToBech32};
 use nostr::types::Timestamp;
 use relay_ui::ReadOnlyStore;
-use relay_ui::chrome::{self, Profiles, ago, avatar, escape, icon, name, plain_name, svg};
+use relay_ui::chrome::{self, Profiles, ago, escape, icon, name, svg};
 use ui_nip34::card::{RepoCard, plural};
 use ui_nip34::repo::{d_tag, first_tag, newest};
 
@@ -306,7 +306,7 @@ fn message_html(
         "<li class=\"message\" data-id=\"{}\">{}<div class=\"body\"><div class=\"line\">{} \
          <span class=\"muted small\">{}</span></div>{quoted}<p class=\"text\">{}</p></div></li>",
         event.id.to_hex(),
-        avatar(&plain_name(names, &event.pubkey), true),
+        relay_ui::chrome::picture_avatar(&event.pubkey, true),
         name(names, &event.pubkey),
         ago(event.created_at),
         text.html.trim(),
@@ -557,7 +557,7 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(id): Path<String>) -> 
         body.push_str(&format!(
             "<li><a href=\"{}\">{} {}</a></li>",
             chrome::profile_path(key),
-            avatar(&plain_name(names, key), true),
+            relay_ui::chrome::picture_avatar(key, true),
             name(names, key)
         ));
     }

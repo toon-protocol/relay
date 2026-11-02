@@ -391,3 +391,111 @@ async fn an_issue_page_shows_the_note_its_honoured_status_carries() {
     assert!(page.contains("Reopened: still flaky on iOS 18."), "{page}");
     assert!(page.contains("marked this open"), "{page}");
 }
+
+#[tokio::test]
+async fn the_list_finds_repositories_by_name_topic_and_address() {
+    let running = running().await;
+    let relay = &running.relay;
+    let owner = Keys::generate();
+    let announce = |d: &str, description: &str, topic: &str| {
+        signed_by(
+            &owner,
+            30_617,
+            10,
+            &[&["d", d], &["description", description], &["t", topic]],
+        )
+    };
+    store(relay, &announce("relay", "A nostr <relay>", "rust")).await;
+    store(relay, &announce("wallet", "Holds keys for a relay", "go")).await;
+
+    let (status, _, page) = get(relay, "/repo?q=RELAY").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("2 repositories for “RELAY”"), "{page}");
+    assert!(page.contains("<mark>relay</mark>"));
+    assert!(
+        page.contains("&lt;<mark>relay</mark>&gt;"),
+        "escaped: {page}"
+    );
+    let by_name = page.find(">A nostr").expect("the name match");
+    let by_description = page.find(">Holds keys").expect("the description match");
+    assert!(by_name < by_description, "a name match ranks first");
+
+    let (_, _, narrowed) = get(relay, "/repo?q=relay&topic=go").await;
+    assert!(narrowed.contains("1 repository"), "{narrowed}");
+    assert!(narrowed.contains("wallet"));
+
+    let (_, _, none) = get(relay, "/repo?q=%3Cscript%3E").await;
+    assert!(
+        none.contains("No repositories match “&lt;script&gt;”"),
+        "{none}"
+    );
+
+    let naddr = Nip19Coordinate::new(
+        nostr::nips::nip01::Coordinate::new(nostr::event::Kind::from(30_617), owner.public_key())
+            .identifier("relay"),
+        Vec::<nostr::types::RelayUrl>::new(),
+    )
+    .to_bech32()
+    .expect("bech32");
+    let (status, location, _) = get(relay, &format!("/repo?q=nostr:{naddr}")).await;
+    assert!(status.is_redirection());
+    assert!(location.expect("a redirect").ends_with("/relay"));
+}
+
+#[tokio::test]
+async fn an_avatar_redirects_only_to_the_newest_profiles_https_picture() {
+    use nostr::event::{EventBuilder, FinalizeEvent, Kind};
+    use nostr::types::Timestamp;
+
+    let running = running().await;
+    let relay = &running.relay;
+    let profile = |keys: &Keys, at: u64, content: &str| {
+        EventBuilder::new(Kind::Metadata, content)
+            .custom_created_at(Timestamp::from(at))
+            .finalize(keys)
+            .expect("signed")
+    };
+    let path = |keys: &Keys| {
+        format!(
+            "/social/avatar/{}",
+            keys.public_key().to_bech32().expect("npub")
+        )
+    };
+    let shown = Keys::generate();
+    store(
+        relay,
+        &profile(&shown, 10, r#"{"picture":"https://a.example/old.png"}"#),
+    )
+    .await;
+    store(
+        relay,
+        &profile(&shown, 20, r#"{"picture":"https://a.example/new.png"}"#),
+    )
+    .await;
+    let (status, location, _) = get(relay, &path(&shown)).await;
+    assert_eq!(status, StatusCode::FOUND);
+    assert_eq!(location.as_deref(), Some("https://a.example/new.png"));
+
+    let plain = Keys::generate();
+    store(
+        relay,
+        &profile(&plain, 10, r#"{"picture":"http://a.example/p.png"}"#),
+    )
+    .await;
+    assert_eq!(get(relay, &path(&plain)).await.0, StatusCode::NOT_FOUND);
+    let script = Keys::generate();
+    store(
+        relay,
+        &profile(&script, 10, r#"{"picture":"javascript:alert(1)"}"#),
+    )
+    .await;
+    assert_eq!(get(relay, &path(&script)).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(
+        get(relay, &path(&Keys::generate())).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get(relay, "/social/avatar/nonsense").await.0,
+        StatusCode::NOT_FOUND
+    );
+}

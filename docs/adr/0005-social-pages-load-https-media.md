@@ -1,10 +1,10 @@
 # /social pages let the browser load https media
 
-**Status:** Accepted (2026-10-23, #307). Built by the `/social` app UI (`crates/ui-social`).
+**Status:** Accepted (2026-10-23, #307); rule 4 superseded by [ADR 0008](0008-avatars-are-pictures-over-identicons.md). Built by the `/social` app UI (`crates/ui-social`).
 
 **Scope:** relay architecture — internal to this codebase. See the [ADR index](README.md).
 
-**Falsifier:** a `/social` page whose `Content-Security-Policy` allows script, or allows images or media from anything but `'self'` and `https:`; a `/social` page served without `Referrer-Policy: no-referrer`; an `<img>` or `<video>` on a `/social` page whose URL is not `https`; an avatar drawn from a profile's `picture`; or the relay making an outbound request to produce or check any of it.
+**Falsifier:** a `/social` page whose `Content-Security-Policy` allows script, or allows images or media from anything but `'self'` and `https:`; a `/social` page served without `Referrer-Policy: no-referrer`; an `<img>` or `<video>` on a `/social` page whose URL is not `https`; or the relay making an outbound request to produce or check any of it.
 
 **`/social` pages allow the visitor's browser to load `https` images and video that events name. The relay still fetches nothing.** This loosens ADR 0001's "strict CSP for pages built only from events" for one app. It does not touch ADR 0001's rule that the relay never fetches.
 
@@ -23,7 +23,7 @@ Loading third-party media in the visitor's browser has costs. The media host lea
    (`ui_social::CONTENT_SECURITY_POLICY_VALUE`). The pages run no script at all.
 2. **No referrer.** Every `/social` response carries `Referrer-Policy: no-referrer`, and each drawn `<img>` also has `referrerpolicy="no-referrer"`. A media host is not told which page or relay asked.
 3. **Only `https` URLs named in events.** A page draws media only from an `https` URL that an event names (an `imeta` `url` or `image`, a NIP-68/71 event, a NIP-82 `icon` or `image`). `http:` and `data:` URLs are never drawn. A video is not fetched until it is played (`preload="none"`).
-4. **Avatars are initials.** A person's avatar is the first two letters of their name, never their kind 0 `picture`. A page loads no image a person chose to stand for themselves, so following a by-line does not ping a host that person picked.
+4. **Avatars are initials.** *(Superseded by ADR 0008.)* A person's avatar is the first two letters of their name, never their kind 0 `picture`. A page loads no image a person chose to stand for themselves, so following a by-line does not ping a host that person picked.
 5. **The relay still never fetches.** It does not proxy, cache, resize or check any media, and it makes no outbound request for a `/social` page. ADR 0001 stands unchanged on this point.
 6. **`/repo` keeps its stricter policy.** Its event pages stay `default-src 'self'` and its git pages add only `connect-src 'self' https:`. This decision applies to `/social` alone.
 

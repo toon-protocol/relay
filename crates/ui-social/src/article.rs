@@ -39,9 +39,7 @@ use nostr::nips::nip19::{FromBech32, Nip19, Nip19Coordinate, ToBech32};
 use nostr::nips::nip21::Nip21;
 use nostr::parser::{NostrParser, Token};
 use nostr::types::{RelayUrl, Timestamp};
-use relay_ui::chrome::{
-    Profiles, ago, escape, name, npub, percent_encode, person, person_avatar, plain_name,
-};
+use relay_ui::chrome::{Profiles, ago, escape, name, npub, percent_encode, person, plain_name};
 use ui_markdown::{Node, Place};
 use ui_nip34::card::plural;
 use ui_nip34::repo::{RepoAddress, first_tag, newest, topics};
@@ -671,7 +669,7 @@ fn reader(
     out.push_str(&format!(
         "<div class=\"article-by\">{}<div class=\"who\"><div class=\"line\">\
          {}{}{}</div>{about}</div></div>",
-        person_avatar(view.links.apps(), view.names, &article.pubkey, false),
+        relay_ui::chrome::person_picture_avatar(&article.pubkey, false),
         person(view.links.apps(), view.names, &article.pubkey),
         relay_ui::chrome::bot_chip(view.bots, &article.pubkey),
         if maker {

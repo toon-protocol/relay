@@ -1,5 +1,5 @@
 //! The chrome every app UI page is drawn from, so `/repo` and `/social` read
-//! as one site: the page shell with its top bar and app switcher, the repo
+//! as one site: the page shell with its site bar, the repo
 //! header's title and tabs, icons, people's names and avatars, and dates.
 //!
 //! Every function here writes escaped HTML that names classes of the shared
@@ -9,6 +9,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use sha2::{Digest, Sha256};
 
 use nostr::event::{Event, Kind};
 use nostr::filter::Filter;
@@ -29,7 +31,7 @@ pub enum App {
 }
 
 impl App {
-    /// Every app, in the order the switcher shows them.
+    /// Every app, in a fixed order.
     pub const ALL: [App; 2] = [App::Repo, App::Social];
 
     /// The name `TOON_UI_APPS` gives the app.
@@ -53,23 +55,16 @@ impl App {
         }
     }
 
-    /// What the switcher calls it.
+    /// What a preview calls it.
     pub fn label(self) -> &'static str {
         match self {
             Self::Repo => "Repos",
             Self::Social => "Social",
         }
     }
-
-    fn icon(self) -> &'static str {
-        match self {
-            Self::Repo => icon::REPO,
-            Self::Social => icon::COMMENT,
-        }
-    }
 }
 
-/// The apps the relay serves: what the switcher offers and which cross-links
+/// The apps the relay serves: which sections the site bar offers and which cross-links
 /// a page may draw, and the public origin they are reached at when the
 /// operator has said it. A link to an app that is off would answer `426`, so
 /// a page asks [`Apps::serves`] before drawing one.
@@ -80,7 +75,7 @@ pub struct Apps {
 }
 
 impl Apps {
-    /// The apps in `on`, once each, in the switcher's order.
+    /// The apps in `on`, once each, in a fixed order.
     pub fn new(on: impl IntoIterator<Item = App>) -> Self {
         let on: Vec<App> = on.into_iter().collect();
         Self {
@@ -113,6 +108,7 @@ impl Apps {
 /// Octicons (MIT, GitHub), 16px, drawn in the text colour by [`svg`].
 pub mod icon {
     pub const REPO: &str = "M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7.75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z";
+    pub const SEARCH: &str = "M10.68 11.74a6 6 0 1 1 1.06-1.06l3.04 3.04a.75.75 0 1 1-1.06 1.06ZM11.5 7a4.5 4.5 0 1 0-9 0 4.5 4.5 0 0 0 9 0Z";
     pub const CODE: &str = "M4.72 3.22a.75.75 0 011.06 1.06L2.06 8l3.72 3.72a.75.75 0 11-1.06 1.06L.47 8.53a.75.75 0 010-1.06l4.25-4.25zm6.56 0a.75.75 0 10-1.06 1.06L13.94 8l-3.72 3.72a.75.75 0 101.06 1.06l4.25-4.25a.75.75 0 000-1.06L11.28 3.22z";
     pub const ISSUE: &str = "M8 9.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3z M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0z";
     pub const ISSUE_DONE: &str = "M11.28 6.78a.75.75 0 0 0-1.06-1.06L7.25 8.69 5.78 7.22a.75.75 0 0 0-1.06 1.06l2 2a.75.75 0 0 0 1.06 0l3.5-3.5Z M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0Zm-1.5 0a6.5 6.5 0 1 0-13 0 6.5 6.5 0 0 0 13 0Z";
@@ -188,11 +184,55 @@ pub fn npub(key: &PublicKey) -> String {
     npub
 }
 
-/// The whole page: the stylesheet, the top bar with the app switcher (when
-/// more than one app is on) and `header` after it, then `body`. `app` is the
-/// app drawing the page; its stylesheet is served under its own prefix.
-pub fn page(apps: &Apps, app: App, title: &str, header: &str, body: &str) -> String {
-    page_with(apps, app, title, header, body, &Preview::default())
+/// The part of the site a page belongs to, marked in the site bar. Which app
+/// draws a page is an implementation detail a visitor never has to know.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    Home,
+    Repos,
+    Trending,
+    Events,
+    Bounties,
+    Apps,
+    /// A page that is none of them: a post, a profile, an article.
+    Other,
+}
+
+impl Section {
+    /// The site bar's links, in order: the section, the app serving it, its
+    /// path and its label.
+    const LINKS: [(Section, App, &'static str, &'static str); 6] = [
+        (Section::Home, App::Social, "/social", "Home"),
+        (Section::Repos, App::Repo, "/repo", "Repos"),
+        (
+            Section::Trending,
+            App::Social,
+            "/social/trending",
+            "Trending",
+        ),
+        (Section::Events, App::Social, "/social/events", "Events"),
+        (
+            Section::Bounties,
+            App::Social,
+            "/social/bounties",
+            "Bounties",
+        ),
+        (Section::Apps, App::Social, "/social/apps", "Apps"),
+    ];
+}
+
+/// The whole page: the stylesheet, the site bar with `section` marked and
+/// `header` at its end, then `body`. `app` is the app drawing the page; its
+/// stylesheet is served under its own prefix.
+pub fn page(
+    apps: &Apps,
+    app: App,
+    section: Section,
+    title: &str,
+    header: &str,
+    body: &str,
+) -> String {
+    page_with(apps, app, section, title, header, body, &Preview::default())
 }
 
 /// [`page`], telling link unfurlers what `preview` says about it: Open
@@ -200,6 +240,7 @@ pub fn page(apps: &Apps, app: App, title: &str, header: &str, body: &str) -> Str
 pub fn page_with(
     apps: &Apps,
     app: App,
+    section: Section,
     title: &str,
     header: &str,
     body: &str,
@@ -215,28 +256,92 @@ pub fn page_with(
         preview.tags(title, app, apps),
         app.prefix(),
         crate::stylesheet_name(),
-        switcher(apps, app),
+        site_bar(apps, app, section),
     )
 }
 
-/// The app switcher: one link per app that is on, `current` marked.
-fn switcher(apps: &Apps, current: App) -> String {
-    let mut out = String::from("<nav class=\"app-switch\" aria-label=\"Apps\">");
-    for app in App::ALL
-        .into_iter()
-        .filter(|app| *app == current || apps.serves(*app))
-    {
-        let here = app == current;
+/// The value of `name` in a query string, percent-decoded (`+` is a space).
+/// A pure function.
+pub fn param(query: Option<&str>, name: &str) -> Option<String> {
+    query?.split('&').find_map(|pair| {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        (key == name).then(|| percent_decode(value))
+    })
+}
+
+/// `text` with `%XX` escapes decoded and `+` read as a space; invalid UTF-8
+/// is replaced. A pure function.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        let byte = bytes[at];
+        let hex = |offset: usize| {
+            bytes
+                .get(at + offset)
+                .and_then(|digit| char::from(*digit).to_digit(16))
+        };
+        match (byte, hex(1), hex(2)) {
+            (b'%', Some(high), Some(low)) => {
+                out.push(u8::try_from(high * 16 + low).unwrap_or(b'?'));
+                at += 3;
+            }
+            (b'+', _, _) => {
+                out.push(b' ');
+                at += 1;
+            }
+            _ => {
+                out.push(byte);
+                at += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// The TOON mark, drawn from the protocol's logo: a dark and a gold block
+/// joined by a line. Its colours are classes, so it reads in dark mode too.
+const BRAND_MARK: &str = "<svg class=\"brand-mark\" viewBox=\"0 0 32 24\" aria-hidden=\"true\">\
+     <path class=\"brand-line\" d=\"M0 10h3v1.25h4v1.5H3V14H0zM25 11.25h4V10h3v4h-3v-1.25h-4z\"/>\
+     <path class=\"brand-dark\" d=\"M7.5 1h8v22h-8zM9.5 3v2.5H12V3z\" fill-rule=\"evenodd\"/>\
+     <path class=\"brand-gold\" d=\"M16.5 1h8v22h-8z\"/></svg>";
+
+/// The site bar: the mark, one link per section of the apps that are on, and
+/// the repository search when `/repo` is on.
+fn site_bar(apps: &Apps, current: App, section: Section) -> String {
+    let on = |app: App| app == current || apps.serves(app);
+    let home = if on(App::Social) {
+        App::Social
+    } else {
+        App::Repo
+    };
+    let mut out = format!(
+        "<a class=\"brand\" href=\"{}\" aria-label=\"TOON home\">{BRAND_MARK}<span>TOON</span></a>\
+         <nav class=\"app-nav\" aria-label=\"Site\">",
+        home.prefix()
+    );
+    for (link, app, path, label) in Section::LINKS {
+        if !on(app) {
+            continue;
+        }
+        let here = link == section;
         out.push_str(&format!(
-            "<a class=\"app-link{}\" href=\"{}\"{}>{}{}</a>",
+            "<a class=\"navlink{}\" href=\"{path}\"{}>{label}</a>",
             if here { " current" } else { "" },
-            app.prefix(),
             if here { " aria-current=\"page\"" } else { "" },
-            svg(app.icon(), ""),
-            app.label(),
         ));
     }
-    out.push_str("</nav>");
+    out.push_str("</nav><span class=\"grow\"></span>");
+    if on(App::Repo) {
+        out.push_str(&format!(
+            "<form class=\"site-search\" role=\"search\" method=\"get\" action=\"{}\">{}\
+             <input class=\"input\" type=\"search\" name=\"q\" placeholder=\"Search repositories\" \
+             aria-label=\"Search repositories\" autocomplete=\"off\"></form>",
+            App::Repo.prefix(),
+            svg(icon::SEARCH, ""),
+        ));
+    }
     out
 }
 
@@ -345,21 +450,25 @@ pub fn person(apps: &Apps, names: &HashMap<PublicKey, String>, key: &PublicKey) 
 /// A person's [`avatar`], linking to their `/social` profile when `apps`
 /// serves `/social`. The link is hidden from assistive technology: the
 /// name beside it carries the same link.
-pub fn person_avatar(
-    apps: &Apps,
-    names: &HashMap<PublicKey, String>,
-    key: &PublicKey,
-    small: bool,
-) -> String {
-    let drawn = avatar(&plain_name(names, key), small);
+pub fn person_avatar(apps: &Apps, key: &PublicKey, small: bool) -> String {
+    let drawn = avatar(key, small);
     if apps.serves(App::Social) {
-        format!(
-            "<a class=\"avatar-link\" href=\"{}\" tabindex=\"-1\" aria-hidden=\"true\">{drawn}</a>",
-            profile_path(key)
-        )
+        linked_avatar(key, &drawn)
     } else {
         drawn
     }
+}
+
+/// A person's [`picture_avatar`], linking to their `/social` profile.
+pub fn person_picture_avatar(key: &PublicKey, small: bool) -> String {
+    linked_avatar(key, &picture_avatar(key, small))
+}
+
+fn linked_avatar(key: &PublicKey, drawn: &str) -> String {
+    format!(
+        "<a class=\"avatar-link\" href=\"{}\" tabindex=\"-1\" aria-hidden=\"true\">{drawn}</a>",
+        profile_path(key)
+    )
 }
 
 /// The plain text [`name`] shows: the profile's name, else the start of
@@ -379,19 +488,58 @@ pub fn plain_name(names: &HashMap<PublicKey, String>, key: &PublicKey) -> String
         .unwrap_or_else(|| npub(key)[5..7].to_owned())
 }
 
-/// A round avatar holding the first two letters of `name`. Avatars are never
-/// a profile's picture: a page loads no image a person chose for themselves.
-pub fn avatar(name: &str, small: bool) -> String {
-    let initials: String = name
-        .chars()
-        .filter(|c| c.is_alphanumeric())
-        .take(2)
-        .collect::<String>()
-        .to_uppercase();
+/// A round avatar: the key's [`identicon`]. Loads nothing.
+pub fn avatar(key: &PublicKey, small: bool) -> String {
     format!(
         "<span class=\"avatar{}\" aria-hidden=\"true\">{}</span>",
         if small { " avatar-sm" } else { "" },
-        escape(&initials)
+        identicon(key),
+    )
+}
+
+/// An [`avatar`] with the key's own picture over its identicon, for pages
+/// whose policy lets the browser load one (ADR 0008). `/social/avatar/<npub>`
+/// redirects to the picture, or answers 404; a failed image has an empty
+/// `alt`, so it draws nothing and the identicon shows through.
+pub fn picture_avatar(key: &PublicKey, small: bool) -> String {
+    format!(
+        "<span class=\"avatar{}\" aria-hidden=\"true\">{}<img class=\"avatar-picture\" \
+         src=\"{}/avatar/{}\" alt=\"\" loading=\"lazy\" decoding=\"async\" \
+         referrerpolicy=\"no-referrer\"></span>",
+        if small { " avatar-sm" } else { "" },
+        identicon(key),
+        App::Social.prefix(),
+        npub(key),
+    )
+}
+
+/// The side of an identicon, in pixels.
+const IDENTICON_SIZE: usize = 8;
+
+/// A key's placeholder picture: pixel art drawn from the SHA-256 of its npub,
+/// left and right mirrored. The same key draws the same picture on every page
+/// and every relay. A pure function; `fill` is an SVG attribute, which the
+/// pages' policy allows where it refuses `style`.
+pub fn identicon(key: &PublicKey) -> String {
+    let hash = Sha256::digest(npub(key).as_bytes());
+    let hue = u16::from_be_bytes([hash[0], hash[1]]) % 360;
+    let mut pixels = String::new();
+    // One bit per pixel of the left half, from the bytes the hue did not use.
+    for y in 0..IDENTICON_SIZE {
+        let row = hash[2 + y];
+        for x in 0..IDENTICON_SIZE / 2 {
+            if row >> x & 1 == 1 {
+                pixels.push_str(&format!("M{x} {y}h1v1h-1z"));
+                let mirrored = IDENTICON_SIZE - 1 - x;
+                pixels.push_str(&format!("M{mirrored} {y}h1v1h-1z"));
+            }
+        }
+    }
+    format!(
+        "<svg class=\"identicon\" viewBox=\"0 0 {IDENTICON_SIZE} {IDENTICON_SIZE}\" \
+         shape-rendering=\"crispEdges\"><path fill=\"hsl({hue} 45% 90%)\" \
+         d=\"M0 0h{IDENTICON_SIZE}v{IDENTICON_SIZE}H0z\"/>\
+         <path fill=\"hsl({hue} 60% 38%)\" d=\"{pixels}\"/></svg>"
     )
 }
 
@@ -589,9 +737,27 @@ mod tests {
     }
 
     #[test]
-    fn initials_are_the_first_two_letters() {
-        assert!(avatar("ada lovelace", false).contains(">AD<"));
-        assert!(avatar("<b>", true).contains(">B<"));
+    fn an_identicon_is_the_same_for_a_key_mirrored_and_different_between_keys() {
+        let key = Keys::generate().public_key();
+        let drawn = identicon(&key);
+        assert_eq!(drawn, identicon(&key));
+        assert_ne!(drawn, identicon(&Keys::generate().public_key()));
+        for rect in drawn.split('M').filter(|part| part.ends_with("h1v1h-1z")) {
+            let (x, y) = rect.trim_end_matches("h1v1h-1z").split_once(' ').unwrap();
+            let x: usize = x.parse().unwrap();
+            let twin = format!("M{} {y}h1v1h-1z", IDENTICON_SIZE - 1 - x);
+            assert!(drawn.contains(&twin), "{twin}");
+        }
+    }
+
+    #[test]
+    fn an_avatar_loads_nothing_and_a_picture_avatar_asks_its_own_origin() {
+        let key = Keys::generate().public_key();
+        assert!(!avatar(&key, true).contains("<img"));
+        let picture = picture_avatar(&key, true);
+        assert!(picture.contains("identicon"));
+        assert!(picture.contains(&format!("src=\"/social/avatar/{}\"", npub(&key))));
+        assert!(picture.contains("referrerpolicy=\"no-referrer\""));
     }
 
     #[test]
@@ -600,19 +766,32 @@ mod tests {
     }
 
     #[test]
-    fn the_switcher_offers_only_the_apps_that_are_on() {
+    fn the_site_bar_is_one_list_of_sections_for_the_apps_that_are_on() {
         let both = Apps::new([App::Social, App::Repo]);
-        let page_html = page(&both, App::Repo, "t", "", "");
-        let repo = page_html.find("href=\"/repo\"").expect("repo link");
-        let social = page_html.find("href=\"/social\"").expect("social link");
-        assert!(repo < social, "the switcher's order is fixed");
-        assert!(page_html.contains("app-link current\" href=\"/repo\""));
-        assert!(page_html.contains("href=\"/repo/assets/style."));
+        let html = page(&both, App::Repo, Section::Repos, "t", "", "");
+        let home = html
+            .find("class=\"navlink\" href=\"/social\"")
+            .expect("home");
+        let repos = html
+            .find("class=\"navlink current\" href=\"/repo\" aria-current=\"page\"")
+            .expect("repos");
+        assert!(home < repos, "the bar's order is fixed");
+        assert_eq!(html.matches("aria-current").count(), 1);
+        assert!(html.contains("href=\"/repo/assets/style."));
+        assert!(html.contains("action=\"/repo\""), "the search");
+        assert!(!page(&both, App::Social, Section::Other, "t", "", "").contains("aria-current"));
 
         let alone = Apps::new([App::Repo]);
-        assert!(!page(&alone, App::Repo, "t", "", "").contains("/social"));
-        assert!(!both.serves(App::Social) || both.serves(App::Repo));
-        assert!(!alone.serves(App::Social));
+        assert!(!page(&alone, App::Repo, Section::Repos, "t", "", "").contains("/social"));
+        let social = page(
+            &Apps::new([App::Social]),
+            App::Social,
+            Section::Home,
+            "t",
+            "",
+            "",
+        );
+        assert!(!social.contains("action=\"/repo\""));
     }
 
     #[test]
@@ -696,10 +875,10 @@ mod tests {
         assert_eq!(profile_path(&key), path);
         let on = Apps::new([App::Repo, App::Social]);
         assert!(person(&on, &names, &key).contains(&format!("href=\"{path}\"")));
-        assert!(person_avatar(&on, &names, &key, true).contains(&format!("href=\"{path}\"")));
+        assert!(person_avatar(&on, &key, true).contains(&format!("href=\"{path}\"")));
         let off = Apps::new([App::Repo]);
         assert!(!person(&off, &names, &key).contains("href"));
-        assert!(!person_avatar(&off, &names, &key, false).contains("href"));
+        assert!(!person_avatar(&off, &key, false).contains("href"));
     }
 
     #[test]

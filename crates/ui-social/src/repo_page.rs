@@ -30,7 +30,7 @@ use nostr::event::{Event, Kind};
 use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use nostr::types::Timestamp;
-use relay_ui::chrome::{self, Profiles, ago, avatar, escape, icon, name, plain_name, svg};
+use relay_ui::chrome::{self, Profiles, ago, escape, icon, name, svg};
 use ui_nip34::card::{self, RepoCard, clone_urls, plural};
 use ui_nip34::repo::{RepoAddress, first_tag, tag_values, topics};
 
@@ -373,7 +373,17 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab, query: Option<&str>
     ));
     let mut tabs: Vec<chrome::Tab> = Vec::new();
     if let Some(code) = links.repo_path(&repo) {
-        tabs.push(chrome::Tab::new("Code", icon::CODE, code));
+        tabs.push(chrome::Tab::new("Code", icon::CODE, code.clone()));
+        tabs.push(chrome::Tab::new(
+            "Issues",
+            icon::ISSUE,
+            format!("{code}/issues"),
+        ));
+        tabs.push(chrome::Tab::new(
+            "Pull requests",
+            icon::PULL,
+            format!("{code}/pulls"),
+        ));
     }
     let as_viewer = viewer
         .as_ref()
@@ -494,7 +504,7 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab, query: Option<&str>
     };
     html_with(
         pages,
-        (crate::Nav::Other, StatusCode::OK),
+        (crate::Nav::Repos, StatusCode::OK),
         &format!("{} · {}", card.name(), tab.label()),
         viewer.as_ref(),
         &body,
@@ -601,7 +611,7 @@ fn people_grid(
             "<a class=\"person\" href=\"{}\">{}<span class=\"who\">{}\
              <span class=\"muted small\">{verb} {}</span></span></a>",
             chrome::profile_path(key),
-            avatar(&plain_name(view.names, key), false),
+            relay_ui::chrome::picture_avatar(key, false),
             name(view.names, key),
             ago(*at),
         ));
@@ -747,7 +757,7 @@ fn sidebar(view: &View<'_>, card: &RepoCard, before: &str, after: &str) -> Strin
     for key in card.authorized() {
         out.push_str(&format!(
             "<li>{} {}</li>",
-            chrome::person_avatar(view.links.apps(), card.profiles().names(), key, true),
+            relay_ui::chrome::person_picture_avatar(key, true),
             chrome::person(view.links.apps(), card.profiles().names(), key)
         ));
     }

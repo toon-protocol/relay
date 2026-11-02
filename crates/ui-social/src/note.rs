@@ -13,7 +13,7 @@ use axum::response::{IntoResponse, Response};
 use nostr::event::{Event, Kind};
 use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
-use relay_ui::chrome::{Profiles, ago, escape, icon, person, person_avatar, svg};
+use relay_ui::chrome::{Profiles, ago, escape, icon, person, svg};
 use ui_nip34::card::plural;
 use ui_nip34::repo::{RepoAddress, first_tag};
 
@@ -251,7 +251,7 @@ fn launch(view: &View<'_>, event: &Event, repo: &RepoAddress, reactions: &[Event
         post::ship_chips(event),
         ago(event.created_at),
         escape(&post::ship_title(event)),
-        person_avatar(view.links.apps(), view.names, &event.pubkey, false),
+        relay_ui::chrome::person_picture_avatar(&event.pubkey, false),
         person(view.links.apps(), view.names, &event.pubkey),
     );
     if let Some((hero, rest)) = media.split_first() {
@@ -350,7 +350,7 @@ pub(crate) fn reply_html(view: &View<'_>, reply: &Event, maker: bool) -> String 
         "<article class=\"reply\" data-id=\"{}\">{}<div class=\"body\"><div class=\"line\">{}{}\
          <a class=\"muted small\" href=\"{}\">{}</a></div><p class=\"text\">{}</p></div></article>",
         reply.id.to_hex(),
-        person_avatar(view.links.apps(), view.names, &reply.pubkey, true),
+        relay_ui::chrome::person_picture_avatar(&reply.pubkey, true),
         person(view.links.apps(), view.names, &reply.pubkey)
             + relay_ui::chrome::bot_chip(view.bots, &reply.pubkey),
         if maker {

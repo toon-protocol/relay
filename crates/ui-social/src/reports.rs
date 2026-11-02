@@ -29,7 +29,7 @@ use nostr::event::{Event, EventId, Kind};
 use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use relay_ui::ReadOnlyStore;
-use relay_ui::chrome::{Profiles, ago, avatar, escape, name, plain_name};
+use relay_ui::chrome::{Profiles, ago, escape, name};
 use ui_nip34::card::{RepoCard, plural};
 use ui_nip34::repo::RepoAddress;
 
@@ -294,7 +294,7 @@ fn list(
              <a href=\"{}\">{}</a><span class=\"chip chip-report\">{kind}</span>{}</div>\
              <span class=\"muted small\">reported {} &middot; {}</span></div></div>{}</li>",
             report.id.to_hex(),
-            avatar(&plain_name(names, &report.pubkey), true),
+            relay_ui::chrome::picture_avatar(&report.pubkey, true),
             relay_ui::chrome::profile_path(&report.pubkey),
             name(names, &report.pubkey),
             if followed {

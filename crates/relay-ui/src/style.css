@@ -38,6 +38,8 @@
   --contrib-2: #4ac26b;
   --contrib-3: #2da44e;
   --contrib-4: #116329;
+  --brand: #c9a24a;
+  --brand-soft: rgba(201, 162, 74, 0.35);
   --radius: 6px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
@@ -113,7 +115,7 @@ svg.icon-lg { width: 32px; height: 32px; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .empty { padding: 32px 16px; text-align: center; color: var(--muted-fg); }
 
-/* Top bar: the app switcher (Repos | Social), then the app's own nav. */
+/* Top bar: see "The site bar" below. */
 .topbar { border-bottom: 1px solid var(--border); background: var(--muted); }
 .topbar .container { padding-top: 10px; padding-bottom: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .topbar a { color: var(--fg); font-weight: 600; }
@@ -823,3 +825,60 @@ details.older > ul { margin-top: 8px; }
 .hl-raw { color: #2f8f6a; }
 .hl-b { font-weight: bold; }
 .hl-i { font-style: italic; }
+
+/* The site bar: the mark, the sections, the repository search. */
+.topbar { background: var(--bg); }
+.topbar .container { padding-top: 0; padding-bottom: 0; min-height: 56px; }
+.topbar .brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; letter-spacing: 0.04em; margin-right: 8px; }
+.topbar .brand:hover { text-decoration: none; }
+.brand-mark { width: 32px; height: 24px; flex-shrink: 0; }
+.brand-line { fill: var(--muted-fg); }
+.brand-dark { fill: var(--fg); }
+.brand-gold { fill: var(--brand); }
+.topbar .navlink { padding: 17px 10px 15px; border-radius: 0; border-bottom: 2px solid transparent; color: var(--muted-fg); }
+.topbar .navlink:hover { background: none; color: var(--fg); }
+.topbar .navlink.current { background: none; color: var(--fg); border-bottom-color: var(--brand); }
+.tab.active { border-bottom-color: var(--brand); }
+.site-search { position: relative; flex: 0 1 280px; min-width: 160px; }
+.site-search .icon { position: absolute; left: 8px; top: 8px; color: var(--muted-fg); pointer-events: none; }
+.site-search .input { width: 100%; height: 32px; padding-left: 30px; font-family: inherit; font-size: 13px; }
+body:has(.search-hero) .site-search { display: none; }
+.viewer-menu > summary { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; padding: 4px 10px; border: 0; }
+.viewer-menu .viewer { display: flex; flex-wrap: wrap; }
+.viewer-menu .viewer .input { flex: 1 1 200px; }
+.menu-panel.right { max-width: calc(100vw - 32px); }
+@media (max-width: 720px) {
+  .topbar .container { padding-top: 8px; padding-bottom: 8px; }
+  .app-nav { order: 5; flex: 1 0 100%; flex-wrap: nowrap; overflow-x: auto; }
+  .topbar .navlink { padding: 8px 10px; white-space: nowrap; }
+  .site-search { flex: 1 1 160px; }
+}
+
+/* An avatar: a key's identicon, with its picture over it where one loads. */
+.avatar { position: relative; overflow: hidden; }
+/* Sized by min and max, not width and height: a failed image with an explicit
+   size draws a broken-image glyph, and without one it draws nothing. */
+.identicon { position: absolute; inset: 0; width: 100%; height: 100%; }
+.avatar-picture { position: absolute; top: 0; left: 0; min-width: 100%; min-height: 100%; max-width: 100%; max-height: 100%; object-fit: cover; }
+.profile-avatar .avatar { box-sizing: content-box; }
+
+/* Repository search. */
+.search-hero { padding: 16px 0 8px; }
+.search-hero h1 { font-size: 28px; font-weight: 700; }
+.search-hero p { margin: 4px 0 16px; color: var(--muted-fg); }
+.search-box { display: flex; align-items: center; gap: 8px; }
+.search-field { position: relative; flex: 1 1 auto; min-width: 0; }
+.search-field .icon { position: absolute; left: 12px; top: 14px; color: var(--muted-fg); pointer-events: none; }
+.search-field .input { width: 100%; height: 44px; padding-left: 36px; font-family: inherit; font-size: 16px; }
+.search-field .input:focus { outline: 2px solid var(--brand); outline-offset: -1px; border-color: var(--brand); }
+.search-box .btn { height: 44px; padding: 0 20px; }
+.search-topics { margin-top: 12px; }
+.results-head { justify-content: space-between; }
+mark { background: var(--brand-soft); color: inherit; border-radius: 2px; padding: 0 1px; }
+.repo-row { flex-direction: row; gap: 12px; align-items: flex-start; }
+.repo-row .repo-row-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.repo-row .meta { flex-wrap: wrap; }
+.search-empty h2 { font-size: 18px; margin-bottom: 8px; color: var(--fg); }
+
+/* A NIP-24 banner is usually 3:1; a fixed strip would cut most of it off. */
+.profile-banner:not(.empty) { height: auto; aspect-ratio: 3 / 1; }

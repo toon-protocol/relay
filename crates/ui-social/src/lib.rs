@@ -84,6 +84,8 @@ use ui_nip34::card::{Links, RepoCard};
 use ui_nip34::repo::RepoAddress;
 use ui_preview::Previews;
 
+use chrome::Section as Nav;
+
 /// The mount prefix.
 pub const PREFIX: &str = "/social";
 
@@ -157,7 +159,7 @@ impl Pages {
 }
 
 /// The app UI over `store`, with the operator's `settings` and the `apps`
-/// the relay serves (for the switcher and the links to `/repo`).
+/// the relay serves (for the site bar and the links to `/repo`).
 pub fn app(store: ReadOnlyStore, settings: Settings, apps: Apps) -> AppUi {
     let groups = settings
         .group_signer
@@ -165,6 +167,7 @@ pub fn app(store: ReadOnlyStore, settings: Settings, apps: Apps) -> AppUi {
     let router = Router::new()
         .route(PREFIX, get(feed::everyone))
         .route("/social/assets/{name}", get(asset))
+        .route("/social/avatar/{npub}", get(picture))
         .route("/social/og/site.png", get(og::site))
         .route("/social/og/r/{npub}/{file}", get(og::repo))
         .route("/social/og/p/{file}", get(og::profile))
@@ -206,6 +209,38 @@ pub fn app(store: ReadOnlyStore, settings: Settings, apps: Apps) -> AppUi {
     AppUi::new(PREFIX, router)
 }
 
+/// Where a key's picture is: a redirect to the `https` URL its newest profile
+/// names, which the browser follows, or 404. The relay reads its own store
+/// and fetches nothing (ADR 0008).
+async fn picture(State(pages): State<Pages>, Path(npub): Path<String>) -> Response {
+    let found = async {
+        let key = PublicKey::from_bech32(&npub).ok()?;
+        let profiles = pages
+            .store
+            .query(Filter::new().kind(nostr::event::Kind::Metadata).author(key))
+            .await;
+        let newest = profiles
+            .iter()
+            .max_by(|a, b| (a.created_at, b.id).cmp(&(b.created_at, a.id)))?;
+        let fields: serde_json::Value = serde_json::from_str(&newest.content).ok()?;
+        let url = media::https(fields.get("picture")?.as_str()?)?;
+        HeaderValue::from_str(url).ok()
+    }
+    .await;
+    let cache = (
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=300"),
+    );
+    match found {
+        Some(url) => (
+            StatusCode::FOUND,
+            [cache, (axum::http::header::LOCATION, url)],
+        )
+            .into_response(),
+        None => (StatusCode::NOT_FOUND, [cache]).into_response(),
+    }
+}
+
 async fn asset(Path(name): Path<String>) -> Response {
     if name == relay_ui::stylesheet_name() {
         return relay_ui::stylesheet_response();
@@ -213,66 +248,25 @@ async fn asset(Path(name): Path<String>) -> Response {
     StatusCode::NOT_FOUND.into_response()
 }
 
-/// The places the header links, so a page can say which one it is in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Nav {
-    Home,
-    Trending,
-    Events,
-    Bounties,
-    Apps,
-    /// A page that is none of them: a post, a repo, a profile, an article.
-    Other,
-}
-
-impl Nav {
-    /// The header's links, in order: where each goes, its icon, its label.
-    const LINKS: [(Nav, &'static str, Option<&'static str>, &'static str); 5] = [
-        (Nav::Home, "", Some(chrome::icon::HOME), "Home"),
-        (
-            Nav::Trending,
-            "/trending",
-            Some(chrome::icon::STAR),
-            "Trending",
+/// Who is viewing: a menu holding the form that opens the following feed of
+/// the key a visitor names (a `GET`, so nothing is written or kept).
+fn header(viewer: Option<&PublicKey>) -> String {
+    let npub = viewer.map(npub);
+    let summary = match (viewer, &npub) {
+        (Some(key), Some(npub)) => format!(
+            "{}<span class=\"truncate\">{}…</span>",
+            chrome::avatar(key, true),
+            escape(&npub[..12])
         ),
-        (
-            Nav::Events,
-            "/events",
-            Some(chrome::icon::CALENDAR),
-            "Events",
-        ),
-        (Nav::Bounties, "/bounties", None, "Bounties"),
-        (Nav::Apps, "/apps", None, "Apps"),
-    ];
-}
-
-/// The app's own header: its links, the current one marked, and a form
-/// that opens the following feed of the key a visitor names (a `GET`, so
-/// nothing is written or kept).
-fn header(viewer: Option<&PublicKey>, current: Nav) -> String {
-    let mut links = String::new();
-    for (nav, path, glyph, label) in Nav::LINKS {
-        let here = nav == current;
-        links.push_str(&format!(
-            "<a class=\"navlink{}\" href=\"{PREFIX}{path}\"{}>{}{label}</a>",
-            if here { " current" } else { "" },
-            if here { " aria-current=\"page\"" } else { "" },
-            glyph
-                .map(|glyph| chrome::svg(glyph, ""))
-                .unwrap_or_default(),
-        ));
-    }
+        _ => "Your feed".to_owned(),
+    };
     format!(
-        "<nav class=\"app-nav\" aria-label=\"Social\">{links}</nav>\
-         <span class=\"grow\"></span>\
-         <form class=\"viewer\" method=\"get\" action=\"{PREFIX}/following\">\
+        "<details class=\"menu viewer-menu\"><summary class=\"navlink\">{summary}</summary>\
+         <div class=\"menu-panel right\"><form class=\"menu-body viewer\" method=\"get\" action=\"{PREFIX}/following\">\
          <label for=\"viewer-npub\">Viewing as</label>\
          <input class=\"input\" id=\"viewer-npub\" name=\"npub\" placeholder=\"npub1…\" value=\"{}\" autocomplete=\"off\">\
-         <button class=\"btn\" type=\"submit\">Follow feed</button></form>",
-        viewer
-            .map(npub)
-            .map(|npub| escape(&npub))
-            .unwrap_or_default(),
+         <button class=\"btn\" type=\"submit\">Follow feed</button></form></div></details>",
+        npub.as_deref().map(escape).unwrap_or_default(),
     )
 }
 
@@ -309,8 +303,9 @@ fn html_with(
         Html(chrome::page_with(
             &pages.apps,
             App::Social,
+            nav,
             title,
-            &header(viewer, nav),
+            &header(viewer),
             body,
             preview,
         )),
@@ -426,27 +421,6 @@ mod tests {
     use nostr::nips::nip19::ToBech32;
 
     use super::*;
-
-    #[test]
-    fn the_header_marks_the_page_it_is_on_and_only_that_one() {
-        let bar = header(None, Nav::Events);
-        assert!(bar.contains(
-            "<a class=\"navlink current\" href=\"/social/events\" aria-current=\"page\">"
-        ));
-        assert_eq!(bar.matches("aria-current").count(), 1);
-        for path in [
-            "/social\"",
-            "/social/trending",
-            "/social/bounties",
-            "/social/apps",
-        ] {
-            assert!(
-                bar.contains(&format!("class=\"navlink\" href=\"{path}")),
-                "{path}"
-            );
-        }
-        assert!(!header(None, Nav::Other).contains("aria-current"));
-    }
 
     #[test]
     fn a_reply_is_an_e_tag_that_is_not_a_mention() {

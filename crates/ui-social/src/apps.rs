@@ -32,9 +32,7 @@ use nostr::nips::nip01::Coordinate;
 use nostr::nips::nip19::{FromBech32, Nip19Coordinate, ToBech32};
 use nostr::types::Timestamp;
 use relay_ui::ReadOnlyStore;
-use relay_ui::chrome::{
-    Profiles, ago, avatar, escape, icon, name, npub, percent_encode, plain_name, svg,
-};
+use relay_ui::chrome::{Profiles, ago, escape, icon, name, npub, percent_encode, plain_name, svg};
 use ui_nip34::card::{Links, RepoCard, plural};
 use ui_nip34::repo::{RepoAddress, first_tag, newest, supersedes};
 
@@ -1342,7 +1340,7 @@ fn vouch_card(
                 "<a href=\"{}\" title=\"{}\">{}</a>",
                 relay_ui::chrome::profile_path(key),
                 escape(&plain_name(names, key)),
-                avatar(&plain_name(names, key), true)
+                relay_ui::chrome::picture_avatar(key, true)
             ));
         }
         out.push_str("</div>");

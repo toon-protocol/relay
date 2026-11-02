@@ -13,3 +13,4 @@ that cites one by number means that one.
 | [0005](0005-social-pages-load-https-media.md) | /social pages let the browser load https media |
 | [0006](0006-the-relay-draws-link-preview-cards.md) | The relay draws link preview cards |
 | [0007](0007-readers-count-a-tip-only-when-its-recipient-acknowledged-it.md) | Readers count a tip only when its recipient acknowledged it |
+| [0008](0008-avatars-are-pictures-over-identicons.md) | Avatars are pictures over identicons |

@@ -11,7 +11,7 @@ use nostr::key::PublicKey;
 use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::Apps;
 
-use super::markup::{Tab, ago, avatar, icon, name, plain_name, repo_header, svg};
+use super::markup::{Tab, ago, avatar, icon, name, repo_header, svg};
 use super::{
     ANNOUNCEMENT, authorized_authors, escape, first_tag, html, names, newest, not_found, repo_path,
     resolve_repo,
@@ -614,7 +614,7 @@ fn comment(names: &HashMap<PublicKey, String>, event: &Event, verb: &str, text: 
     format!(
         "<div class=\"comment\">{}<div class=\"card\"><div class=\"card-head\">{}\
          <span class=\"muted\">{verb} {}</span></div>{text}</div></div>",
-        avatar(&plain_name(names, &event.pubkey), false),
+        avatar(&event.pubkey, false),
         name(names, &event.pubkey),
         ago(event.created_at),
     )

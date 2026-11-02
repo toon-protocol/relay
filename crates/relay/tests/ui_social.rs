@@ -368,7 +368,7 @@ async fn the_social_pages_read_written_events() {
     );
     assert!(
         home.text.contains("href=\"/social\""),
-        "the switcher offers Social"
+        "the site bar offers Social"
     );
 
     for path in [

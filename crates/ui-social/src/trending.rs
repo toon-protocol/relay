@@ -139,45 +139,7 @@ impl Window {
     }
 }
 
-/// The value of `name` in a query string, percent-decoded (`+` is a space).
-/// A pure function.
-pub(crate) fn param(query: Option<&str>, name: &str) -> Option<String> {
-    query?.split('&').find_map(|pair| {
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        (key == name).then(|| percent_decode(value))
-    })
-}
-
-/// `text` with `%XX` escapes decoded and `+` read as a space; invalid UTF-8
-/// is replaced. A pure function.
-fn percent_decode(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut at = 0;
-    while at < bytes.len() {
-        let byte = bytes[at];
-        let hex = |offset: usize| {
-            bytes
-                .get(at + offset)
-                .and_then(|digit| char::from(*digit).to_digit(16))
-        };
-        match (byte, hex(1), hex(2)) {
-            (b'%', Some(high), Some(low)) => {
-                out.push(u8::try_from(high * 16 + low).unwrap_or(b'?'));
-                at += 3;
-            }
-            (b'+', _, _) => {
-                out.push(b' ');
-                at += 1;
-            }
-            _ => {
-                out.push(byte);
-                at += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
+pub(crate) use chrome::param;
 
 /// `/social/trending` with these settings.
 pub(crate) fn path(
