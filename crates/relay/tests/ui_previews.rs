@@ -196,7 +196,15 @@ async fn a_repo_page_names_an_absolute_card_that_is_a_png_of_the_open_graph_size
         Some("Engines.")
     );
     let profile_image = meta(&profile_html, "og:image").expect("an og:image");
-    assert_eq!(profile_image, format!("{ORIGIN}/social/og/p/{npub}.png"));
+    // The card's URL names what it is drawn from, so a crawler's image cache
+    // takes a changed card for a new image.
+    let version = profile_image
+        .strip_prefix(&format!("{ORIGIN}/social/og/p/{npub}.png?v="))
+        .expect("a versioned card URL");
+    assert!(
+        version.len() == 16 && version.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "{profile_image}"
+    );
     let profile = get(relay, path_of(&profile_image), None).await;
     assert_eq!(png_size(&profile.body), Some((1200, 630)));
 
@@ -215,14 +223,16 @@ async fn a_repo_page_names_an_absolute_card_that_is_a_png_of_the_open_graph_size
     .await;
     let pictured =
         String::from_utf8(get(relay, &format!("/social/p/{npub}"), None).await.body).expect("html");
-    assert_eq!(meta(&pictured, "og:image"), Some(profile_image.clone()));
+    let pictured_image = meta(&pictured, "og:image").expect("an og:image");
+    assert!(pictured_image.starts_with(&format!("{ORIGIN}/social/og/p/{npub}.png?v=")));
+    assert_ne!(pictured_image, profile_image, "a new picture is a new URL");
     assert_eq!(
         meta(&pictured, "twitter:card").as_deref(),
         Some("summary_large_image")
     );
     // A picture the relay must not fetch (it resolves to loopback) leaves the
     // identicon: the card still draws.
-    let card = get(relay, path_of(&profile_image), None).await;
+    let card = get(relay, path_of(&pictured_image), None).await;
     assert_eq!(card.status, StatusCode::OK);
     assert_eq!(png_size(&card.body), Some((1200, 630)));
 

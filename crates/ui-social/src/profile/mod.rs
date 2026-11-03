@@ -483,7 +483,7 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
     )
     .kind("profile")
     .at(base.clone())
-    .image(crate::og::profile_path(&key), title.clone());
+    .image(crate::og::profile_image(pages, key).await, title.clone());
     html_with(
         pages,
         (crate::Nav::Other, StatusCode::OK),
