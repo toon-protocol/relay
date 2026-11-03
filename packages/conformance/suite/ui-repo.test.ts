@@ -194,7 +194,7 @@ describe('relay image conformance: the /repo app UI', () => {
       // Like rig-web's, the home page lists the files and README, so it is a
       // git page: the browser half fills it and may fetch over https.
       expect(page.headers.get('content-security-policy')).toBe(
-        "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https:"
+        "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https:; img-src 'self' https: blob:"
       );
       expect(html).toContain('id="git" data-git=');
       for (const [, src] of html.matchAll(/<script[^>]*src="([^"]*)"/g)) {

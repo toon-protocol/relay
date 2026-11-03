@@ -1,6 +1,8 @@
 //! What a page shows, decided from the objects alone: the view model the DOM
 //! code draws.
 
+use std::collections::BTreeMap;
+
 use git_objects::{ObjectId, ObjectKind, TreeEntry};
 use ui_markdown::Node;
 
@@ -36,10 +38,20 @@ pub struct Readme {
     pub body: Document,
 }
 
+/// A Markdown document as drawn, and the images it names in this repo.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Markdown {
+    pub nodes: Vec<Node>,
+    /// The bytes of each image the document names by its path in this repo
+    /// (an `img` whose `src` is not `https://`), at the page's commit. One
+    /// missing here could not be had and is drawn by its alt text.
+    pub images: BTreeMap<String, Vec<u8>>,
+}
+
 /// A text file as a page reads it: Markdown is drawn, anything else is not.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Document {
-    Markdown(Vec<Node>),
+    Markdown(Markdown),
     Plain(String),
     /// The README is named but could not be had.
     Unheld,
@@ -61,7 +73,7 @@ pub enum Content {
     /// A file that is text, and its Markdown drawn if it is Markdown.
     Text {
         text: String,
-        markdown: Option<Vec<Node>>,
+        markdown: Option<Markdown>,
     },
     /// A file that is not, with its size in bytes.
     Binary(usize),
@@ -137,17 +149,9 @@ fn is_readme(name: &str) -> bool {
     .contains(&lower.as_str())
 }
 
-/// Where a link in a document in `directory` goes: a page of this repo at
-/// the same ref for a relative path, the address itself for an absolute
-/// one, and nowhere for any other scheme.
-fn document_link(layout: &Layout, directory: &[String], url: &str) -> Option<String> {
-    if url.starts_with('#') || ui_markdown::scheme(url).is_some() {
-        return ui_markdown::absolute_only(url);
-    }
-    if url.starts_with("//") {
-        return None;
-    }
-    let path = url.split(['#', '?']).next().unwrap_or_default();
+/// The repo path a relative `path` in `directory` names: from the root if
+/// it starts with `/`, with `.` and `..` followed.
+fn resolve<'a>(directory: &'a [String], path: &'a str) -> Vec<&'a str> {
     let mut segments: Vec<&str> = if path.starts_with('/') {
         Vec::new()
     } else {
@@ -162,6 +166,21 @@ fn document_link(layout: &Layout, directory: &[String], url: &str) -> Option<Str
             other => segments.push(other),
         }
     }
+    segments
+}
+
+/// Where a link in a document in `directory` goes: a page of this repo at
+/// the same ref for a relative path, the address itself for an absolute
+/// one, and nowhere for any other scheme.
+fn document_link(layout: &Layout, directory: &[String], url: &str) -> Option<String> {
+    if url.starts_with('#') || ui_markdown::scheme(url).is_some() {
+        return ui_markdown::absolute_only(url);
+    }
+    if url.starts_with("//") {
+        return None;
+    }
+    let path = url.split(['#', '?']).next().unwrap_or_default();
+    let segments = resolve(directory, path);
     let page = if path.ends_with('/') || segments.is_empty() {
         "tree"
     } else {
@@ -170,12 +189,33 @@ fn document_link(layout: &Layout, directory: &[String], url: &str) -> Option<Str
     Some(address(layout, page, &segments))
 }
 
-/// `text` read as a document in `directory`.
+/// Where an image in a document in `directory` is drawn from: an `https`
+/// address as it is (the visitor's browser loads it, ADR 0009), a relative
+/// path as the repo path of a file at the page's commit, and nothing else.
+fn document_image(directory: &[String], url: &str) -> Option<String> {
+    if ui_markdown::scheme(url).is_some() {
+        return (ui_markdown::scheme(url).as_deref() == Some("https")).then(|| url.to_owned());
+    }
+    if url.starts_with("//") || url.starts_with('#') {
+        return None;
+    }
+    let path = url.split(['#', '?']).next().unwrap_or_default();
+    let segments = resolve(directory, path);
+    (!segments.is_empty() && !path.ends_with('/')).then(|| segments.join("/"))
+}
+
+/// `text` read as a document in `directory`. A Markdown document's repo
+/// images are not loaded yet: see [`with_images`].
 fn document(layout: &Layout, directory: &[String], name: &str, text: &str) -> Document {
     if is_markdown(name) {
-        Document::Markdown(ui_markdown::parse(text, |url| {
-            document_link(layout, directory, url)
-        }))
+        Document::Markdown(Markdown {
+            nodes: ui_markdown::parse_rich(
+                text,
+                |url| document_link(layout, directory, url),
+                |url| document_image(directory, url),
+            ),
+            images: BTreeMap::new(),
+        })
     } else {
         Document::Plain(text.to_owned())
     }
@@ -187,8 +227,75 @@ fn text_of(bytes: &[u8]) -> Option<&str> {
         .filter(|text| !text.contains('\0'))
 }
 
+/// The repo paths of the images `nodes` draw from this repo.
+fn repo_images(nodes: &[Node], out: &mut Vec<String>) {
+    for node in nodes {
+        if let Node::Element(element) = node {
+            if element.tag == "img" {
+                for (name, value) in &element.attrs {
+                    if *name == "src" && !value.starts_with("https://") && !out.contains(value) {
+                        out.push(value.clone());
+                    }
+                }
+            }
+            repo_images(&element.children, out);
+        }
+    }
+}
+
+/// The blob at `path` below the tree `root`, if every object on the way is
+/// held.
+async fn blob_at(
+    fetch: &impl Fetch,
+    layout: &Layout,
+    root: ObjectId,
+    path: &str,
+) -> Option<Vec<u8>> {
+    let segments: Vec<&str> = path.split('/').collect();
+    let (last, directories) = segments.split_last()?;
+    let mut tree_id = root;
+    for segment in directories {
+        let tree = load(fetch, layout, tree_id, ObjectKind::Tree).await.ok()?;
+        tree_id = tree
+            .parse_tree()
+            .ok()?
+            .entries
+            .iter()
+            .find(|entry| entry.name == *segment && entry.is_tree())?
+            .id;
+    }
+    let tree = load(fetch, layout, tree_id, ObjectKind::Tree).await.ok()?;
+    let entries = tree.parse_tree().ok()?.entries;
+    let entry = entries
+        .iter()
+        .find(|entry| entry.name == *last && !entry.is_tree() && !entry.is_gitlink())?;
+    let blob = load(fetch, layout, entry.id, ObjectKind::Blob).await.ok()?;
+    blob.blob().ok().map(<[u8]>::to_vec)
+}
+
+/// `document` with the images it names in this repo loaded from the tree
+/// `root`, one at a time.
+async fn with_images(
+    fetch: &impl Fetch,
+    layout: &Layout,
+    root: ObjectId,
+    document: Document,
+) -> Document {
+    let Document::Markdown(mut markdown) = document else {
+        return document;
+    };
+    let mut paths = Vec::new();
+    repo_images(&markdown.nodes, &mut paths);
+    for path in paths {
+        if let Some(bytes) = blob_at(fetch, layout, root, &path).await {
+            markdown.images.insert(path, bytes);
+        }
+    }
+    Document::Markdown(markdown)
+}
+
 /// A file's content as the page shows it.
-fn file(layout: &Layout, bytes: &[u8]) -> Content {
+async fn file(fetch: &impl Fetch, layout: &Layout, root: ObjectId, bytes: &[u8]) -> Content {
     match text_of(bytes) {
         Some(text) => {
             let (name, directory) = layout
@@ -197,8 +304,9 @@ fn file(layout: &Layout, bytes: &[u8]) -> Content {
                 .map_or(("", &[][..]), |(name, directory)| {
                     (name.as_str(), directory)
                 });
-            let markdown = match document(layout, directory, name, text) {
-                Document::Markdown(nodes) => Some(nodes),
+            let document = document(layout, directory, name, text);
+            let markdown = match with_images(fetch, layout, root, document).await {
+                Document::Markdown(markdown) => Some(markdown),
                 Document::Plain(_) | Document::Unheld => None,
             };
             Content::Text {
@@ -211,14 +319,22 @@ fn file(layout: &Layout, bytes: &[u8]) -> Content {
 }
 
 /// The README among `entries`, fetched and read, if there is one.
-async fn readme(fetch: &impl Fetch, layout: &Layout, entries: &[TreeEntry]) -> Option<Readme> {
+async fn readme(
+    fetch: &impl Fetch,
+    layout: &Layout,
+    root: ObjectId,
+    entries: &[TreeEntry],
+) -> Option<Readme> {
     let entry = entries
         .iter()
         .filter(|entry| !entry.is_tree() && !entry.is_gitlink() && is_readme(&entry.name))
         .min_by_key(|entry| !is_markdown(&entry.name))?;
     let body = match load(fetch, layout, entry.id, ObjectKind::Blob).await {
         Ok(object) => match object.blob().ok().and_then(text_of) {
-            Some(text) => document(layout, &layout.path, &entry.name, text),
+            Some(text) => {
+                let document = document(layout, &layout.path, &entry.name, text);
+                with_images(fetch, layout, root, document).await
+            }
             None => Document::Unheld,
         },
         Err(_) => Document::Unheld,
@@ -256,7 +372,8 @@ async fn walk(fetch: &impl Fetch, layout: &Layout) -> Result<Content, Error> {
         author: commit.author.name.clone(),
         date: when(&commit.author),
     };
-    let mut tree_id = commit.tree;
+    let root = commit.tree;
+    let mut tree_id = root;
     let (last, directories) = match (layout.kind, layout.path.split_last()) {
         (PageKind::Blob, Some((last, directories))) => (Some(last), directories),
         _ => (None, layout.path.as_slice()),
@@ -278,7 +395,7 @@ async fn walk(fetch: &impl Fetch, layout: &Layout) -> Result<Content, Error> {
         return Ok(Content::Tree(Listing {
             rows: rows(layout, &entries),
             head,
-            readme: readme(fetch, layout, &entries).await,
+            readme: readme(fetch, layout, root, &entries).await,
         }));
     };
     let Some(entry) = entries
@@ -288,7 +405,8 @@ async fn walk(fetch: &impl Fetch, layout: &Layout) -> Result<Content, Error> {
         return Ok(Content::NoSuchPath);
     };
     let blob = load(fetch, layout, entry.id, ObjectKind::Blob).await?;
-    Ok(file(layout, blob.blob().map_err(|_| Error::Unheld)?))
+    let bytes = blob.blob().map_err(|_| Error::Unheld)?;
+    Ok(file(fetch, layout, root, bytes).await)
 }
 
 #[cfg(test)]
@@ -479,6 +597,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_readmes_repo_images_are_loaded_at_its_commit_and_https_ones_left_to_the_browser() {
+        let (mut repo, ..) = repo();
+        let logo = repo.add(ObjectKind::Blob, b"\x89PNG logo".to_vec());
+        let assets = repo.add(ObjectKind::Tree, tree(&[("100644", "logo.png", logo)]));
+        let docs = repo.add(ObjectKind::Tree, tree(&[("40000", "assets", assets)]));
+        let text = "<div align=\"center\">\n\n<img src=\"docs/assets/logo.png\" alt=\"Logo\" \
+                    width=\"160\">\n\n![badge](https://img.test/b.svg) ![gone](gone.png)\n\n</div>\n";
+        let readme = repo.add(ObjectKind::Blob, text.as_bytes().to_vec());
+        let root = repo.add(
+            ObjectKind::Tree,
+            tree(&[("100644", "README.md", readme), ("40000", "docs", docs)]),
+        );
+        let commit =
+            format!("tree {root}\nauthor A <a@x> 1 +0000\ncommitter A <a@x> 1 +0000\n\nmsg\n");
+        repo.commit = repo.add(ObjectKind::Commit, commit.into_bytes());
+        let content = build(&repo.table, &repo.layout(PageKind::Tree, &[])).await;
+        let Content::Tree(Listing {
+            readme:
+                Some(Readme {
+                    body: Document::Markdown(markdown),
+                    ..
+                }),
+            ..
+        }) = content
+        else {
+            panic!("{content:?}")
+        };
+        let html = ui_markdown::to_html(&markdown.nodes);
+        assert!(html.starts_with("<div align=\"center\">"), "{html}");
+        assert!(
+            html.contains("<img src=\"docs/assets/logo.png\" alt=\"Logo\" width=\"160\""),
+            "{html}"
+        );
+        assert!(
+            html.contains("<img src=\"https://img.test/b.svg\" alt=\"badge\""),
+            "{html}"
+        );
+        assert_eq!(
+            markdown.images,
+            BTreeMap::from([("docs/assets/logo.png".to_owned(), b"\x89PNG logo".to_vec())]),
+            "the missing image is left out, the https one is the browser's"
+        );
+    }
+
+    #[test]
+    fn a_documents_images_resolve_in_the_repo_or_are_https() {
+        let directory = ["docs".to_owned()];
+        let at = |url: &str| document_image(&directory, url);
+        assert_eq!(at("a.png").as_deref(), Some("docs/a.png"));
+        assert_eq!(at("../logo.svg?raw=true").as_deref(), Some("logo.svg"));
+        assert_eq!(at("/x/y.gif").as_deref(), Some("x/y.gif"));
+        assert_eq!(
+            at("https://img.test/b.svg").as_deref(),
+            Some("https://img.test/b.svg")
+        );
+        assert_eq!(at("http://img.test/b.svg"), None);
+        assert_eq!(at("data:image/png;base64,AAAA"), None);
+        assert_eq!(at("//img.test/b.svg"), None);
+        assert_eq!(at(".."), None);
+    }
+
+    #[tokio::test]
     async fn a_markdown_file_is_drawn_as_well_as_shown() {
         let (mut repo, ..) = repo();
         let doc = repo.add(ObjectKind::Blob, b"# Hi\n\n[next](b.md)\n".to_vec());
@@ -489,7 +669,7 @@ mod tests {
         let content = build(&repo.table, &repo.layout(PageKind::Blob, &["a.md"])).await;
         let Content::Text {
             text,
-            markdown: Some(nodes),
+            markdown: Some(Markdown { nodes, .. }),
         } = content
         else {
             panic!("{content:?}")

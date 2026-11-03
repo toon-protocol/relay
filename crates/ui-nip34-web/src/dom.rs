@@ -1,13 +1,17 @@
 //! Drawing a [`Content`] into the page, in rig-web's look (the classes are
 //! `relay_ui`'s stylesheet). Text only goes in through text nodes, never as
 //! markup: file names and file contents are other people's. A Markdown
-//! document goes in as the fixed tags `ui_markdown` read it into.
+//! document goes in as the fixed tags `ui_markdown` read it into, and an
+//! image from the repo as a `blob:` URL over its verified bytes.
 
+use std::collections::BTreeMap;
+
+use js_sys::{Array, Uint8Array};
 use ui_markdown::Node;
-use web_sys::{Document, Element};
+use web_sys::{Blob, BlobPropertyBag, Document, Element, Url};
 
 use crate::object::NO_LONGER_HELD;
-use crate::view::{Document as Doc, Head, Listing, Readme};
+use crate::view::{Document as Doc, Head, Listing, Markdown, Readme};
 use crate::{Body, CommitView, Content, Files, HISTORY_ENDS, Log, LogRow, Row};
 
 /// Octicons (MIT, GitHub), 16px.
@@ -131,24 +135,76 @@ fn empty(document: &Document, message: &str) -> Element {
     boxed
 }
 
-/// The fixed tags of a Markdown document, under `parent`.
-fn markdown(document: &Document, parent: &Element, nodes: &[Node]) {
+/// The media type an image file's name says it is, for the types an `img`
+/// draws. An SVG drawn by `img` runs no script.
+fn image_type(path: &str) -> Option<&'static str> {
+    let extension = path.rsplit('.').next()?.to_ascii_lowercase();
+    Some(match extension.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        "bmp" => "image/bmp",
+        _ => return None,
+    })
+}
+
+/// A `blob:` URL over `bytes`, typed as an image.
+fn blob_url(bytes: &[u8], kind: &str) -> Option<String> {
+    let parts = Array::of1(&Uint8Array::from(bytes));
+    let options = BlobPropertyBag::new();
+    options.set_type(kind);
+    let blob = Blob::new_with_u8_array_sequence_and_options(&parts, &options).ok()?;
+    Url::create_object_url_with_blob(&blob).ok()
+}
+
+/// The fixed tags of a Markdown document, under `parent`. An `img` from the
+/// repo is drawn from `images`; one not there keeps no `src` and shows its
+/// alt text.
+fn markdown(
+    document: &Document,
+    parent: &Element,
+    nodes: &[Node],
+    images: &BTreeMap<String, Vec<u8>>,
+) {
     for node in nodes {
         match node {
             Node::Text(words) => text(document, parent, words),
             Node::Element(item) => {
                 let child = element(document, item.tag, None);
                 for (name, value) in &item.attrs {
+                    if *name == "src" && !value.starts_with("https://") {
+                        let url = images.get(value).and_then(|bytes| {
+                            image_type(value).and_then(|kind| blob_url(bytes, kind))
+                        });
+                        if let Some(url) = url {
+                            set(&child, "src", &url);
+                        }
+                        continue;
+                    }
                     set(&child, name, value);
                     if *name == "href" && !value.starts_with('#') {
                         set(&child, "rel", "nofollow noopener");
                     }
                 }
-                markdown(document, &child, &item.children);
+                if item.tag == "img" {
+                    set(&child, "referrerpolicy", "no-referrer");
+                }
+                markdown(document, &child, &item.children, images);
                 add(parent, &child);
             }
         }
     }
+}
+
+/// A drawn Markdown document.
+fn rendered(document: &Document, drawn: &Markdown) -> Element {
+    let rendered = styled(document, "div", "markdown", None);
+    markdown(document, &rendered, &drawn.nodes, &drawn.images);
+    rendered
 }
 
 fn row(document: &Document, row: &Row) -> Element {
@@ -203,11 +259,7 @@ fn readme(document: &Document, readme: &Readme) -> Element {
     add(&boxed, &header);
     let body = styled(document, "div", "box-body-lg", None);
     match &readme.body {
-        Doc::Markdown(nodes) => {
-            let rendered = styled(document, "div", "markdown", None);
-            markdown(document, &rendered, nodes);
-            add(&body, &rendered);
-        }
+        Doc::Markdown(drawn) => add(&body, &rendered(document, drawn)),
         Doc::Plain(words) => {
             let pre = styled(document, "pre", "markdown", Some(words));
             add(&body, &pre);
@@ -237,7 +289,7 @@ fn listing(document: &Document, listing: &Listing) -> Element {
 /// A file: its size above it, then its lines beside their numbers. A
 /// Markdown file is drawn first, with a switch to its source that needs no
 /// script.
-fn file(document: &Document, words: &str, nodes: Option<&[Node]>) -> Element {
+fn file(document: &Document, words: &str, nodes: Option<&Markdown>) -> Element {
     let boxed = styled(document, "div", "box", None);
     if nodes.is_some() {
         for (id, checked) in [("view-preview", true), ("view-code", false)] {
@@ -279,9 +331,7 @@ fn file(document: &Document, words: &str, nodes: Option<&[Node]>) -> Element {
     add(&boxed, &header);
     if let Some(nodes) = nodes {
         let preview = styled(document, "div", "box-body-lg panel-preview", None);
-        let rendered = styled(document, "div", "markdown", None);
-        markdown(document, &rendered, nodes);
-        add(&preview, &rendered);
+        add(&preview, &rendered(document, nodes));
         add(&boxed, &preview);
     }
     let code = styled(
@@ -631,7 +681,7 @@ pub(crate) fn render(document: &Document, root: &Element, content: &Content) {
         Content::Tree(found) => listing(document, found),
         Content::Log(page) => log(document, page),
         Content::Commit(view) => commit(document, view),
-        Content::Text { text, markdown } => file(document, text, markdown.as_deref()),
+        Content::Text { text, markdown } => file(document, text, markdown.as_ref()),
         Content::Binary(bytes) => binary(document, *bytes),
         Content::Unheld => empty(document, NO_LONGER_HELD),
         Content::NoSuchPath => empty(document, "No such path in this commit."),

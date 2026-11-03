@@ -212,7 +212,7 @@ async fn git_pages_carry_ordered_candidates_and_their_own_policy() {
         assert_eq!(response.status(), StatusCode::OK, "{page}");
         assert_eq!(
             response.headers()["content-security-policy"],
-            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https:"
+            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https:; img-src 'self' https: blob:"
         );
         let bytes = response
             .into_body()
