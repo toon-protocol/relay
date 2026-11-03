@@ -193,7 +193,11 @@ async fn a_repo_page_names_an_absolute_card_that_is_a_png_of_the_open_graph_size
     assert_eq!(meta(&profile_html, "og:type").as_deref(), Some("profile"));
     assert_eq!(
         meta(&profile_html, "og:description").as_deref(),
-        Some("Engines.")
+        Some("1 repository · 0 followers · Engines.")
+    );
+    assert_eq!(
+        meta(&profile_html, "og:site_name").as_deref(),
+        Some("TOON Social")
     );
     let profile_image = meta(&profile_html, "og:image").expect("an og:image");
     // The card's URL names what it is drawn from, so a crawler's image cache

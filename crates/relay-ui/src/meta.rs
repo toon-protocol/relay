@@ -126,7 +126,7 @@ impl Preview {
             DESCRIPTION_CHARS,
         );
         let mut tags = vec![
-            ("property", "og:site_name", "TOON".to_owned()),
+            ("property", "og:site_name", format!("TOON {}", app.label())),
             (
                 "property",
                 "og:type",

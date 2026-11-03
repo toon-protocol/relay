@@ -89,7 +89,7 @@ describe('relay image conformance: link previews on the app UIs', () => {
     async () => {
       const path = `/social/r/${fixture.npubs.maya}/tidepool`;
       const text = await html(path);
-      expect(meta(text, 'og:site_name')).toBe('TOON');
+      expect(meta(text, 'og:site_name')).toBe('TOON Social');
       expect(meta(text, 'og:type')).toBe('website');
       expect(meta(text, 'og:title')).toBe('Maya Okafor / tidepool');
       expect(meta(text, 'og:description')).toBe(
@@ -125,9 +125,12 @@ describe('relay image conformance: link previews on the app UIs', () => {
     async () => {
       const profile = await html(`/social/p/${fixture.npubs.maya}`);
       expect(meta(profile, 'og:type')).toBe('profile');
-      expect(meta(profile, 'og:description')).toBe(
-        'Sails a 19-foot boat; builds tide tools.'
+      // The counts lead, then the about, so the unfurl adds what the card
+      // does not repeat.
+      expect(meta(profile, 'og:description')).toMatch(
+        /^\d+ repositor(y|ies) · \d+ followers? · Sails a 19-foot boat; builds tide tools\.$/
       );
+      expect(meta(profile, 'og:title')).toMatch(/ · TOON Social$/);
       await expectCard(meta(profile, 'og:image') ?? '');
       // Versioned by what the card is drawn from, so a crawler's image cache
       // takes a changed card for a new image.

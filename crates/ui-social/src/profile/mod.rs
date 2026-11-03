@@ -473,17 +473,20 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
     body.push_str(&sidebar(&who, profiles.names(), &tips));
     body.push_str(&format!("<div class=\"profile-main\">{main}</div></div>"));
     let title = shown(&who.meta, &key);
+    let card = preview(store, key).await;
+    let counts = card
+        .as_ref()
+        .map(|(profile, _)| (profile.repos, profile.followers));
     let preview = Preview::new(
-        title.clone(),
-        who.meta
-            .about
-            .clone()
-            .filter(|about| !about.trim().is_empty())
-            .unwrap_or_else(|| format!("{title} builds in public on TOON.")),
+        embed_title(&who.meta, &title),
+        embed_description(&who.meta, &title, counts),
     )
     .kind("profile")
     .at(base.clone())
-    .image(crate::og::profile_image(pages, key).await, title.clone());
+    .image(
+        crate::og::profile_image(pages, &key, card.as_ref()),
+        title.clone(),
+    );
     html_with(
         pages,
         (crate::Nav::Other, StatusCode::OK),
@@ -492,6 +495,38 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
         &body,
         &preview,
     )
+}
+
+/// A profile's link preview title: the name it goes by, its handle when it
+/// shows another name, and the app, as GitHub's `name (login)` reads.
+fn embed_title(meta: &Metadata, shown: &str) -> String {
+    match &meta.handle {
+        Some(handle) => format!("{shown} ({handle}) · TOON Social"),
+        None => format!("{shown} · TOON Social"),
+    }
+}
+
+/// A profile's link preview description: what the card counts, then the
+/// about. The counts lead, so an unfurl that cuts the text keeps them.
+fn embed_description(meta: &Metadata, shown: &str, counts: Option<(usize, usize)>) -> String {
+    let about = meta
+        .about
+        .clone()
+        .filter(|about| !about.trim().is_empty())
+        .unwrap_or_else(|| format!("{shown} builds in public on TOON."));
+    match counts {
+        Some((repos, followers)) => format!(
+            "{} · {} · {about}",
+            counted(repos, "repository", "repositories"),
+            counted(followers, "follower", "followers")
+        ),
+        None => about,
+    }
+}
+
+/// `count` of a thing, named in the singular for one.
+fn counted(count: usize, one: &str, many: &str) -> String {
+    format!("{count} {}", if count == 1 { one } else { many })
 }
 
 /// The name a profile goes by: its own, else the start of its npub.
@@ -1135,6 +1170,30 @@ mod tests {
     use nostr::key::Keys;
 
     use super::*;
+
+    #[test]
+    fn a_profiles_embed_names_the_handle_and_leads_with_the_counts() {
+        let meta = Metadata {
+            name: Some("TOON Protocol".into()),
+            handle: Some("TOON".into()),
+            about: Some("Pay-to-write Nostr.".into()),
+            ..Metadata::default()
+        };
+        assert_eq!(
+            embed_title(&meta, "TOON Protocol"),
+            "TOON Protocol (TOON) · TOON Social"
+        );
+        assert_eq!(
+            embed_description(&meta, "TOON Protocol", Some((6, 1))),
+            "6 repositories · 1 follower · Pay-to-write Nostr."
+        );
+        let bare = Metadata::default();
+        assert_eq!(embed_title(&bare, "npub1abc…"), "npub1abc… · TOON Social");
+        assert_eq!(
+            embed_description(&bare, "npub1abc…", None),
+            "npub1abc… builds in public on TOON."
+        );
+    }
 
     fn signed(keys: &Keys, kind: u16, at: u64, content: &str, tags: &[&[&str]]) -> Event {
         EventBuilder::new(Kind::from(kind), content)
