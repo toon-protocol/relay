@@ -1,6 +1,6 @@
 # A profile's link preview is its own picture
 
-**Status:** Accepted (2026-11-03). Amends [ADR 0006](0006-the-relay-draws-link-preview-cards.md) for `/social` profile pages and rule 5 of [ADR 0008](0008-avatars-are-pictures-over-identicons.md).
+**Status:** Superseded by [ADR 0011](0011-profile-cards-draw-the-picture-and-banner.md) (2026-11-03). Was accepted 2026-11-03. Amends [ADR 0006](0006-the-relay-draws-link-preview-cards.md) for `/social` profile pages and rule 5 of [ADR 0008](0008-avatars-are-pictures-over-identicons.md).
 
 **Scope:** relay architecture — internal to this codebase. See the [ADR index](README.md).
 

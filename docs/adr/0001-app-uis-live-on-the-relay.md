@@ -1,6 +1,6 @@
 # App UIs live on the relay
 
-**Status:** Accepted (owner decision, 2026-10-22, #276). Recorded in #277; the UIs themselves are built by the sub-issues of #276, so nothing in this record is built yet.
+**Status:** Accepted (owner decision, 2026-10-22, #276); profile cards fetch their pictures as an exception, [ADR 0011](0011-profile-cards-draw-the-picture-and-banner.md). Recorded in #277; the UIs themselves are built by the sub-issues of #276, so nothing in this record is built yet.
 
 **Scope:** relay architecture — internal to this codebase. See the [ADR index](README.md).
 

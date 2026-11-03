@@ -110,7 +110,16 @@ async fn repo_card(pages: &Pages, owner: &str, file: &str) -> Option<Card> {
 
 async fn profile_card(pages: &Pages, file: &str) -> Option<Card> {
     let key = parse_pubkey(ui_preview::stem(file)?)?;
-    let profile = crate::profile::preview(&pages.store, key).await?;
+    let (mut profile, urls) = crate::profile::preview(&pages.store, key).await?;
+    // The picture and banner the kind 0 names, fetched at once (ADR 0011).
+    // One that cannot be had is left out, and the card is drawn without it.
+    let fetch = |url: Option<String>| async move {
+        match url {
+            Some(url) => pages.pictures.get(&url).await,
+            None => None,
+        }
+    };
+    (profile.picture, profile.banner) = tokio::join!(fetch(urls.picture), fetch(urls.banner));
     Some(Card::new(pages.card_host(), Face::Profile(profile)))
 }
 

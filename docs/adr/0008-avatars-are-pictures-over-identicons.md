@@ -1,6 +1,6 @@
 # Avatars are pictures over identicons
 
-**Status:** Accepted (2026-11-02). Supersedes rule 4 of [ADR 0005](0005-social-pages-load-https-media.md). Amended for profile previews by [ADR 0010](0010-a-profiles-preview-is-its-own-picture.md).
+**Status:** Accepted (2026-11-02). Supersedes rule 4 of [ADR 0005](0005-social-pages-load-https-media.md). Rule 5 amended by [ADR 0011](0011-profile-cards-draw-the-picture-and-banner.md): profile cards draw the picture over the identicon.
 
 **Scope:** relay architecture — internal to this codebase. See the [ADR index](README.md).
 

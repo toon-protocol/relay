@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "Link preview cards for the app UIs: 1200x630 PNGs drawn from this relay's events, with no outbound fetch"
+description = "Link preview cards for the app UIs: 1200x630 PNGs drawn from this relay's events and the https pictures they name"
 
 # The bundled font is Inter (fonts/), under the SIL Open Font License 1.1
 # (fonts/OFL.txt), not this crate's licence.
@@ -14,12 +14,20 @@ workspace = true
 
 [dependencies]
 axum.workspace = true
+base64.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+imagesize.workspace = true
 relay-ui.workspace = true
 resvg.workspace = true
+rustls.workspace = true
 sha2.workspace = true
 skrifa.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-rustls.workspace = true
+webpki-roots.workspace = true
 
 [dev-dependencies]
 nostr.workspace = true

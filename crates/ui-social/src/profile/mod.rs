@@ -473,7 +473,7 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
     body.push_str(&sidebar(&who, profiles.names(), &tips));
     body.push_str(&format!("<div class=\"profile-main\">{main}</div></div>"));
     let title = shown(&who.meta, &key);
-    let mut preview = Preview::new(
+    let preview = Preview::new(
         title.clone(),
         who.meta
             .about
@@ -484,10 +484,6 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
     .kind("profile")
     .at(base.clone())
     .image(crate::og::profile_path(&key), title.clone());
-    // Their own picture, when they named one, is the preview (ADR 0010).
-    if let Some(picture) = &who.meta.picture {
-        preview = preview.picture(picture, title.clone());
-    }
     html_with(
         pages,
         (crate::Nav::Other, StatusCode::OK),
@@ -528,14 +524,22 @@ async fn load_kept(store: &relay_ui::ReadOnlyStore, key: &PublicKey) -> Vec<(Rep
     kept_repos(key, &announcements)
 }
 
+/// The `https` pictures a profile's kind 0 names, for its card to fetch.
+#[derive(Debug, Default)]
+pub(crate) struct PictureUrls {
+    pub(crate) picture: Option<String>,
+    pub(crate) banner: Option<String>,
+}
+
 /// `key`'s profile as its link preview draws it, counted as the profile
 /// page counts: the repos it keeps and the people whose follow list names
-/// it. None when the store holds neither a kind 0 by the key nor a repo it
-/// keeps: a key this relay knows nothing about has no card.
+/// it, and the pictures its kind 0 names (not yet fetched). None when the
+/// store holds neither a kind 0 by the key nor a repo it keeps: a key this
+/// relay knows nothing about has no card.
 pub(crate) async fn preview(
     store: &relay_ui::ReadOnlyStore,
     key: PublicKey,
-) -> Option<ui_preview::Profile> {
+) -> Option<(ui_preview::Profile, PictureUrls)> {
     let profiles = store
         .query(Filter::new().author(key).kind(Kind::Metadata).limit(LIMIT))
         .await;
@@ -552,15 +556,22 @@ pub(crate) async fn preview(
                 .limit(FOLLOWER_LIMIT),
         )
         .await;
-    Some(ui_preview::Profile {
+    let urls = PictureUrls {
+        picture: meta.picture.clone(),
+        banner: meta.banner.as_ref().map(|banner| banner.url().to_owned()),
+    };
+    let profile = ui_preview::Profile {
         name: shown(&meta, &key),
         avatar: relay_ui::chrome::Identicon::of(&key),
+        picture: None,
+        banner: None,
         nip05: meta.nip05.clone(),
         about: meta.about.clone(),
         repos: kept.len(),
         followers: followers(&key, &follow_lists),
         bot: meta.bot,
-    })
+    };
+    Some((profile, urls))
 }
 
 /// The sidebar's facts about `key`, read from `lists` (everything the key

@@ -140,6 +140,8 @@ struct Pages {
     groups: Option<rooms::Groups>,
     /// Link preview cards drawn so far ([`og`]).
     previews: Previews,
+    /// The pictures profile cards draw, fetched under ADR 0011's bounds.
+    pictures: ui_preview::Pictures,
 }
 
 impl Pages {
@@ -205,6 +207,7 @@ pub fn app(store: ReadOnlyStore, settings: Settings, apps: Apps) -> AppUi {
             apps,
             groups,
             previews: Previews::new(),
+            pictures: ui_preview::Pictures::default(),
         });
     AppUi::new(PREFIX, router)
 }

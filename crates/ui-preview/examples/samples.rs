@@ -84,6 +84,7 @@ fn main() {
                     repos: 12,
                     followers: 1,
                     bot: true,
+                    ..Profile::default()
                 }),
             ),
         ),
