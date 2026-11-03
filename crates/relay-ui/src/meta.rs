@@ -86,6 +86,7 @@ pub struct Preview {
     kind: Option<&'static str>,
     path: Option<String>,
     image: Option<(String, String)>,
+    picture: Option<(String, String)>,
 }
 
 impl Preview {
@@ -117,6 +118,20 @@ impl Preview {
         self
     }
 
+    /// An `https` image elsewhere as its preview in place of a card, described
+    /// by `alt`: a profile's own picture (ADR 0010). The unfurler fetches it
+    /// and the relay never does. Its size is unknown, so it is named as a
+    /// small square (X's `summary`), and it is named with or without a
+    /// public URL, since it is absolute already. Anything but `https` is
+    /// ignored.
+    pub fn picture(mut self, url: impl Into<String>, alt: impl Into<String>) -> Self {
+        let url = url.into();
+        if url.starts_with("https://") {
+            self.picture = Some((url, alt.into()));
+        }
+        self
+    }
+
     /// The `<meta>` tags for a page titled `page_title` drawn by `app`,
     /// among `apps`. A pure function.
     pub fn tags(&self, page_title: &str, app: App, apps: &Apps) -> String {
@@ -140,8 +155,17 @@ impl Preview {
         if let (Some(origin), Some(path)) = (origin, &self.path) {
             tags.push(("property", "og:url", origin.absolute(path)));
         }
-        let card = match origin {
-            Some(origin) => {
+        let card = match (&self.picture, origin) {
+            (Some((image, alt)), _) => {
+                tags.extend([
+                    ("property", "og:image", image.clone()),
+                    ("property", "og:image:alt", alt.clone()),
+                    ("name", "twitter:image", image.clone()),
+                    ("name", "twitter:image:alt", alt.clone()),
+                ]);
+                "summary"
+            }
+            (None, Some(origin)) => {
                 let (path, alt) = self.image.clone().unwrap_or_else(|| {
                     (
                         site_image(app),
@@ -160,7 +184,7 @@ impl Preview {
                 ]);
                 "summary_large_image"
             }
-            None => "summary",
+            (None, None) => "summary",
         };
         tags.extend([
             ("name", "twitter:card", card.to_owned()),
@@ -312,6 +336,42 @@ mod tests {
         assert_eq!(
             content(&tags, "twitter:card").as_deref(),
             Some("summary_large_image")
+        );
+    }
+
+    #[test]
+    fn a_picture_is_named_as_it_is_in_place_of_the_card() {
+        let apps = Apps::new([App::Social]).with_public_url(PublicUrl::parse("https://r.test"));
+        for apps in [apps, Apps::new([App::Social])] {
+            let tags = Preview::new("Ada", "d")
+                .kind("profile")
+                .image("/social/og/p/x.png", "Ada")
+                .picture("https://img.test/ada.jpg", "Ada")
+                .tags("t", App::Social, &apps);
+            assert_eq!(
+                content(&tags, "og:image").as_deref(),
+                Some("https://img.test/ada.jpg")
+            );
+            assert_eq!(
+                content(&tags, "twitter:image").as_deref(),
+                Some("https://img.test/ada.jpg")
+            );
+            assert_eq!(content(&tags, "og:image:width"), None);
+            assert_eq!(content(&tags, "og:image:type"), None);
+            assert_eq!(content(&tags, "twitter:card").as_deref(), Some("summary"));
+        }
+        let tags = Preview::new("Ada", "d")
+            .image("/social/og/p/x.png", "Ada")
+            .picture("http://img.test/ada.jpg", "Ada")
+            .tags(
+                "t",
+                App::Social,
+                &Apps::new([App::Social]).with_public_url(PublicUrl::parse("https://r.test")),
+            );
+        assert_eq!(
+            content(&tags, "og:image").as_deref(),
+            Some("https://r.test/social/og/p/x.png"),
+            "a picture that is not https leaves the card"
         );
     }
 

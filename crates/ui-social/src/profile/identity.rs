@@ -31,6 +31,8 @@ pub(crate) struct Metadata {
     pub(crate) website: Option<String>,
     /// An `https` image, for the browser to load.
     pub(crate) banner: Option<Media>,
+    /// The `https` picture, for an unfurler to load (ADR 0010).
+    pub(crate) picture: Option<String>,
     /// NIP-24 `bot`: the key's content is partly or wholly automated.
     pub(crate) bot: bool,
     /// The NIP-05 identifier it claims, unverified.
@@ -69,6 +71,7 @@ pub(crate) fn metadata(key: &PublicKey, events: &[Event]) -> Metadata {
     read.handle = name.filter(|name| display.as_ref().is_some_and(|shown| shown != name));
     read.about = text("about");
     read.website = text("website").filter(|url| web_url(url));
+    read.picture = text("picture").and_then(|url| crate::media::https(&url).map(str::to_owned));
     read.banner = text("banner").and_then(|url| Media::new(&url, Some("image/*")));
     read.bot = fields.get("bot").and_then(serde_json::Value::as_bool) == Some(true);
     read.nip05 = text("nip05").and_then(|claim| nip05_identifier(&claim));
