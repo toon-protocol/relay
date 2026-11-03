@@ -40,11 +40,15 @@ pub(crate) fn profile_path(key: &PublicKey) -> String {
 /// their URLs rather than their bytes, so the page fetches none. A crawler's
 /// image cache (Discord's media proxy keeps an image by its URL) then sees a
 /// new picture, banner or count as a new image, not one it already holds.
-pub(crate) async fn profile_image(pages: &Pages, key: PublicKey) -> String {
-    let path = profile_path(&key);
-    match crate::profile::preview(&pages.store, key).await {
+pub(crate) fn profile_image(
+    pages: &Pages,
+    key: &PublicKey,
+    preview: Option<&(ui_preview::Profile, crate::profile::PictureUrls)>,
+) -> String {
+    let path = profile_path(key);
+    match preview {
         Some((profile, urls)) => {
-            let card = Card::new(pages.card_host(), Face::Profile(profile));
+            let card = Card::new(pages.card_host(), Face::Profile(profile.clone()));
             let version = ui_preview::version(&format!("{}\n{urls:?}", card.key()));
             format!("{path}?v={version}")
         }
