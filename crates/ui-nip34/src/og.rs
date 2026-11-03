@@ -42,7 +42,6 @@ async fn repo_card(pages: &Pages, owner: &str, file: &str) -> Option<Card> {
         .forks(&address)
         .len();
     Some(Card::new(
-        Mark::Repos,
         host(pages),
         Face::Repo(card.preview(Some(forks))),
     ))

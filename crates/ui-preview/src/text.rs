@@ -156,16 +156,6 @@ pub fn line(text: &str, size: f32, weight: Weight, width: f32, measure: &impl Me
     })
 }
 
-/// The first two letters or digits of `name`, upper case: what an avatar
-/// shows, as the pages draw it. Never a picture.
-pub fn initials(name: &str) -> String {
-    name.chars()
-        .filter(|character| character.is_alphanumeric())
-        .take(2)
-        .collect::<String>()
-        .to_uppercase()
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -252,12 +242,5 @@ pub(crate) mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn initials_are_the_first_two_letters_upper_case() {
-        assert_eq!(initials("ada lovelace"), "AD");
-        assert_eq!(initials("<b>"), "B");
-        assert_eq!(initials("🙂"), "");
     }
 }

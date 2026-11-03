@@ -22,8 +22,8 @@ use relay_ui::Assets;
 use crate::markup::{Tab, ref_menu, repo_header};
 use crate::{
     ANNOUNCEMENT, HIGHLIGHT_SCRIPT, PREFIX, Pages, SCRIPT, STATE, UNAVAILABLE, authorized_authors,
-    d_tag, escape, head_branch, honoured_state, html, names, newest, not_found, percent_encode,
-    refs, repo_name, repo_path, tag_values,
+    d_tag, escape, head_branch, honoured_state, html_with, names, newest, not_found,
+    percent_encode, refs, repo_name, repo_path, repo_preview, tag_values,
 };
 
 /// What a git page may load: its own origin, its own WebAssembly, and `https`
@@ -399,7 +399,43 @@ async fn page(
             format!("{} · {}", path.join("/"), repo_name(announcement))
         }
     };
-    let mut response = html(&apps, StatusCode::OK, &title, &body);
+    let encoded = |rest: &str| {
+        rest.split('/')
+            .map(percent_encode)
+            .collect::<Vec<_>>()
+            .join("/")
+    };
+    let (shared_as, at) = match kind {
+        PageKind::Commit => (
+            Some(format!("Commit {}", &commit[..7])),
+            format!("{base}/commit/{commit}"),
+        ),
+        PageKind::Commits => (
+            Some("Commits".to_owned()),
+            if segments.is_empty() {
+                format!("{base}/commits")
+            } else {
+                format!("{base}/commits/{}", encoded(rest))
+            },
+        ),
+        PageKind::Tree => (
+            (!path.is_empty()).then(|| path.join("/")),
+            format!("{base}/tree/{}", encoded(rest)),
+        ),
+        PageKind::Blob => (
+            Some(path.join("/")),
+            format!("{base}/blob/{}", encoded(rest)),
+        ),
+    };
+    let preview = repo_preview(
+        &apps,
+        defaults.relay_host.clone(),
+        announcement,
+        &names,
+        shared_as.as_deref(),
+        at,
+    );
+    let mut response = html_with(&apps, StatusCode::OK, &title, &body, &preview);
     response.headers_mut().insert(
         header::CONTENT_SECURITY_POLICY,
         HeaderValue::from_static(CONTENT_SECURITY_POLICY_VALUE),

@@ -14,7 +14,7 @@
 2. **`/social` lays the picture over it.** The image is `/social/avatar/<npub>`, which reads the key's newest kind 0 and answers `302` to its `https` `picture`, or `404`. The image has an empty `alt`, so a picture that fails draws nothing and the identicon shows.
 3. **ADR 0005's protections stay.** The relay still fetches nothing, only `https` URLs are followed, and no referrer is sent. Images load lazily.
 4. **`/repo` keeps its stricter policy**, as ADR 0005 rule 6 says, so it draws no pictures.
-5. **Link preview cards are unchanged.** Under ADR 0006 they hold no picture and keep their initials. Git commit authors on `/repo` have a name but no key, so they keep initials too.
+5. **Link preview cards draw the identicon.** Under ADR 0006 they hold no picture, so TOON's or anyone's `picture` is not on a card, but the identicon is plain shapes from the key and needs no fetch. Git commit authors on `/repo` have a name but no key, so they keep initials too.
 
 ## Consequences
 

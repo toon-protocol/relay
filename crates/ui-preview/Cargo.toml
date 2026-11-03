@@ -20,3 +20,6 @@ sha2.workspace = true
 skrifa.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+nostr.workspace = true

@@ -105,17 +105,13 @@ async fn repo_card(pages: &Pages, owner: &str, file: &str) -> Option<Card> {
     let address = RepoAddress::new(parse_pubkey(owner)?, ui_preview::stem(file)?)?;
     let card = RepoCard::load(&pages.store, &address).await?;
     let face = Face::Repo(repo_face(pages, &card).await);
-    Some(Card::new(Mark::Social, pages.card_host(), face))
+    Some(Card::new(pages.card_host(), face))
 }
 
 async fn profile_card(pages: &Pages, file: &str) -> Option<Card> {
     let key = parse_pubkey(ui_preview::stem(file)?)?;
     let profile = crate::profile::preview(&pages.store, key).await?;
-    Some(Card::new(
-        Mark::Social,
-        pages.card_host(),
-        Face::Profile(profile),
-    ))
+    Some(Card::new(pages.card_host(), Face::Profile(profile)))
 }
 
 async fn ship_card(pages: &Pages, file: &str) -> Option<Card> {
@@ -130,7 +126,7 @@ async fn ship_card(pages: &Pages, file: &str) -> Option<Card> {
         headline: post::ship_title(&event),
         repo: repo_face(pages, card).await,
     };
-    Some(Card::new(Mark::Social, pages.card_host(), face))
+    Some(Card::new(pages.card_host(), face))
 }
 
 async fn article_card(pages: &Pages, author: &str, file: &str) -> Option<Card> {
@@ -149,5 +145,5 @@ async fn article_card(pages: &Pages, author: &str, file: &str) -> Option<Card> {
         author: shown_name(&names, &event.pubkey),
         summary: article::summary_of(&event),
     });
-    Some(Card::new(Mark::Social, pages.card_host(), face))
+    Some(Card::new(pages.card_host(), face))
 }
