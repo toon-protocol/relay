@@ -129,9 +129,12 @@ describe('relay image conformance: link previews on the app UIs', () => {
         'Sails a 19-foot boat; builds tide tools.'
       );
       await expectCard(meta(profile, 'og:image') ?? '');
-      expect(meta(profile, 'og:image')).toBe(
-        `${ORIGIN}/social/og/p/${fixture.npubs.maya}.png`
-      );
+      // Versioned by what the card is drawn from, so a crawler's image cache
+      // takes a changed card for a new image.
+      expect(meta(profile, 'og:image')?.split('?v=')).toEqual([
+        `${ORIGIN}/social/og/p/${fixture.npubs.maya}.png`,
+        expect.stringMatching(/^[0-9a-f]{16}$/),
+      ]);
 
       const ship = await html(
         `/social/e/${nip19.noteEncode(fixture.named.ship.id)}`

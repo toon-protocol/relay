@@ -168,6 +168,15 @@ impl Card {
     }
 }
 
+/// A short name for `text`: the first 8 bytes of its SHA-256, in hex. A
+/// page puts one in its card's URL, so the URL changes with the card.
+pub fn version(text: &str) -> String {
+    Sha256::digest(text.as_bytes())[..8]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 /// The host a card's footer names: the public origin's when the operator
 /// set one, else the relay hint visitors' clients use, else none.
 pub fn footer_host(apps: &relay_ui::chrome::Apps, relay_host: Option<&str>) -> Option<String> {

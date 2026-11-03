@@ -25,7 +25,8 @@
 3. **The request is bounded.** It gets 5 s in all and 5 MiB of body, and four fetches may run at once. The relay sends no cookies or credentials, and its `User-Agent` names it.
 4. **Bytes are checked before they are decoded.** The format is read from the magic number, and the size from the header: PNG, JPEG, GIF or WebP, up to 4096 × 4096. SVG and anything else are discarded. The renderer resolves an `<image>` only from a raster `data:` URL, never from a file, a URL or a nested SVG.
 5. **Answers are cached.** A picture is kept for an hour and a failure for ten minutes, in a cache of at most 512 entries and 64 MiB. A card's ETag covers the digest of each picture it draws, so a changed picture is a new card.
-6. **A missing picture leaves the identicon.** A failed, slow or refused fetch draws the card without it. The card still draws, and its counts are unaffected.
+6. **The card's URL changes with the card.** The page's `og:image` is `/social/og/p/<npub>.png?v=<version>`, the version a hash of what the card is drawn from, its pictures named by URL, so the page fetches nothing to name it. Crawlers keep an image by its URL (Discord's media proxy does, and re-posting the page does not refresh it), so an unchanging URL would leave a stale card in an unfurl. The query is not read when the card is served.
+7. **A missing picture leaves the identicon.** A failed, slow or refused fetch draws the card without it. The card still draws, and its counts are unaffected.
 
 ## Consequences
 

@@ -35,6 +35,23 @@ pub(crate) fn profile_path(key: &PublicKey) -> String {
     format!("{PREFIX}/og/p/{}.png", npub(key))
 }
 
+/// A profile's card as its page's `og:image` names it: [`profile_path`]
+/// with `?v=` and a name for what the card is drawn from, its pictures by
+/// their URLs rather than their bytes, so the page fetches none. A crawler's
+/// image cache (Discord's media proxy keeps an image by its URL) then sees a
+/// new picture, banner or count as a new image, not one it already holds.
+pub(crate) async fn profile_image(pages: &Pages, key: PublicKey) -> String {
+    let path = profile_path(&key);
+    match crate::profile::preview(&pages.store, key).await {
+        Some((profile, urls)) => {
+            let card = Card::new(pages.card_host(), Face::Profile(profile));
+            let version = ui_preview::version(&format!("{}\n{urls:?}", card.key()));
+            format!("{path}?v={version}")
+        }
+        None => path,
+    }
+}
+
 /// A ship post's card.
 pub(crate) fn ship_path(id: &EventId) -> String {
     format!("{PREFIX}/og/e/{}.png", id.to_hex())
