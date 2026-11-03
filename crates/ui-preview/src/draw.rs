@@ -1,16 +1,16 @@
 //! A card drawn as SVG: GitHub's social card layout in the pages' light
-//! colours (`relay-ui`'s `style.css` tokens). Text, rectangles, circles and
-//! the pages' own Octicon paths, nothing else: no `<image>`, no link, no
-//! font but the bundled one. Every string from an event is [`clean`]ed,
+//! colours (`relay-ui`'s `style.css` tokens). Text, rectangles, circles, an
+//! identicon and the pages' own Octicon paths, nothing else: no `<image>`, no
+//! link, no font but the bundled one. Every string from an event is [`clean`]ed,
 //! measured and escaped here, so the SVG's size and the time it takes to
 //! draw are bounded whatever the events hold. A pure function of the card
 //! and a [`Measure`].
 
-use relay_ui::chrome::icon;
+use relay_ui::chrome::{Identicon, icon};
 
 use crate::font::FAMILY;
-use crate::text::{Fit, Line, Measure, Weight, clean, initials, line, wrap};
-use crate::{Article, Card, Face, HEIGHT, Mark, Profile, Repo, WIDTH};
+use crate::text::{Fit, Line, Measure, Weight, clean, line, wrap};
+use crate::{Article, Card, Face, HEIGHT, Profile, Repo, WIDTH};
 
 // The light theme's tokens.
 const BG: &str = "#ffffff";
@@ -26,15 +26,6 @@ const ATTENTION_FG: &str = "#7d4e00";
 const LINK: &str = "#0969da";
 const DONE: &str = "#8250df";
 const SUCCESS: &str = "#1f883d";
-
-/// An avatar's two colours, by name: the pages' accent, done, success and
-/// attention pairs.
-const AVATARS: [(&str, &str); 4] = [
-    (ACCENT_BG, ACCENT_FG),
-    ("#fbefff", DONE),
-    ("#dafbe1", "#116329"),
-    (ATTENTION_BG, ATTENTION_FG),
-];
 
 /// The left and right edges of what is drawn.
 const LEFT: f32 = 80.0;
@@ -64,7 +55,7 @@ pub fn draw(card: &Card, measure: &impl Measure) -> String {
          stop-color=\"{DONE}\"/><stop offset=\"1\" stop-color=\"{SUCCESS}\"/></linearGradient>\
          </defs><rect width=\"{WIDTH}\" height=\"{HEIGHT}\" fill=\"{BG}\"/>"
     ));
-    svg.mark(card.mark());
+    svg.text(LEFT, 100.0, (38.0, Weight::Bold), FG, Anchor::Start, "TOON");
     let counts = match card.face() {
         Face::Repo(repo) => svg.repo(repo),
         Face::Ship { headline, repo } => svg.ship(headline, repo),
@@ -106,7 +97,6 @@ struct Count {
 #[derive(Clone, Copy)]
 enum Anchor {
     Start,
-    Middle,
     End,
 }
 
@@ -137,7 +127,6 @@ impl<M: Measure> Svg<'_, M> {
             },
             match anchor {
                 Anchor::Start => "",
-                Anchor::Middle => " text-anchor=\"middle\"",
                 Anchor::End => " text-anchor=\"end\"",
             },
             escape(text),
@@ -207,50 +196,23 @@ impl<M: Measure> Svg<'_, M> {
         )
     }
 
-    /// The app's mark, top left: a dark tile with its icon, then
-    /// `TOON <app>`.
-    fn mark(&mut self, mark: Mark) {
+    /// A round avatar, the key's identicon, top right.
+    fn avatar(&mut self, avatar: &Identicon) {
+        let hue = avatar.hue();
+        let pixels = avatar.pixels();
+        let side = AVATAR_R * 2.0;
+        let scale = side / Identicon::SIZE as f32;
+        let (x, y) = (AVATAR_X - AVATAR_R, AVATAR_Y - AVATAR_R);
         self.out.push_str(&format!(
-            "<rect x=\"{LEFT}\" y=\"60\" width=\"52\" height=\"52\" rx=\"12\" fill=\"{FG}\"/>"
-        ));
-        let glyph = match mark {
-            Mark::Repos => icon::REPO,
-            Mark::Social => icon::COMMENT,
-        };
-        self.icon(glyph, LEFT + 12.0, 72.0, 28.0, BG);
-        let x = LEFT + 72.0;
-        self.text(x, 97.0, (30.0, Weight::Bold), FG, Anchor::Start, "TOON");
-        let toon = self.measure.width("TOON", 30.0, Weight::Bold);
-        self.text(
-            x + toon + 10.0,
-            97.0,
-            (30.0, Weight::Regular),
-            MUTED_FG,
-            Anchor::Start,
-            mark.label(),
-        );
-    }
-
-    /// A round avatar with `name`'s initials, top right.
-    fn avatar(&mut self, name: &str) {
-        let shown = initials(&clean(name, self.measure));
-        let pick = name
-            .bytes()
-            .fold(0usize, |sum, byte| sum + usize::from(byte))
-            % AVATARS.len();
-        let (fill, ink) = AVATARS[pick];
-        self.out.push_str(&format!(
-            "<circle cx=\"{AVATAR_X}\" cy=\"{AVATAR_Y}\" r=\"{AVATAR_R}\" fill=\"{fill}\" \
+            "<clipPath id=\"avatar\"><circle cx=\"{AVATAR_X}\" cy=\"{AVATAR_Y}\" \
+             r=\"{AVATAR_R}\"/></clipPath>\
+             <g clip-path=\"url(#avatar)\"><g transform=\"translate({x} {y}) scale({scale})\" \
+             shape-rendering=\"crispEdges\">\
+             <path fill=\"hsl({hue},45%,90%)\" d=\"M0 0h8v8H0z\"/>\
+             <path fill=\"hsl({hue},60%,38%)\" d=\"{pixels}\"/></g></g>\
+             <circle cx=\"{AVATAR_X}\" cy=\"{AVATAR_Y}\" r=\"{AVATAR_R}\" fill=\"none\" \
              stroke=\"{BORDER}\" stroke-width=\"2\"/>"
         ));
-        self.text(
-            AVATAR_X,
-            AVATAR_Y + 22.0,
-            (62.0, Weight::Bold),
-            ink,
-            Anchor::Middle,
-            &shown,
-        );
     }
 
     /// A pill: `label` (with `glyph` before it) at `(x, top)`, 44 high. Its
@@ -374,7 +336,7 @@ impl<M: Measure> Svg<'_, M> {
     }
 
     fn repo(&mut self, repo: &Repo) -> Vec<Count> {
-        self.avatar(&repo.owner);
+        self.avatar(&repo.avatar);
         let owner = line(
             &format!("{} /", clean(&repo.owner, self.measure)),
             40.0,
@@ -464,7 +426,7 @@ impl<M: Measure> Svg<'_, M> {
     }
 
     fn profile(&mut self, profile: &Profile) -> Vec<Count> {
-        self.avatar(&profile.name);
+        self.avatar(&profile.avatar);
         let mut last = self.title(&profile.name, 240.0, 80.0, 60.0, BESIDE_AVATAR);
         if profile.nip05.is_some() || profile.bot {
             last += 58.0;
@@ -643,6 +605,7 @@ mod tests {
     fn repo() -> Repo {
         Repo {
             owner: "Ada <script>".into(),
+            avatar: Identicon::default(),
             name: "engine".into(),
             description: Some("Computes & tabulates Bernoulli numbers. ".repeat(20)),
             topics: vec!["math".into(), "history".into()],
@@ -664,9 +627,25 @@ mod tests {
     }
 
     #[test]
+    fn an_avatar_is_the_keys_identicon_clipped_round_with_no_letters() {
+        let key = nostr::key::PublicKey::from_hex(
+            "9955302dd51d10db5c05756ce1647708addd9c1daf10500b7d6d52c01bac10e5",
+        )
+        .expect("a key");
+        let avatar = Identicon::of(&key);
+        let svg = draw(
+            &Card::new(None, Face::Repo(Repo { avatar, ..repo() })),
+            &Fixed,
+        );
+        assert!(svg.contains(&format!("d=\"{}\"", avatar.pixels())));
+        assert!(svg.contains("clip-path=\"url(#avatar)\""));
+        assert!(!texts(&svg).contains(&"AD".to_owned()));
+    }
+
+    #[test]
     fn a_repo_card_shows_owner_name_topics_and_counts_escaped() {
         let svg = draw(
-            &Card::new(Mark::Social, Some("relay.test".into()), Face::Repo(repo())),
+            &Card::new(Some("relay.test".into()), Face::Repo(repo())),
             &Fixed,
         );
         assert!(svg.starts_with(
@@ -675,8 +654,6 @@ mod tests {
         let shown = texts(&svg);
         for expected in [
             "TOON",
-            "Social",
-            "AD",
             "Ada &lt;script&gt; /",
             "engine",
             "math",
@@ -714,6 +691,7 @@ mod tests {
             },
             Face::Profile(Profile {
                 name: "Ada".into(),
+                avatar: Identicon::default(),
                 nip05: Some("ada@x.y".into()),
                 about: Some("Writes engines.".into()),
                 repos: 2,
@@ -726,11 +704,11 @@ mod tests {
                 summary: None,
             }),
             Face::Site {
-                title: "TOON Social".into(),
+                title: "Social".into(),
                 tagline: "Builders".into(),
             },
         ] {
-            let svg = draw(&Card::new(Mark::Repos, None, face), &Fixed);
+            let svg = draw(&Card::new(None, face), &Fixed);
             for forbidden in [
                 "<image",
                 "href",
@@ -751,10 +729,10 @@ mod tests {
         let card = |bot| {
             draw(
                 &Card::new(
-                    Mark::Social,
                     None,
                     Face::Profile(Profile {
                         name: "Maya".into(),
+                        avatar: Identicon::default(),
                         nip05: Some("maya@tide.dev".into()),
                         about: None,
                         repos: 1,
@@ -777,7 +755,6 @@ mod tests {
     fn a_ship_card_leads_with_its_headline_over_the_repo() {
         let shown = texts(&draw(
             &Card::new(
-                Mark::Social,
                 None,
                 Face::Ship {
                     headline: "Engine 1.0 ships today".into(),
@@ -808,7 +785,7 @@ mod tests {
             author: "x".repeat(300),
             summary: Some("y ".repeat(300)),
         });
-        let svg = draw(&Card::new(Mark::Social, None, long), &Fixed);
+        let svg = draw(&Card::new(None, long), &Fixed);
         for part in svg.split("<text x=\"").skip(1) {
             let y: f32 = part
                 .split("y=\"")

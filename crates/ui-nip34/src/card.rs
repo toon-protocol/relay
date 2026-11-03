@@ -306,6 +306,7 @@ impl RepoCard {
     pub fn preview(&self, forks: Option<usize>) -> ui_preview::Repo {
         ui_preview::Repo {
             owner: chrome::shown_name(self.profiles.names(), self.address.owner()),
+            avatar: chrome::Identicon::of(self.address.owner()),
             name: self.name().to_owned(),
             description: self.description().map(str::to_owned),
             topics: topics(&self.announcement)

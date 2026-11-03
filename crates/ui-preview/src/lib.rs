@@ -7,7 +7,7 @@
 //! [`Card`], [`draw`] writes it as SVG of text and plain shapes in the
 //! pages' light colours, and [`Card::png`] rasterises that with `resvg` and
 //! the bundled Inter font ([`font`]). A card never holds a picture: an
-//! avatar is initials, as on the pages (ADR 0005). [`Previews`] serves cards
+//! avatar is the key's identicon (ADR 0008). [`Previews`] serves cards
 //! from a bounded cache, keyed by what each one shows, and draws only a few
 //! at once, so a crawler cannot make the relay draw without limit.
 
@@ -19,6 +19,7 @@ pub mod text;
 pub use draw::draw;
 pub use serve::{CACHE_CONTROL_VALUE, Previews};
 
+use relay_ui::chrome::Identicon;
 use sha2::{Digest, Sha256};
 
 /// A card's width, in pixels: what Open Graph and X's large card expect.
@@ -28,9 +29,9 @@ pub const HEIGHT: u32 = 630;
 
 /// Changes when the drawing does, so a cached card from before is not
 /// served as current.
-const DRAWING: &str = "ui-preview/1";
+const DRAWING: &str = "ui-preview/2";
 
-/// Which app a card is from: the mark in its corner.
+/// Which app a site card stands for. Every other card is the same from either.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Mark {
     /// `/repo`.
@@ -40,7 +41,7 @@ pub enum Mark {
 }
 
 impl Mark {
-    /// What the mark says after "TOON".
+    /// The app's name, a site card's title.
     pub fn label(self) -> &'static str {
         match self {
             Self::Repos => "Repos",
@@ -54,6 +55,8 @@ impl Mark {
 pub struct Repo {
     /// The owner's display name, else the start of their npub.
     pub owner: String,
+    /// The owner's identicon.
+    pub avatar: Identicon,
     pub name: String,
     pub description: Option<String>,
     /// The announcement's `t` tags; a card shows the first few that fit.
@@ -70,6 +73,8 @@ pub struct Repo {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct Profile {
     pub name: String,
+    /// The key's identicon.
+    pub avatar: Identicon,
     /// The NIP-05 identifier the profile claims. It is a claim: the relay
     /// checks none, and the card never calls it verified.
     pub nip05: Option<String>,
@@ -108,25 +113,18 @@ pub enum Face {
     },
 }
 
-/// A preview card: what it shows, which app it is from, and the host the
-/// relay is reached at, for the footer.
+/// A preview card: what it shows, and the host the relay is reached at, for
+/// the footer.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Card {
-    mark: Mark,
     host: Option<String>,
     face: Face,
 }
 
 impl Card {
-    /// A card from `mark`'s app showing `face`, with `host` in its footer
-    /// when it is known.
-    pub fn new(mark: Mark, host: Option<String>, face: Face) -> Self {
-        Self { mark, host, face }
-    }
-
-    /// The app's mark.
-    pub fn mark(&self) -> Mark {
-        self.mark
+    /// A card showing `face`, with `host` in its footer when it is known.
+    pub fn new(host: Option<String>, face: Face) -> Self {
+        Self { host, face }
     }
 
     /// The footer's host.
@@ -175,10 +173,9 @@ pub fn site(mark: Mark, host: Option<String>) -> Card {
         Mark::Social => relay_ui::chrome::App::Social,
     };
     Card::new(
-        mark,
         host,
         Face::Site {
-            title: format!("TOON {}", mark.label()),
+            title: mark.label().to_owned(),
             tagline: relay_ui::meta::tagline(app).to_owned(),
         },
     )
@@ -209,6 +206,7 @@ mod tests {
     fn repo() -> Repo {
         Repo {
             owner: "ada".into(),
+            avatar: Identicon::default(),
             name: "engine".into(),
             description: Some("Computes Bernoulli numbers.".into()),
             topics: vec!["math".into()],
@@ -220,17 +218,13 @@ mod tests {
 
     #[test]
     fn the_key_changes_with_what_is_drawn_and_only_with_it() {
-        let card = Card::new(Mark::Social, None, Face::Repo(repo()));
+        let card = Card::new(None, Face::Repo(repo()));
         assert_eq!(card.key(), card.clone().key());
         assert_eq!(card.key().len(), 32);
-        let starred = Card::new(Mark::Social, None, Face::Repo(Repo { stars: 4, ..repo() }));
+        let starred = Card::new(None, Face::Repo(Repo { stars: 4, ..repo() }));
         assert_ne!(card.key(), starred.key());
-        let hosted = Card::new(Mark::Social, Some("relay.test".into()), Face::Repo(repo()));
+        let hosted = Card::new(Some("relay.test".into()), Face::Repo(repo()));
         assert_ne!(card.key(), hosted.key());
-        assert_ne!(
-            card.key(),
-            Card::new(Mark::Repos, None, Face::Repo(repo())).key()
-        );
     }
 
     /// The width and height a PNG's header states, if it is a PNG.
@@ -247,7 +241,7 @@ mod tests {
 
     #[test]
     fn a_card_is_a_png_of_the_open_graph_size() {
-        let card = Card::new(Mark::Social, Some("relay.test".into()), Face::Repo(repo()));
+        let card = Card::new(Some("relay.test".into()), Face::Repo(repo()));
         let bytes = card.png().expect("a card draws");
         assert_eq!(png_size(&bytes), Some((WIDTH, HEIGHT)));
         assert!(bytes.len() < 512 * 1024, "{}", bytes.len());
@@ -262,7 +256,7 @@ mod tests {
         let missing = previews.respond(&HeaderMap::new(), None).await;
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
 
-        let card = Card::new(Mark::Repos, None, Face::Repo(repo()));
+        let card = Card::new(None, Face::Repo(repo()));
         let first = previews
             .respond(&HeaderMap::new(), Some(card.clone()))
             .await;

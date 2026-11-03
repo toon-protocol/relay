@@ -10,11 +10,12 @@ use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::Apps;
+use relay_ui::meta::Preview;
 
 use super::markup::{Tab, ago, avatar, icon, name, repo_header, svg};
 use super::{
-    ANNOUNCEMENT, authorized_authors, escape, first_tag, html, names, newest, not_found, repo_path,
-    resolve_repo,
+    ANNOUNCEMENT, authorized_authors, escape, first_tag, html_with, names, newest, not_found,
+    repo_path, repo_preview, resolve_repo,
 };
 
 const ISSUE: u16 = 1621;
@@ -305,6 +306,18 @@ impl Repo {
         coordinate(&self.owner, &self.d)
     }
 
+    /// What the thread page `title`, at `path`, tells a link unfurler.
+    fn preview(&self, defaults: &super::Defaults, title: &str, path: String) -> Preview {
+        repo_preview(
+            &self.apps,
+            defaults.relay_host.clone(),
+            &self.announcement,
+            &self.names,
+            Some(title),
+            path,
+        )
+    }
+
     fn header(&self, tab: Tab) -> String {
         repo_header(
             &self.apps,
@@ -473,7 +486,12 @@ fn authors_of(events: &[&Event]) -> Vec<PublicKey> {
 }
 
 pub(super) async fn issues(
-    State(super::Pages { store, apps, .. }): State<super::Pages>,
+    State(super::Pages {
+        store,
+        apps,
+        defaults,
+        ..
+    }): State<super::Pages>,
     Path((npub, d)): Path<(String, String)>,
     RawQuery(query): RawQuery,
 ) -> Response {
@@ -498,11 +516,17 @@ pub(super) async fn issues(
         &names,
         wants_closed(query.as_deref()),
     );
-    html(&apps, StatusCode::OK, "Issues", &body)
+    let preview = repo.preview(&defaults, "Issues", format!("{}/issues", repo.base()));
+    html_with(&apps, StatusCode::OK, "Issues", &body, &preview)
 }
 
 pub(super) async fn pulls(
-    State(super::Pages { store, apps, .. }): State<super::Pages>,
+    State(super::Pages {
+        store,
+        apps,
+        defaults,
+        ..
+    }): State<super::Pages>,
     Path((npub, d)): Path<(String, String)>,
     RawQuery(query): RawQuery,
 ) -> Response {
@@ -535,7 +559,9 @@ pub(super) async fn pulls(
         &names,
         wants_closed(query.as_deref()),
     );
-    html(&apps, StatusCode::OK, "Patches and pull requests", &body)
+    let title = "Patches and pull requests";
+    let preview = repo.preview(&defaults, title, format!("{}/pulls", repo.base()));
+    html_with(&apps, StatusCode::OK, title, &body, &preview)
 }
 
 /// The target `id` if it is an event of one of `kinds` for `repo`.
@@ -725,7 +751,12 @@ fn thread_body(
 }
 
 pub(super) async fn issue(
-    State(super::Pages { store, apps, .. }): State<super::Pages>,
+    State(super::Pages {
+        store,
+        apps,
+        defaults,
+        ..
+    }): State<super::Pages>,
     Path((npub, d, id)): Path<(String, String, String)>,
 ) -> Response {
     let Some(repo) = Repo::resolve(&store, &apps, &npub, &d).await else {
@@ -746,11 +777,19 @@ pub(super) async fn issue(
     }
     let names = names(&store, &people).await;
     let body = thread_body(&repo, &issue, status, &names, "", &comments);
-    html(&apps, StatusCode::OK, &title_of(&issue), &body)
+    let title = title_of(&issue);
+    let at = format!("{}/issues/{}", repo.base(), issue.id.to_hex());
+    let preview = repo.preview(&defaults, &title, at);
+    html_with(&apps, StatusCode::OK, &title, &body, &preview)
 }
 
 pub(super) async fn pull(
-    State(super::Pages { store, apps, .. }): State<super::Pages>,
+    State(super::Pages {
+        store,
+        apps,
+        defaults,
+        ..
+    }): State<super::Pages>,
     Path((npub, d, id)): Path<(String, String, String)>,
 ) -> Response {
     let Some(repo) = Repo::resolve(&store, &apps, &npub, &d).await else {
@@ -826,7 +865,10 @@ pub(super) async fn pull(
         extra.push_str("</dl></div>");
     }
     let body = thread_body(&repo, &pull, status, &names, &extra, &comments);
-    html(&apps, StatusCode::OK, &title_of(&pull), &body)
+    let title = title_of(&pull);
+    let at = format!("{}/pulls/{}", repo.base(), pull.id.to_hex());
+    let preview = repo.preview(&defaults, &title, at);
+    html_with(&apps, StatusCode::OK, &title, &body, &preview)
 }
 
 /// The author of `target` and of each comment, once each.

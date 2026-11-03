@@ -550,6 +550,7 @@ pub(crate) async fn preview(
         .await;
     Some(ui_preview::Profile {
         name: shown(&meta, &key),
+        avatar: relay_ui::chrome::Identicon::of(&key),
         nip05: meta.nip05.clone(),
         about: meta.about.clone(),
         repos: kept.len(),

@@ -1,7 +1,9 @@
 //! Draws one card of each face into a folder, to look at while changing the
 //! drawing: `cargo run -p ui-preview --example samples -- <dir>`.
 
-use ui_preview::{Article, Card, Face, Mark, Profile, Repo};
+use nostr::key::PublicKey;
+use relay_ui::chrome::Identicon;
+use ui_preview::{Article, Card, Face, Profile, Repo};
 
 fn main() {
     let dir = std::env::args()
@@ -12,8 +14,13 @@ fn main() {
         std::process::exit(1);
     }
     let host = Some("relay.toonprotocol.dev".to_owned());
+    let avatar = || {
+        let key = "9955302dd51d10db5c05756ce1647708addd9c1daf10500b7d6d52c01bac10e5";
+        Identicon::of(&PublicKey::from_hex(key).expect("a key"))
+    };
     let repo = Repo {
         owner: "Maya Tide".into(),
+        avatar: avatar(),
         name: "harmonics".into(),
         description: Some(
             "A tiny synthesizer that runs in the browser: oscillators, envelopes and a \
@@ -33,17 +40,14 @@ fn main() {
         forks: Some(5),
     };
     let cards = [
-        (
-            "repo",
-            Card::new(Mark::Social, host.clone(), Face::Repo(repo.clone())),
-        ),
+        ("repo", Card::new(host.clone(), Face::Repo(repo.clone()))),
         (
             "repo-long",
             Card::new(
-                Mark::Repos,
                 host.clone(),
                 Face::Repo(Repo {
                     owner: "npub1qqqqqqqq…".into(),
+                    avatar: avatar(),
                     name: "an-extraordinarily-long-repository-name-that-will-not-fit".into(),
                     description: None,
                     topics: vec![],
@@ -56,7 +60,6 @@ fn main() {
         (
             "ship",
             Card::new(
-                Mark::Social,
                 host.clone(),
                 Face::Ship {
                     headline: "harmonics 1.0 is out: polyphony, a step sequencer and MIDI input"
@@ -68,9 +71,9 @@ fn main() {
         (
             "profile",
             Card::new(
-                Mark::Social,
                 host.clone(),
                 Face::Profile(Profile {
+                    avatar: avatar(),
                     name: "Maya Tide".into(),
                     nip05: Some("maya@tide.dev".into()),
                     about: Some(
@@ -87,7 +90,6 @@ fn main() {
         (
             "article",
             Card::new(
-                Mark::Social,
                 host.clone(),
                 Face::Article(Article {
                     title: "How harmonics schedules notes without a clock thread".into(),
@@ -99,10 +101,9 @@ fn main() {
         (
             "site",
             Card::new(
-                Mark::Social,
                 host,
                 Face::Site {
-                    title: "TOON Social".into(),
+                    title: "Social".into(),
                     tagline: "Builders sharing repos, launches and devlogs, read from this \
                               relay's Nostr events."
                         .into(),

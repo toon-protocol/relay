@@ -153,6 +153,41 @@ fn html_with(
     (status, Html(markup::page_with(apps, title, body, preview))).into_response()
 }
 
+/// What a page of a repo tells a link unfurler: `owner / name`, after what
+/// `page` adds when it is a page within the repo, the repo's description,
+/// and the repo's preview image.
+fn repo_preview(
+    apps: &Apps,
+    relay_host: Option<String>,
+    announcement: &Event,
+    names: &HashMap<PublicKey, String>,
+    page: Option<&str>,
+    path: String,
+) -> Preview {
+    let owner = announcement.pubkey;
+    let Some(address) = RepoAddress::new(owner, d_tag(announcement)) else {
+        return Preview::default();
+    };
+    let repo = format!(
+        "{} / {}",
+        shown_name(names, &owner),
+        repo_name(announcement)
+    );
+    let description = first_tag(announcement, "description")
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("{repo}: a repository on TOON."));
+    let title = match page {
+        Some(page) => format!("{page} · {repo}"),
+        None => repo,
+    };
+    Preview::new(title.clone(), description).at(path).image(
+        card::Links::new(apps.clone(), relay_host).preview_image(&address),
+        title,
+    )
+}
+
 async fn fallback(State(pages): State<Pages>) -> Response {
     not_found(&pages.apps)
 }
@@ -500,27 +535,14 @@ async fn home(
     body.push_str("</div>");
     body.push_str(&about(&apps, &owner, announcement, state, &authors, &names));
     body.push_str("</div>");
-    let preview = RepoAddress::new(owner, &d)
-        .map(|address| {
-            let title = format!(
-                "{} / {}",
-                shown_name(&names, &owner),
-                repo_name(announcement)
-            );
-            let description = first_tag(announcement, "description")
-                .map(str::trim)
-                .filter(|text| !text.is_empty())
-                .map(str::to_owned)
-                .unwrap_or_else(|| format!("{title}: a repository on TOON."));
-            Preview::new(title.clone(), description)
-                .at(base.clone())
-                .image(
-                    card::Links::new(apps.clone(), defaults.relay_host.clone())
-                        .preview_image(&address),
-                    title,
-                )
-        })
-        .unwrap_or_default();
+    let preview = repo_preview(
+        &apps,
+        defaults.relay_host.clone(),
+        announcement,
+        &names,
+        None,
+        base.clone(),
+    );
     let mut response = html_with(
         &apps,
         StatusCode::OK,

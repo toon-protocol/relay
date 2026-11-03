@@ -226,6 +226,71 @@ async fn a_repo_page_names_an_absolute_card_that_is_a_png_of_the_open_graph_size
 }
 
 #[tokio::test]
+async fn every_page_of_a_repo_names_the_repos_card() {
+    let running =
+        running_with(|name| (name == "TOON_UI_PUBLIC_URL").then(|| format!("{ORIGIN}/"))).await;
+    let relay = &running.relay;
+    let owner = Keys::generate();
+    let npub = owner.public_key().to_bech32().expect("encodes");
+    let sha = "a".repeat(40);
+    store(
+        relay,
+        &event(
+            &owner,
+            30_617,
+            1,
+            "",
+            &[&["d", "engine"], &["description", "Computes numbers."]],
+        ),
+    )
+    .await;
+    store(
+        relay,
+        &event(
+            &owner,
+            30_618,
+            1,
+            "",
+            &[
+                &["d", "engine"],
+                &["refs/heads/main", &sha],
+                &["HEAD", "ref: refs/heads/main"],
+            ],
+        ),
+    )
+    .await;
+    let repo = format!("{npub}/engine");
+    for (page, title) in [
+        ("tree/main/src", "src · "),
+        ("blob/main/src/lib.rs", "src/lib.rs · "),
+        ("commits", "Commits · "),
+        ("issues", "Issues · "),
+        ("pulls", "Patches and pull requests · "),
+    ] {
+        let path = format!("/repo/{repo}/{page}");
+        let answer = get(relay, &path, None).await;
+        assert_eq!(answer.status, StatusCode::OK, "{path}");
+        let html = String::from_utf8(answer.body).expect("html");
+        let shared = meta(&html, "og:title").expect("an og:title");
+        assert!(
+            shared.starts_with(title) && shared.ends_with("/ engine"),
+            "{shared}"
+        );
+        assert_eq!(
+            meta(&html, "og:image"),
+            Some(format!("{ORIGIN}/social/og/r/{repo}.png")),
+            "{path}"
+        );
+        assert_eq!(
+            meta(&html, "og:description").as_deref(),
+            Some("Computes numbers."),
+            "{path}"
+        );
+        assert_eq!(meta(&html, "og:url"), Some(format!("{ORIGIN}{path}")));
+    }
+}
+
+#[tokio::test]
 async fn without_a_public_origin_a_page_names_no_image() {
     let running = running_with(|_| None).await;
     let relay = &running.relay;

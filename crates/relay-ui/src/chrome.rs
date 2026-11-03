@@ -521,26 +521,60 @@ const IDENTICON_SIZE: usize = 8;
 /// and every relay. A pure function; `fill` is an SVG attribute, which the
 /// pages' policy allows where it refuses `style`.
 pub fn identicon(key: &PublicKey) -> String {
-    let hash = Sha256::digest(npub(key).as_bytes());
-    let hue = u16::from_be_bytes([hash[0], hash[1]]) % 360;
-    let mut pixels = String::new();
-    // One bit per pixel of the left half, from the bytes the hue did not use.
-    for y in 0..IDENTICON_SIZE {
-        let row = hash[2 + y];
-        for x in 0..IDENTICON_SIZE / 2 {
-            if row >> x & 1 == 1 {
-                pixels.push_str(&format!("M{x} {y}h1v1h-1z"));
-                let mirrored = IDENTICON_SIZE - 1 - x;
-                pixels.push_str(&format!("M{mirrored} {y}h1v1h-1z"));
-            }
-        }
-    }
+    let drawn = Identicon::of(key);
+    let hue = drawn.hue();
+    let pixels = drawn.pixels();
     format!(
         "<svg class=\"identicon\" viewBox=\"0 0 {IDENTICON_SIZE} {IDENTICON_SIZE}\" \
          shape-rendering=\"crispEdges\"><path fill=\"hsl({hue} 45% 90%)\" \
          d=\"M0 0h{IDENTICON_SIZE}v{IDENTICON_SIZE}H0z\"/>\
          <path fill=\"hsl({hue} 60% 38%)\" d=\"{pixels}\"/></svg>"
     )
+}
+
+/// What an [`identicon`] shows, for a drawing that is not a page's: its hue
+/// and which pixels of the left half are set.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Identicon {
+    hue: u16,
+    rows: [u8; IDENTICON_SIZE],
+}
+
+impl Identicon {
+    /// The side of the picture, in pixels.
+    pub const SIZE: usize = IDENTICON_SIZE;
+
+    /// `key`'s picture, from the SHA-256 of its npub.
+    pub fn of(key: &PublicKey) -> Self {
+        let hash = Sha256::digest(npub(key).as_bytes());
+        let mut rows = [0; IDENTICON_SIZE];
+        // One bit per pixel of the left half, from the bytes the hue did not use.
+        rows.copy_from_slice(&hash[2..2 + IDENTICON_SIZE]);
+        Self {
+            hue: u16::from_be_bytes([hash[0], hash[1]]) % 360,
+            rows,
+        }
+    }
+
+    /// The hue of both its colours, in degrees.
+    pub fn hue(&self) -> u16 {
+        self.hue
+    }
+
+    /// The set pixels as SVG path data, on a [`Self::SIZE`] square.
+    pub fn pixels(&self) -> String {
+        let mut pixels = String::new();
+        for (y, row) in self.rows.iter().enumerate() {
+            for x in 0..IDENTICON_SIZE / 2 {
+                if row >> x & 1 == 1 {
+                    pixels.push_str(&format!("M{x} {y}h1v1h-1z"));
+                    let mirrored = IDENTICON_SIZE - 1 - x;
+                    pixels.push_str(&format!("M{mirrored} {y}h1v1h-1z"));
+                }
+            }
+        }
+        pixels
+    }
 }
 
 /// What kind 0 profiles say about some keys: display names, NIP-05
