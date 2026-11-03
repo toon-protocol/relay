@@ -31,7 +31,7 @@ pub(crate) struct Metadata {
     pub(crate) website: Option<String>,
     /// An `https` image, for the browser to load.
     pub(crate) banner: Option<Media>,
-    /// The `https` picture, for an unfurler to load (ADR 0010).
+    /// The `https` picture, which the profile card draws (ADR 0011).
     pub(crate) picture: Option<String>,
     /// NIP-24 `bot`: the key's content is partly or wholly automated.
     pub(crate) bot: bool,

@@ -2,21 +2,27 @@
 //! page's `og:image` names, so a `/social` or `/repo` link posted on X,
 //! Discord, Slack or Bluesky unfurls into a card.
 //!
-//! The relay draws each card itself, from what its own store says, and
-//! fetches nothing to do it (ADR 0001): an app reads the events and fills in a
-//! [`Card`], [`draw`] writes it as SVG of text and plain shapes in the
-//! pages' light colours, and [`Card::png`] rasterises that with `resvg` and
-//! the bundled Inter font ([`font`]). A card never holds a picture: an
-//! avatar is the key's identicon (ADR 0008). [`Previews`] serves cards
+//! The relay draws each card itself, from what its own store says: an app
+//! reads the events and fills in a [`Card`], [`draw`] writes it as SVG of
+//! text and plain shapes in the pages' light colours, and [`Card::png`]
+//! rasterises that with `resvg` and the bundled Inter font ([`font`]). An
+//! avatar is the key's identicon (ADR 0008). A profile card also draws the
+//! `https` picture and banner its kind 0 names, which [`Pictures`] fetches
+//! under the bounds ADR 0011 sets; it is the only thing a card fetches, and
+//! a picture that cannot be had leaves the identicon. [`Previews`] serves cards
 //! from a bounded cache, keyed by what each one shows, and draws only a few
 //! at once, so a crawler cannot make the relay draw without limit.
 
 mod draw;
+pub mod fetch;
 pub mod font;
+mod picture;
 mod serve;
 pub mod text;
 
 pub use draw::draw;
+pub use fetch::Pictures;
+pub use picture::{Format, MAX_PIXELS, MAX_SIDE, Picture};
 pub use serve::{CACHE_CONTROL_VALUE, Previews};
 
 use relay_ui::chrome::Identicon;
@@ -29,7 +35,7 @@ pub const HEIGHT: u32 = 630;
 
 /// Changes when the drawing does, so a cached card from before is not
 /// served as current.
-const DRAWING: &str = "ui-preview/2";
+const DRAWING: &str = "ui-preview/3";
 
 /// Which app a site card stands for. Every other card is the same from either.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -75,6 +81,10 @@ pub struct Profile {
     pub name: String,
     /// The key's identicon.
     pub avatar: Identicon,
+    /// The kind 0 `picture`, drawn round over the identicon.
+    pub picture: Option<Picture>,
+    /// The kind 0 `banner`, drawn across the top.
+    pub banner: Option<Picture>,
     /// The NIP-05 identifier the profile claims. It is a claim: the relay
     /// checks none, and the card never calls it verified.
     pub nip05: Option<String>,

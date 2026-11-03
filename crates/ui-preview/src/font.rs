@@ -79,11 +79,30 @@ fn database() -> Arc<fontdb::Database> {
         .clone()
 }
 
+/// An `<image>` is drawn only from a `data:` URL of a raster format: never a
+/// file, a URL or a nested SVG. The card only ever writes [`Picture`]s'
+/// `data:` URLs; this holds even if it wrote something else.
+///
+/// [`Picture`]: crate::Picture
+fn raster_data_only() -> usvg::ImageHrefResolver<'static> {
+    usvg::ImageHrefResolver {
+        resolve_data: Box::new(|mime, data, _| match mime {
+            "image/png" => Some(usvg::ImageKind::PNG(data)),
+            "image/jpeg" => Some(usvg::ImageKind::JPEG(data)),
+            "image/gif" => Some(usvg::ImageKind::GIF(data)),
+            "image/webp" => Some(usvg::ImageKind::WEBP(data)),
+            _ => None,
+        }),
+        resolve_string: Box::new(|_, _| None),
+    }
+}
+
 /// `svg` drawn as a PNG of the card's size.
 pub(crate) fn rasterise(svg: &str) -> Result<Vec<u8>, PreviewError> {
     let options = usvg::Options {
         font_family: FAMILY.to_owned(),
         fontdb: database(),
+        image_href_resolver: raster_data_only(),
         ..usvg::Options::default()
     };
     let tree = usvg::Tree::from_str(svg, &options)

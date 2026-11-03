@@ -1,7 +1,8 @@
 //! A card drawn as SVG: GitHub's social card layout in the pages' light
 //! colours (`relay-ui`'s `style.css` tokens). Text, rectangles, circles, an
-//! identicon and the pages' own Octicon paths, nothing else: no `<image>`, no
-//! link, no font but the bundled one. Every string from an event is [`clean`]ed,
+//! identicon and the pages' own Octicon paths, and on a profile card its
+//! [`Picture`]s as `data:` images; no other `<image>`, no link, no font but
+//! the bundled one. Every string from an event is [`clean`]ed,
 //! measured and escaped here, so the SVG's size and the time it takes to
 //! draw are bounded whatever the events hold. A pure function of the card
 //! and a [`Measure`].
@@ -10,7 +11,7 @@ use relay_ui::chrome::{Identicon, icon};
 
 use crate::font::FAMILY;
 use crate::text::{Fit, Line, Measure, Weight, clean, line, wrap};
-use crate::{Article, Card, Face, HEIGHT, Profile, Repo, WIDTH};
+use crate::{Article, Card, Face, HEIGHT, Picture, Profile, Repo, WIDTH};
 
 // The light theme's tokens.
 const BG: &str = "#ffffff";
@@ -34,6 +35,11 @@ const RIGHT: f32 = WIDTH as f32 - 80.0;
 const AVATAR_X: f32 = 1040.0;
 const AVATAR_Y: f32 = 214.0;
 const AVATAR_R: f32 = 80.0;
+/// A profile's banner fills the top this deep, behind the wordmark, with
+/// the avatar centred on its lower edge; the text below moves down by
+/// [`BANNER_DROP`] to make room.
+const BANNER: f32 = 250.0;
+const BANNER_DROP: f32 = 90.0;
 /// Text beside the avatar stops this far left of it.
 const BESIDE_AVATAR: f32 = AVATAR_X - AVATAR_R - 40.0 - LEFT;
 /// The baseline of the footer: counts at the left, the host at the right.
@@ -55,7 +61,22 @@ pub fn draw(card: &Card, measure: &impl Measure) -> String {
          stop-color=\"{DONE}\"/><stop offset=\"1\" stop-color=\"{SUCCESS}\"/></linearGradient>\
          </defs><rect width=\"{WIDTH}\" height=\"{HEIGHT}\" fill=\"{BG}\"/>"
     ));
-    svg.text(LEFT, 100.0, (38.0, Weight::Bold), FG, Anchor::Start, "TOON");
+    let banner = match card.face() {
+        Face::Profile(profile) => profile.banner.as_ref(),
+        _ => None,
+    };
+    if let Some(banner) = banner {
+        svg.banner(banner);
+    }
+    let mark = if banner.is_some() { BG } else { FG };
+    svg.text(
+        LEFT,
+        100.0,
+        (38.0, Weight::Bold),
+        mark,
+        Anchor::Start,
+        "TOON",
+    );
     let counts = match card.face() {
         Face::Repo(repo) => svg.repo(repo),
         Face::Ship { headline, repo } => svg.ship(headline, repo),
@@ -196,22 +217,60 @@ impl<M: Measure> Svg<'_, M> {
         )
     }
 
-    /// A round avatar, the key's identicon, top right.
-    fn avatar(&mut self, avatar: &Identicon) {
+    /// `picture` filling the box at `(x, y)` of `width` × `height`, cropped
+    /// to it and clipped by `clip`.
+    fn image(
+        &mut self,
+        picture: &Picture,
+        (x, y, width, height): (f32, f32, f32, f32),
+        clip: &str,
+    ) {
+        self.out.push_str(&format!(
+            "<image x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{height}\" \
+             preserveAspectRatio=\"xMidYMid slice\" clip-path=\"url(#{clip})\" href=\"{}\"/>",
+            picture.data_url()
+        ));
+    }
+
+    /// A profile's banner across the top, shaded at the left so the
+    /// wordmark reads over it.
+    fn banner(&mut self, banner: &Picture) {
+        self.out.push_str(&format!(
+            "<clipPath id=\"banner\"><rect width=\"{WIDTH}\" height=\"{BANNER}\"/></clipPath>\
+             <linearGradient id=\"shade\" x1=\"0\" x2=\"1\" y1=\"0\" y2=\"0\">\
+             <stop offset=\"0\" stop-color=\"#000\" stop-opacity=\"0.55\"/>\
+             <stop offset=\"0.45\" stop-color=\"#000\" stop-opacity=\"0\"/></linearGradient>\
+             <rect width=\"{WIDTH}\" height=\"{BANNER}\" fill=\"{SUBTLE}\"/>"
+        ));
+        self.image(banner, (0.0, 0.0, WIDTH as f32, BANNER), "banner");
+        self.out.push_str(&format!(
+            "<rect width=\"{WIDTH}\" height=\"{BANNER}\" fill=\"url(#shade)\"/>"
+        ));
+    }
+
+    /// A round avatar, the key's identicon, top right, with `picture` over
+    /// it when there is one. Over a banner it has a ring of the background.
+    fn avatar(&mut self, avatar: &Identicon, picture: Option<&Picture>, ringed: bool, cy: f32) {
         let hue = avatar.hue();
         let pixels = avatar.pixels();
         let side = AVATAR_R * 2.0;
         let scale = side / Identicon::SIZE as f32;
-        let (x, y) = (AVATAR_X - AVATAR_R, AVATAR_Y - AVATAR_R);
+        let (x, y) = (AVATAR_X - AVATAR_R, cy - AVATAR_R);
         self.out.push_str(&format!(
-            "<clipPath id=\"avatar\"><circle cx=\"{AVATAR_X}\" cy=\"{AVATAR_Y}\" \
+            "<clipPath id=\"avatar\"><circle cx=\"{AVATAR_X}\" cy=\"{cy}\" \
              r=\"{AVATAR_R}\"/></clipPath>\
              <g clip-path=\"url(#avatar)\"><g transform=\"translate({x} {y}) scale({scale})\" \
              shape-rendering=\"crispEdges\">\
              <path fill=\"hsl({hue},45%,90%)\" d=\"M0 0h8v8H0z\"/>\
-             <path fill=\"hsl({hue},60%,38%)\" d=\"{pixels}\"/></g></g>\
-             <circle cx=\"{AVATAR_X}\" cy=\"{AVATAR_Y}\" r=\"{AVATAR_R}\" fill=\"none\" \
-             stroke=\"{BORDER}\" stroke-width=\"2\"/>"
+             <path fill=\"hsl({hue},60%,38%)\" d=\"{pixels}\"/></g></g>"
+        ));
+        if let Some(picture) = picture {
+            self.image(picture, (x, y, side, side), "avatar");
+        }
+        let (stroke, width) = if ringed { (BG, 8) } else { (BORDER, 2) };
+        self.out.push_str(&format!(
+            "<circle cx=\"{AVATAR_X}\" cy=\"{cy}\" r=\"{AVATAR_R}\" fill=\"none\" \
+             stroke=\"{stroke}\" stroke-width=\"{width}\"/>"
         ));
     }
 
@@ -336,7 +395,7 @@ impl<M: Measure> Svg<'_, M> {
     }
 
     fn repo(&mut self, repo: &Repo) -> Vec<Count> {
-        self.avatar(&repo.avatar);
+        self.avatar(&repo.avatar, None, false, AVATAR_Y);
         let owner = line(
             &format!("{} /", clean(&repo.owner, self.measure)),
             40.0,
@@ -426,8 +485,18 @@ impl<M: Measure> Svg<'_, M> {
     }
 
     fn profile(&mut self, profile: &Profile) -> Vec<Count> {
-        self.avatar(&profile.avatar);
-        let mut last = self.title(&profile.name, 240.0, 80.0, 60.0, BESIDE_AVATAR);
+        let (drop, cy) = if profile.banner.is_some() {
+            (BANNER_DROP, BANNER)
+        } else {
+            (0.0, AVATAR_Y)
+        };
+        self.avatar(
+            &profile.avatar,
+            profile.picture.as_ref(),
+            profile.banner.is_some(),
+            cy,
+        );
+        let mut last = self.title(&profile.name, 240.0 + drop, 80.0, 60.0, BESIDE_AVATAR);
         if profile.nip05.is_some() || profile.bot {
             last += 58.0;
             let mut x = LEFT;
@@ -453,7 +522,10 @@ impl<M: Measure> Svg<'_, M> {
                 self.chip(x, last - 32.0, None, "bot", (SUBTLE, BORDER, MUTED_FG));
             }
         }
-        let y = (last + 60.0).max(AVATAR_Y + AVATAR_R + 50.0);
+        // Under a banner the gap is a little tighter, so the about keeps two
+        // lines.
+        let gap = if profile.banner.is_some() { 52.0 } else { 60.0 };
+        let y = (last + gap).max(cy + AVATAR_R + 50.0);
         let about = profile
             .about
             .as_deref()
@@ -697,6 +769,7 @@ mod tests {
                 repos: 2,
                 followers: 5,
                 bot: true,
+                ..Profile::default()
             }),
             Face::Article(Article {
                 title: "Notes".into(),
@@ -725,6 +798,88 @@ mod tests {
     }
 
     #[test]
+    fn a_profile_card_draws_its_picture_and_banner_as_data_and_nothing_else() {
+        use crate::picture::tests::coloured;
+
+        let picture = Picture::new(coloured(64, 64, (10, 200, 30))).expect("a picture");
+        let banner = Picture::new(coloured(300, 100, (30, 40, 220))).expect("a banner");
+        let card = Card::new(
+            Some("relay.test".into()),
+            Face::Profile(Profile {
+                name: "Ada".into(),
+                picture: Some(picture.clone()),
+                banner: Some(banner.clone()),
+                repos: 2,
+                followers: 5,
+                ..Profile::default()
+            }),
+        );
+        let svg = draw(&card, &Fixed);
+        assert_eq!(svg.matches("<image ").count(), 2);
+        assert_eq!(svg.matches("href=\"data:image/png;base64,").count(), 2);
+        let body = svg.replace("http://www.w3.org/2000/svg", "");
+        for forbidden in ["<a ", "<script", "<foreignObject", "http://", "https://"] {
+            assert!(!body.contains(forbidden), "{forbidden}");
+        }
+        let shown = texts(&svg);
+        assert!(shown.contains(&"repositories".to_owned()));
+        assert!(shown.contains(&"followers".to_owned()));
+
+        let png = card.png().expect("a card draws");
+        let pixmap = resvg::tiny_skia::Pixmap::decode_png(&png).expect("decodes");
+        let at = |x: u32, y: u32| {
+            let pixel = pixmap.pixel(x, y).expect("in the card").demultiply();
+            (pixel.red(), pixel.green(), pixel.blue())
+        };
+        assert_eq!(at(700, 60), (30, 40, 220), "the banner fills the top");
+        assert_eq!(at(1040, 250), (10, 200, 30), "the picture fills the avatar");
+        assert_eq!(
+            at(700, 270),
+            (255, 255, 255),
+            "below the banner is the card"
+        );
+
+        // Without them, the identicon and no image at all.
+        let plain = draw(
+            &Card::new(
+                None,
+                Face::Profile(Profile {
+                    name: "Ada".into(),
+                    ..Profile::default()
+                }),
+            ),
+            &Fixed,
+        );
+        assert!(!plain.contains("<image"));
+        assert!(plain.contains("hsl("));
+    }
+
+    #[test]
+    fn only_raster_data_images_are_ever_drawn() {
+        let svg = |href: &str| {
+            format!(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" \
+                 width=\"{WIDTH}\" height=\"{HEIGHT}\"><rect width=\"{WIDTH}\" height=\"{HEIGHT}\" \
+                 fill=\"#fff\"/><image width=\"{WIDTH}\" height=\"{HEIGHT}\" href=\"{href}\"/></svg>"
+            )
+        };
+        let white = crate::font::rasterise(&svg("")).expect("draws");
+        let nested = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxIiBoZWlnaHQ9IjEiPjxyZWN0IHdpZHRoPSIxIiBoZWlnaHQ9IjEiLz48L3N2Zz4=";
+        for refused in [
+            "/etc/hostname",
+            "Cargo.toml",
+            "https://img.test/a.png",
+            nested,
+        ] {
+            assert_eq!(
+                crate::font::rasterise(&svg(refused)).expect("draws"),
+                white,
+                "{refused}"
+            );
+        }
+    }
+
+    #[test]
     fn a_profile_card_never_calls_the_claim_verified_and_marks_a_bot() {
         let card = |bot| {
             draw(
@@ -738,6 +893,7 @@ mod tests {
                         repos: 1,
                         followers: 2,
                         bot,
+                        ..Profile::default()
                     }),
                 ),
                 &Fixed,

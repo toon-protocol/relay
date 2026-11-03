@@ -19,8 +19,8 @@ ui-highlight.workspace = true
 ui-markdown.workspace = true
 ui-nip34.workspace = true
 ui-preview.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 nostr = { workspace = true, features = ["os-rng"] }
-tokio.workspace = true
 tower.workspace = true

@@ -30,6 +30,7 @@ base64 = "0.22"
 connector-domain = { git = "https://github.com/toon-protocol/connector", rev = "d3e2bd514cc713f4034bdc062c7b30f3ec84d275" }
 # Git objects verified and parsed from bytes, for the browser half of /repo.
 git-objects = { path = "crates/git-objects" }
+imagesize = "0.15"
 js-sys = "0.3"
 # Pure Rust (miniz_oxide) so crates/git-objects builds for wasm32.
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
@@ -40,7 +41,7 @@ hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
 # Link preview cards (crates/ui-preview): SVG drawn by the relay, rasterised
 # to PNG. `text` only: no system fonts (the font is bundled), no memory-mapped
 # fonts and no raster images, so a card can never embed a picture.
-resvg = { version = "0.48", default-features = false, features = ["text"] }
+resvg = { version = "0.48", default-features = false, features = ["raster-images", "text"] }
 # The protocol crate: events, filters and matching one against the other.
 # NIP-01 messages and subscriptions are the relay's own
 # (crates/relay/src/session.rs). The relay was built on nostr-sdk's
@@ -56,6 +57,9 @@ pulldown-cmark = { version = "0.13", default-features = false }
 relay-ui = { path = "crates/relay-ui" }
 # `bundled`: SQLite is compiled in, so the image stays one static binary.
 rusqlite = { version = "0.40", features = ["bundled"] }
+# The TLS a preview card's picture is fetched over (ADR 0011): ring, and the
+# Mozilla roots compiled in, so the image needs no CA bundle.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha1 = "0.10"
@@ -72,6 +76,7 @@ syntect = { version = "5", default-features = false, features = ["parsing", "dum
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "handshake"] }
 tower = { version = "0.5", features = ["util"] }
 trybuild = "1"
@@ -110,3 +115,5 @@ web-sys = { version = "0.3", features = [
     "Url",
     "Window",
 ] }
+
+webpki-roots = "1"
