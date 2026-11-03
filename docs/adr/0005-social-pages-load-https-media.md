@@ -1,6 +1,6 @@
 # /social pages let the browser load https media
 
-**Status:** Accepted (2026-10-23, #307); rule 4 superseded by [ADR 0008](0008-avatars-are-pictures-over-identicons.md). Built by the `/social` app UI (`crates/ui-social`).
+**Status:** Accepted (2026-10-23, #307); rule 4 superseded by [ADR 0008](0008-avatars-are-pictures-over-identicons.md), rule 6 by [ADR 0009](0009-repo-markdown-renders-as-github-does.md) for repo Markdown images. Built by the `/social` app UI (`crates/ui-social`).
 
 **Scope:** relay architecture — internal to this codebase. See the [ADR index](README.md).
 
