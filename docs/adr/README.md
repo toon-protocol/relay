@@ -15,3 +15,4 @@ that cites one by number means that one.
 | [0007](0007-readers-count-a-tip-only-when-its-recipient-acknowledged-it.md) | Readers count a tip only when its recipient acknowledged it |
 | [0008](0008-avatars-are-pictures-over-identicons.md) | Avatars are pictures over identicons |
 | [0009](0009-repo-markdown-renders-as-github-does.md) | /repo draws a repository's Markdown as GitHub does |
+| [0010](0010-a-profiles-preview-is-its-own-picture.md) | A profile's link preview is its own picture |

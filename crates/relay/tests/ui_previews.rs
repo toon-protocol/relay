@@ -200,6 +200,26 @@ async fn a_repo_page_names_an_absolute_card_that_is_a_png_of_the_open_graph_size
     let profile = get(relay, path_of(&profile_image), None).await;
     assert_eq!(png_size(&profile.body), Some((1200, 630)));
 
+    // A profile that names an https picture is previewed by it (ADR 0010).
+    store(
+        relay,
+        &event(
+            &owner,
+            0,
+            2,
+            r#"{"name":"Ada","about":"Engines.","picture":"https://img.test/ada.jpg"}"#,
+            &[],
+        ),
+    )
+    .await;
+    let pictured =
+        String::from_utf8(get(relay, &format!("/social/p/{npub}"), None).await.body).expect("html");
+    assert_eq!(
+        meta(&pictured, "og:image").as_deref(),
+        Some("https://img.test/ada.jpg")
+    );
+    assert_eq!(meta(&pictured, "twitter:card").as_deref(), Some("summary"));
+
     let stranger = Keys::generate().public_key().to_bech32().expect("encodes");
     for missing in [
         format!("/social/og/r/{npub}/nothing.png"),

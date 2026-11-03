@@ -1,6 +1,6 @@
 # The relay draws link preview cards
 
-**Status:** Accepted (owner decision, 2026-10-23, #314). Built by `crates/ui-preview` and the `/social` and `/repo` app UIs.
+**Status:** Accepted (owner decision, 2026-10-23, #314); amended for profile pages by [ADR 0010](0010-a-profiles-preview-is-its-own-picture.md). Built by `crates/ui-preview` and the `/social` and `/repo` app UIs.
 
 **Scope:** relay architecture — internal to this codebase. See the [ADR index](README.md).
 

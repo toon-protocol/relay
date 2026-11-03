@@ -473,7 +473,7 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
     body.push_str(&sidebar(&who, profiles.names(), &tips));
     body.push_str(&format!("<div class=\"profile-main\">{main}</div></div>"));
     let title = shown(&who.meta, &key);
-    let preview = Preview::new(
+    let mut preview = Preview::new(
         title.clone(),
         who.meta
             .about
@@ -484,6 +484,10 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
     .kind("profile")
     .at(base.clone())
     .image(crate::og::profile_path(&key), title.clone());
+    // Their own picture, when they named one, is the preview (ADR 0010).
+    if let Some(picture) = &who.meta.picture {
+        preview = preview.picture(picture, title.clone());
+    }
     html_with(
         pages,
         (crate::Nav::Other, StatusCode::OK),
