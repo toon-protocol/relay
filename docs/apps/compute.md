@@ -74,7 +74,8 @@ anyone else still has its own page, shown as that key's claim.
 
 ## Reading in a browser: the relay's `/compute` pages
 
-Not built yet: this is the agreed shape (ADR 0012).
+Only `/compute` is built so far (the Listings this relay holds, each joined to
+its Provider Profile); the other rows are the agreed shape (ADR 0012).
 
 | Path | What it shows | What it reads |
 | --- | --- | --- |

@@ -28,17 +28,20 @@ pub enum App {
     Repo,
     /// The social NIPs, repos first, at `/social`.
     Social,
+    /// TOON Compute's Provider Directory, at `/compute`.
+    Compute,
 }
 
 impl App {
     /// Every app, in a fixed order.
-    pub const ALL: [App; 2] = [App::Repo, App::Social];
+    pub const ALL: [App; 3] = [App::Repo, App::Social, App::Compute];
 
     /// The name `TOON_UI_APPS` gives the app.
     pub fn name(self) -> &'static str {
         match self {
             Self::Repo => "repo",
             Self::Social => "social",
+            Self::Compute => "compute",
         }
     }
 
@@ -52,6 +55,7 @@ impl App {
         match self {
             Self::Repo => "/repo",
             Self::Social => "/social",
+            Self::Compute => "/compute",
         }
     }
 
@@ -60,6 +64,7 @@ impl App {
         match self {
             Self::Repo => "Repos",
             Self::Social => "Social",
+            Self::Compute => "Compute",
         }
     }
 }
@@ -194,6 +199,7 @@ pub enum Section {
     Events,
     Bounties,
     Apps,
+    Compute,
     /// A page that is none of them: a post, a profile, an article.
     Other,
 }
@@ -201,7 +207,7 @@ pub enum Section {
 impl Section {
     /// The site bar's links, in order: the section, the app serving it, its
     /// path and its label.
-    const LINKS: [(Section, App, &'static str, &'static str); 6] = [
+    const LINKS: [(Section, App, &'static str, &'static str); 7] = [
         (Section::Home, App::Social, "/social", "Home"),
         (Section::Repos, App::Repo, "/repo", "Repos"),
         (
@@ -218,6 +224,7 @@ impl Section {
             "Bounties",
         ),
         (Section::Apps, App::Social, "/social/apps", "Apps"),
+        (Section::Compute, App::Compute, "/compute", "Compute"),
     ];
 }
 

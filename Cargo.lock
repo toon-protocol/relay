@@ -1485,6 +1485,7 @@ dependencies = [
  "tokio-tungstenite",
  "tower",
  "trybuild",
+ "ui-compute",
  "ui-nip34",
  "ui-social",
 ]
@@ -2198,6 +2199,19 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "ui-compute"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "nostr",
+ "relay-ui",
+ "serde_json",
+ "tokio",
+ "tower",
+ "ui-preview",
+]
 
 [[package]]
 name = "ui-highlight"

@@ -1,25 +1,25 @@
 //! The app UIs on the read port (#276): which are on, the read-only handle
 //! each is built from, and which one a request belongs to.
 
-#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
+#[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
 use std::collections::HashSet;
-#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
+#[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
 use std::future::Future;
 use std::path::Path;
-#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
+#[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
 use std::pin::Pin;
 use std::sync::Arc;
 
 use axum::extract::Request;
 use axum::http::Method;
-#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
+#[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
 use nostr::event::Event;
-#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
+#[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
 use nostr::filter::Filter;
 use relay_ui::chrome::{App, Apps};
 use relay_ui::meta::PublicUrl;
 use relay_ui::{AppUi, Assets};
-#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
+#[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
 use relay_ui::{EventSource, ReadOnlyStore};
 
 use crate::auth::AuthPolicy;
@@ -33,7 +33,10 @@ use crate::{Relay, RelayError, Store};
 /// kinds the operator restricts and gift wraps meant for their recipients
 /// alone are left out, on `/repo` as on `/social`.
 #[derive(Debug, Clone, Default)]
-#[cfg_attr(not(any(feature = "ui-repo", feature = "ui-social")), allow(dead_code))]
+#[cfg_attr(
+    not(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute")),
+    allow(dead_code)
+)]
 pub(crate) struct Unauthenticated {
     /// NIP-42's policy, while it is on.
     pub(crate) auth: Option<AuthPolicy>,
@@ -41,7 +44,7 @@ pub(crate) struct Unauthenticated {
     pub(crate) groups: Option<GroupView>,
 }
 
-#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
+#[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
 impl Unauthenticated {
     /// Whether such a connection may be shown `event`.
     fn may_read(&self, event: &Event) -> bool {
@@ -57,13 +60,13 @@ impl Unauthenticated {
 
 /// The store as an app UI sees it: queries, and nothing else, answered as
 /// to a connection that has not authenticated.
-#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
+#[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
 struct Reading {
     store: Store,
     rules: Unauthenticated,
 }
 
-#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
+#[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
 impl EventSource for Reading {
     fn query(&self, filter: Filter) -> Pin<Box<dyn Future<Output = Vec<Event>> + Send + '_>> {
         Box::pin(async move {
@@ -80,7 +83,7 @@ impl EventSource for Reading {
 }
 
 /// The read-only handle every app UI is built from: `store` under `rules`.
-#[cfg(any(feature = "ui-repo", feature = "ui-social"))]
+#[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
 fn reading(store: &Store, rules: &Unauthenticated) -> ReadOnlyStore {
     ReadOnlyStore::new(Reading {
         store: store.clone(),
@@ -162,7 +165,7 @@ pub(crate) fn enabled(
 
 /// The app UI called `name`, if this build includes it.
 #[cfg_attr(
-    not(all(feature = "ui-repo", feature = "ui-social")),
+    not(all(feature = "ui-repo", feature = "ui-social", feature = "ui-compute")),
     allow(unused_variables)
 )]
 fn built(
@@ -197,6 +200,14 @@ fn built(
         return Some(ui_social::app(
             reading(store, &settings.reads),
             social,
+            on.clone(),
+        ));
+    }
+    #[cfg(feature = "ui-compute")]
+    if name == App::Compute.name() {
+        return Some(ui_compute::app(
+            reading(store, &settings.reads),
+            settings.relay_host.clone(),
             on.clone(),
         ));
     }
