@@ -2,7 +2,7 @@
 # Standards: docs/rust-coding-standards.md.
 [workspace]
 resolver = "3"
-members = ["crates/git-objects", "crates/relay", "crates/relay-ui", "crates/ui-highlight", "crates/ui-highlight-web", "crates/ui-markdown", "crates/ui-nip34", "crates/ui-nip34-web", "crates/ui-preview", "crates/ui-social", "crates/xtask"]
+members = ["crates/git-objects", "crates/relay", "crates/relay-ui", "crates/ui-compute", "crates/ui-highlight", "crates/ui-highlight-web", "crates/ui-markdown", "crates/ui-nip34", "crates/ui-nip34-web", "crates/ui-preview", "crates/ui-social", "crates/xtask"]
 
 [workspace.package]
 edition = "2024"
@@ -85,6 +85,8 @@ ui-markdown = { path = "crates/ui-markdown" }
 ui-nip34 = { path = "crates/ui-nip34" }
 # Link preview cards for the app UIs: Open Graph images drawn from events.
 ui-preview = { path = "crates/ui-preview" }
+# The /compute app UI: TOON Compute's providers and their listings.
+ui-compute = { path = "crates/ui-compute" }
 # The /social app UI: the social NIPs, repos first.
 ui-social = { path = "crates/ui-social" }
 # The browser half of /repo (#283). The pin is exact and is the version of

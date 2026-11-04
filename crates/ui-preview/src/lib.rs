@@ -44,6 +44,8 @@ pub enum Mark {
     Repos,
     /// `/social`.
     Social,
+    /// `/compute`.
+    Compute,
 }
 
 impl Mark {
@@ -52,6 +54,7 @@ impl Mark {
         match self {
             Self::Repos => "Repos",
             Self::Social => "Social",
+            Self::Compute => "Compute",
         }
     }
 }
@@ -190,6 +193,7 @@ pub fn site(mark: Mark, host: Option<String>) -> Card {
     let app = match mark {
         Mark::Repos => relay_ui::chrome::App::Repo,
         Mark::Social => relay_ui::chrome::App::Social,
+        Mark::Compute => relay_ui::chrome::App::Compute,
     };
     Card::new(
         host,

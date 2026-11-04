@@ -262,6 +262,8 @@ const UI_APP_NAMES: &[&str] = &[
     "repo",
     #[cfg(feature = "ui-social")]
     "social",
+    #[cfg(feature = "ui-compute")]
+    "compute",
 ];
 
 const DEFAULT_WRITE_PORT: u16 = 3100;
@@ -320,7 +322,7 @@ Options (each flag beats its environment variable):
   --expiration-reap-grace-seconds <n>      TOON_EXPIRATION_REAP_GRACE_SECONDS (default 86400)
   --expiration-reap-interval-seconds <n>   TOON_EXPIRATION_REAP_INTERVAL_SECONDS (default 3600)
   --ui-apps <names>                        TOON_UI_APPS (comma-separated app UIs served on the read port, default
-                                           every app this build includes, repo,social; empty serves none)
+                                           every app this build includes, repo,social,compute; empty serves none)
   --ui-assets-dir <dir>                    TOON_UI_ASSETS_DIR (built UI assets, served under /repo/assets/;
                                            unset or unusable: git browsing is unavailable)
   --ui-arweave-gateways <urls>             TOON_UI_ARWEAVE_GATEWAYS (comma-separated https URLs a browser tries after the

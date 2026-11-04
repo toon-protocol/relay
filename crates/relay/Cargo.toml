@@ -10,11 +10,13 @@ description = "TOON Protocol Nostr relay: free NIP-01 WebSocket reads and an HTT
 workspace = true
 
 [features]
-default = ["ui-repo", "ui-social"]
+default = ["ui-repo", "ui-social", "ui-compute"]
 # The /repo app UI (#276); TOON_UI_APPS switches it on and off at run time.
 ui-repo = ["dep:ui-nip34"]
 # The /social app UI; likewise.
 ui-social = ["dep:ui-social"]
+# The /compute app UI; likewise.
+ui-compute = ["dep:ui-compute"]
 
 [dependencies]
 axum.workspace = true
@@ -35,6 +37,7 @@ sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
+ui-compute = { workspace = true, optional = true }
 ui-nip34 = { workspace = true, optional = true }
 ui-social = { workspace = true, optional = true }
 
