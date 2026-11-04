@@ -33,7 +33,7 @@ use nostr::event::{Event, EventId, Kind};
 use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use nostr::types::Timestamp;
-use relay_ui::chrome::{self, Profiles, ago, date, escape, icon, name, npub, svg};
+use relay_ui::chrome::{self, App, Profiles, ago, date, escape, icon, name, npub, svg};
 use ui_nip34::card::{self, Links, RepoCard, plural};
 use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors, first_tag, newest, topics};
 
@@ -244,6 +244,9 @@ fn list_size(key: &PublicKey, lists: &[Event], kind: u16, name: &str) -> usize {
     .unwrap_or(0)
 }
 
+/// TOON Compute's Provider Profile.
+const COMPUTE_PROVIDER_PROFILE: u16 = 10_432;
+
 /// What every tab's sidebar shows.
 struct Who {
     key: PublicKey,
@@ -254,6 +257,9 @@ struct Who {
     following: usize,
     repos_followed: usize,
     badges: Vec<Badge>,
+    /// Whether the key has a Provider Profile (kind 10432) and `/compute` is
+    /// on, so the sidebar links to its Provider page.
+    compute_provider: bool,
     /// Whether the store holds anything this key signed.
     known: bool,
 }
@@ -652,8 +658,19 @@ async fn who(pages: &Pages, key: PublicKey, lists: &[Event], now: i64) -> Who {
         };
         badges::shown(&key, &pairs, &awards, &definitions)
     };
+    let compute_provider = pages.apps.serves(App::Compute)
+        && !store
+            .query(
+                Filter::new()
+                    .kind(Kind::from(COMPUTE_PROVIDER_PROFILE))
+                    .author(key)
+                    .limit(1),
+            )
+            .await
+            .is_empty();
     Who {
         key,
+        compute_provider,
         statuses: identity::statuses(&key, lists, now),
         identities,
         followers: followers(&key, &follow_lists),
@@ -768,6 +785,14 @@ fn sidebar(who: &Who, names: &HashMap<PublicKey, String>, tips: &str) -> String 
             "</ul><p class=\"muted small\">Accounts the key claims (NIP-39). This relay checks none \
              of them; open the proof to check one yourself.</p></section>",
         );
+    }
+    if who.compute_provider {
+        out.push_str(&format!(
+            "<p class=\"profile-compute\"><a class=\"badge\" data-compute-provider href=\"{}/p/{}\" \
+             title=\"This key publishes a TOON Compute Provider Profile\">Compute provider</a></p>",
+            App::Compute.prefix(),
+            escape(&npub),
+        ));
     }
     if !who.badges.is_empty() {
         out.push_str("<section class=\"profile-badges\"><h2>Badges</h2><div class=\"badges\">");

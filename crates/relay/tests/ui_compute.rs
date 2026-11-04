@@ -256,3 +256,124 @@ async fn an_unknown_path_under_compute_is_the_404_page() {
         assert!(page.text.contains("Not found"), "{path}");
     }
 }
+
+#[tokio::test]
+async fn a_provider_and_a_listing_have_pages_linked_with_social() {
+    let running = running_with(|_| None).await;
+    let relay = &running.relay;
+    let provider = Keys::generate();
+    let npub = nostr::nips::nip19::ToBech32::to_bech32(&provider.public_key()).expect("npub");
+    store(
+        relay,
+        &event(
+            &provider,
+            10_432,
+            r#"{"name":"Tidal","isolation":"vm","settlement":[{"chain":"base","tokens":["USDC"]}],
+                "relay_set":["wss://relay.example"]}"#,
+            &[&["L", "toon.network"]],
+        ),
+    )
+    .await;
+    listing(
+        relay,
+        &provider,
+        "small",
+        r#"{"name":"Small","resources":{"vcpu":2},"price":5,"lease_interval_s":60}"#,
+    )
+    .await;
+
+    let page = get(relay, &format!("/compute/p/{npub}")).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.text);
+    for shown in [
+        "Tidal",
+        "vm",
+        "base: USDC",
+        "wss://relay.example",
+        "vcpu 2",
+        "5 µUSDC per 60 s",
+        &format!("href=\"/compute/{npub}/small\""),
+        &format!("href=\"/social/p/{npub}\""),
+    ] {
+        assert!(page.text.contains(shown), "{shown}: {}", page.text);
+    }
+
+    let one = get(relay, &format!("/compute/{npub}/small")).await;
+    assert_eq!(one.status, StatusCode::OK, "{}", one.text);
+    assert!(one.text.contains("vcpu 2"));
+    assert!(one.text.contains(&format!("href=\"/compute/p/{npub}\"")));
+
+    let index = get(relay, "/compute").await;
+    assert!(index.text.contains(&format!("href=\"/compute/p/{npub}\"")));
+    assert!(
+        index
+            .text
+            .contains(&format!("href=\"/compute/{npub}/small\""))
+    );
+
+    let coordinate = nostr::nips::nip01::Coordinate::new(Kind::from(30_432), provider.public_key())
+        .identifier("small");
+    let naddr = nostr::nips::nip19::ToBech32::to_bech32(&nostr::nips::nip19::Nip19Coordinate::new(
+        coordinate,
+        Vec::<nostr::types::RelayUrl>::new(),
+    ))
+    .expect("naddr");
+    let response = running
+        .relay
+        .read_router()
+        .oneshot(
+            Request::get(format!("/compute/{naddr}"))
+                .body(Body::empty())
+                .expect("a request"),
+        )
+        .await
+        .expect("infallible");
+    assert!(response.status().is_redirection());
+    assert_eq!(
+        response.headers()["location"],
+        format!("/compute/{npub}/small").as_str()
+    );
+
+    for path in [
+        format!("/compute/{npub}/none"),
+        format!(
+            "/compute/p/{}",
+            nostr::nips::nip19::ToBech32::to_bech32(&Keys::generate().public_key()).unwrap()
+        ),
+    ] {
+        let missing = get(relay, &path).await;
+        assert_eq!(missing.status, StatusCode::NOT_FOUND, "{path}");
+        assert!(missing.text.contains("Not found"), "{path}");
+    }
+}
+
+#[tokio::test]
+async fn a_social_profile_shows_the_compute_badge_only_for_a_provider_while_compute_is_on() {
+    let provider = Keys::generate();
+    let plain = Keys::generate();
+    let npub = |k: &Keys| nostr::nips::nip19::ToBech32::to_bech32(&k.public_key()).expect("npub");
+    for apps in [None, Some("repo,social")] {
+        let running = running_with(|name| {
+            (name == "TOON_UI_APPS")
+                .then(|| apps.map(str::to_owned))
+                .flatten()
+        })
+        .await;
+        let relay = &running.relay;
+        store(
+            relay,
+            &event(&provider, 10_432, "{}", &[&["L", "toon.network"]]),
+        )
+        .await;
+        store(relay, &event(&plain, 0, "{}", &[])).await;
+        let with = get(relay, &format!("/social/p/{}", npub(&provider))).await;
+        let without = get(relay, &format!("/social/p/{}", npub(&plain))).await;
+        assert_eq!(with.status, StatusCode::OK);
+        assert_eq!(
+            with.text
+                .contains(&format!("href=\"/compute/p/{}\"", npub(&provider))),
+            apps.is_none(),
+            "{apps:?}"
+        );
+        assert!(!without.text.contains("data-compute-provider"));
+    }
+}
