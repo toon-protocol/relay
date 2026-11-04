@@ -205,7 +205,11 @@ fn built(
     }
     #[cfg(feature = "ui-compute")]
     if name == App::Compute.name() {
-        return Some(ui_compute::app(reading(store, &settings.reads), on.clone()));
+        return Some(ui_compute::app(
+            reading(store, &settings.reads),
+            settings.relay_host.clone(),
+            on.clone(),
+        ));
     }
     None
 }

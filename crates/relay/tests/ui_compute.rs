@@ -106,6 +106,18 @@ async fn compute_lists_listings_whose_profile_the_relay_holds() {
     )
     .await;
     listing(relay, &orphan, "lost", r#"{"name":"Orphaned"}"#).await;
+    // Not a TOON Compute event: no `["L","toon.network"]`.
+    let a = format!("10432:{}:", provider.public_key().to_hex());
+    store(
+        relay,
+        &event(
+            &provider,
+            30_432,
+            r#"{"name":"Unlabelled"}"#,
+            &[&["d", "unlabelled"], &["a", &a]],
+        ),
+    )
+    .await;
 
     let page = get(relay, "/compute").await;
     assert_eq!(page.status, StatusCode::OK);
@@ -117,6 +129,7 @@ async fn compute_lists_listings_whose_profile_the_relay_holds() {
     assert!(page.text.contains("Tidal &lt;b&gt;Metal&lt;/b&gt;"));
     assert!(!page.text.contains("Tidal <b>"));
     assert!(!page.text.contains("Orphaned"));
+    assert!(!page.text.contains("Unlabelled"));
     assert!(
         page.text
             .contains("only Providers that publish to this relay")

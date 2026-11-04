@@ -141,6 +141,7 @@ describe('relay image conformance: the /compute app UI', () => {
     async () => {
       const response = await fetch(`${relay.readUrl}/compute/nope`);
       expect(response.status).toBe(404);
+      expect(response.headers.get('content-type')).toContain('text/html');
       expect(await response.text()).toContain('Not found');
     }
   );

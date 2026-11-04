@@ -13,6 +13,8 @@ use serde_json::Value;
 pub(crate) const PROFILE_KIND: u16 = 10_432;
 /// A Listing.
 pub(crate) const LISTING_KIND: u16 = 30_432;
+/// The `L` namespace every TOON Compute event carries.
+pub(crate) const LABEL_NAMESPACE: &str = "toon.network";
 
 /// The longest a resource or an architecture is drawn.
 const FIELD_CHARS: usize = 80;
@@ -75,9 +77,9 @@ fn profile_of(listing: &Event) -> Option<PublicKey> {
         if name != "a" {
             return None;
         }
-        let mut parts = coordinate.splitn(3, ':');
-        let (kind, key) = (parts.next()?, parts.next()?);
-        if kind.parse() != Ok(PROFILE_KIND) {
+        let mut parts = coordinate.split(':');
+        let (kind, key, d) = (parts.next()?, parts.next()?, parts.next()?);
+        if kind.parse() != Ok(PROFILE_KIND) || !d.is_empty() || parts.next().is_some() {
             return None;
         }
         let key = PublicKey::from_hex(key).ok()?;
@@ -127,8 +129,8 @@ fn json(content: &str) -> Value {
     serde_json::from_str(content).unwrap_or(Value::Null)
 }
 
-/// What a Listing's `resources` says, as `(what, amount)` pairs in the
-/// order written: an object's fields, or a lone text.
+/// What a Listing's `resources` says, as `(what, amount)` pairs: an
+/// object's fields in name order, or a lone text.
 fn resources(value: Option<&Value>) -> Vec<(String, String)> {
     let shown = |value: &Value| match value {
         Value::String(text) => summary(text, FIELD_CHARS),
@@ -192,6 +194,30 @@ mod tests {
     }
 
     #[test]
+    fn the_a_tag_names_a_profile_by_kind_and_key_alone() {
+        let provider = Keys::generate();
+        let key = provider.public_key().to_hex();
+        let profile = signed(&provider, PROFILE_KIND, "{}", &[]);
+        let with_a = |a: &str| {
+            signed(
+                &provider,
+                LISTING_KIND,
+                "{}",
+                &[tag(&["d", a]), tag(&["a", a])],
+            )
+        };
+        let listings = [
+            with_a(&format!("10432:{key}:")),
+            with_a(&format!("10432:{key}:extra")),
+            with_a(&format!("10432:{key}")),
+            with_a(&format!("30432:{key}:")),
+        ];
+        let joined = join(&[profile], &listings);
+        assert_eq!(joined.len(), 1);
+        assert_eq!(joined[0].name, format!("10432:{key}:"));
+    }
+
+    #[test]
     fn resources_and_arch_are_read_from_the_content_or_the_labels() {
         let provider = Keys::generate();
         let profile = signed(&provider, PROFILE_KIND, "{}", &[]);
@@ -206,8 +232,8 @@ mod tests {
         assert_eq!(
             joined[0].resources,
             vec![
-                ("vcpu".to_owned(), "2".to_owned()),
-                ("memory".to_owned(), "4 GiB".to_owned())
+                ("memory".to_owned(), "4 GiB".to_owned()),
+                ("vcpu".to_owned(), "2".to_owned())
             ]
         );
         assert_eq!(joined[0].arch, None);

@@ -20,14 +20,14 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use nostr::event::Kind;
-use nostr::filter::Filter;
+use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use relay_ui::chrome::{self, App, Apps, Profiles, Section, escape};
 use relay_ui::meta::Preview;
 use relay_ui::{AppUi, ReadOnlyStore};
 use ui_preview::{Mark, Previews};
 
-use directory::{LISTING_KIND, Listing, PROFILE_KIND};
+use directory::{LABEL_NAMESPACE, LISTING_KIND, Listing, PROFILE_KIND};
 
 /// The mount prefix.
 pub const PREFIX: &str = "/compute";
@@ -45,13 +45,16 @@ const READ_LIMIT: usize = 1_000;
 struct Pages {
     store: ReadOnlyStore,
     apps: Apps,
+    /// The host visitors' clients reach this relay at, for the site card.
+    relay_host: Option<String>,
     /// Link preview cards drawn so far.
     previews: Previews,
 }
 
-/// The app UI over `store`, with the `apps` the relay serves (for the site
-/// bar and the links to `/social`).
-pub fn app(store: ReadOnlyStore, apps: Apps) -> AppUi {
+/// The app UI over `store`, with the host this relay is reached at
+/// (`TOON_UI_RELAY_URL`'s, for the site card) and the `apps` the relay serves
+/// (for the site bar and the links to `/social`).
+pub fn app(store: ReadOnlyStore, relay_host: Option<String>, apps: Apps) -> AppUi {
     let router = Router::new()
         .route(PREFIX, get(index))
         .route("/compute/assets/{name}", get(asset))
@@ -60,6 +63,7 @@ pub fn app(store: ReadOnlyStore, apps: Apps) -> AppUi {
         .with_state(Pages {
             store,
             apps,
+            relay_host,
             previews: Previews::new(),
         });
     AppUi::new(PREFIX, router)
@@ -73,7 +77,7 @@ async fn asset(Path(name): Path<String>) -> Response {
 }
 
 async fn site_card(State(pages): State<Pages>, headers: HeaderMap) -> Response {
-    let host = ui_preview::footer_host(&pages.apps, None);
+    let host = ui_preview::footer_host(&pages.apps, pages.relay_host.as_deref());
     let card = ui_preview::site(Mark::Compute, host);
     pages.previews.respond(&headers, Some(card)).await
 }
@@ -115,19 +119,20 @@ async fn fallback(State(pages): State<Pages>) -> Response {
     )
 }
 
+/// The directory's events of `kind`: every TOON Compute event carries
+/// `["L","toon.network"]`.
+fn directory_filter(kind: u16) -> Filter {
+    Filter::new()
+        .kind(Kind::from(kind))
+        .custom_tag(SingleLetterTag::UPPERCASE_L, LABEL_NAMESPACE)
+        .limit(READ_LIMIT)
+}
+
 /// `/compute`: the Provider Directory.
 async fn index(State(pages): State<Pages>) -> Response {
     let (profiles, listings) = tokio::join!(
-        pages.store.query(
-            Filter::new()
-                .kind(Kind::from(PROFILE_KIND))
-                .limit(READ_LIMIT)
-        ),
-        pages.store.query(
-            Filter::new()
-                .kind(Kind::from(LISTING_KIND))
-                .limit(READ_LIMIT)
-        ),
+        pages.store.query(directory_filter(PROFILE_KIND)),
+        pages.store.query(directory_filter(LISTING_KIND)),
     );
     let mut listings = directory::join(&profiles, &listings);
     let keys: Vec<PublicKey> = {

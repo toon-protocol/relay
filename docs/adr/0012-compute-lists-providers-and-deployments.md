@@ -1,6 +1,6 @@
 # /compute lists providers and deployments from the directory's own events
 
-**Status:** Accepted (owner decision, 2026-11-04, design session for `/compute`). Applies to `/compute` (`ui-compute`, not built yet) and to the `/repo` and `/social` pages that link to it. Wire shapes: [`docs/nips/nip-deployment.md`](../nips/nip-deployment.md); guide: [`docs/apps/compute.md`](../apps/compute.md).
+**Status:** Accepted (owner decision, 2026-11-04, design session for `/compute`). Applies to `/compute` (`ui-compute`) and to the `/repo` and `/social` pages that link to it. Wire shapes: [`docs/nips/nip-deployment.md`](../nips/nip-deployment.md); guide: [`docs/apps/compute.md`](../apps/compute.md).
 
 **Scope:** relay architecture — internal to this codebase. See the [ADR index](README.md).
 

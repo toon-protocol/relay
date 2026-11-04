@@ -28,7 +28,7 @@ pub enum App {
     Repo,
     /// The social NIPs, repos first, at `/social`.
     Social,
-    /// TOON Compute's provider directory, at `/compute`.
+    /// TOON Compute's Provider Directory, at `/compute`.
     Compute,
 }
 

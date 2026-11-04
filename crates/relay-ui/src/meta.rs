@@ -186,7 +186,7 @@ pub fn tagline(app: App) -> &'static str {
             "Builders sharing repos, launches and devlogs, read from this TOON relay's Nostr events."
         }
         App::Compute => {
-            "TOON Compute providers and their listings, read from this TOON relay's Nostr events."
+            "TOON Compute Providers and their Listings, read from this TOON relay's Nostr events."
         }
     }
 }
