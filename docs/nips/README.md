@@ -14,3 +14,4 @@ How to author or read one app's events for people and skills is a guide and belo
 - [`nip-34-blossom.md`](nip-34-blossom.md): git objects on Blossom.
 - [`nip-c1.md`](nip-c1.md): Nostr CI.
 - [`nip-tips.md`](nip-tips.md): tips on TOON, with the tip route (10850), tip receipt (9850) and tip acknowledgement (9851).
+- [`nip-deployment.md`](nip-deployment.md): the TOON Compute Deployment (30437), which lease serves a repository's environment.
