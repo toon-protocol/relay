@@ -14,7 +14,7 @@ mod directory;
 use std::collections::HashMap;
 
 use axum::Router;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, RawQuery, State};
 use axum::http::header::{CONTENT_SECURITY_POLICY, REFERRER_POLICY};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
@@ -129,11 +129,8 @@ fn directory_filter(kind: u16) -> Filter {
 }
 
 /// `/compute`: the Provider Directory.
-async fn index(
-    State(pages): State<Pages>,
-    Query(query): Query<HashMap<String, String>>,
-) -> Response {
-    let filters = Filters::from_query(&query);
+async fn index(State(pages): State<Pages>, RawQuery(query): RawQuery) -> Response {
+    let filters = Filters::from_query(query.as_deref());
     let (profiles, listings, liveness) = tokio::join!(
         pages.store.query(directory_filter(PROFILE_KIND)),
         pages.store.query(directory_filter(LISTING_KIND)),
@@ -281,11 +278,12 @@ fn filter_form(filters: &Filters) -> String {
             escape(value)
         )
     };
-    let hidden = |value: &str, text: &str| {
-        let selected = match filters.hidden.eq_ignore_ascii_case(value) {
+    let hidden = |value: Option<bool>, text: &str| {
+        let selected = match filters.hidden == value {
             true => " selected",
             false => "",
         };
+        let value = value.map(|v| v.to_string()).unwrap_or_default();
         format!("<option value=\"{value}\"{selected}>{text}</option>")
     };
     format!(
@@ -296,8 +294,8 @@ fn filter_form(filters: &Filters) -> String {
         field("isolation", "Isolation", &filters.isolation),
         field("gpu", "GPU", &filters.gpu),
         field("cap", "Capability", &filters.cap),
-        hidden("", "any"),
-        hidden("true", "Anyone-only"),
-        hidden("false", "not hidden"),
+        hidden(None, "any"),
+        hidden(Some(true), "Anyone-only"),
+        hidden(Some(false), "not hidden"),
     )
 }

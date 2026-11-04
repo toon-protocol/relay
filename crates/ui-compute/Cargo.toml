@@ -10,7 +10,7 @@ description = "The compute app UI, mounted at /compute: TOON Compute's Providers
 workspace = true
 
 [dependencies]
-axum = { workspace = true, features = ["query"] }
+axum.workspace = true
 nostr.workspace = true
 relay-ui.workspace = true
 serde_json.workspace = true

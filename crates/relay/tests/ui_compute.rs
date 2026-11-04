@@ -228,16 +228,30 @@ async fn compute_filters_by_query_and_marks_hidden_providers_without_a_host() {
             &hidden,
             10_432,
             r#"{"host":"secret.example.net"}"#,
-            &[&["L", "toon.network"], &["l", "hidden:true"]],
+            &[&["L", "toon.network"]],
         ),
     )
     .await;
     for (keys, d, labels) in [
-        (&open, "Open", [&["l", "arch:arm64"][..], &["t", "docker"]]),
+        (
+            &open,
+            "Open",
+            vec![
+                &["l", "arch:arm64"][..],
+                &["l", "isolation:vm"],
+                &["l", "gpu:a100"],
+                &["t", "docker"],
+            ],
+        ),
         (
             &hidden,
             "Hid",
-            [&["l", "arch:x86_64"][..], &["t", "docker"]],
+            vec![
+                &["l", "arch:x86_64"][..],
+                &["l", "isolation:container"],
+                &["l", "hidden:true"],
+                &["t", "docker"],
+            ],
         ),
     ] {
         let a = format!("10432:{}:", keys.public_key().to_hex());
@@ -259,6 +273,14 @@ async fn compute_filters_by_query_and_marks_hidden_providers_without_a_host() {
         (true, false)
     );
     assert_eq!(
+        listed(&get(relay, "/compute?isolation=container").await),
+        (false, true)
+    );
+    assert_eq!(
+        listed(&get(relay, "/compute?gpu=a100").await),
+        (true, false)
+    );
+    assert_eq!(
         listed(&get(relay, "/compute?cap=docker").await),
         (true, true)
     );
@@ -273,6 +295,16 @@ async fn compute_filters_by_query_and_marks_hidden_providers_without_a_host() {
     assert_eq!(
         listed(&get(relay, "/compute?arch=arm64&hidden=true").await),
         (false, false)
+    );
+    assert_eq!(
+        listed(
+            &get(
+                relay,
+                "/compute?arch=arm64&isolation=vm&gpu=a100&cap=docker&hidden=false"
+            )
+            .await
+        ),
+        (true, false)
     );
     let page = get(relay, "/compute?arch=x86_64").await;
     assert!(page.text.contains("Anyone-only"));
