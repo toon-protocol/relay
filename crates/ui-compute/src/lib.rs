@@ -34,7 +34,9 @@ use relay_ui::{AppUi, ReadOnlyStore};
 use ui_preview::{Mark, Previews};
 
 use directory::{LABEL_NAMESPACE, LISTING_KIND, LIVENESS_KIND, Listing, PROFILE_KIND};
-use provider::{by_naddr, listing_page, listing_path, provider_link, provider_page};
+use provider::{
+    by_naddr, listing_page, listing_path, provider_link, provider_page, unnamed_listing_page,
+};
 
 /// The mount prefix.
 pub const PREFIX: &str = "/compute";
@@ -67,6 +69,7 @@ pub fn app(store: ReadOnlyStore, relay_host: Option<String>, apps: Apps) -> AppU
         .route("/compute/p/{npub}", get(provider_page))
         .route("/compute/{target}", get(by_naddr))
         .route("/compute/{npub}/{listing}", get(listing_page))
+        .route("/compute/{npub}/", get(unnamed_listing_page))
         .route("/compute/assets/{name}", get(asset))
         .route("/compute/og/site.png", get(site_card))
         .fallback(fallback)
@@ -131,7 +134,7 @@ pub(crate) async fn fallback(State(pages): State<Pages>) -> Response {
 
 /// The directory's events of `kind`: every TOON Compute event carries
 /// `["L","toon.network"]`.
-fn directory_filter(kind: u16) -> Filter {
+pub(crate) fn directory_filter(kind: u16) -> Filter {
     Filter::new()
         .kind(Kind::from(kind))
         .custom_tag(SingleLetterTag::UPPERCASE_L, LABEL_NAMESPACE)

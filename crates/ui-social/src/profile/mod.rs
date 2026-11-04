@@ -247,6 +247,10 @@ fn list_size(key: &PublicKey, lists: &[Event], kind: u16, name: &str) -> usize {
 /// TOON Compute's Provider Profile.
 const COMPUTE_PROVIDER_PROFILE: u16 = 10_432;
 
+/// The label every TOON Compute event carries, as `["L","toon.network"]`;
+/// `/compute` reads no Provider Profile without it.
+const COMPUTE_LABEL: &str = "toon.network";
+
 /// What every tab's sidebar shows.
 struct Who {
     key: PublicKey,
@@ -663,6 +667,7 @@ async fn who(pages: &Pages, key: PublicKey, lists: &[Event], now: i64) -> Who {
             .query(
                 Filter::new()
                     .kind(Kind::from(COMPUTE_PROVIDER_PROFILE))
+                    .custom_tag(SingleLetterTag::UPPERCASE_L, COMPUTE_LABEL)
                     .author(key)
                     .limit(1),
             )

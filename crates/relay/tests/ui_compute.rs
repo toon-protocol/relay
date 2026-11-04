@@ -377,3 +377,48 @@ async fn a_social_profile_shows_the_compute_badge_only_for_a_provider_while_comp
         assert!(!without.text.contains("data-compute-provider"));
     }
 }
+
+#[tokio::test]
+async fn an_empty_d_has_a_page_and_only_listing_naddrs_and_labelled_profiles_count() {
+    let running = running_with(|_| None).await;
+    let relay = &running.relay;
+    let to_npub =
+        |k: &Keys| nostr::nips::nip19::ToBech32::to_bech32(&k.public_key()).expect("npub");
+    let provider = Keys::generate();
+    let npub = to_npub(&provider);
+    store(
+        relay,
+        &event(&provider, 10_432, "{}", &[&["L", "toon.network"]]),
+    )
+    .await;
+    listing(relay, &provider, "", r#"{"name":"Unnamed"}"#).await;
+
+    // A Listing with an empty `d` still has a page its link reaches.
+    let page = get(relay, &format!("/compute/p/{npub}")).await;
+    assert!(page.text.contains(&format!("href=\"/compute/{npub}/\"")));
+    let one = get(relay, &format!("/compute/{npub}/")).await;
+    assert_eq!(one.status, StatusCode::OK, "{}", one.text);
+    assert!(one.text.contains("Unnamed"));
+
+    // An `naddr` of another kind is not a Listing's.
+    let coordinate = nostr::nips::nip01::Coordinate::new(Kind::from(30_023), provider.public_key())
+        .identifier("small");
+    let naddr = nostr::nips::nip19::ToBech32::to_bech32(&nostr::nips::nip19::Nip19Coordinate::new(
+        coordinate,
+        Vec::<nostr::types::RelayUrl>::new(),
+    ))
+    .expect("naddr");
+    assert_eq!(
+        get(relay, &format!("/compute/{naddr}")).await.status,
+        StatusCode::NOT_FOUND
+    );
+
+    // A 10432 without TOON Compute's label is no Provider: no page, no badge.
+    let unlabelled = Keys::generate();
+    store(relay, &event(&unlabelled, 10_432, "{}", &[])).await;
+    let page = get(relay, &format!("/compute/p/{}", to_npub(&unlabelled))).await;
+    assert_eq!(page.status, StatusCode::NOT_FOUND);
+    let social = get(relay, &format!("/social/p/{}", to_npub(&unlabelled))).await;
+    assert_eq!(social.status, StatusCode::OK);
+    assert!(!social.text.contains("data-compute-provider"));
+}

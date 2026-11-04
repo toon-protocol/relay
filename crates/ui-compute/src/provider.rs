@@ -6,13 +6,12 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use nostr::event::{Event, Kind};
-use nostr::filter::Filter;
 use nostr::key::PublicKey;
 use nostr::nips::nip19::{FromBech32, Nip19, Nip19Coordinate};
 use relay_ui::chrome::{self, App, Apps, Profiles, escape};
 
 use crate::directory::{self, LISTING_KIND, LIVENESS_KIND, Listing, PROFILE_KIND, Provider};
-use crate::{PREFIX, Pages, READ_LIMIT, fallback, html, price, resources, standby, status};
+use crate::{PREFIX, Pages, directory_filter, fallback, html, price, resources, standby, status};
 
 /// A key's name, linking to its `/compute` Provider page.
 pub(crate) fn provider_link(names: &HashMap<PublicKey, String>, key: &PublicKey) -> String {
@@ -60,12 +59,7 @@ struct Held {
 /// `key`'s Provider and its Listings, as the store holds them; `None` when
 /// it holds no Provider Profile for it.
 async fn held(pages: &Pages, key: PublicKey) -> Option<Held> {
-    let of = |kind: u16| {
-        Filter::new()
-            .kind(Kind::from(kind))
-            .author(key)
-            .limit(READ_LIMIT)
-    };
+    let of = |kind: u16| directory_filter(kind).author(key);
     let (profiles, listings, liveness): (Vec<Event>, Vec<Event>, Vec<Event>) = tokio::join!(
         pages.store.query(of(PROFILE_KIND)),
         pages.store.query(of(LISTING_KIND)),
@@ -272,6 +266,15 @@ pub(crate) async fn listing_page(
         facts(&rows),
     );
     html(&pages, StatusCode::OK, &listing.name, &body)
+}
+
+/// `/compute/<npub>/`: the Listing whose `d` is empty, which the two-segment
+/// route cannot match.
+pub(crate) async fn unnamed_listing_page(
+    pages: State<Pages>,
+    Path(npub): Path<String>,
+) -> Response {
+    listing_page(pages, Path((npub, String::new()))).await
 }
 
 /// `/compute/<naddr>`: a Listing's `naddr` redirects to its page.
