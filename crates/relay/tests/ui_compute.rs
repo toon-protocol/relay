@@ -213,6 +213,81 @@ async fn compute_shows_live_status_price_and_standby_live_and_cheapest_first() {
 }
 
 #[tokio::test]
+async fn compute_filters_by_query_and_marks_hidden_providers_without_a_host() {
+    let running = running_with(|_| None).await;
+    let relay = &running.relay;
+    let (open, hidden) = (Keys::generate(), Keys::generate());
+    store(
+        relay,
+        &event(&open, 10_432, "{}", &[&["L", "toon.network"]]),
+    )
+    .await;
+    store(
+        relay,
+        &event(
+            &hidden,
+            10_432,
+            r#"{"host":"secret.example.net"}"#,
+            &[&["L", "toon.network"], &["l", "hidden:true"]],
+        ),
+    )
+    .await;
+    for (keys, d, labels) in [
+        (&open, "Open", [&["l", "arch:arm64"][..], &["t", "docker"]]),
+        (
+            &hidden,
+            "Hid",
+            [&["l", "arch:x86_64"][..], &["t", "docker"]],
+        ),
+    ] {
+        let a = format!("10432:{}:", keys.public_key().to_hex());
+        let (base, name, address) = (["L", "toon.network"], ["d", d], ["a", a.as_str()]);
+        let mut tags: Vec<&[&str]> = vec![&base, &name, &address];
+        tags.extend(labels);
+        let content = format!(r#"{{"name":"{d}","host":"secret.example.net"}}"#);
+        store(relay, &event(keys, 30_432, &content, &tags)).await;
+    }
+    let listed = |page: &Page| {
+        (
+            page.text.contains("data-listing=\"Open\""),
+            page.text.contains("data-listing=\"Hid\""),
+        )
+    };
+    assert_eq!(listed(&get(relay, "/compute").await), (true, true));
+    assert_eq!(
+        listed(&get(relay, "/compute?arch=arm64").await),
+        (true, false)
+    );
+    assert_eq!(
+        listed(&get(relay, "/compute?cap=docker").await),
+        (true, true)
+    );
+    assert_eq!(
+        listed(&get(relay, "/compute?hidden=true").await),
+        (false, true)
+    );
+    assert_eq!(
+        listed(&get(relay, "/compute?hidden=false").await),
+        (true, false)
+    );
+    assert_eq!(
+        listed(&get(relay, "/compute?arch=arm64&hidden=true").await),
+        (false, false)
+    );
+    let page = get(relay, "/compute?arch=x86_64").await;
+    assert!(page.text.contains("Anyone-only"));
+    assert!(page.text.contains("value=\"x86_64\""));
+    assert!(page.text.contains("method=\"get\""));
+    assert!(!page.text.contains("secret.example.net"));
+    assert!(
+        !get(relay, "/compute")
+            .await
+            .text
+            .contains("secret.example.net")
+    );
+}
+
+#[tokio::test]
 async fn the_site_bar_links_to_compute_on_every_app() {
     let running = running_with(|_| None).await;
     let relay = &running.relay;

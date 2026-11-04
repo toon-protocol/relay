@@ -14,7 +14,7 @@ mod directory;
 use std::collections::HashMap;
 
 use axum::Router;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::header::{CONTENT_SECURITY_POLICY, REFERRER_POLICY};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
@@ -27,7 +27,7 @@ use relay_ui::meta::Preview;
 use relay_ui::{AppUi, ReadOnlyStore};
 use ui_preview::{Mark, Previews};
 
-use directory::{LABEL_NAMESPACE, LISTING_KIND, LIVENESS_KIND, Listing, PROFILE_KIND};
+use directory::{Filters, LABEL_NAMESPACE, LISTING_KIND, LIVENESS_KIND, Listing, PROFILE_KIND};
 
 /// The mount prefix.
 pub const PREFIX: &str = "/compute";
@@ -129,13 +129,18 @@ fn directory_filter(kind: u16) -> Filter {
 }
 
 /// `/compute`: the Provider Directory.
-async fn index(State(pages): State<Pages>) -> Response {
+async fn index(
+    State(pages): State<Pages>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    let filters = Filters::from_query(&query);
     let (profiles, listings, liveness) = tokio::join!(
         pages.store.query(directory_filter(PROFILE_KIND)),
         pages.store.query(directory_filter(LISTING_KIND)),
         pages.store.query(directory_filter(LIVENESS_KIND)),
     );
     let mut listings = directory::join(&profiles, &listings);
+    listings.retain(|l| filters.matches(l));
     let keys: Vec<PublicKey> = {
         let mut keys: Vec<PublicKey> = listings.iter().map(|l| l.provider).collect();
         keys.dedup();
@@ -166,18 +171,30 @@ async fn index(State(pages): State<Pages>) -> Response {
         &pages,
         StatusCode::OK,
         "Compute",
-        &directory_page(&pages.apps, &names, &listings),
+        &directory_page(&pages.apps, &names, &listings, &filters),
     )
 }
 
-fn directory_page(apps: &Apps, names: &HashMap<PublicKey, String>, listings: &[Listing]) -> String {
+fn directory_page(
+    apps: &Apps,
+    names: &HashMap<PublicKey, String>,
+    listings: &[Listing],
+    filters: &Filters,
+) -> String {
     let mut body = String::from(
         "<h1 class=\"page-title\">Compute</h1>\
          <p class=\"muted small\" data-notice=\"relay-only\">This lists only Providers that publish \
          to this relay. A Provider whose Relay Set leaves this relay out is not listed here.</p>",
     );
+    body.push_str(&filter_form(filters));
     if listings.is_empty() {
-        body.push_str("<div class=\"box\"><div class=\"empty\">No Listings here yet.</div></div>");
+        let none = match filters.is_empty() {
+            true => "No Listings here yet.",
+            false => "No Listings match these filters.",
+        };
+        body.push_str(&format!(
+            "<div class=\"box\"><div class=\"empty\">{none}</div></div>"
+        ));
         return body;
     }
     body.push_str(
@@ -195,11 +212,15 @@ fn directory_page(apps: &Apps, names: &HashMap<PublicKey, String>, listings: &[L
             .collect::<Vec<_>>()
             .join(", ");
         body.push_str(&format!(
-            "<tr data-listing=\"{}\"><td><span>{}{}</span></td><td class=\"strong\">{}</td>\
+            "<tr data-listing=\"{}\"><td><span>{}{}</span>{}</td><td class=\"strong\">{}</td>\
              <td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             escape(&listing.name),
             chrome::person_avatar(apps, &listing.provider, true),
             chrome::person(apps, names, &listing.provider),
+            match listing.hidden {
+                true => " <span class=\"muted small\" data-hidden=\"true\">Anyone-only</span>",
+                false => "",
+            },
             escape(&listing.name),
             resources,
             listing.arch.as_deref().map(escape).unwrap_or_default(),
@@ -248,4 +269,35 @@ fn standby(listing: &Listing) -> String {
         Some(price) => format!("{price} µUSDC"),
         None => "no standbys".to_owned(),
     }
+}
+
+/// The GET form that narrows the directory: it works without script, keeps
+/// the current values, and its URL is the filtered page.
+fn filter_form(filters: &Filters) -> String {
+    let field = |name: &str, label: &str, value: &str| {
+        format!(
+            "<label class=\"small muted\">{label} <input type=\"text\" name=\"{name}\" \
+             value=\"{}\"></label> ",
+            escape(value)
+        )
+    };
+    let hidden = |value: &str, text: &str| {
+        let selected = match filters.hidden.eq_ignore_ascii_case(value) {
+            true => " selected",
+            false => "",
+        };
+        format!("<option value=\"{value}\"{selected}>{text}</option>")
+    };
+    format!(
+        "<form method=\"get\" action=\"{PREFIX}\" class=\"box\" data-filters>{}{}{}{}\
+         <label class=\"small muted\">Hidden <select name=\"hidden\">{}{}{}</select></label> \
+         <button type=\"submit\">Filter</button> <a href=\"{PREFIX}\">Clear</a></form>",
+        field("arch", "Arch", &filters.arch),
+        field("isolation", "Isolation", &filters.isolation),
+        field("gpu", "GPU", &filters.gpu),
+        field("cap", "Capability", &filters.cap),
+        hidden("", "any"),
+        hidden("true", "Anyone-only"),
+        hidden("false", "not hidden"),
+    )
 }
