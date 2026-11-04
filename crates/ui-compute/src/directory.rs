@@ -13,6 +13,8 @@ use serde_json::Value;
 pub(crate) const PROFILE_KIND: u16 = 10_432;
 /// A Listing.
 pub(crate) const LISTING_KIND: u16 = 30_432;
+/// A Liveness.
+pub(crate) const LIVENESS_KIND: u16 = 10_433;
 /// The `L` namespace every TOON Compute event carries.
 pub(crate) const LABEL_NAMESPACE: &str = "toon.network";
 
@@ -30,7 +32,139 @@ pub(crate) struct Listing {
     /// `what: amount` for each resource the Listing sells.
     pub(crate) resources: Vec<(String, String)>,
     pub(crate) arch: Option<String>,
+    /// The Listing's `d` tag: the key of its capacity in a Liveness.
+    d: String,
+    /// µUSDC per Lease Interval.
+    pub(crate) price: Option<u64>,
+    /// µUSDC per Lease Interval for a Warm Standby; `None` sells no standbys.
+    pub(crate) standby_price: Option<u64>,
+    pub(crate) lease_interval_s: Option<u64>,
+    /// Whether the provider holds an unexpired Liveness.
+    pub(crate) live: bool,
+    /// What the provider's Liveness says is available for this Listing.
+    pub(crate) available: Option<u64>,
     created_at: u64,
+}
+
+impl Listing {
+    /// The price per hour, when the Listing states a price and an interval.
+    pub(crate) fn per_hour(&self) -> Option<PerHour> {
+        price_per_hour(self.price?, self.lease_interval_s?)
+    }
+}
+
+/// A price per hour, exactly: `whole + remainder / interval` µUSDC, the
+/// fraction in lowest terms so equal prices are equal values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PerHour {
+    pub(crate) whole: u128,
+    pub(crate) remainder: u64,
+    pub(crate) interval: u64,
+}
+
+impl Ord for PerHour {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Both remainders are below their interval, so both products fit.
+        self.whole.cmp(&other.whole).then_with(|| {
+            (u128::from(self.remainder) * u128::from(other.interval))
+                .cmp(&(u128::from(other.remainder) * u128::from(self.interval)))
+        })
+    }
+}
+
+impl PartialOrd for PerHour {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// `price × 3600 / interval_s` in integer arithmetic, with nothing rounded
+/// away. `None` for a zero interval. A pure function.
+pub(crate) fn price_per_hour(price: u64, interval_s: u64) -> Option<PerHour> {
+    if interval_s == 0 {
+        return None;
+    }
+    let total = u128::from(price) * 3600;
+    let interval = u128::from(interval_s);
+    let remainder = total % interval;
+    let common = gcd(remainder, interval);
+    Some(PerHour {
+        whole: total / interval,
+        // Below `interval_s`, so both fit.
+        remainder: u64::try_from(remainder / common).ok()?,
+        interval: u64::try_from(interval / common).ok()?,
+    })
+}
+
+fn gcd(mut a: u128, mut b: u128) -> u128 {
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a
+}
+
+/// Marks each of `listings` live or down from `liveness` (kind 10433
+/// events) at `now`, and fills in its capacity. A provider is live while it
+/// has a Liveness that carries no expiration, or one still ahead of `now`;
+/// its newest Liveness decides, since it replaces the older ones.
+pub(crate) fn apply_liveness(listings: &mut [Listing], liveness: &[Event], now: u64) {
+    let mut newest: HashMap<PublicKey, &Event> = HashMap::new();
+    for event in liveness
+        .iter()
+        .filter(|e| e.kind == Kind::from(LIVENESS_KIND))
+    {
+        let later = newest
+            .get(&event.pubkey)
+            .is_none_or(|had| (had.created_at, had.id) < (event.created_at, event.id));
+        if later {
+            newest.insert(event.pubkey, event);
+        }
+    }
+    newest.retain(|_, event| expiration(event).is_none_or(|at| at > now));
+    for listing in listings {
+        let Some(event) = newest.get(&listing.provider) else {
+            listing.live = false;
+            listing.available = None;
+            continue;
+        };
+        listing.live = true;
+        listing.available = json(&event.content)
+            .get("available")
+            .and_then(|available| available.get(&listing.d))
+            .and_then(count);
+    }
+}
+
+/// Live providers first, then cheapest per hour first; a Listing with no
+/// stated price last among its kind. Stable, so equal Listings keep their
+/// order.
+pub(crate) fn sort_for_buyers(listings: &mut [Listing]) {
+    listings.sort_by(|a, b| {
+        b.live
+            .cmp(&a.live)
+            .then_with(|| match (a.per_hour(), b.per_hour()) {
+                (Some(x), Some(y)) => x.cmp(&y),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            })
+    });
+}
+
+fn expiration(event: &Event) -> Option<u64> {
+    event.tags.iter().find_map(|tag| match tag.as_slice() {
+        [name, at, ..] if name == "expiration" => at.parse().ok(),
+        _ => None,
+    })
+}
+
+/// A whole count written as a JSON number or a string of digits.
+fn count(value: &Value) -> Option<u64> {
+    match value {
+        Value::Number(n) => n.as_u64(),
+        Value::String(text) => text.trim().parse().ok(),
+        _ => None,
+    }
 }
 
 /// The Listings among `listings` whose provider's Profile is among
@@ -110,6 +244,12 @@ fn read(listing: &Event, profile: &Event) -> Option<Listing> {
         name: text(&content, "name").unwrap_or_else(|| d.to_owned()),
         resources: resources(content.get("resources")),
         arch,
+        d: d.to_owned(),
+        price: content.get("price").and_then(count),
+        standby_price: content.get("standby_price").and_then(count),
+        lease_interval_s: content.get("lease_interval_s").and_then(count),
+        live: false,
+        available: None,
         created_at: listing.created_at.as_secs(),
     })
 }
@@ -150,6 +290,7 @@ fn resources(value: Option<&Value>) -> Vec<(String, String)> {
 mod tests {
     use nostr::event::{EventBuilder, FinalizeEvent, Tag};
     use nostr::key::Keys;
+    use nostr::types::Timestamp;
 
     use super::*;
 
@@ -250,5 +391,152 @@ mod tests {
         let joined = join(&[profile], &[event]);
         assert_eq!(joined[0].name, "x");
         assert_eq!(joined[0].arch.as_deref(), Some("x86_64"));
+    }
+
+    fn priced(provider: &Keys, d: &str, price: u64, interval: u64) -> Event {
+        listing(
+            provider,
+            d,
+            &format!(r#"{{"price":{price},"lease_interval_s":{interval}}}"#),
+            provider,
+        )
+    }
+
+    fn liveness(keys: &Keys, content: &str, expiration: u64) -> Event {
+        signed(
+            keys,
+            LIVENESS_KIND,
+            content,
+            &[tag(&["expiration", &expiration.to_string()])],
+        )
+    }
+
+    #[test]
+    fn price_per_hour_is_exact_integer_arithmetic() {
+        let per = |price, interval| price_per_hour(price, interval).unwrap();
+        assert_eq!(
+            per(10, 3600),
+            PerHour {
+                whole: 10,
+                remainder: 0,
+                interval: 1
+            }
+        );
+        assert_eq!(
+            per(5, 60),
+            PerHour {
+                whole: 300,
+                remainder: 0,
+                interval: 1
+            }
+        );
+        assert_eq!(
+            per(1, 7200),
+            PerHour {
+                whole: 0,
+                remainder: 1,
+                interval: 2
+            }
+        );
+        // The same price per hour from a different interval is equal.
+        assert_eq!(per(1, 7200), per(2, 14_400));
+        // 1000 × 3600 / 7 = 514285 + 5/7: nothing rounded away.
+        assert_eq!(
+            per(1000, 7),
+            PerHour {
+                whole: 514_285,
+                remainder: 5,
+                interval: 7
+            }
+        );
+        assert_eq!(price_per_hour(1, 0), None);
+        let max = per(u64::MAX, 1);
+        assert_eq!(max.whole, u128::from(u64::MAX) * 3600);
+        assert!(per(1, 3) < per(1, 2));
+        assert!(per(1, 1800) < per(7, 7200));
+    }
+
+    #[test]
+    fn standby_price_is_read_and_absence_means_no_standbys() {
+        let provider = Keys::generate();
+        let profile = signed(&provider, PROFILE_KIND, "{}", &[]);
+        let with = listing(
+            &provider,
+            "a",
+            r#"{"price":"9","standby_price":4}"#,
+            &provider,
+        );
+        let without = priced(&provider, "b", 9, 60);
+        let joined = join(&[profile], &[with, without]);
+        let by = |d: &str| joined.iter().find(|l| l.d == d).unwrap();
+        assert_eq!(by("a").standby_price, Some(4));
+        assert_eq!(by("a").price, Some(9));
+        assert_eq!(by("b").standby_price, None);
+    }
+
+    #[test]
+    fn live_means_an_unexpired_liveness_and_carries_capacity() {
+        let (up, lapsed, silent) = (Keys::generate(), Keys::generate(), Keys::generate());
+        let profiles: Vec<Event> = [&up, &lapsed, &silent]
+            .iter()
+            .map(|k| signed(k, PROFILE_KIND, "{}", &[]))
+            .collect();
+        let listings = [
+            priced(&up, "s", 1, 60),
+            priced(&lapsed, "s", 1, 60),
+            priced(&silent, "s", 1, 60),
+        ];
+        let mut joined = join(&profiles, &listings);
+        let events = [
+            liveness(&up, r#"{"available":{"s":3,"other":9}}"#, 2_000),
+            liveness(&lapsed, r#"{"available":{"s":5}}"#, 1_000),
+        ];
+        apply_liveness(&mut joined, &events, 1_500);
+        for listing in &joined {
+            if listing.provider == up.public_key() {
+                assert!(listing.live);
+                assert_eq!(listing.available, Some(3));
+            } else {
+                assert!(!listing.live);
+                assert_eq!(listing.available, None);
+            }
+        }
+    }
+
+    #[test]
+    fn an_expired_newest_liveness_is_down_though_an_older_one_is_not() {
+        let provider = Keys::generate();
+        let profile = signed(&provider, PROFILE_KIND, "{}", &[]);
+        let mut joined = join(&[profile], &[priced(&provider, "s", 1, 60)]);
+        let at = |created: u64, expires: u64| {
+            EventBuilder::new(Kind::from(LIVENESS_KIND), "{}")
+                .tags([Tag::parse(["expiration", &expires.to_string()]).unwrap()])
+                .custom_created_at(Timestamp::from(created))
+                .finalize(&provider)
+                .unwrap()
+        };
+        apply_liveness(&mut joined, &[at(100, 2_000), at(200, 1_000)], 1_500);
+        assert!(!joined[0].live);
+    }
+
+    #[test]
+    fn live_sorts_above_down_then_cheapest_per_hour() {
+        let (up, down) = (Keys::generate(), Keys::generate());
+        let profiles = [
+            signed(&up, PROFILE_KIND, "{}", &[]),
+            signed(&down, PROFILE_KIND, "{}", &[]),
+        ];
+        let listings = [
+            priced(&down, "cheap-down", 1, 3600),
+            priced(&up, "dear-up", 100, 3600),
+            // 60 per minute is 3600 per hour; 50 per hour is cheaper.
+            priced(&up, "per-minute", 60, 60),
+            priced(&up, "cheap-up", 50, 3600),
+        ];
+        let mut joined = join(&profiles, &listings);
+        apply_liveness(&mut joined, &[liveness(&up, "{}", 9_999)], 1);
+        sort_for_buyers(&mut joined);
+        let names: Vec<&str> = joined.iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(names, ["cheap-up", "dear-up", "per-minute", "cheap-down"]);
     }
 }

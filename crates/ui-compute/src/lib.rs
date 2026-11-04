@@ -27,7 +27,7 @@ use relay_ui::meta::Preview;
 use relay_ui::{AppUi, ReadOnlyStore};
 use ui_preview::{Mark, Previews};
 
-use directory::{LABEL_NAMESPACE, LISTING_KIND, Listing, PROFILE_KIND};
+use directory::{LABEL_NAMESPACE, LISTING_KIND, LIVENESS_KIND, Listing, PROFILE_KIND};
 
 /// The mount prefix.
 pub const PREFIX: &str = "/compute";
@@ -130,9 +130,10 @@ fn directory_filter(kind: u16) -> Filter {
 
 /// `/compute`: the Provider Directory.
 async fn index(State(pages): State<Pages>) -> Response {
-    let (profiles, listings) = tokio::join!(
+    let (profiles, listings, liveness) = tokio::join!(
         pages.store.query(directory_filter(PROFILE_KIND)),
         pages.store.query(directory_filter(LISTING_KIND)),
+        pages.store.query(directory_filter(LIVENESS_KIND)),
     );
     let mut listings = directory::join(&profiles, &listings);
     let keys: Vec<PublicKey> = {
@@ -147,6 +148,7 @@ async fn index(State(pages): State<Pages>) -> Response {
             names.insert(listing.provider, name.clone());
         }
     }
+    // Name order is the tiebreak under the buyer's order.
     listings.sort_by_cached_key(|l| {
         (
             chrome::shown_name(&names, &l.provider).to_lowercase(),
@@ -154,6 +156,12 @@ async fn index(State(pages): State<Pages>) -> Response {
             l.name.to_lowercase(),
         )
     });
+    directory::apply_liveness(
+        &mut listings,
+        &liveness,
+        u64::try_from(chrome::now()).unwrap_or(0),
+    );
+    directory::sort_for_buyers(&mut listings);
     html(
         &pages,
         StatusCode::OK,
@@ -174,7 +182,7 @@ fn directory_page(apps: &Apps, names: &HashMap<PublicKey, String>, listings: &[L
     }
     body.push_str(
         "<div class=\"box\"><div class=\"table-wrap\"><table class=\"data-table\">\
-         <thead><tr><th>Provider</th><th>Listing</th><th>Resources</th><th>Arch</th></tr></thead><tbody>",
+         <thead><tr><th>Provider</th><th>Listing</th><th>Resources</th><th>Arch</th><th>Status</th><th>Price</th><th>Standby</th></tr></thead><tbody>",
     );
     for listing in listings {
         let resources = listing
@@ -188,15 +196,56 @@ fn directory_page(apps: &Apps, names: &HashMap<PublicKey, String>, listings: &[L
             .join(", ");
         body.push_str(&format!(
             "<tr data-listing=\"{}\"><td><span>{}{}</span></td><td class=\"strong\">{}</td>\
-             <td>{}</td><td>{}</td></tr>",
+             <td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             escape(&listing.name),
             chrome::person_avatar(apps, &listing.provider, true),
             chrome::person(apps, names, &listing.provider),
             escape(&listing.name),
             resources,
             listing.arch.as_deref().map(escape).unwrap_or_default(),
+            status(listing),
+            price(listing),
+            standby(listing),
         ));
     }
     body.push_str("</tbody></table></div></div>");
     body
+}
+
+/// Live with its capacity, or down.
+fn status(listing: &Listing) -> String {
+    match (listing.live, listing.available) {
+        (true, Some(n)) => format!("<span data-status=\"live\">live, {n} available</span>"),
+        (true, None) => "<span data-status=\"live\">live</span>".to_owned(),
+        (false, _) => "<span data-status=\"down\">down</span>".to_owned(),
+    }
+}
+
+/// The price per Lease Interval and per hour, exactly.
+fn price(listing: &Listing) -> String {
+    let Some(price) = listing.price else {
+        return String::new();
+    };
+    let mut out = match listing.lease_interval_s {
+        Some(s) => format!("{price} µUSDC per {s} s"),
+        None => format!("{price} µUSDC"),
+    };
+    if let Some(hour) = listing.per_hour() {
+        out.push_str(&format!(" ({} per hour)", per_hour(hour)));
+    }
+    out
+}
+
+fn per_hour(hour: directory::PerHour) -> String {
+    match hour.remainder {
+        0 => format!("{} µUSDC", hour.whole),
+        r => format!("{} + {}/{} µUSDC", hour.whole, r, hour.interval),
+    }
+}
+
+fn standby(listing: &Listing) -> String {
+    match listing.standby_price {
+        Some(price) => format!("{price} µUSDC"),
+        None => "no standbys".to_owned(),
+    }
 }

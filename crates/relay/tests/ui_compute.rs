@@ -141,6 +141,78 @@ async fn compute_lists_listings_whose_profile_the_relay_holds() {
 }
 
 #[tokio::test]
+async fn compute_shows_live_status_price_and_standby_live_and_cheapest_first() {
+    let running = running_with(|_| None).await;
+    let relay = &running.relay;
+    let (up, down) = (Keys::generate(), Keys::generate());
+    for keys in [&up, &down] {
+        store(relay, &event(keys, 10_432, "{}", &[&["L", "toon.network"]])).await;
+    }
+    listing(
+        relay,
+        &down,
+        "cheap-down",
+        r#"{"name":"CheapDown","price":1,"lease_interval_s":3600}"#,
+    )
+    .await;
+    listing(
+        relay,
+        &up,
+        "dear-up",
+        r#"{"name":"DearUp","price":1000,"lease_interval_s":7,"standby_price":40}"#,
+    )
+    .await;
+    listing(
+        relay,
+        &up,
+        "cheap-up",
+        r#"{"name":"CheapUp","price":50,"lease_interval_s":60}"#,
+    )
+    .await;
+    let later = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after the epoch")
+        .as_secs()
+        + 3_600)
+        .to_string();
+    store(
+        relay,
+        &event(
+            &up,
+            10_433,
+            r#"{"available":{"cheap-up":3}}"#,
+            &[&["L", "toon.network"], &["expiration", &later]],
+        ),
+    )
+    .await;
+
+    let page = get(relay, "/compute").await;
+    assert_eq!(page.status, StatusCode::OK);
+    let at = |name: &str| {
+        page.text
+            .find(&format!("data-listing=\"{name}\""))
+            .unwrap_or_else(|| panic!("{name}: {}", page.text))
+    };
+    assert!(at("CheapUp") < at("DearUp"));
+    assert!(at("DearUp") < at("CheapDown"));
+    let row = |name: &str| {
+        let rest = &page.text[at(name)..];
+        rest[..rest.find("</tr>").expect("a row end")].to_owned()
+    };
+    let cheap_up = row("CheapUp");
+    assert!(cheap_up.contains("live, 3 available"), "{cheap_up}");
+    assert!(cheap_up.contains("50 µUSDC per 60 s (3000 µUSDC per hour)"));
+    assert!(cheap_up.contains("no standbys"));
+    let dear_up = row("DearUp");
+    assert!(dear_up.contains("data-status=\"live\""), "{dear_up}");
+    assert!(dear_up.contains("1000 µUSDC per 7 s (514285 + 5/7 µUSDC per hour)"));
+    assert!(dear_up.contains("<td>40 µUSDC</td>"));
+    let cheap_down = row("CheapDown");
+    assert!(cheap_down.contains("data-status=\"down\""), "{cheap_down}");
+    assert!(cheap_down.contains("1 µUSDC per 3600 s (1 µUSDC per hour)"));
+}
+
+#[tokio::test]
 async fn the_site_bar_links_to_compute_on_every_app() {
     let running = running_with(|_| None).await;
     let relay = &running.relay;
