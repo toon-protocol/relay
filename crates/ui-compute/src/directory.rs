@@ -53,7 +53,8 @@ impl Listing {
     }
 }
 
-/// A price per hour, exactly: `whole + remainder / interval` µUSDC.
+/// A price per hour, exactly: `whole + remainder / interval` µUSDC, the
+/// fraction in lowest terms so equal prices are equal values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PerHour {
     pub(crate) whole: u128,
@@ -85,24 +86,32 @@ pub(crate) fn price_per_hour(price: u64, interval_s: u64) -> Option<PerHour> {
     }
     let total = u128::from(price) * 3600;
     let interval = u128::from(interval_s);
+    let remainder = total % interval;
+    let common = gcd(remainder, interval);
     Some(PerHour {
         whole: total / interval,
-        // Below `interval_s`, so it fits.
-        remainder: u64::try_from(total % interval).ok()?,
-        interval: interval_s,
+        // Below `interval_s`, so both fit.
+        remainder: u64::try_from(remainder / common).ok()?,
+        interval: u64::try_from(interval / common).ok()?,
     })
+}
+
+fn gcd(mut a: u128, mut b: u128) -> u128 {
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a
 }
 
 /// Marks each of `listings` live or down from `liveness` (kind 10433
 /// events) at `now`, and fills in its capacity. A provider is live while it
 /// has a Liveness that carries no expiration, or one still ahead of `now`;
-/// its newest Liveness decides.
+/// its newest Liveness decides, since it replaces the older ones.
 pub(crate) fn apply_liveness(listings: &mut [Listing], liveness: &[Event], now: u64) {
     let mut newest: HashMap<PublicKey, &Event> = HashMap::new();
     for event in liveness
         .iter()
         .filter(|e| e.kind == Kind::from(LIVENESS_KIND))
-        .filter(|e| expiration(e).is_none_or(|at| at > now))
     {
         let later = newest
             .get(&event.pubkey)
@@ -111,6 +120,7 @@ pub(crate) fn apply_liveness(listings: &mut [Listing], liveness: &[Event], now: 
             newest.insert(event.pubkey, event);
         }
     }
+    newest.retain(|_, event| expiration(event).is_none_or(|at| at > now));
     for listing in listings {
         let Some(event) = newest.get(&listing.provider) else {
             listing.live = false;
@@ -280,6 +290,7 @@ fn resources(value: Option<&Value>) -> Vec<(String, String)> {
 mod tests {
     use nostr::event::{EventBuilder, FinalizeEvent, Tag};
     use nostr::key::Keys;
+    use nostr::types::Timestamp;
 
     use super::*;
 
@@ -408,7 +419,7 @@ mod tests {
             PerHour {
                 whole: 10,
                 remainder: 0,
-                interval: 3600
+                interval: 1
             }
         );
         assert_eq!(
@@ -416,17 +427,19 @@ mod tests {
             PerHour {
                 whole: 300,
                 remainder: 0,
-                interval: 60
+                interval: 1
             }
         );
         assert_eq!(
             per(1, 7200),
             PerHour {
                 whole: 0,
-                remainder: 3600,
-                interval: 7200
+                remainder: 1,
+                interval: 2
             }
         );
+        // The same price per hour from a different interval is equal.
+        assert_eq!(per(1, 7200), per(2, 14_400));
         // 1000 × 3600 / 7 = 514285 + 5/7: nothing rounded away.
         assert_eq!(
             per(1000, 7),
@@ -488,6 +501,22 @@ mod tests {
                 assert_eq!(listing.available, None);
             }
         }
+    }
+
+    #[test]
+    fn an_expired_newest_liveness_is_down_though_an_older_one_is_not() {
+        let provider = Keys::generate();
+        let profile = signed(&provider, PROFILE_KIND, "{}", &[]);
+        let mut joined = join(&[profile], &[priced(&provider, "s", 1, 60)]);
+        let at = |created: u64, expires: u64| {
+            EventBuilder::new(Kind::from(LIVENESS_KIND), "{}")
+                .tags([Tag::parse(["expiration", &expires.to_string()]).unwrap()])
+                .custom_created_at(Timestamp::from(created))
+                .finalize(&provider)
+                .unwrap()
+        };
+        apply_liveness(&mut joined, &[at(100, 2_000), at(200, 1_000)], 1_500);
+        assert!(!joined[0].live);
     }
 
     #[test]
