@@ -9,6 +9,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use nostr::event::{Event, Kind};
 use nostr::key::PublicKey;
 use nostr::nips::nip19::{FromBech32, Nip19, Nip19Coordinate};
+use nostr::types::Timestamp;
 use relay_ui::chrome::{self, App, Apps, Identicon, Profiles, escape};
 use relay_ui::meta::Preview;
 use ui_preview::{Card, Face};
@@ -16,8 +17,8 @@ use ui_preview::{Card, Face};
 use crate::deployment;
 use crate::directory::{self, LISTING_KIND, LIVENESS_KIND, Listing, PROFILE_KIND, Provider};
 use crate::{
-    PREFIX, Pages, card_stem, directory_filter, fallback, html_with, per_hour, price, resources,
-    resources_text, standby, status,
+    PREFIX, Pages, capability_list, card_stem, directory_filter, fallback, html_with, per_hour,
+    price, resources, resources_text, standby, status,
 };
 
 /// A key's name, linking to its `/compute` Provider page.
@@ -60,7 +61,8 @@ pub(crate) fn parse_pubkey(text: &str) -> Option<PublicKey> {
 struct Held {
     provider: Provider,
     listings: Vec<Listing>,
-    live: bool,
+    /// When its current Liveness was signed, while it is live.
+    live_since: Option<u64>,
 }
 
 /// `key`'s Provider and its Listings, as the store holds them; `None` when
@@ -72,15 +74,22 @@ async fn held(pages: &Pages, key: PublicKey) -> Option<Held> {
         pages.store.query(of(LISTING_KIND)),
         pages.store.query(of(LIVENESS_KIND)),
     );
-    let provider = directory::provider(&profiles, &key)?;
+    let mut provider = directory::provider(&profiles, &key)?;
     let now = crate::now();
     let mut listings = directory::join(&profiles, &listings);
+    // A Listing marked hidden makes its Provider Anyone-only, as the
+    // directory shows it: no page names its host.
+    if listings.iter().any(|listing| listing.hidden) {
+        provider.hidden = true;
+        provider.host = None;
+    }
     directory::apply_liveness(&mut listings, &liveness, now);
     listings.sort_by_cached_key(|l| (l.name.to_lowercase(), l.d.clone()));
+    let live_since = directory::live_since(&liveness, &key, now);
     Some(Held {
         provider,
         listings,
-        live: directory::is_live(&liveness, &key, now),
+        live_since,
     })
 }
 
@@ -117,7 +126,11 @@ pub(crate) async fn provider_page(
         chrome::person_avatar(&pages.apps, &key, false),
         escape(&shown),
     );
-    body.push_str(&provider_facts(&pages.apps, &held.provider, held.live));
+    body.push_str(&provider_facts(
+        &pages.apps,
+        &held.provider,
+        held.live_since,
+    ));
     body.push_str("<h2>Listings</h2>");
     if held.listings.is_empty() {
         body.push_str("<div class=\"box\"><div class=\"empty\">No Listings here.</div></div>");
@@ -134,7 +147,7 @@ pub(crate) async fn provider_page(
         named.clone(),
         format!(
             "{named}: a TOON Compute Provider, {}, with {}.",
-            liveness_word(held.live),
+            liveness_word(held.live_since.is_some()),
             count(held.listings.len(), "Listing"),
         ),
     )
@@ -189,7 +202,7 @@ pub(crate) async fn provider_card(
             Face::Provider(ui_preview::Provider {
                 name: chrome::shown_name(&names, &key),
                 avatar: Identicon::of(&key),
-                live: held.live,
+                live: held.live_since.is_some(),
                 listings: held.listings.len(),
             }),
         ))
@@ -229,13 +242,16 @@ pub(crate) async fn listing_card(
 }
 
 /// The Provider's Profile fields.
-fn provider_facts(apps: &Apps, provider: &Provider, live: bool) -> String {
+fn provider_facts(apps: &Apps, provider: &Provider, live_since: Option<u64>) -> String {
     let mut rows = vec![(
         "Status",
-        if live {
-            "<span data-status=\"live\">live</span>".to_owned()
-        } else {
-            "<span data-status=\"down\">down</span>".to_owned()
+        match live_since {
+            Some(at) => format!(
+                "<span data-status=\"live\">live</span> \
+                 <span class=\"muted small\" data-live-since=\"{at}\">Liveness signed {}</span>",
+                chrome::ago(Timestamp::from_secs(at)),
+            ),
+            None => "<span data-status=\"down\">down</span>".to_owned(),
         },
     )];
     if provider.hidden {
@@ -359,11 +375,13 @@ pub(crate) async fn listing_page(
     if let Some(arch) = &listing.arch {
         rows.push(("Arch", escape(arch)));
     }
+    if let Some(isolation) = &listing.isolation {
+        rows.push(("Isolation", escape(isolation)));
+    }
     rows.push(("Price", price(listing)));
     rows.push(("Standby", standby(listing)));
     if !listing.capabilities.is_empty() {
-        let caps: Vec<String> = listing.capabilities.iter().map(|c| escape(c)).collect();
-        rows.push(("Capabilities", caps.join(", ")));
+        rows.push(("Capabilities", capability_list(listing)));
     }
     let body = format!(
         "<p class=\"muted small\"><a href=\"{PREFIX}\">Compute</a> / <a href=\"{}\">{}</a></p>\

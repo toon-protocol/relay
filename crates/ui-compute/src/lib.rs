@@ -253,12 +253,12 @@ fn directory_page(
     }
     body.push_str(
         "<div class=\"box\"><div class=\"table-wrap\"><table class=\"data-table\">\
-         <thead><tr><th>Provider</th><th>Listing</th><th>Resources</th><th>Arch</th><th>Status</th><th>Price</th><th>Standby</th></tr></thead><tbody>",
+         <thead><tr><th>Provider</th><th>Listing</th><th>Resources</th><th>Arch</th><th>Isolation</th><th>Capabilities</th><th>Status</th><th>Price</th><th>Standby</th></tr></thead><tbody>",
     );
     for listing in listings {
         body.push_str(&format!(
             "<tr data-listing=\"{}\"><td><span>{}{}</span>{}</td><td class=\"strong\"><a href=\"{}\">{}</a></td>\
-             <td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+             <td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             escape(&listing.name),
             chrome::person_avatar(apps, &listing.provider, true),
             provider_link(names, &listing.provider),
@@ -270,6 +270,8 @@ fn directory_page(
             escape(&listing.name),
             resources(listing),
             listing.arch.as_deref().map(escape).unwrap_or_default(),
+            listing.isolation.as_deref().map(escape).unwrap_or_default(),
+            capability_list(listing),
             status(listing),
             price(listing),
             standby(listing),
@@ -277,6 +279,12 @@ fn directory_page(
     }
     body.push_str("</tbody></table></div></div>");
     body
+}
+
+/// What the Listing can do, comma-separated.
+pub(crate) fn capability_list(listing: &Listing) -> String {
+    let caps: Vec<String> = listing.capabilities.iter().map(|c| escape(c)).collect();
+    caps.join(", ")
 }
 
 /// Live with its capacity, or down.
