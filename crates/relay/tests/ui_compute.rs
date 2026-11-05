@@ -11,6 +11,7 @@ use common::{delivery, running_with, write};
 use http_body_util::BodyExt;
 use nostr::event::{Event, EventBuilder, FinalizeEvent, Kind, Tag};
 use nostr::key::Keys;
+use nostr::types::Timestamp;
 use tower::ServiceExt;
 
 const POLICY: &str = "default-src 'self'; script-src 'none'; img-src 'self'; \
@@ -843,6 +844,131 @@ fn rebuild(keys: &Keys, source: &Event, change: impl Fn(&str) -> Option<String>)
         .tags(tags)
         .finalize(keys)
         .expect("signs")
+}
+
+/// `event`, signed `ago` seconds before now.
+fn event_ago(keys: &Keys, kind: u16, content: &str, tags: &[&[&str]], ago: u64) -> Event {
+    EventBuilder::new(Kind::from(kind), content)
+        .tags(
+            tags.iter()
+                .map(|tag| Tag::parse(tag.iter().copied()).expect("a tag")),
+        )
+        .custom_created_at(Timestamp::from_secs(Timestamp::now().as_secs() - ago))
+        .finalize(keys)
+        .expect("signs")
+}
+
+#[tokio::test]
+async fn a_provider_page_logs_its_evictions_takeovers_and_deployments_newest_first() {
+    let running = running_with(|_| None).await;
+    let relay = &running.relay;
+    let (tenant, primary, standby, other) = (
+        Keys::generate(),
+        Keys::generate(),
+        Keys::generate(),
+        Keys::generate(),
+    );
+    for provider in [&primary, &standby, &other] {
+        store(
+            relay,
+            &event(provider, 10_432, "{}", &[&["L", "toon.network"]]),
+        )
+        .await;
+    }
+    let (workload, elsewhere) = ("ab".repeat(32), "cd".repeat(32));
+    store(
+        relay,
+        &deployment_event(&tenant, "production", &primary, &standby, &workload, &[]),
+    )
+    .await;
+    let primary_json = format!(r#"{{"primary":"{}"}}"#, primary.public_key().to_hex());
+    store(
+        relay,
+        &event_ago(&standby, 30_433, &primary_json, &[&["d", &workload]], 200),
+    )
+    .await;
+    for (content, ago) in [
+        (r#"{"reason":"made-up","message":"too loud"}"#, 100),
+        (r#"{"reason":"abuse","message":"first"}"#, 300),
+    ] {
+        store(
+            relay,
+            &event_ago(&primary, 4_433, content, &[&["x", &"ef".repeat(32)]], ago),
+        )
+        .await;
+    }
+    // Another provider's Eviction Notice, Deployment and Takeover are not in
+    // this provider's log.
+    store(
+        relay,
+        &event(
+            &other,
+            4_433,
+            r#"{"reason":"abuse","message":"elsewhere"}"#,
+            &[&["x", &"12".repeat(32)]],
+        ),
+    )
+    .await;
+    store(
+        relay,
+        &deployment_event(&tenant, "staging", &other, &standby, &elsewhere, &[]),
+    )
+    .await;
+    let other_json = format!(r#"{{"primary":"{}"}}"#, other.public_key().to_hex());
+    store(
+        relay,
+        &event_ago(&standby, 30_433, &other_json, &[&["d", &elsewhere]], 50),
+    )
+    .await;
+
+    let page = get(relay, &format!("/compute/p/{}", npub_of(&primary))).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.text);
+    let log = &page.text[page.text.find("data-activity>").expect("activity log")..];
+    for shown in [
+        "made-up",
+        "too loud",
+        "took over from",
+        &format!("/compute/p/{}", npub_of(&standby)),
+        &format!("/compute/d/{}/production", npub_of(&tenant)),
+    ] {
+        assert!(log.contains(shown), "{shown}: {log}");
+    }
+    for hidden in ["elsewhere", "staging"] {
+        assert!(!log.contains(hidden), "{hidden}: {log}");
+    }
+    let rows: Vec<(&str, u64)> = log
+        .split("data-activity-kind=\"")
+        .skip(1)
+        .map(|row| {
+            let kind = &row[..row.find('"').expect("a kind")];
+            let at = &row[row.find("data-at=\"").expect("a time") + 9..];
+            (
+                kind,
+                at[..at.find('"').expect("a time")]
+                    .parse()
+                    .expect("a number"),
+            )
+        })
+        .collect();
+    let kinds: Vec<&str> = rows.iter().map(|(kind, _)| *kind).collect();
+    assert_eq!(
+        kinds,
+        ["deployment", "eviction", "takeover", "eviction"],
+        "{log}"
+    );
+    assert!(rows.windows(2).all(|w| w[0].1 > w[1].1), "{rows:?}");
+
+    // The other provider's own page logs its own events alone.
+    let page = get(relay, &format!("/compute/p/{}", npub_of(&other))).await;
+    let log = &page.text[page.text.find("data-activity>").expect("activity log")..];
+    assert!(
+        log.contains("elsewhere") && log.contains("staging"),
+        "{log}"
+    );
+    assert!(
+        !log.contains("too loud") && !log.contains("production"),
+        "{log}"
+    );
 }
 
 /// The `content` of the `<meta>` named `name` in `html`.

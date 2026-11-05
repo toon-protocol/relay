@@ -124,7 +124,9 @@ pub(crate) async fn provider_page(
     } else {
         body.push_str(&listing_table(&held.listings));
     }
-    body.push_str(&deployment::serving_section(&pages, &key).await);
+    let served = deployment::serving(&pages, &key).await;
+    body.push_str(&deployment::serving_section(&pages, &served).await);
+    body.push_str(&crate::activity::section(&pages, &key, &served).await);
     // A key with no name is its npub's start, as the cards name it, not
     // the initials the page heads with.
     let named = chrome::shown_name(&names, &key);

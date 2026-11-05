@@ -77,7 +77,7 @@ fn hex64(text: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-fn tag_slices(event: &Event) -> impl Iterator<Item = &[String]> {
+pub(crate) fn tag_slices(event: &Event) -> impl Iterator<Item = &[String]> {
     event.tags.iter().map(|tag| tag.as_slice())
 }
 
@@ -170,8 +170,17 @@ impl Deployment {
     }
 
     /// Whether `key` is in the Deployment's `p` tags.
-    fn names(&self, key: &PublicKey) -> bool {
+    pub(crate) fn names(&self, key: &PublicKey) -> bool {
         self.primary == *key || self.standby.contains(key)
+    }
+
+    /// The keys the Deployment itself names: its signer, its providers and
+    /// its Listing's owner.
+    pub(crate) fn keys(&self) -> Vec<PublicKey> {
+        let mut keys = vec![self.signer];
+        keys.extend(self.providers());
+        keys.push(self.listing.0);
+        keys
     }
 
     /// Every provider the Deployment names, primary first.
@@ -182,7 +191,7 @@ impl Deployment {
 
 /// The note an Eviction Notice carries under `field`: its content's JSON,
 /// else a tag of that name.
-fn note(event: &Event, field: &str) -> Option<String> {
+pub(crate) fn note(event: &Event, field: &str) -> Option<String> {
     let text = json(&event.content)
         .get(field)
         .and_then(|v| v.as_str().map(str::to_owned))
@@ -193,6 +202,27 @@ fn note(event: &Event, field: &str) -> Option<String> {
             })
         })?;
     Some(summary(&text, NOTE_CHARS)).filter(|text| !text.is_empty())
+}
+
+/// The Takeovers in `takeovers` that count for `deployment`: for its workload
+/// id, from a standby it names, naming its primary.
+pub(crate) fn valid_takeovers<'a>(
+    deployment: &'a Deployment,
+    takeovers: &'a [Event],
+) -> impl Iterator<Item = &'a Event> {
+    takeovers
+        .iter()
+        .filter(|e| e.kind == Kind::from(TAKEOVER_KIND))
+        .filter(|e| deployment.standby.contains(&e.pubkey))
+        .filter(|e| {
+            tag_slices(e).any(
+                |tag| matches!(tag, [name, value, ..] if name == "d" && *value == deployment.workload),
+            )
+        })
+        .filter(|e| {
+            json(&e.content).get("primary").and_then(|v| v.as_str())
+                == Some(deployment.primary.to_hex().as_str())
+        })
 }
 
 /// The state of `deployment`. `primary_live` is whether its primary has an
@@ -216,20 +246,7 @@ pub(crate) fn state(
             )
         })
         .max_by_key(|e| (e.created_at, e.id));
-    let taken = takeovers
-        .iter()
-        .filter(|e| e.kind == Kind::from(TAKEOVER_KIND))
-        .filter(|e| deployment.standby.contains(&e.pubkey))
-        .filter(|e| {
-            tag_slices(e).any(
-                |tag| matches!(tag, [name, value, ..] if name == "d" && *value == deployment.workload),
-            )
-        })
-        .filter(|e| {
-            json(&e.content).get("primary").and_then(|v| v.as_str())
-                == Some(deployment.primary.to_hex().as_str())
-        })
-        .max_by_key(|e| (e.created_at, e.id));
+    let taken = valid_takeovers(deployment, takeovers).max_by_key(|e| (e.created_at, e.id));
     match (evicted, taken) {
         (Some(e), Some(t)) if t.created_at > e.created_at => {
             Standing::TakenOver { winner: t.pubkey }
@@ -336,12 +353,7 @@ fn state_html(state: &Standing, names: &HashMap<PublicKey, String>) -> String {
                 "<span data-state=\"evicted\">evicted by {}</span>",
                 provider_link(names, by)
             );
-            if let Some(reason) = reason {
-                out.push_str(&format!(" <span data-reason>{}</span>", escape(reason)));
-            }
-            if let Some(message) = message {
-                out.push_str(&format!(" <span data-message>{}</span>", escape(message)));
-            }
+            out.push_str(&notes_html(reason.as_deref(), message.as_deref()));
             out
         }
         Standing::TakenOver { winner } => format!(
@@ -351,11 +363,21 @@ fn state_html(state: &Standing, names: &HashMap<PublicKey, String>) -> String {
     }
 }
 
+/// An Eviction Notice's `reason` and `message`, each with a leading space.
+pub(crate) fn notes_html(reason: Option<&str>, message: Option<&str>) -> String {
+    let mut out = String::new();
+    if let Some(reason) = reason {
+        out.push_str(&format!(" <span data-reason>{}</span>", escape(reason)));
+    }
+    if let Some(message) = message {
+        out.push_str(&format!(" <span data-message>{}</span>", escape(message)));
+    }
+    out
+}
+
 /// The keys a Deployment page names, to look their names up once.
 fn keys(deployment: &Deployment, state: &Standing) -> Vec<PublicKey> {
-    let mut keys = vec![deployment.signer];
-    keys.extend(deployment.providers());
-    keys.push(deployment.listing.0);
+    let mut keys = deployment.keys();
     match state {
         Standing::Evicted { by: key, .. } | Standing::TakenOver { winner: key } => keys.push(*key),
         _ => {}
@@ -365,9 +387,8 @@ fn keys(deployment: &Deployment, state: &Standing) -> Vec<PublicKey> {
     keys
 }
 
-/// The Serving section of a provider page.
-pub(crate) async fn serving_section(pages: &Pages, provider: &PublicKey) -> String {
-    let served = serving(pages, provider).await;
+/// The Serving section of a provider page. `served` is [`serving`]'s answer for the provider.
+pub(crate) async fn serving_section(pages: &Pages, served: &[(Deployment, Standing)]) -> String {
     let mut body = String::from("<h2>Serving</h2>");
     if served.is_empty() {
         body.push_str("<div class=\"box\"><div class=\"empty\">No Deployments name this provider.</div></div>");
@@ -381,7 +402,7 @@ pub(crate) async fn serving_section(pages: &Pages, provider: &PublicKey) -> Stri
         "<div class=\"box\"><div class=\"table-wrap\"><table class=\"data-table\">\
          <thead><tr><th>Deployment</th><th>Repository</th><th>State</th></tr></thead><tbody>",
     );
-    for (d, s) in &served {
+    for (d, s) in served {
         body.push_str(&format!(
             "<tr data-deployment=\"{}\"><td class=\"strong\"><a href=\"{}\">{}</a> {}</td>\
              <td>{}</td><td>{}</td></tr>",
