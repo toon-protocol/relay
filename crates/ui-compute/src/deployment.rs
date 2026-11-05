@@ -5,19 +5,21 @@
 use std::collections::HashMap;
 
 use axum::extract::{Path, State};
+use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::response::Response;
 use nostr::event::{Event, Kind};
 use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use relay_ui::ReadOnlyStore;
-use relay_ui::chrome::{self, App, Apps, Profiles, escape};
-use relay_ui::meta::summary;
+use relay_ui::chrome::{self, App, Apps, Identicon, Profiles, escape};
+use relay_ui::meta::{Preview, summary};
 use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors, owner_announcement};
+use ui_preview::{Card, Face};
 
 use crate::directory::{self, LISTING_KIND, LIVENESS_KIND, expiration, json};
 use crate::provider::{parse_pubkey, provider_link};
-use crate::{PREFIX, Pages, directory_filter, fallback, html};
+use crate::{PREFIX, Pages, card_stem, directory_filter, fallback, html_with};
 
 /// A Deployment.
 pub(crate) const DEPLOYMENT_KIND: u16 = 30_437;
@@ -504,6 +506,80 @@ fn repo_link(pages: &Pages, repo: &RepoAddress) -> String {
     }
 }
 
+/// The Deployment `signer` signed for `environment`, with its state.
+async fn load(
+    pages: &Pages,
+    signer: PublicKey,
+    environment: &str,
+) -> Option<(Deployment, Standing)> {
+    let events = pages
+        .store
+        .query(
+            directory_filter(DEPLOYMENT_KIND)
+                .author(signer)
+                .identifier(environment.to_owned()),
+        )
+        .await;
+    let events: Vec<Event> = events
+        .into_iter()
+        .max_by_key(|e| (e.created_at, e.id))
+        .into_iter()
+        .collect();
+    with_states(&pages.store, &events)
+        .await
+        .into_iter()
+        .find(|(d, _)| d.environment == environment)
+}
+
+/// A Deployment's card.
+fn deployment_card_path(signer: &PublicKey, environment: &str) -> String {
+    format!(
+        "{PREFIX}/og/d/{}/{}.png",
+        chrome::npub(signer),
+        chrome::percent_encode(environment)
+    )
+}
+
+/// A state as plain words, naming keys by `names`.
+fn state_text(state: &Standing, names: &HashMap<PublicKey, String>) -> String {
+    match state {
+        Standing::Running { .. } => "running on a live provider".to_owned(),
+        Standing::ProviderDown => "provider down".to_owned(),
+        Standing::Evicted { by, .. } => format!("evicted by {}", chrome::shown_name(names, by)),
+        Standing::TakenOver { winner } => {
+            format!("taken over by {}", chrome::shown_name(names, winner))
+        }
+    }
+}
+
+/// `/compute/og/d/<npub>/<environment>.png`.
+pub(crate) async fn deployment_card(
+    State(pages): State<Pages>,
+    Path((npub, file)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let card = async {
+        let signer = parse_pubkey(&npub)?;
+        let (d, s) = load(&pages, signer, card_stem(&file)?).await?;
+        let names = Profiles::load(&pages.store, &keys(&d, &s))
+            .await
+            .into_names();
+        Some(Card::new(
+            pages.card_host(),
+            Face::Deployment(ui_preview::Deployment {
+                repo: d.repo.d().to_owned(),
+                environment: d.environment.clone(),
+                provider: chrome::shown_name(&names, &d.primary),
+                avatar: Identicon::of(&d.primary),
+                state: state_text(&s, &names),
+                running: matches!(s, Standing::Running { .. }),
+            }),
+        ))
+    }
+    .await;
+    pages.previews.respond(&headers, card).await
+}
+
 /// `/compute/d/<npub>/<environment>`: one Deployment.
 pub(crate) async fn deployment_page(
     State(pages): State<Pages>,
@@ -512,24 +588,7 @@ pub(crate) async fn deployment_page(
     let Some(signer) = parse_pubkey(&npub) else {
         return fallback(State(pages)).await;
     };
-    let events = pages
-        .store
-        .query(
-            directory_filter(DEPLOYMENT_KIND)
-                .author(signer)
-                .identifier(environment.clone()),
-        )
-        .await;
-    let events: Vec<Event> = events
-        .into_iter()
-        .max_by_key(|e| (e.created_at, e.id))
-        .into_iter()
-        .collect();
-    let Some((d, s)) = with_states(&pages.store, &events)
-        .await
-        .into_iter()
-        .find(|(d, _)| d.environment == environment)
-    else {
+    let Some((d, s)) = load(&pages, signer, &environment).await else {
         return fallback(State(pages)).await;
     };
     let announcements = pages
@@ -607,7 +666,21 @@ pub(crate) async fn deployment_page(
         escape(&title),
         crate::provider::facts(&rows),
     );
-    html(&pages, StatusCode::OK, &title, &body)
+    let preview = Preview::new(
+        title.clone(),
+        format!(
+            "{}, on {}: {}.",
+            d.repo.d(),
+            chrome::shown_name(&names, &d.primary),
+            state_text(&s, &names)
+        ),
+    )
+    .at(deployment_path(&d.signer, &d.environment))
+    .image(
+        deployment_card_path(&d.signer, &d.environment),
+        title.clone(),
+    );
+    html_with(&pages, StatusCode::OK, &title, &body, &preview)
 }
 
 /// `/compute/d/<npub>/`: the Deployment whose `d` is empty.

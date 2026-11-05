@@ -108,9 +108,55 @@ pub struct Article {
     pub summary: Option<String>,
 }
 
+/// A TOON Compute Provider, as its page shows it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct Provider {
+    pub name: String,
+    /// The key's identicon.
+    pub avatar: Identicon,
+    /// The store holds an unexpired Liveness for it.
+    pub live: bool,
+    /// Listings the page lists.
+    pub listings: usize,
+}
+
+/// A Listing, with its Provider.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct Listing {
+    pub name: String,
+    pub provider: String,
+    /// The Provider's identicon.
+    pub avatar: Identicon,
+    /// The resources as the page words them, `vcpu 2, memory 4096`.
+    pub resources: String,
+    /// The price per hour as the page words it, where the Listing states
+    /// one.
+    pub per_hour: Option<String>,
+    pub live: bool,
+}
+
+/// A Deployment, as its page states it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct Deployment {
+    /// The repository's name.
+    pub repo: String,
+    pub environment: String,
+    /// The primary Provider's name.
+    pub provider: String,
+    /// The primary Provider's identicon.
+    pub avatar: Identicon,
+    /// The state in words, `running on a live provider`.
+    pub state: String,
+    /// The state is the good one: served by a live provider.
+    pub running: bool,
+}
+
 /// What a card shows.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Face {
+    Provider(Provider),
+    Listing(Listing),
+    Deployment(Deployment),
     Repo(Repo),
     /// A ship post: its headline over the repo it launches.
     Ship {

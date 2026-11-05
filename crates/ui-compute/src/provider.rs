@@ -3,16 +3,22 @@
 use std::collections::HashMap;
 
 use axum::extract::{Path, State};
+use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use nostr::event::{Event, Kind};
 use nostr::key::PublicKey;
 use nostr::nips::nip19::{FromBech32, Nip19, Nip19Coordinate};
-use relay_ui::chrome::{self, App, Apps, Profiles, escape};
+use relay_ui::chrome::{self, App, Apps, Identicon, Profiles, escape};
+use relay_ui::meta::Preview;
+use ui_preview::{Card, Face};
 
 use crate::deployment;
 use crate::directory::{self, LISTING_KIND, LIVENESS_KIND, Listing, PROFILE_KIND, Provider};
-use crate::{PREFIX, Pages, directory_filter, fallback, html, price, resources, standby, status};
+use crate::{
+    PREFIX, Pages, card_stem, directory_filter, fallback, html_with, per_hour, price, resources,
+    resources_text, standby, status,
+};
 
 /// A key's name, linking to its `/compute` Provider page.
 pub(crate) fn provider_link(names: &HashMap<PublicKey, String>, key: &PublicKey) -> String {
@@ -121,7 +127,105 @@ pub(crate) async fn provider_page(
     let served = deployment::serving(&pages, &key).await;
     body.push_str(&deployment::serving_section(&pages, &served).await);
     body.push_str(&crate::activity::section(&pages, &key, &served).await);
-    html(&pages, StatusCode::OK, &shown, &body)
+    // A key with no name is its npub's start, as the cards name it, not
+    // the initials the page heads with.
+    let named = chrome::shown_name(&names, &key);
+    let preview = Preview::new(
+        named.clone(),
+        format!(
+            "{named}: a TOON Compute Provider, {}, with {}.",
+            liveness_word(held.live),
+            count(held.listings.len(), "Listing"),
+        ),
+    )
+    .at(provider_path(&key))
+    .image(
+        provider_card_path(&key),
+        format!("{named}, a Compute Provider"),
+    );
+    html_with(&pages, StatusCode::OK, &shown, &body, &preview)
+}
+
+fn liveness_word(live: bool) -> &'static str {
+    match live {
+        true => "live",
+        false => "down",
+    }
+}
+
+fn count(number: usize, noun: &str) -> String {
+    match number {
+        1 => format!("1 {noun}"),
+        n => format!("{n} {noun}s"),
+    }
+}
+
+/// A Provider's card.
+fn provider_card_path(key: &PublicKey) -> String {
+    format!("{PREFIX}/og/p/{}.png", chrome::npub(key))
+}
+
+/// A Listing's card.
+fn listing_card_path(listing: &Listing) -> String {
+    format!(
+        "{PREFIX}/og/l/{}/{}.png",
+        chrome::npub(&listing.provider),
+        chrome::percent_encode(&listing.d)
+    )
+}
+
+/// `/compute/og/p/<npub>.png`.
+pub(crate) async fn provider_card(
+    State(pages): State<Pages>,
+    Path(file): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let card = async {
+        let key = parse_pubkey(ui_preview::stem(&file)?)?;
+        let held = held(&pages, key).await?;
+        let names = names(&pages, &held.provider).await;
+        Some(Card::new(
+            pages.card_host(),
+            Face::Provider(ui_preview::Provider {
+                name: chrome::shown_name(&names, &key),
+                avatar: Identicon::of(&key),
+                live: held.live,
+                listings: held.listings.len(),
+            }),
+        ))
+    }
+    .await;
+    pages.previews.respond(&headers, card).await
+}
+
+/// `/compute/og/l/<npub>/<d>.png`.
+pub(crate) async fn listing_card(
+    State(pages): State<Pages>,
+    Path((npub, file)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let card = async {
+        let key = parse_pubkey(&npub)?;
+        let d = card_stem(&file)?;
+        let held = held(&pages, key).await?;
+        let listing = held.listings.iter().find(|l| l.d == d)?;
+        let names = names(&pages, &held.provider).await;
+        Some(Card::new(
+            pages.card_host(),
+            Face::Listing(ui_preview::Listing {
+                name: listing.name.clone(),
+                provider: chrome::shown_name(&names, &key),
+                avatar: Identicon::of(&key),
+                resources: resources_text(listing),
+                per_hour: listing
+                    .per_hour()
+                    .map(|hour| format!("{} per hour", per_hour(hour))),
+                live: listing.live,
+            }),
+        ))
+    }
+    .await;
+    pages.previews.respond(&headers, card).await
 }
 
 /// The Provider's Profile fields.
@@ -269,7 +373,23 @@ pub(crate) async fn listing_page(
         escape(&listing.name),
         facts(&rows),
     );
-    html(&pages, StatusCode::OK, &listing.name, &body)
+    let description = match (listing.per_hour(), resources_text(listing)) {
+        (Some(hour), resources) if !resources.is_empty() => {
+            format!("{resources}, {} per hour.", per_hour(hour))
+        }
+        (Some(hour), _) => format!("{} per hour.", per_hour(hour)),
+        (None, resources) => resources,
+    };
+    let preview = Preview::new(
+        format!("{} · {}", listing.name, chrome::shown_name(&names, &key)),
+        description,
+    )
+    .at(listing_path(listing))
+    .image(
+        listing_card_path(listing),
+        format!("{}, a Compute Listing", listing.name),
+    );
+    html_with(&pages, StatusCode::OK, &listing.name, &body, &preview)
 }
 
 /// `/compute/<npub>/`: the Listing whose `d` is empty, which the two-segment

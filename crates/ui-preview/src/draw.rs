@@ -11,7 +11,9 @@ use relay_ui::chrome::{Identicon, icon};
 
 use crate::font::FAMILY;
 use crate::text::{Fit, Line, Measure, Weight, clean, line, wrap};
-use crate::{Article, Card, Face, HEIGHT, Picture, Profile, Repo, WIDTH};
+use crate::{
+    Article, Card, Deployment, Face, HEIGHT, Listing, Picture, Profile, Provider, Repo, WIDTH,
+};
 
 // The light theme's tokens.
 const BG: &str = "#ffffff";
@@ -27,6 +29,7 @@ const ATTENTION_FG: &str = "#7d4e00";
 const LINK: &str = "#0969da";
 const DONE: &str = "#8250df";
 const SUCCESS: &str = "#1f883d";
+const SUCCESS_BG: &str = "#dafbe1";
 
 /// The left and right edges of what is drawn.
 const LEFT: f32 = 80.0;
@@ -79,6 +82,9 @@ pub fn draw(card: &Card, measure: &impl Measure) -> String {
     );
     let counts = match card.face() {
         Face::Repo(repo) => svg.repo(repo),
+        Face::Provider(provider) => svg.provider(provider),
+        Face::Listing(listing) => svg.listing(listing),
+        Face::Deployment(deployment) => svg.deployment(deployment),
         Face::Ship { headline, repo } => svg.ship(headline, repo),
         Face::Profile(profile) => svg.profile(profile),
         Face::Article(article) => svg.article(article),
@@ -548,6 +554,145 @@ impl<M: Measure> Svg<'_, M> {
         ]
     }
 
+    /// The "live" or "down" pill of a Provider or Listing.
+    fn liveness(&mut self, x: f32, top: f32, live: bool) -> f32 {
+        let (label, colours) = match live {
+            true => ("live", (SUCCESS_BG, SUCCESS, SUCCESS)),
+            false => ("down", (SUBTLE, BORDER, MUTED_FG)),
+        };
+        self.chip(x, top, None, label, colours)
+    }
+
+    fn provider(&mut self, provider: &Provider) -> Vec<Count> {
+        self.avatar(&provider.avatar, None, false, AVATAR_Y);
+        self.chip(
+            LEFT,
+            148.0,
+            None,
+            "Provider",
+            (ACCENT_BG, ACCENT_BG, ACCENT_FG),
+        );
+        let last = self.title(&provider.name, 284.0, 80.0, 60.0, BESIDE_AVATAR);
+        self.liveness(LEFT, last + 40.0, provider.live);
+        vec![Count {
+            icon: icon::TAG,
+            number: provider.listings,
+            singular: "listing",
+            plural: "listings",
+        }]
+    }
+
+    fn listing(&mut self, listing: &Listing) -> Vec<Count> {
+        self.avatar(&listing.avatar, None, false, AVATAR_Y);
+        self.chip(
+            LEFT,
+            148.0,
+            None,
+            "Listing",
+            (ACCENT_BG, ACCENT_BG, ACCENT_FG),
+        );
+        let last = self.title(&listing.name, 284.0, 80.0, 60.0, BESIDE_AVATAR);
+        // The price is drawn 66 below the last line of resources, and the
+        // provider's name only where a line of resources and the price
+        // still fit under it.
+        let below = AVATAR_Y + AVATAR_R + 50.0;
+        let by_y = last + 58.0;
+        let y = if (by_y + 60.0).max(below) + 66.0 <= LOWEST {
+            let by = line(
+                &format!("by {}", clean(&listing.provider, self.measure)),
+                34.0,
+                Weight::Regular,
+                BESIDE_AVATAR,
+                self.measure,
+            );
+            self.text(
+                LEFT,
+                by_y,
+                (34.0, Weight::Regular),
+                MUTED_FG,
+                Anchor::Start,
+                &by.text,
+            );
+            (by_y + 60.0).max(below)
+        } else {
+            by_y.max(below)
+        };
+        let resources = self.wrapped(
+            &listing.resources,
+            (34.0, Weight::Regular),
+            RIGHT - LEFT,
+            y,
+            46.0,
+            Self::room(y + 66.0, 46.0, 2),
+        );
+        let next = self.lines(&resources, y, 46.0, (34.0, Weight::Regular, FG));
+        let y = next + 20.0;
+        let mut x = LEFT;
+        if let Some(per_hour) = &listing.per_hour {
+            let shown = line(
+                &clean(per_hour, self.measure),
+                40.0,
+                Weight::Bold,
+                RIGHT - LEFT - 160.0,
+                self.measure,
+            );
+            self.text(x, y, (40.0, Weight::Bold), FG, Anchor::Start, &shown.text);
+            x += shown.width + 24.0;
+        }
+        self.liveness(x, y - 32.0, listing.live);
+        Vec::new()
+    }
+
+    fn deployment(&mut self, deployment: &Deployment) -> Vec<Count> {
+        self.avatar(&deployment.avatar, None, false, AVATAR_Y);
+        self.chip(
+            LEFT,
+            148.0,
+            None,
+            "Deployment",
+            (ACCENT_BG, ACCENT_BG, ACCENT_FG),
+        );
+        let last = self.title(&deployment.repo, 284.0, 80.0, 60.0, BESIDE_AVATAR);
+        // Three lines under a title of two still end above [`LOWEST`].
+        let mut y = (last + 50.0).max(AVATAR_Y + AVATAR_R + 50.0);
+        let environment = self.wrapped(
+            &format!(
+                "Environment {}",
+                clean(&deployment.environment, self.measure)
+            ),
+            (36.0, Weight::Regular),
+            RIGHT - LEFT,
+            y,
+            48.0,
+            1,
+        );
+        y = self.lines(&environment, y, 48.0, (36.0, Weight::Regular, FG));
+        let provider = self.wrapped(
+            &format!("on {}", clean(&deployment.provider, self.measure)),
+            (34.0, Weight::Regular),
+            RIGHT - LEFT,
+            y,
+            46.0,
+            1,
+        );
+        y = self.lines(&provider, y, 46.0, (34.0, Weight::Regular, MUTED_FG));
+        let state = self.wrapped(
+            &deployment.state,
+            (34.0, Weight::Bold),
+            RIGHT - LEFT,
+            y,
+            46.0,
+            1,
+        );
+        let ink = if deployment.running {
+            SUCCESS
+        } else {
+            ATTENTION_FG
+        };
+        self.lines(&state, y, 46.0, (34.0, Weight::Bold, ink));
+        Vec::new()
+    }
+
     fn article(&mut self, article: &Article) -> Vec<Count> {
         self.chip(
             LEFT,
@@ -776,6 +921,28 @@ mod tests {
                 author: "Ada".into(),
                 summary: None,
             }),
+            Face::Provider(Provider {
+                name: "Tidal".into(),
+                live: true,
+                listings: 2,
+                ..Provider::default()
+            }),
+            Face::Listing(Listing {
+                name: "Small".into(),
+                provider: "Tidal".into(),
+                resources: "vcpu 2, memory 4096".into(),
+                per_hour: Some("300 µUSDC per hour".into()),
+                live: false,
+                ..Listing::default()
+            }),
+            Face::Deployment(Deployment {
+                repo: "site".into(),
+                environment: "prod".into(),
+                provider: "Tidal".into(),
+                state: "running on a live provider".into(),
+                running: true,
+                ..Deployment::default()
+            }),
             Face::Site {
                 title: "Social".into(),
                 tagline: "Builders".into(),
@@ -953,6 +1120,122 @@ mod tests {
                 .parse()
                 .unwrap();
             assert!(y <= FOOTER, "{y}");
+        }
+    }
+
+    #[test]
+    fn compute_cards_state_what_their_pages_state_escaped() {
+        let svg = draw(
+            &Card::new(
+                None,
+                Face::Listing(Listing {
+                    name: "Small <1>".into(),
+                    provider: "Tidal & Co".into(),
+                    resources: "vcpu 2".into(),
+                    per_hour: Some("300 µUSDC per hour".into()),
+                    live: true,
+                    ..Listing::default()
+                }),
+            ),
+            &Fixed,
+        );
+        let shown = texts(&svg);
+        for expected in [
+            "Small &lt;1&gt;",
+            "by Tidal &amp; Co",
+            "vcpu 2",
+            "300 µUSDC per hour",
+            "live",
+        ] {
+            assert!(shown.iter().any(|t| t == expected), "{expected}: {shown:?}");
+        }
+        assert!(!svg.contains("<1>"));
+        let provider = texts(&draw(
+            &Card::new(
+                None,
+                Face::Provider(Provider {
+                    name: "Tidal".into(),
+                    live: false,
+                    listings: 1,
+                    ..Provider::default()
+                }),
+            ),
+            &Fixed,
+        ));
+        for expected in ["Tidal", "down", "listing"] {
+            assert!(
+                provider.iter().any(|t| t == expected),
+                "{expected}: {provider:?}"
+            );
+        }
+        let deployment = texts(&draw(
+            &Card::new(
+                None,
+                Face::Deployment(Deployment {
+                    repo: "site".into(),
+                    environment: "prod".into(),
+                    provider: "Tidal".into(),
+                    state: "provider down".into(),
+                    ..Deployment::default()
+                }),
+            ),
+            &Fixed,
+        ));
+        for expected in ["site", "Environment prod", "on Tidal", "provider down"] {
+            assert!(
+                deployment.iter().any(|t| t == expected),
+                "{expected}: {deployment:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_long_title_never_pushes_the_price_or_the_state_off_a_card() {
+        let long = "a-rather-long-name-that-wraps-to-two-lines";
+        let listing = texts(&draw(
+            &Card::new(
+                None,
+                Face::Listing(Listing {
+                    name: long.into(),
+                    provider: "Tidal".into(),
+                    resources: "vcpu 2, memory 4096, disk 100000, gpu 1, bandwidth 1000, \
+                                region eu-west, arch x86_64, ports 8"
+                        .into(),
+                    per_hour: Some("300 µUSDC per hour".into()),
+                    live: true,
+                    ..Listing::default()
+                }),
+            ),
+            &Fixed,
+        ));
+        for expected in ["300 µUSDC per hour", "live"] {
+            assert!(
+                listing.iter().any(|t| t == expected),
+                "{expected}: {listing:?}"
+            );
+        }
+        assert!(
+            listing.iter().any(|t| t.starts_with("vcpu 2")),
+            "{listing:?}"
+        );
+        let deployment = texts(&draw(
+            &Card::new(
+                None,
+                Face::Deployment(Deployment {
+                    repo: long.into(),
+                    environment: "prod".into(),
+                    provider: "Tidal".into(),
+                    state: "provider down".into(),
+                    ..Deployment::default()
+                }),
+            ),
+            &Fixed,
+        ));
+        for expected in ["Environment prod", "on Tidal", "provider down"] {
+            assert!(
+                deployment.iter().any(|t| t == expected),
+                "{expected}: {deployment:?}"
+            );
         }
     }
 }
