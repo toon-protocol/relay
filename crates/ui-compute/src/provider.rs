@@ -125,10 +125,13 @@ pub(crate) async fn provider_page(
         body.push_str(&listing_table(&held.listings));
     }
     body.push_str(&deployment::serving_section(&pages, &key).await);
+    // A key with no name is its npub's start, as the cards name it, not
+    // the initials the page heads with.
+    let named = chrome::shown_name(&names, &key);
     let preview = Preview::new(
-        shown.clone(),
+        named.clone(),
         format!(
-            "{shown}: a TOON Compute Provider, {}, with {}.",
+            "{named}: a TOON Compute Provider, {}, with {}.",
             liveness_word(held.live),
             count(held.listings.len(), "Listing"),
         ),
@@ -136,7 +139,7 @@ pub(crate) async fn provider_page(
     .at(provider_path(&key))
     .image(
         provider_card_path(&key),
-        format!("{shown}, a Compute Provider"),
+        format!("{named}, a Compute Provider"),
     );
     html_with(&pages, StatusCode::OK, &shown, &body, &preview)
 }
@@ -182,7 +185,7 @@ pub(crate) async fn provider_card(
         Some(Card::new(
             pages.card_host(),
             Face::Provider(ui_preview::Provider {
-                name: chrome::plain_name(&names, &key),
+                name: chrome::shown_name(&names, &key),
                 avatar: Identicon::of(&key),
                 live: held.live,
                 listings: held.listings.len(),
@@ -209,7 +212,7 @@ pub(crate) async fn listing_card(
             pages.card_host(),
             Face::Listing(ui_preview::Listing {
                 name: listing.name.clone(),
-                provider: chrome::plain_name(&names, &key),
+                provider: chrome::shown_name(&names, &key),
                 avatar: Identicon::of(&key),
                 resources: resources_text(listing),
                 per_hour: listing
@@ -376,7 +379,7 @@ pub(crate) async fn listing_page(
         (None, resources) => resources,
     };
     let preview = Preview::new(
-        format!("{} · {}", listing.name, chrome::plain_name(&names, &key)),
+        format!("{} · {}", listing.name, chrome::shown_name(&names, &key)),
         description,
     )
     .at(listing_path(listing))

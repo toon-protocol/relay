@@ -592,30 +592,38 @@ impl<M: Measure> Svg<'_, M> {
             (ACCENT_BG, ACCENT_BG, ACCENT_FG),
         );
         let last = self.title(&listing.name, 284.0, 80.0, 60.0, BESIDE_AVATAR);
-        let by = line(
-            &format!("by {}", clean(&listing.provider, self.measure)),
-            34.0,
-            Weight::Regular,
-            BESIDE_AVATAR,
-            self.measure,
-        );
-        let y = last + 58.0;
-        self.text(
-            LEFT,
-            y,
-            (34.0, Weight::Regular),
-            MUTED_FG,
-            Anchor::Start,
-            &by.text,
-        );
-        let y = (y + 60.0).max(AVATAR_Y + AVATAR_R + 50.0);
+        // The price is drawn 66 below the last line of resources, and the
+        // provider's name only where a line of resources and the price
+        // still fit under it.
+        let below = AVATAR_Y + AVATAR_R + 50.0;
+        let by_y = last + 58.0;
+        let y = if (by_y + 60.0).max(below) + 66.0 <= LOWEST {
+            let by = line(
+                &format!("by {}", clean(&listing.provider, self.measure)),
+                34.0,
+                Weight::Regular,
+                BESIDE_AVATAR,
+                self.measure,
+            );
+            self.text(
+                LEFT,
+                by_y,
+                (34.0, Weight::Regular),
+                MUTED_FG,
+                Anchor::Start,
+                &by.text,
+            );
+            (by_y + 60.0).max(below)
+        } else {
+            by_y.max(below)
+        };
         let resources = self.wrapped(
             &listing.resources,
             (34.0, Weight::Regular),
             RIGHT - LEFT,
             y,
             46.0,
-            2,
+            Self::room(y + 66.0, 46.0, 2),
         );
         let next = self.lines(&resources, y, 46.0, (34.0, Weight::Regular, FG));
         let y = next + 20.0;
@@ -628,14 +636,10 @@ impl<M: Measure> Svg<'_, M> {
                 RIGHT - LEFT - 160.0,
                 self.measure,
             );
-            if y <= LOWEST {
-                self.text(x, y, (40.0, Weight::Bold), FG, Anchor::Start, &shown.text);
-                x += shown.width + 24.0;
-            }
+            self.text(x, y, (40.0, Weight::Bold), FG, Anchor::Start, &shown.text);
+            x += shown.width + 24.0;
         }
-        if y <= LOWEST {
-            self.liveness(x, y - 32.0, listing.live);
-        }
+        self.liveness(x, y - 32.0, listing.live);
         Vec::new()
     }
 
@@ -649,7 +653,8 @@ impl<M: Measure> Svg<'_, M> {
             (ACCENT_BG, ACCENT_BG, ACCENT_FG),
         );
         let last = self.title(&deployment.repo, 284.0, 80.0, 60.0, BESIDE_AVATAR);
-        let mut y = (last + 58.0).max(AVATAR_Y + AVATAR_R + 50.0);
+        // Three lines under a title of two still end above [`LOWEST`].
+        let mut y = (last + 50.0).max(AVATAR_Y + AVATAR_R + 50.0);
         let environment = self.wrapped(
             &format!(
                 "Environment {}",
@@ -675,7 +680,7 @@ impl<M: Measure> Svg<'_, M> {
             &deployment.state,
             (34.0, Weight::Bold),
             RIGHT - LEFT,
-            y + 8.0,
+            y,
             46.0,
             1,
         );
@@ -684,7 +689,7 @@ impl<M: Measure> Svg<'_, M> {
         } else {
             ATTENTION_FG
         };
-        self.lines(&state, y + 8.0, 46.0, (34.0, Weight::Bold, ink));
+        self.lines(&state, y, 46.0, (34.0, Weight::Bold, ink));
         Vec::new()
     }
 
@@ -1177,6 +1182,56 @@ mod tests {
             &Fixed,
         ));
         for expected in ["site", "Environment prod", "on Tidal", "provider down"] {
+            assert!(
+                deployment.iter().any(|t| t == expected),
+                "{expected}: {deployment:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_long_title_never_pushes_the_price_or_the_state_off_a_card() {
+        let long = "a-rather-long-name-that-wraps-to-two-lines";
+        let listing = texts(&draw(
+            &Card::new(
+                None,
+                Face::Listing(Listing {
+                    name: long.into(),
+                    provider: "Tidal".into(),
+                    resources: "vcpu 2, memory 4096, disk 100000, gpu 1, bandwidth 1000, \
+                                region eu-west, arch x86_64, ports 8"
+                        .into(),
+                    per_hour: Some("300 µUSDC per hour".into()),
+                    live: true,
+                    ..Listing::default()
+                }),
+            ),
+            &Fixed,
+        ));
+        for expected in ["300 µUSDC per hour", "live"] {
+            assert!(
+                listing.iter().any(|t| t == expected),
+                "{expected}: {listing:?}"
+            );
+        }
+        assert!(
+            listing.iter().any(|t| t.starts_with("vcpu 2")),
+            "{listing:?}"
+        );
+        let deployment = texts(&draw(
+            &Card::new(
+                None,
+                Face::Deployment(Deployment {
+                    repo: long.into(),
+                    environment: "prod".into(),
+                    provider: "Tidal".into(),
+                    state: "provider down".into(),
+                    ..Deployment::default()
+                }),
+            ),
+            &Fixed,
+        ));
+        for expected in ["Environment prod", "on Tidal", "provider down"] {
             assert!(
                 deployment.iter().any(|t| t == expected),
                 "{expected}: {deployment:?}"

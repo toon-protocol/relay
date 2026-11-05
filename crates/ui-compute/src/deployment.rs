@@ -445,9 +445,9 @@ fn state_text(state: &Standing, names: &HashMap<PublicKey, String>) -> String {
     match state {
         Standing::Running { .. } => "running on a live provider".to_owned(),
         Standing::ProviderDown => "provider down".to_owned(),
-        Standing::Evicted { by, .. } => format!("evicted by {}", chrome::plain_name(names, by)),
+        Standing::Evicted { by, .. } => format!("evicted by {}", chrome::shown_name(names, by)),
         Standing::TakenOver { winner } => {
-            format!("taken over by {}", chrome::plain_name(names, winner))
+            format!("taken over by {}", chrome::shown_name(names, winner))
         }
     }
 }
@@ -469,7 +469,7 @@ pub(crate) async fn deployment_card(
             Face::Deployment(ui_preview::Deployment {
                 repo: d.repo.d().to_owned(),
                 environment: d.environment.clone(),
-                provider: chrome::plain_name(&names, &d.primary),
+                provider: chrome::shown_name(&names, &d.primary),
                 avatar: Identicon::of(&d.primary),
                 state: state_text(&s, &names),
                 running: matches!(s, Standing::Running { .. }),
@@ -580,7 +580,7 @@ pub(crate) async fn deployment_page(
         format!(
             "{}, on {}: {}.",
             d.repo.d(),
-            chrome::plain_name(&names, &d.primary),
+            chrome::shown_name(&names, &d.primary),
             state_text(&s, &names)
         ),
     )
