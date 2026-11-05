@@ -362,6 +362,31 @@ fn keys(deployment: &Deployment, state: &Standing) -> Vec<PublicKey> {
     keys
 }
 
+/// The names of every key the `served` Deployments name, looked up once.
+async fn names_of(
+    store: &ReadOnlyStore,
+    served: &[(Deployment, Standing)],
+) -> HashMap<PublicKey, String> {
+    let mut all: Vec<PublicKey> = served.iter().flat_map(|(d, s)| keys(d, s)).collect();
+    all.sort();
+    all.dedup();
+    Profiles::load(store, &all).await.into_names()
+}
+
+/// A Deployment's commit, shown as `label`, linked into `/repo` while that
+/// app is on.
+fn commit_html(deployment: &Deployment, repo_on: bool, label: &str) -> String {
+    match repo_on {
+        true => format!(
+            "<a class=\"mono\" href=\"{}/commit/{}\">{}</a>",
+            deployment.repo.repo_path(),
+            chrome::percent_encode(&deployment.commit),
+            escape(label)
+        ),
+        false => format!("<span class=\"mono\">{}</span>", escape(label)),
+    }
+}
+
 /// The Serving section of a provider page.
 pub(crate) async fn serving_section(pages: &Pages, provider: &PublicKey) -> String {
     let served = serving(pages, provider).await;
@@ -370,10 +395,7 @@ pub(crate) async fn serving_section(pages: &Pages, provider: &PublicKey) -> Stri
         body.push_str("<div class=\"box\"><div class=\"empty\">No Deployments name this provider.</div></div>");
         return body;
     }
-    let mut all: Vec<PublicKey> = served.iter().flat_map(|(d, s)| keys(d, s)).collect();
-    all.sort();
-    all.dedup();
-    let names = Profiles::load(&pages.store, &all).await.into_names();
+    let names = names_of(&pages.store, &served).await;
     body.push_str(
         "<div class=\"box\"><div class=\"table-wrap\"><table class=\"data-table\">\
          <thead><tr><th>Deployment</th><th>Repository</th><th>State</th></tr></thead><tbody>",
@@ -411,10 +433,6 @@ pub(crate) async fn environments(
                 .authors(authorized.iter().copied()),
         )
         .await;
-    let events: Vec<Event> = events
-        .into_iter()
-        .filter(|e| authorized.contains(&e.pubkey))
-        .collect();
     let served: Vec<(Deployment, Standing)> = with_states(store, &events)
         .await
         .into_iter()
@@ -425,10 +443,7 @@ pub(crate) async fn environments(
                 owner and maintainers have published no Deployment of it to this relay.</div></div>"
             .to_owned();
     }
-    let mut all: Vec<PublicKey> = served.iter().flat_map(|(d, s)| keys(d, s)).collect();
-    all.sort();
-    all.dedup();
-    let names = Profiles::load(store, &all).await.into_names();
+    let names = names_of(store, &served).await;
     let repo_on = apps.serves(App::Repo);
     let mut body = String::from(
         "<div class=\"box\"><div class=\"table-wrap\"><table class=\"data-table\">\
@@ -436,15 +451,7 @@ pub(crate) async fn environments(
          <th>Visit</th></tr></thead><tbody>",
     );
     for (d, s) in &served {
-        let short = &d.commit[..7];
-        let commit = match repo_on {
-            true => format!(
-                "<a class=\"mono\" href=\"{}/commit/{}\">{short}</a>",
-                d.repo.repo_path(),
-                chrome::percent_encode(&d.commit),
-            ),
-            false => format!("<span class=\"mono\">{short}</span>"),
-        };
+        let commit = commit_html(d, repo_on, &d.commit[..7]);
         let visit = match &d.visit {
             Some(url) => format!(
                 "<a data-visit href=\"{0}\" rel=\"nofollow noopener\">Visit</a>",
@@ -524,16 +531,7 @@ pub(crate) async fn deployment_page(
     all.dedup();
     let names = Profiles::load(&pages.store, &all).await.into_names();
 
-    let repo_on = pages.apps.serves(App::Repo);
-    let commit = match repo_on {
-        true => format!(
-            "<a class=\"mono\" href=\"{}/commit/{}\">{}</a>",
-            d.repo.repo_path(),
-            chrome::percent_encode(&d.commit),
-            escape(&d.commit)
-        ),
-        false => format!("<span class=\"mono\">{}</span>", escape(&d.commit)),
-    };
+    let commit = commit_html(&d, pages.apps.serves(App::Repo), &d.commit);
     let mut rows = vec![
         ("State", state_html(&s, &names)),
         (

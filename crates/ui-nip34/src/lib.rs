@@ -12,6 +12,8 @@
 //! and commit pages (`git`) are layouts the browser half fills in, and the
 //! relay never fetches a git object. A blob page also loads the highlighter
 //! (`ui-highlight-web`, #287), its own module, which no other page names.
+//! While `/compute` is on, a repository also has an Environments tab, whose
+//! body `ui-compute` draws ([`Environments`], #337).
 
 pub mod card;
 mod git;
