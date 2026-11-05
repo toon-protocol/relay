@@ -3,7 +3,7 @@
 //! newest Liveness, Profile and Listing, so there is no uptime or price
 //! history.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use nostr::event::{Event, Kind};
 use nostr::filter::Filter;
@@ -12,7 +12,8 @@ use relay_ui::chrome::{self, Profiles, escape};
 
 use crate::Pages;
 use crate::deployment::{
-    Deployment, EVICTION_KIND, TAKEOVER_KIND, deployment_path, keys, note, serving, valid_takeovers,
+    Deployment, EVICTION_KIND, Standing, TAKEOVER_KIND, deployment_path, note, notes_html,
+    tag_slices, valid_takeovers,
 };
 use crate::provider::provider_link;
 
@@ -29,7 +30,9 @@ enum Entry {
     Deployment(Box<Deployment>),
 }
 
-/// The entries for `provider`, newest first, as `(created_at, entry)`.
+/// The entries for `provider`, newest first, as `(created_at, entry)`. An
+/// Eviction Notice counts only with its `x` workload id; a Takeover is listed
+/// once, however many of the Deployments share its workload id.
 fn entries(
     provider: &PublicKey,
     deployments: &[Deployment],
@@ -39,6 +42,7 @@ fn entries(
     let mut log: Vec<(u64, Entry)> = evictions
         .iter()
         .filter(|e| e.kind == Kind::from(EVICTION_KIND) && e.pubkey == *provider)
+        .filter(|e| tag_slices(e).any(|tag| matches!(tag, [name, _, ..] if name == "x")))
         .map(|e| {
             (
                 e.created_at.as_secs(),
@@ -49,9 +53,11 @@ fn entries(
             )
         })
         .collect();
+    let mut listed = HashSet::new();
     for d in deployments.iter().filter(|d| d.names(provider)) {
         log.push((d.created_at, Entry::Deployment(Box::new(d.clone()))));
-        log.extend(valid_takeovers(d, takeovers).map(|e| {
+        let fresh = valid_takeovers(d, takeovers).filter(|e| listed.insert(e.id));
+        log.extend(fresh.map(|e| {
             (
                 e.created_at.as_secs(),
                 Entry::Takeover {
@@ -65,9 +71,13 @@ fn entries(
     log
 }
 
-/// The activity log section of a Provider page.
-pub(crate) async fn section(pages: &Pages, provider: &PublicKey) -> String {
-    let served = serving(pages, provider).await;
+/// The activity log section of a Provider page. `served` is
+/// [`serving`](crate::deployment::serving)'s answer for the provider.
+pub(crate) async fn section(
+    pages: &Pages,
+    provider: &PublicKey,
+    served: &[(Deployment, Standing)],
+) -> String {
     let deployments: Vec<Deployment> = served.iter().map(|(d, _)| d.clone()).collect();
     let workloads: Vec<String> = deployments.iter().map(|d| d.workload.clone()).collect();
     let (evictions, takeovers) = tokio::join!(
@@ -104,7 +114,7 @@ pub(crate) async fn section(pages: &Pages, provider: &PublicKey) -> String {
         .iter()
         .flat_map(|(_, entry)| match entry {
             Entry::Takeover { winner, primary } => vec![*winner, *primary],
-            Entry::Deployment(d) => keys(d, &crate::deployment::Standing::ProviderDown),
+            Entry::Deployment(d) => d.keys(),
             Entry::Eviction { .. } => Vec::new(),
         })
         .collect();
@@ -118,16 +128,10 @@ pub(crate) async fn section(pages: &Pages, provider: &PublicKey) -> String {
     for (at, entry) in &log {
         let when = escape(&chrome::date(i64::try_from(*at).unwrap_or(i64::MAX)));
         let (kind, details) = match entry {
-            Entry::Eviction { reason, message } => {
-                let mut text = String::new();
-                if let Some(reason) = reason {
-                    text.push_str(&format!("<span data-reason>{}</span>", escape(reason)));
-                }
-                if let Some(message) = message {
-                    text.push_str(&format!(" <span data-message>{}</span>", escape(message)));
-                }
-                ("eviction", text)
-            }
+            Entry::Eviction { reason, message } => (
+                "eviction",
+                notes_html(reason.as_deref(), message.as_deref()),
+            ),
             Entry::Takeover { winner, primary } => (
                 "takeover",
                 format!(
@@ -177,9 +181,17 @@ mod tests {
             &me.public_key(),
             &[],
             &[
-                at(&me, 4_433, r#"{"reason":"zzz","message":"m"}"#, &[], 10),
-                at(&other, 4_433, r#"{"reason":"abuse"}"#, &[], 20),
-                at(&me, 4_433, r#"{"reason":"policy"}"#, &[], 30),
+                at(
+                    &me,
+                    4_433,
+                    r#"{"reason":"zzz","message":"m"}"#,
+                    &[&["x", "w1"]],
+                    10,
+                ),
+                at(&other, 4_433, r#"{"reason":"abuse"}"#, &[&["x", "w2"]], 20),
+                at(&me, 4_433, r#"{"reason":"policy"}"#, &[&["x", "w3"]], 30),
+                // No `x` workload id: not an Eviction Notice.
+                at(&me, 4_433, r#"{"reason":"policy"}"#, &[], 40),
             ],
             &[],
         );

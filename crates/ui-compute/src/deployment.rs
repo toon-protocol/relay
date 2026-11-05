@@ -75,7 +75,7 @@ fn hex64(text: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-fn tag_slices(event: &Event) -> impl Iterator<Item = &[String]> {
+pub(crate) fn tag_slices(event: &Event) -> impl Iterator<Item = &[String]> {
     event.tags.iter().map(|tag| tag.as_slice())
 }
 
@@ -170,6 +170,15 @@ impl Deployment {
     /// Whether `key` is in the Deployment's `p` tags.
     pub(crate) fn names(&self, key: &PublicKey) -> bool {
         self.primary == *key || self.standby.contains(key)
+    }
+
+    /// The keys the Deployment itself names: its signer, its providers and
+    /// its Listing's owner.
+    pub(crate) fn keys(&self) -> Vec<PublicKey> {
+        let mut keys = vec![self.signer];
+        keys.extend(self.providers());
+        keys.push(self.listing.0);
+        keys
     }
 
     /// Every provider the Deployment names, primary first.
@@ -342,12 +351,7 @@ fn state_html(state: &Standing, names: &HashMap<PublicKey, String>) -> String {
                 "<span data-state=\"evicted\">evicted by {}</span>",
                 provider_link(names, by)
             );
-            if let Some(reason) = reason {
-                out.push_str(&format!(" <span data-reason>{}</span>", escape(reason)));
-            }
-            if let Some(message) = message {
-                out.push_str(&format!(" <span data-message>{}</span>", escape(message)));
-            }
+            out.push_str(&notes_html(reason.as_deref(), message.as_deref()));
             out
         }
         Standing::TakenOver { winner } => format!(
@@ -357,11 +361,21 @@ fn state_html(state: &Standing, names: &HashMap<PublicKey, String>) -> String {
     }
 }
 
+/// An Eviction Notice's `reason` and `message`, each with a leading space.
+pub(crate) fn notes_html(reason: Option<&str>, message: Option<&str>) -> String {
+    let mut out = String::new();
+    if let Some(reason) = reason {
+        out.push_str(&format!(" <span data-reason>{}</span>", escape(reason)));
+    }
+    if let Some(message) = message {
+        out.push_str(&format!(" <span data-message>{}</span>", escape(message)));
+    }
+    out
+}
+
 /// The keys a Deployment page names, to look their names up once.
-pub(crate) fn keys(deployment: &Deployment, state: &Standing) -> Vec<PublicKey> {
-    let mut keys = vec![deployment.signer];
-    keys.extend(deployment.providers());
-    keys.push(deployment.listing.0);
+fn keys(deployment: &Deployment, state: &Standing) -> Vec<PublicKey> {
+    let mut keys = deployment.keys();
     match state {
         Standing::Evicted { by: key, .. } | Standing::TakenOver { winner: key } => keys.push(*key),
         _ => {}
@@ -371,9 +385,8 @@ pub(crate) fn keys(deployment: &Deployment, state: &Standing) -> Vec<PublicKey> 
     keys
 }
 
-/// The Serving section of a provider page.
-pub(crate) async fn serving_section(pages: &Pages, provider: &PublicKey) -> String {
-    let served = serving(pages, provider).await;
+/// The Serving section of a provider page. `served` is [`serving`]'s answer for the provider.
+pub(crate) async fn serving_section(pages: &Pages, served: &[(Deployment, Standing)]) -> String {
     let mut body = String::from("<h2>Serving</h2>");
     if served.is_empty() {
         body.push_str("<div class=\"box\"><div class=\"empty\">No Deployments name this provider.</div></div>");
@@ -387,7 +400,7 @@ pub(crate) async fn serving_section(pages: &Pages, provider: &PublicKey) -> Stri
         "<div class=\"box\"><div class=\"table-wrap\"><table class=\"data-table\">\
          <thead><tr><th>Deployment</th><th>Repository</th><th>State</th></tr></thead><tbody>",
     );
-    for (d, s) in &served {
+    for (d, s) in served {
         body.push_str(&format!(
             "<tr data-deployment=\"{}\"><td class=\"strong\"><a href=\"{}\">{}</a> {}</td>\
              <td>{}</td><td>{}</td></tr>",
