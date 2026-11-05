@@ -529,3 +529,318 @@ async fn an_empty_d_has_a_page_and_only_listing_naddrs_and_labelled_profiles_cou
     assert_eq!(social.status, StatusCode::OK);
     assert!(!social.text.contains("data-compute-provider"));
 }
+
+fn npub_of(keys: &Keys) -> String {
+    nostr::nips::nip19::ToBech32::to_bech32(&keys.public_key()).expect("npub")
+}
+
+fn in_an_hour() -> String {
+    (nostr::types::Timestamp::now().as_secs() + 3_600).to_string()
+}
+
+/// A Deployment of `tenant`'s `site` repository, `env`, on `primary` with
+/// `standby`, whose workload id is `workload`.
+fn deployment_event(
+    tenant: &Keys,
+    env: &str,
+    primary: &Keys,
+    standby: &Keys,
+    workload: &str,
+    extra: &[&[&str]],
+) -> Event {
+    let (tenant_hex, primary_hex, standby_hex) = (
+        tenant.public_key().to_hex(),
+        primary.public_key().to_hex(),
+        standby.public_key().to_hex(),
+    );
+    let repo = format!("30617:{tenant_hex}:site");
+    let listing = format!("30432:{primary_hex}:small");
+    let expiration = in_an_hour();
+    let commit = "1".repeat(40);
+    let image = "cd".repeat(32);
+    let mut tags: Vec<Vec<&str>> = vec![
+        vec!["d", env],
+        vec!["a", &repo],
+        vec!["c", &commit],
+        vec!["a", &listing],
+        vec!["p", &primary_hex, "primary"],
+        vec!["p", &standby_hex, "standby"],
+        vec!["x", workload, "workload"],
+        vec!["x", &image, "image"],
+        vec!["r", "https://app.example.com"],
+        vec!["expiration", &expiration],
+        vec!["L", "toon.network"],
+    ];
+    tags.extend(extra.iter().map(|tag| tag.to_vec()));
+    let tags: Vec<&[&str]> = tags.iter().map(Vec::as_slice).collect();
+    event(tenant, 30_437, "", &tags)
+}
+
+#[tokio::test]
+async fn a_deployment_page_shows_each_state_and_ignores_keys_it_does_not_name() {
+    let running = running_with(|_| None).await;
+    let relay = &running.relay;
+    let (tenant, primary, standby, stranger) = (
+        Keys::generate(),
+        Keys::generate(),
+        Keys::generate(),
+        Keys::generate(),
+    );
+    let (tenant_npub, primary_npub) = (npub_of(&tenant), npub_of(&primary));
+    for provider in [&primary, &standby] {
+        store(
+            relay,
+            &event(provider, 10_432, "{}", &[&["L", "toon.network"]]),
+        )
+        .await;
+    }
+    listing(relay, &primary, "small", r#"{"name":"Small"}"#).await;
+    // The tenant owns `site`, so the Deployment is not a claim.
+    store(relay, &event(&tenant, 30_617, "", &[&["d", "site"]])).await;
+
+    let workload = "ab".repeat(32);
+    store(
+        relay,
+        &deployment_event(&tenant, "production", &primary, &standby, &workload, &[]),
+    )
+    .await;
+    let path = format!("/compute/d/{tenant_npub}/production");
+
+    // No Liveness: the provider is down.
+    let page = get(relay, &path).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.text);
+    for shown in [
+        "provider down",
+        &format!("href=\"/repo/{tenant_npub}/site\""),
+        &format!(
+            "href=\"/repo/{tenant_npub}/site/commit/{}\"",
+            "1".repeat(40)
+        ),
+        &format!("href=\"/compute/p/{primary_npub}\""),
+        &format!("href=\"/compute/{primary_npub}/small\""),
+        &format!("sha256:{}", "cd".repeat(32)),
+        "href=\"https://app.example.com\"",
+    ] {
+        assert!(page.text.contains(shown), "{shown}: {}", page.text);
+    }
+    assert!(!page.text.contains("data-claim"), "{}", page.text);
+
+    // Live.
+    store(
+        relay,
+        &event(
+            &primary,
+            10_433,
+            "{}",
+            &[&["expiration", &in_an_hour()], &["L", "toon.network"]],
+        ),
+    )
+    .await;
+    let page = get(relay, &path).await;
+    assert!(
+        page.text.contains("running on a live provider until"),
+        "{}",
+        page.text
+    );
+
+    // Keys the Deployment does not name change nothing.
+    store(relay, &event(&stranger, 4_433, "{}", &[&["x", &workload]])).await;
+    store(
+        relay,
+        &event(
+            &stranger,
+            30_433,
+            &format!(r#"{{"primary":"{}"}}"#, primary.public_key().to_hex()),
+            &[&["d", &workload]],
+        ),
+    )
+    .await;
+    let page = get(relay, &path).await;
+    assert!(
+        page.text.contains("running on a live provider until"),
+        "{}",
+        page.text
+    );
+
+    // The provider lists it under Serving.
+    let provider = get(relay, &format!("/compute/p/{primary_npub}")).await;
+    assert!(provider.text.contains("Serving"), "{}", provider.text);
+    assert!(
+        provider.text.contains(&format!("href=\"{path}\"")),
+        "{}",
+        provider.text
+    );
+    assert!(provider.text.contains("running on a live provider"));
+
+    // Taken over by the standby.
+    store(
+        relay,
+        &event(
+            &standby,
+            30_433,
+            &format!(r#"{{"primary":"{}"}}"#, primary.public_key().to_hex()),
+            &[&["d", &workload]],
+        ),
+    )
+    .await;
+    let page = get(relay, &path).await;
+    assert!(page.text.contains("taken over by"), "{}", page.text);
+    assert!(
+        page.text
+            .contains(&format!("/compute/p/{}", npub_of(&standby)))
+    );
+
+    // Evicted by the primary, with its reason and message.
+    store(
+        relay,
+        &event(
+            &primary,
+            4_433,
+            r#"{"reason":"abuse","message":"mining <b>"}"#,
+            &[&["x", &workload], &["L", "toon.network"]],
+        ),
+    )
+    .await;
+    let page = get(relay, &path).await;
+    assert!(page.text.contains("evicted by"), "{}", page.text);
+    assert!(page.text.contains("abuse"));
+    assert!(page.text.contains("mining &lt;b&gt;"), "{}", page.text);
+}
+
+#[tokio::test]
+async fn a_deployment_that_is_expired_or_misshapen_is_a_404_and_a_foreign_signer_is_a_claim() {
+    let running = running_with(|_| None).await;
+    let relay = &running.relay;
+    let (tenant, owner, primary, standby) = (
+        Keys::generate(),
+        Keys::generate(),
+        Keys::generate(),
+        Keys::generate(),
+    );
+    let workload = "ab".repeat(32);
+
+    // Not the repository's owner: labelled as the signer's claim.
+    let mut claim = deployment_event(&tenant, "claim", &primary, &standby, &workload, &[]);
+    let repo = format!("30617:{}:site", owner.public_key().to_hex());
+    claim = rebuild(&tenant, &claim, |tag| {
+        tag.starts_with("30617:").then(|| repo.clone())
+    });
+    store(relay, &claim).await;
+    let page = get(relay, &format!("/compute/d/{}/claim", npub_of(&tenant))).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.text);
+    assert!(page.text.contains("data-claim"), "{}", page.text);
+
+    // The repository's owner is not a claim, even with no announcement here.
+    store(
+        relay,
+        &deployment_event(&owner, "owned", &primary, &standby, &workload, &[]),
+    )
+    .await;
+    let page = get(relay, &format!("/compute/d/{}/owned", npub_of(&owner))).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.text);
+    assert!(!page.text.contains("data-claim"), "{}", page.text);
+
+    // A maintainer named by the owner is not a claim.
+    store(
+        relay,
+        &event(
+            &owner,
+            30_617,
+            "",
+            &[
+                &["d", "site"],
+                &["maintainers", &tenant.public_key().to_hex()],
+            ],
+        ),
+    )
+    .await;
+    let page = get(relay, &format!("/compute/d/{}/claim", npub_of(&tenant))).await;
+    assert!(!page.text.contains("data-claim"), "{}", page.text);
+
+    // Past its expiration: no longer shown, and its URL is a 404.
+    let soon = (nostr::types::Timestamp::now().as_secs() + 2).to_string();
+    let expiring = deployment_event(&tenant, "expiring", &primary, &standby, &workload, &[]);
+    let tags: Vec<Tag> = expiring
+        .tags
+        .iter()
+        .map(|tag| {
+            let mut parts = tag.as_slice().to_vec();
+            if parts[0] == "expiration" {
+                parts[1] = soon.clone();
+            }
+            Tag::parse(parts).expect("a tag")
+        })
+        .collect();
+    let expiring = EventBuilder::new(Kind::from(30_437), "")
+        .tags(tags)
+        .finalize(&tenant)
+        .expect("signs");
+    store(relay, &expiring).await;
+    let path = format!("/compute/d/{}/expiring", npub_of(&tenant));
+    assert_eq!(get(relay, &path).await.status, StatusCode::OK);
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    assert_eq!(get(relay, &path).await.status, StatusCode::NOT_FOUND);
+
+    // An unmarked x breaks the shape.
+    let broken = deployment_event(
+        &tenant,
+        "broken",
+        &primary,
+        &standby,
+        &workload,
+        &[&["x", &"ef".repeat(32)]],
+    );
+    store(relay, &broken).await;
+    let page = get(relay, &format!("/compute/d/{}/broken", npub_of(&tenant))).await;
+    assert_eq!(page.status, StatusCode::NOT_FOUND);
+
+    // Nothing at all.
+    let page = get(relay, &format!("/compute/d/{}/nothing", npub_of(&tenant))).await;
+    assert_eq!(page.status, StatusCode::NOT_FOUND);
+
+    // The naddr redirects to the page.
+    let coordinate = nostr::nips::nip01::Coordinate::new(Kind::from(30_437), tenant.public_key())
+        .identifier("claim");
+    let naddr = nostr::nips::nip19::ToBech32::to_bech32(&nostr::nips::nip19::Nip19Coordinate::new(
+        coordinate,
+        Vec::<nostr::types::RelayUrl>::new(),
+    ))
+    .expect("naddr");
+    let response = running
+        .relay
+        .read_router()
+        .oneshot(
+            Request::get(format!("/compute/{naddr}"))
+                .body(Body::empty())
+                .expect("a request"),
+        )
+        .await
+        .expect("infallible");
+    assert!(response.status().is_redirection());
+    assert_eq!(
+        response.headers()["location"],
+        format!("/compute/d/{}/claim", npub_of(&tenant)).as_str()
+    );
+}
+
+/// `source` signed again by `keys` with each `a` tag value `change` returns
+/// `Some` for replaced.
+fn rebuild(keys: &Keys, source: &Event, change: impl Fn(&str) -> Option<String>) -> Event {
+    let tags: Vec<Tag> = source
+        .tags
+        .iter()
+        .map(|tag| {
+            let mut parts = tag.as_slice().to_vec();
+            if parts[0] == "a"
+                && let Some(new) = change(&parts[1])
+            {
+                parts[1] = new;
+            }
+            Tag::parse(parts).expect("a tag")
+        })
+        .collect();
+    EventBuilder::new(Kind::from(30_437), "")
+        .tags(tags)
+        .finalize(keys)
+        .expect("signs")
+}

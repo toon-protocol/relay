@@ -10,6 +10,7 @@ use nostr::key::PublicKey;
 use nostr::nips::nip19::{FromBech32, Nip19, Nip19Coordinate};
 use relay_ui::chrome::{self, App, Apps, Profiles, escape};
 
+use crate::deployment;
 use crate::directory::{self, LISTING_KIND, LIVENESS_KIND, Listing, PROFILE_KIND, Provider};
 use crate::{PREFIX, Pages, directory_filter, fallback, html, price, resources, standby, status};
 
@@ -36,7 +37,7 @@ pub(crate) fn listing_path(listing: &Listing) -> String {
 }
 
 /// The key a path names: an `npub`, an `nprofile` or 64 hex.
-fn parse_pubkey(text: &str) -> Option<PublicKey> {
+pub(crate) fn parse_pubkey(text: &str) -> Option<PublicKey> {
     let text = text.trim();
     let text = text.strip_prefix("nostr:").unwrap_or(text);
     if text.len() == 64 {
@@ -117,6 +118,7 @@ pub(crate) async fn provider_page(
     } else {
         body.push_str(&listing_table(&held.listings));
     }
+    body.push_str(&deployment::serving_section(&pages, &key).await);
     html(&pages, StatusCode::OK, &shown, &body)
 }
 
@@ -189,7 +191,7 @@ fn provider_facts(apps: &Apps, provider: &Provider, live: bool) -> String {
     facts(&rows)
 }
 
-fn facts(rows: &[(&str, String)]) -> String {
+pub(crate) fn facts(rows: &[(&str, String)]) -> String {
     let mut out = String::from(
         "<div class=\"box\"><div class=\"table-wrap\"><table class=\"data-table\"><tbody>",
     );
@@ -283,8 +285,12 @@ pub(crate) async fn by_naddr(State(pages): State<Pages>, Path(target): Path<Stri
     let coordinate = Nip19Coordinate::from_bech32(text)
         .ok()
         .map(|naddr| naddr.coordinate)
-        .filter(|c| c.kind == Kind::from(LISTING_KIND));
+        .filter(|c| [LISTING_KIND, deployment::DEPLOYMENT_KIND].contains(&c.kind.as_u16()));
     match coordinate {
+        Some(c) if c.kind == Kind::from(deployment::DEPLOYMENT_KIND) => {
+            Redirect::permanent(&deployment::deployment_path(&c.public_key, &c.identifier))
+                .into_response()
+        }
         Some(c) => Redirect::permanent(&format!(
             "{PREFIX}/{}/{}",
             chrome::npub(&c.public_key),

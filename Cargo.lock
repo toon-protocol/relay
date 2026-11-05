@@ -2210,6 +2210,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tower",
+ "ui-nip34",
  "ui-preview",
 ]
 
