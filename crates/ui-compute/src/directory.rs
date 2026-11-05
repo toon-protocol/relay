@@ -42,7 +42,9 @@ pub(crate) struct Listing {
     /// Anyone-only provider, whose host is never shown.
     pub(crate) hidden: bool,
     /// The Listing's `d` tag: the key of its capacity in a Liveness.
-    d: String,
+    pub(crate) d: String,
+    /// What the Listing's `capabilities` says it can do, as text.
+    pub(crate) capabilities: Vec<String>,
     /// µUSDC per Lease Interval.
     pub(crate) price: Option<u64>,
     /// µUSDC per Lease Interval for a Warm Standby; `None` sells no standbys.
@@ -261,6 +263,7 @@ fn read(listing: &Event, profile: &Event) -> Option<Listing> {
         labels,
         caps: tag_values(listing, "t"),
         d: d.to_owned(),
+        capabilities: capabilities(content.get("capabilities")),
         price: content.get("price").and_then(count),
         standby_price: content.get("standby_price").and_then(count),
         lease_interval_s: content.get("lease_interval_s").and_then(count),
@@ -268,6 +271,134 @@ fn read(listing: &Event, profile: &Event) -> Option<Listing> {
         available: None,
         created_at: listing.created_at.as_secs(),
     })
+}
+
+/// A Provider Profile, read as far as its fields are there: every field is
+/// optional, since the store holds whatever the provider signed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Provider {
+    pub(crate) key: PublicKey,
+    pub(crate) name: Option<String>,
+    pub(crate) isolation: Option<String>,
+    /// An Anyone-only Provider: its page names no host.
+    pub(crate) hidden: bool,
+    pub(crate) host: Option<String>,
+    /// Each settlement chain with the tokens it takes.
+    pub(crate) settlement: Vec<(String, Vec<String>)>,
+    pub(crate) relay_set: Vec<String>,
+    /// How often the provider says it signs a Liveness.
+    pub(crate) liveness_interval_s: Option<u64>,
+}
+
+/// The newest Provider Profile among `profiles` signed by `key`.
+pub(crate) fn provider(profiles: &[Event], key: &PublicKey) -> Option<Provider> {
+    let profile = profiles
+        .iter()
+        .filter(|e| e.kind == Kind::from(PROFILE_KIND) && e.pubkey == *key)
+        .max_by_key(|e| (e.created_at, e.id))?;
+    let content = json(&profile.content);
+    let text = |field: &str| {
+        content
+            .get(field)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(|text| summary(text, FIELD_CHARS))
+    };
+    let hidden = content.get("hidden").and_then(Value::as_bool) == Some(true)
+        || label(profile, "hidden").as_deref() == Some("true");
+    let relay_set = content
+        .get("relay_set")
+        .or_else(|| content.get("relays"))
+        .and_then(Value::as_array)
+        .map(|relays| {
+            relays
+                .iter()
+                .filter_map(Value::as_str)
+                .map(|relay| summary(relay, FIELD_CHARS))
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(Provider {
+        key: *key,
+        name: text("name"),
+        isolation: text("isolation")
+            .or_else(|| label(profile, "isolation").map(|text| summary(&text, FIELD_CHARS))),
+        hidden,
+        host: if hidden { None } else { text("host") },
+        settlement: settlement(content.get("settlement")),
+        relay_set,
+        liveness_interval_s: content
+            .get("liveness_interval_s")
+            .or_else(|| content.get("liveness_interval"))
+            .and_then(count),
+    })
+}
+
+/// A Profile's `settlement` as `(chain, tokens)` pairs: a list of
+/// `{chain, tokens}` objects, a list of chain names, or an object of chain
+/// to tokens.
+fn settlement(value: Option<&Value>) -> Vec<(String, Vec<String>)> {
+    let tokens = |value: Option<&Value>| -> Vec<String> {
+        match value {
+            Some(Value::String(token)) => vec![summary(token, FIELD_CHARS)],
+            Some(Value::Array(tokens)) => tokens
+                .iter()
+                .filter_map(Value::as_str)
+                .map(|token| summary(token, FIELD_CHARS))
+                .collect(),
+            _ => Vec::new(),
+        }
+    };
+    match value {
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|item| match item {
+                Value::String(chain) => Some((summary(chain, FIELD_CHARS), Vec::new())),
+                Value::Object(fields) => {
+                    let chain = fields.get("chain")?.as_str()?;
+                    Some((
+                        summary(chain, FIELD_CHARS),
+                        tokens(fields.get("tokens").or_else(|| fields.get("token"))),
+                    ))
+                }
+                _ => None,
+            })
+            .collect(),
+        Some(Value::Object(chains)) => chains
+            .iter()
+            .map(|(chain, each)| (summary(chain, FIELD_CHARS), tokens(Some(each))))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// A Listing's `capabilities`: an array of texts, or an object's names whose
+/// value is not `false`.
+fn capabilities(value: Option<&Value>) -> Vec<String> {
+    match value {
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(Value::as_str)
+            .map(|item| summary(item, FIELD_CHARS))
+            .collect(),
+        Some(Value::Object(fields)) => fields
+            .iter()
+            .filter(|(_, on)| **on != Value::Bool(false))
+            .map(|(name, _)| summary(name, FIELD_CHARS))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Whether `key` holds a Liveness among `liveness` that is unexpired at
+/// `now`; its newest decides.
+pub(crate) fn is_live(liveness: &[Event], key: &PublicKey, now: u64) -> bool {
+    liveness
+        .iter()
+        .filter(|e| e.kind == Kind::from(LIVENESS_KIND) && e.pubkey == *key)
+        .max_by_key(|e| (e.created_at, e.id))
+        .is_some_and(|event| expiration(event).is_none_or(|at| at > now))
 }
 
 /// The first value of each `name` tag, lowercased.
@@ -620,6 +751,37 @@ mod tests {
         sort_for_buyers(&mut joined);
         let names: Vec<&str> = joined.iter().map(|l| l.name.as_str()).collect();
         assert_eq!(names, ["cheap-up", "dear-up", "per-minute", "cheap-down"]);
+    }
+
+    #[test]
+    fn a_profiles_fields_are_read_and_a_hidden_provider_has_no_host() {
+        let provider_keys = Keys::generate();
+        let content = r#"{"name":"Tidal","isolation":"vm","host":"h.example",
+            "settlement":[{"chain":"base","tokens":["USDC"]},"solana"],
+            "relay_set":["wss://a.example"],"liveness_interval_s":60}"#;
+        let profile = signed(&provider_keys, PROFILE_KIND, content, &[]);
+        let read = provider(std::slice::from_ref(&profile), &provider_keys.public_key()).unwrap();
+        assert_eq!(read.isolation.as_deref(), Some("vm"));
+        assert_eq!(read.host.as_deref(), Some("h.example"));
+        assert_eq!(
+            read.settlement,
+            vec![
+                ("base".to_owned(), vec!["USDC".to_owned()]),
+                ("solana".to_owned(), vec![])
+            ]
+        );
+        assert_eq!(read.relay_set, ["wss://a.example"]);
+        assert_eq!(read.liveness_interval_s, Some(60));
+        let hidden = signed(
+            &provider_keys,
+            PROFILE_KIND,
+            content,
+            &[tag(&["l", "hidden:true"])],
+        );
+        let read = provider(&[hidden], &provider_keys.public_key()).unwrap();
+        assert!(read.hidden);
+        assert_eq!(read.host, None);
+        assert_eq!(provider(&[profile], &Keys::generate().public_key()), None);
     }
 
     #[test]

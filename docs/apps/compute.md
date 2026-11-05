@@ -74,8 +74,9 @@ anyone else still has its own page, shown as that key's claim.
 
 ## Reading in a browser: the relay's `/compute` pages
 
-Only `/compute` is built so far (the Listings this relay holds, each joined to
-its Provider Profile); the other rows are the agreed shape (ADR 0012).
+Built so far: `/compute`, the Provider and Listing pages (`/compute/<naddr>` redirects
+to the Listing's page) and the `/social` badge; the other rows are the agreed shape
+(ADR 0012).
 
 | Path | What it shows | What it reads |
 | --- | --- | --- |

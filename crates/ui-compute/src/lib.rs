@@ -7,9 +7,15 @@
 //! - `/compute`: every Listing whose Provider Profile is in the store, with
 //!   its provider ([`directory`]).
 //!
+//! - `/compute/p/<npub>`: one Provider, its Listings and a link to its
+//!   `/social` profile;
+//! - `/compute/<npub>/<listing>`: one Listing, with its Provider; the `naddr`
+//!   form, `/compute/<naddr>`, redirects to it ([`provider`]).
+//!
 //! The words are TOON Compute's: Provider, Listing, Liveness.
 
 mod directory;
+mod provider;
 
 use std::collections::HashMap;
 
@@ -28,6 +34,9 @@ use relay_ui::{AppUi, ReadOnlyStore};
 use ui_preview::{Mark, Previews};
 
 use directory::{Filters, LABEL_NAMESPACE, LISTING_KIND, LIVENESS_KIND, Listing, PROFILE_KIND};
+use provider::{
+    by_naddr, listing_page, listing_path, provider_link, provider_page, unnamed_listing_page,
+};
 
 /// The mount prefix.
 pub const PREFIX: &str = "/compute";
@@ -38,13 +47,13 @@ pub const CONTENT_SECURITY_POLICY_VALUE: &str = "default-src 'self'; script-src 
      img-src 'self'; form-action 'self'; base-uri 'none'";
 
 /// The most Profiles and Listings one page reads.
-const READ_LIMIT: usize = 1_000;
+pub(crate) const READ_LIMIT: usize = 1_000;
 
 /// What the pages read.
 #[derive(Clone)]
-struct Pages {
-    store: ReadOnlyStore,
-    apps: Apps,
+pub(crate) struct Pages {
+    pub(crate) store: ReadOnlyStore,
+    pub(crate) apps: Apps,
     /// The host visitors' clients reach this relay at, for the site card.
     relay_host: Option<String>,
     /// Link preview cards drawn so far.
@@ -57,6 +66,10 @@ struct Pages {
 pub fn app(store: ReadOnlyStore, relay_host: Option<String>, apps: Apps) -> AppUi {
     let router = Router::new()
         .route(PREFIX, get(index))
+        .route("/compute/p/{npub}", get(provider_page))
+        .route("/compute/{target}", get(by_naddr))
+        .route("/compute/{npub}/{listing}", get(listing_page))
+        .route("/compute/{npub}/", get(unnamed_listing_page))
         .route("/compute/assets/{name}", get(asset))
         .route("/compute/og/site.png", get(site_card))
         .fallback(fallback)
@@ -83,7 +96,7 @@ async fn site_card(State(pages): State<Pages>, headers: HeaderMap) -> Response {
 }
 
 /// A page with `/compute`'s policy.
-fn html(pages: &Pages, status: StatusCode, title: &str, body: &str) -> Response {
+pub(crate) fn html(pages: &Pages, status: StatusCode, title: &str, body: &str) -> Response {
     let mut response = (
         status,
         Html(chrome::page_with(
@@ -106,7 +119,7 @@ fn html(pages: &Pages, status: StatusCode, title: &str, body: &str) -> Response 
     response
 }
 
-async fn fallback(State(pages): State<Pages>) -> Response {
+pub(crate) async fn fallback(State(pages): State<Pages>) -> Response {
     html(
         &pages,
         StatusCode::NOT_FOUND,
@@ -121,7 +134,7 @@ async fn fallback(State(pages): State<Pages>) -> Response {
 
 /// The directory's events of `kind`: every TOON Compute event carries
 /// `["L","toon.network"]`.
-fn directory_filter(kind: u16) -> Filter {
+pub(crate) fn directory_filter(kind: u16) -> Filter {
     Filter::new()
         .kind(Kind::from(kind))
         .custom_tag(SingleLetterTag::UPPERCASE_L, LABEL_NAMESPACE)
@@ -158,11 +171,7 @@ async fn index(State(pages): State<Pages>, RawQuery(query): RawQuery) -> Respons
             l.name.to_lowercase(),
         )
     });
-    directory::apply_liveness(
-        &mut listings,
-        &liveness,
-        u64::try_from(chrome::now()).unwrap_or(0),
-    );
+    directory::apply_liveness(&mut listings, &liveness, now());
     directory::sort_for_buyers(&mut listings);
     html(
         &pages,
@@ -199,27 +208,19 @@ fn directory_page(
          <thead><tr><th>Provider</th><th>Listing</th><th>Resources</th><th>Arch</th><th>Status</th><th>Price</th><th>Standby</th></tr></thead><tbody>",
     );
     for listing in listings {
-        let resources = listing
-            .resources
-            .iter()
-            .map(|(what, amount)| match what.is_empty() {
-                true => escape(amount),
-                false => format!("{} {}", escape(what), escape(amount)),
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
         body.push_str(&format!(
-            "<tr data-listing=\"{}\"><td><span>{}{}</span>{}</td><td class=\"strong\">{}</td>\
+            "<tr data-listing=\"{}\"><td><span>{}{}</span>{}</td><td class=\"strong\"><a href=\"{}\">{}</a></td>\
              <td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             escape(&listing.name),
             chrome::person_avatar(apps, &listing.provider, true),
-            chrome::person(apps, names, &listing.provider),
+            provider_link(names, &listing.provider),
             match listing.hidden {
                 true => " <span class=\"muted small\" data-hidden=\"true\">Anyone-only</span>",
                 false => "",
             },
+            listing_path(listing),
             escape(&listing.name),
-            resources,
+            resources(listing),
             listing.arch.as_deref().map(escape).unwrap_or_default(),
             status(listing),
             price(listing),
@@ -231,7 +232,7 @@ fn directory_page(
 }
 
 /// Live with its capacity, or down.
-fn status(listing: &Listing) -> String {
+pub(crate) fn status(listing: &Listing) -> String {
     match (listing.live, listing.available) {
         (true, Some(n)) => format!("<span data-status=\"live\">live, {n} available</span>"),
         (true, None) => "<span data-status=\"live\">live</span>".to_owned(),
@@ -240,7 +241,7 @@ fn status(listing: &Listing) -> String {
 }
 
 /// The price per Lease Interval and per hour, exactly.
-fn price(listing: &Listing) -> String {
+pub(crate) fn price(listing: &Listing) -> String {
     let Some(price) = listing.price else {
         return String::new();
     };
@@ -261,11 +262,28 @@ fn per_hour(hour: directory::PerHour) -> String {
     }
 }
 
-fn standby(listing: &Listing) -> String {
+pub(crate) fn standby(listing: &Listing) -> String {
     match listing.standby_price {
         Some(price) => format!("{price} µUSDC"),
         None => "no standbys".to_owned(),
     }
+}
+
+/// The Listing's resources as `what amount` pairs.
+pub(crate) fn resources(listing: &Listing) -> String {
+    listing
+        .resources
+        .iter()
+        .map(|(what, amount)| match what.is_empty() {
+            true => escape(amount),
+            false => format!("{} {}", escape(what), escape(amount)),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn now() -> u64 {
+    u64::try_from(chrome::now()).unwrap_or(0)
 }
 
 /// The GET form that narrows the directory: it works without script, keeps
