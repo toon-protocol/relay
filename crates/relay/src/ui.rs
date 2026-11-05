@@ -186,6 +186,11 @@ fn built(
                 relay_host: settings.relay_host.clone(),
             },
             on.clone(),
+            #[cfg(feature = "ui-compute")]
+            on.serves(App::Compute)
+                .then(|| ui_compute::environments(reading(store, &settings.reads), on.clone())),
+            #[cfg(not(feature = "ui-compute"))]
+            None,
         ));
     }
     #[cfg(feature = "ui-social")]

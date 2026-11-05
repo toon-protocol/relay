@@ -26,6 +26,9 @@ pub use git::{CONTENT_SECURITY_POLICY_VALUE as GIT_CONTENT_SECURITY_POLICY_VALUE
 pub use threads::{STATUS_KINDS, is_applied};
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::{Path, RawQuery, State};
@@ -37,7 +40,8 @@ use nostr::filter::Filter;
 use nostr::key::PublicKey;
 use nostr::nips::nip19::{FromBech32, Nip19Coordinate};
 use relay_ui::chrome::{
-    Apps, Profiles, escape, names, npub, param, percent_encode, person, person_avatar, shown_name,
+    App, Apps, Profiles, escape, names, npub, param, percent_encode, person, person_avatar,
+    shown_name,
 };
 use relay_ui::meta::Preview;
 use relay_ui::{AppUi, Assets, ReadOnlyStore};
@@ -70,6 +74,15 @@ const HIGHLIGHT_SCRIPT: &str = "ui-highlight-web.js";
 /// What the list says when there are no assets to browse with.
 pub const UNAVAILABLE: &str = "git browsing unavailable";
 
+/// What draws the Environments tab's body: given the repository and the keys
+/// its announcement authorizes (ADR 0002), the HTML of the environments they
+/// signed. `ui-compute` supplies it, since it owns the Deployment.
+pub type Environments = Arc<
+    dyn Fn(RepoAddress, Vec<PublicKey>) -> Pin<Box<dyn Future<Output = String> + Send>>
+        + Send
+        + Sync,
+>;
+
 /// What the pages read: the store, and the built assets if the relay has them.
 #[derive(Clone)]
 struct Pages {
@@ -77,14 +90,22 @@ struct Pages {
     assets: Option<Assets>,
     defaults: Defaults,
     apps: Apps,
+    environments: Option<Environments>,
     /// Link preview cards drawn so far ([`og`]).
     previews: Previews,
 }
 
 /// The app UI over `store`, with the built `assets` if the relay has them,
 /// the operator's `defaults` for where a browser looks for git objects, and
-/// the `apps` the relay serves (for the site bar and the links to `/social`).
-pub fn app(store: ReadOnlyStore, assets: Option<Assets>, defaults: Defaults, apps: Apps) -> AppUi {
+/// the `apps` the relay serves (for the site bar and the links to `/social`),
+/// and the `environments` tab's body when `/compute` is on.
+pub fn app(
+    store: ReadOnlyStore,
+    assets: Option<Assets>,
+    defaults: Defaults,
+    apps: Apps,
+    environments: Option<Environments>,
+) -> AppUi {
     let router = Router::new()
         .route(PREFIX, get(list))
         .route(&format!("{PREFIX}/assets/{{name}}"), get(asset))
@@ -101,15 +122,53 @@ pub fn app(store: ReadOnlyStore, assets: Option<Assets>, defaults: Defaults, app
         .route("/repo/{npub}/{d}/issues/{id}", get(threads::issue))
         .route("/repo/{npub}/{d}/pulls", get(threads::pulls))
         .route("/repo/{npub}/{d}/pulls/{id}", get(threads::pull))
+        .route("/repo/{npub}/{d}/environments", get(environments_page))
         .fallback(fallback)
         .with_state(Pages {
             store,
             assets,
             defaults,
             apps,
+            environments,
             previews: Previews::new(),
         });
     AppUi::new(PREFIX, router)
+}
+
+/// `/repo/<npub>/<d>/environments`: where the repository runs, according to
+/// its owner and maintainers. Present only while `/compute` is on.
+async fn environments_page(
+    State(pages): State<Pages>,
+    Path((npub, d)): Path<(String, String)>,
+) -> Response {
+    let (Some(draw), true) = (&pages.environments, pages.apps.serves(App::Compute)) else {
+        return not_found(&pages.apps);
+    };
+    let Some((owner, announcement)) = resolve_repo(&pages.store, &npub, &d).await else {
+        return not_found(&pages.apps);
+    };
+    let Some(address) = RepoAddress::new(owner, &d) else {
+        return not_found(&pages.apps);
+    };
+    let names = names(&pages.store, &lineage::named_keys(&announcement)).await;
+    let mut body = repo_header(
+        &pages.apps,
+        &owner,
+        &d,
+        &announcement,
+        &names,
+        Tab::Environments,
+    );
+    body.push_str(&draw(address, authorized_authors(&announcement)).await);
+    let preview = repo_preview(
+        &pages.apps,
+        pages.defaults.relay_host.clone(),
+        &announcement,
+        &names,
+        Some("Environments"),
+        format!("{}/environments", repo_path(&owner, &d)),
+    );
+    html_with(&pages.apps, StatusCode::OK, "Environments", &body, &preview)
 }
 
 async fn asset(State(pages): State<Pages>, Path(name): Path<String>) -> Response {
