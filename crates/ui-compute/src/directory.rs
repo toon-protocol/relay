@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 use nostr::event::{Event, Kind};
 use nostr::key::PublicKey;
+use relay_ui::chrome::param;
 use relay_ui::meta::summary;
 use serde_json::Value;
 
@@ -32,6 +33,14 @@ pub(crate) struct Listing {
     /// `what: amount` for each resource the Listing sells.
     pub(crate) resources: Vec<(String, String)>,
     pub(crate) arch: Option<String>,
+    /// The Listing's every `l` tag as `name:value`, lowercased: isolation,
+    /// arch, hidden, gpu.
+    labels: Vec<String>,
+    /// Every `t` tag, lowercased: the capabilities.
+    caps: Vec<String>,
+    /// Whether the Listing or its Profile is tagged `l` `hidden:true`: an
+    /// Anyone-only provider, whose host is never shown.
+    pub(crate) hidden: bool,
     /// The Listing's `d` tag: the key of its capacity in a Liveness.
     d: String,
     /// µUSDC per Lease Interval.
@@ -238,12 +247,19 @@ fn read(listing: &Event, profile: &Event) -> Option<Listing> {
     let arch = text(&content, "arch")
         .or_else(|| label(listing, "arch"))
         .map(|arch| summary(&arch, FIELD_CHARS));
+    let labels = tag_values(listing, "l");
+    let hidden = [&labels, &tag_values(profile, "l")]
+        .iter()
+        .any(|labels| labels.iter().any(|l| l == "hidden:true"));
     Some(Listing {
         provider: listing.pubkey,
         provider_name: text(&json(&profile.content), "name"),
         name: text(&content, "name").unwrap_or_else(|| d.to_owned()),
         resources: resources(content.get("resources")),
         arch,
+        hidden,
+        labels,
+        caps: tag_values(listing, "t"),
         d: d.to_owned(),
         price: content.get("price").and_then(count),
         standby_price: content.get("standby_price").and_then(count),
@@ -252,6 +268,72 @@ fn read(listing: &Event, profile: &Event) -> Option<Listing> {
         available: None,
         created_at: listing.created_at.as_secs(),
     })
+}
+
+/// The first value of each `name` tag, lowercased.
+fn tag_values(event: &Event, name: &str) -> Vec<String> {
+    event
+        .tags
+        .iter()
+        .filter_map(|tag| match tag.as_slice() {
+            [tag_name, value, ..] if tag_name == name => Some(value.trim().to_lowercase()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// What the directory is narrowed to. An empty field is no narrowing; each
+/// field a Listing must match, case aside.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct Filters {
+    pub(crate) arch: String,
+    pub(crate) isolation: String,
+    pub(crate) gpu: String,
+    pub(crate) cap: String,
+    /// `Some(true)` keeps only Hidden Providers, `Some(false)` only the rest.
+    pub(crate) hidden: Option<bool>,
+}
+
+impl Filters {
+    /// From the raw query string; unknown names and a `hidden` other than
+    /// `true` or `false` are ignored.
+    pub(crate) fn from_query(query: Option<&str>) -> Self {
+        let get = |name: &str| {
+            param(query, name)
+                .map(|v| v.trim().to_owned())
+                .unwrap_or_default()
+        };
+        Self {
+            arch: get("arch"),
+            isolation: get("isolation"),
+            gpu: get("gpu"),
+            cap: get("cap"),
+            hidden: match get("hidden").to_lowercase().as_str() {
+                "true" => Some(true),
+                "false" => Some(false),
+                _ => None,
+            },
+        }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Whether `listing` passes every filter.
+    pub(crate) fn matches(&self, listing: &Listing) -> bool {
+        let label = |name: &str, want: &str| {
+            want.is_empty() || {
+                let want = format!("{name}:{}", want.to_lowercase());
+                listing.labels.contains(&want)
+            }
+        };
+        label("arch", &self.arch)
+            && label("isolation", &self.isolation)
+            && label("gpu", &self.gpu)
+            && (self.cap.is_empty() || listing.caps.contains(&self.cap.to_lowercase()))
+            && self.hidden.is_none_or(|hidden| hidden == listing.hidden)
+    }
 }
 
 /// The value of an `l` tag written `<name>:<value>`.
@@ -538,5 +620,81 @@ mod tests {
         sort_for_buyers(&mut joined);
         let names: Vec<&str> = joined.iter().map(|l| l.name.as_str()).collect();
         assert_eq!(names, ["cheap-up", "dear-up", "per-minute", "cheap-down"]);
+    }
+
+    #[test]
+    fn filters_match_the_l_and_t_tags_alone_and_combined() {
+        let provider = Keys::generate();
+        let profile = signed(
+            &provider,
+            PROFILE_KIND,
+            "{}",
+            &[tag(&["l", "hidden:true"]), tag(&["l", "arch:riscv64"])],
+        );
+        let a = format!("10432:{}:", provider.public_key().to_hex());
+        let with = |d: &str, extra: &[&[&str]]| {
+            let mut tags = vec![tag(&["d", d]), tag(&["a", &a])];
+            tags.extend(extra.iter().map(|t| tag(t)));
+            signed(&provider, LISTING_KIND, "{}", &tags)
+        };
+        let other = Keys::generate();
+        let other_profile = signed(&other, PROFILE_KIND, "{}", &[]);
+        let other_listing = signed(
+            &other,
+            LISTING_KIND,
+            "{}",
+            &[
+                tag(&["d", "plain"]),
+                tag(&["a", &format!("10432:{}:", other.public_key().to_hex())]),
+            ],
+        );
+        let joined = join(
+            &[profile, other_profile],
+            &[
+                with(
+                    "gpu-vm",
+                    &[
+                        &["l", "arch:arm64"],
+                        &["l", "isolation:vm"],
+                        &["l", "gpu:a100"],
+                        &["t", "Docker"],
+                    ],
+                ),
+                with(
+                    "cpu",
+                    &[&["l", "arch:x86_64"], &["l", "isolation:container"]],
+                ),
+                other_listing,
+            ],
+        );
+        let names = |f: Filters| -> Vec<String> {
+            let mut n: Vec<String> = joined
+                .iter()
+                .filter(|l| f.matches(l))
+                .map(|l| l.name.clone())
+                .collect();
+            n.sort();
+            n
+        };
+        let f = |arch: &str, isolation: &str, gpu: &str, cap: &str, hidden: Option<bool>| Filters {
+            arch: arch.into(),
+            isolation: isolation.into(),
+            gpu: gpu.into(),
+            cap: cap.into(),
+            hidden,
+        };
+        assert_eq!(names(Filters::default()), ["cpu", "gpu-vm", "plain"]);
+        assert_eq!(names(f("ARM64", "", "", "", None)), ["gpu-vm"]);
+        assert_eq!(names(f("", "container", "", "", None)), ["cpu"]);
+        assert_eq!(names(f("", "", "a100", "", None)), ["gpu-vm"]);
+        assert_eq!(names(f("", "", "", "docker", None)), ["gpu-vm"]);
+        assert_eq!(names(f("", "", "", "", Some(true))), ["cpu", "gpu-vm"]);
+        assert_eq!(names(f("", "", "", "", Some(false))), ["plain"]);
+        assert_eq!(
+            names(f("arm64", "vm", "a100", "docker", Some(true))),
+            ["gpu-vm"]
+        );
+        assert!(names(f("arm64", "container", "", "", None)).is_empty());
+        assert!(names(f("riscv64", "", "", "", None)).is_empty());
     }
 }
