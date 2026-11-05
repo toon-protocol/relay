@@ -15,8 +15,11 @@
 //! - `/compute/d/<npub>/<environment>`: one Deployment and its state; its
 //!   `naddr` redirects there ([`deployment`]).
 //!
+//! A provider's page also carries its activity log ([`activity`]).
+//!
 //! The words are TOON Compute's: Provider, Listing, Liveness.
 
+mod activity;
 mod deployment;
 mod directory;
 mod provider;

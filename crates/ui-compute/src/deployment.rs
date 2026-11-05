@@ -168,7 +168,7 @@ impl Deployment {
     }
 
     /// Whether `key` is in the Deployment's `p` tags.
-    fn names(&self, key: &PublicKey) -> bool {
+    pub(crate) fn names(&self, key: &PublicKey) -> bool {
         self.primary == *key || self.standby.contains(key)
     }
 
@@ -180,7 +180,7 @@ impl Deployment {
 
 /// The note an Eviction Notice carries under `field`: its content's JSON,
 /// else a tag of that name.
-fn note(event: &Event, field: &str) -> Option<String> {
+pub(crate) fn note(event: &Event, field: &str) -> Option<String> {
     let text = json(&event.content)
         .get(field)
         .and_then(|v| v.as_str().map(str::to_owned))
@@ -191,6 +191,27 @@ fn note(event: &Event, field: &str) -> Option<String> {
             })
         })?;
     Some(summary(&text, NOTE_CHARS)).filter(|text| !text.is_empty())
+}
+
+/// The Takeovers in `takeovers` that count for `deployment`: for its workload
+/// id, from a standby it names, naming its primary.
+pub(crate) fn valid_takeovers<'a>(
+    deployment: &'a Deployment,
+    takeovers: &'a [Event],
+) -> impl Iterator<Item = &'a Event> {
+    takeovers
+        .iter()
+        .filter(|e| e.kind == Kind::from(TAKEOVER_KIND))
+        .filter(|e| deployment.standby.contains(&e.pubkey))
+        .filter(|e| {
+            tag_slices(e).any(
+                |tag| matches!(tag, [name, value, ..] if name == "d" && *value == deployment.workload),
+            )
+        })
+        .filter(|e| {
+            json(&e.content).get("primary").and_then(|v| v.as_str())
+                == Some(deployment.primary.to_hex().as_str())
+        })
 }
 
 /// The state of `deployment`. `primary_live` is whether its primary has an
@@ -214,20 +235,7 @@ pub(crate) fn state(
             )
         })
         .max_by_key(|e| (e.created_at, e.id));
-    let taken = takeovers
-        .iter()
-        .filter(|e| e.kind == Kind::from(TAKEOVER_KIND))
-        .filter(|e| deployment.standby.contains(&e.pubkey))
-        .filter(|e| {
-            tag_slices(e).any(
-                |tag| matches!(tag, [name, value, ..] if name == "d" && *value == deployment.workload),
-            )
-        })
-        .filter(|e| {
-            json(&e.content).get("primary").and_then(|v| v.as_str())
-                == Some(deployment.primary.to_hex().as_str())
-        })
-        .max_by_key(|e| (e.created_at, e.id));
+    let taken = valid_takeovers(deployment, takeovers).max_by_key(|e| (e.created_at, e.id));
     match (evicted, taken) {
         (Some(e), Some(t)) if t.created_at > e.created_at => {
             Standing::TakenOver { winner: t.pubkey }
@@ -350,7 +358,7 @@ fn state_html(state: &Standing, names: &HashMap<PublicKey, String>) -> String {
 }
 
 /// The keys a Deployment page names, to look their names up once.
-fn keys(deployment: &Deployment, state: &Standing) -> Vec<PublicKey> {
+pub(crate) fn keys(deployment: &Deployment, state: &Standing) -> Vec<PublicKey> {
     let mut keys = vec![deployment.signer];
     keys.extend(deployment.providers());
     keys.push(deployment.listing.0);

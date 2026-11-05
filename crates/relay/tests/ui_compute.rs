@@ -844,3 +844,84 @@ fn rebuild(keys: &Keys, source: &Event, change: impl Fn(&str) -> Option<String>)
         .finalize(keys)
         .expect("signs")
 }
+
+#[tokio::test]
+async fn a_provider_page_logs_its_evictions_takeovers_and_deployments_newest_first() {
+    let running = running_with(|_| None).await;
+    let relay = &running.relay;
+    let (tenant, primary, standby, other) = (
+        Keys::generate(),
+        Keys::generate(),
+        Keys::generate(),
+        Keys::generate(),
+    );
+    for provider in [&primary, &standby, &other] {
+        store(
+            relay,
+            &event(provider, 10_432, "{}", &[&["L", "toon.network"]]),
+        )
+        .await;
+    }
+    let workload = "ab".repeat(32);
+    let primary_json = format!(r#"{{"primary":"{}"}}"#, primary.public_key().to_hex());
+    store(
+        relay,
+        &deployment_event(&tenant, "production", &primary, &standby, &workload, &[]),
+    )
+    .await;
+    store(
+        relay,
+        &event(&standby, 30_433, &primary_json, &[&["d", &workload]]),
+    )
+    .await;
+    store(
+        relay,
+        &event(
+            &primary,
+            4_433,
+            r#"{"reason":"made-up","message":"too loud"}"#,
+            &[&["x", &"ef".repeat(32)]],
+        ),
+    )
+    .await;
+    // Another provider's Eviction Notice is not in this provider's log.
+    store(
+        relay,
+        &event(
+            &other,
+            4_433,
+            r#"{"reason":"abuse","message":"elsewhere"}"#,
+            &[&["x", &"12".repeat(32)]],
+        ),
+    )
+    .await;
+
+    let page = get(relay, &format!("/compute/p/{}", npub_of(&primary))).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.text);
+    let log = &page.text[page.text.find("data-activity>").expect("activity log")..];
+    for shown in [
+        "data-activity-kind=\"eviction\"",
+        "made-up",
+        "too loud",
+        "data-activity-kind=\"takeover\"",
+        "took over from",
+        &format!("/compute/p/{}", npub_of(&standby)),
+        "data-activity-kind=\"deployment\"",
+        &format!("/compute/d/{}/production", npub_of(&tenant)),
+    ] {
+        assert!(log.contains(shown), "{shown}: {log}");
+    }
+    assert!(!log.contains("elsewhere"), "{log}");
+    let stamps: Vec<u64> = log
+        .split("data-at=\"")
+        .skip(1)
+        .map(|s| s[..s.find('"').unwrap()].parse().unwrap())
+        .collect();
+    assert_eq!(stamps.len(), 3, "{log}");
+    assert!(stamps.windows(2).all(|w| w[0] >= w[1]), "{stamps:?}");
+
+    // The other provider's own page logs its Eviction Notice alone.
+    let page = get(relay, &format!("/compute/p/{}", npub_of(&other))).await;
+    assert!(page.text.contains("elsewhere"));
+    assert!(!page.text.contains("too loud"));
+}
