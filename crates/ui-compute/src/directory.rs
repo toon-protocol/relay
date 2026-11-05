@@ -162,7 +162,7 @@ pub(crate) fn sort_for_buyers(listings: &mut [Listing]) {
     });
 }
 
-fn expiration(event: &Event) -> Option<u64> {
+pub(crate) fn expiration(event: &Event) -> Option<u64> {
     event.tags.iter().find_map(|tag| match tag.as_slice() {
         [name, at, ..] if name == "expiration" => at.parse().ok(),
         _ => None,
@@ -478,7 +478,7 @@ fn label(event: &Event, name: &str) -> Option<String> {
     })
 }
 
-fn json(content: &str) -> Value {
+pub(crate) fn json(content: &str) -> Value {
     serde_json::from_str(content).unwrap_or(Value::Null)
 }
 

@@ -12,8 +12,12 @@
 //! - `/compute/<npub>/<listing>`: one Listing, with its Provider; the `naddr`
 //!   form, `/compute/<naddr>`, redirects to it ([`provider`]).
 //!
+//! - `/compute/d/<npub>/<environment>`: one Deployment and its state; its
+//!   `naddr` redirects there ([`deployment`]).
+//!
 //! The words are TOON Compute's: Provider, Listing, Liveness.
 
+mod deployment;
 mod directory;
 mod provider;
 
@@ -67,6 +71,14 @@ pub fn app(store: ReadOnlyStore, relay_host: Option<String>, apps: Apps) -> AppU
     let router = Router::new()
         .route(PREFIX, get(index))
         .route("/compute/p/{npub}", get(provider_page))
+        .route(
+            "/compute/d/{npub}/{environment}",
+            get(deployment::deployment_page),
+        )
+        .route(
+            "/compute/d/{npub}/",
+            get(deployment::unnamed_deployment_page),
+        )
         .route("/compute/{target}", get(by_naddr))
         .route("/compute/{npub}/{listing}", get(listing_page))
         .route("/compute/{npub}/", get(unnamed_listing_page))
