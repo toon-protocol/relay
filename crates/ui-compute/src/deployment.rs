@@ -147,6 +147,10 @@ impl Deployment {
                 _ => {}
             }
         }
+        // A standby is another member of the Standby Set, never the primary.
+        if primary.is_some_and(|key| standby.contains(&key)) {
+            return None;
+        }
         Some(Self {
             signer: event.pubkey,
             environment: d?,
@@ -418,7 +422,6 @@ pub(crate) async fn deployment_page(
         .await;
     let events: Vec<Event> = events
         .into_iter()
-        .filter(|e| e.pubkey == signer)
         .max_by_key(|e| (e.created_at, e.id))
         .into_iter()
         .collect();
@@ -438,8 +441,11 @@ pub(crate) async fn deployment_page(
                 .identifier(d.repo.d().to_owned()),
         )
         .await;
-    let authorized = owner_announcement(d.repo.owner(), d.repo.d(), &announcements)
-        .is_some_and(|a| authorized_authors(a).contains(&d.signer));
+    // The owner is named by the repository address itself; a maintainer only
+    // by the owner's announcement.
+    let authorized = d.signer == *d.repo.owner()
+        || owner_announcement(d.repo.owner(), d.repo.d(), &announcements)
+            .is_some_and(|a| authorized_authors(a).contains(&d.signer));
     let mut all = keys(&d, &s);
     all.push(*d.repo.owner());
     all.sort();
@@ -654,6 +660,17 @@ mod tests {
                 Box::new(|t| t.retain(|g| g[0] != "expiration")),
             ),
             ("no d", Box::new(|t| t.retain(|g| g[0] != "d"))),
+            (
+                "primary as a standby",
+                Box::new(|t| {
+                    let primary = t
+                        .iter()
+                        .find(|g| g.get(2).map(String::as_str) == Some("primary"))
+                        .expect("a primary")[1]
+                        .clone();
+                    t.push(tag(&["p", &primary, "standby"]));
+                }),
+            ),
         ];
         for (what, change) in broken {
             let mut t = tags(&c);

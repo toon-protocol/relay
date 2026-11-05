@@ -730,8 +730,17 @@ async fn a_deployment_that_is_expired_or_misshapen_is_a_404_and_a_foreign_signer
     assert_eq!(page.status, StatusCode::OK, "{}", page.text);
     assert!(page.text.contains("data-claim"), "{}", page.text);
 
+    // The repository's owner is not a claim, even with no announcement here.
+    store(
+        relay,
+        &deployment_event(&owner, "owned", &primary, &standby, &workload, &[]),
+    )
+    .await;
+    let page = get(relay, &format!("/compute/d/{}/owned", npub_of(&owner))).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.text);
+    assert!(!page.text.contains("data-claim"), "{}", page.text);
+
     // A maintainer named by the owner is not a claim.
-    let maintainer_repo = format!("30617:{}:site", owner.public_key().to_hex());
     store(
         relay,
         &event(
@@ -746,11 +755,31 @@ async fn a_deployment_that_is_expired_or_misshapen_is_a_404_and_a_foreign_signer
     )
     .await;
     let page = get(relay, &format!("/compute/d/{}/claim", npub_of(&tenant))).await;
-    assert!(
-        !page.text.contains("data-claim"),
-        "{maintainer_repo}: {}",
-        page.text
-    );
+    assert!(!page.text.contains("data-claim"), "{}", page.text);
+
+    // Past its expiration: no longer shown, and its URL is a 404.
+    let soon = (nostr::types::Timestamp::now().as_secs() + 2).to_string();
+    let expiring = deployment_event(&tenant, "expiring", &primary, &standby, &workload, &[]);
+    let tags: Vec<Tag> = expiring
+        .tags
+        .iter()
+        .map(|tag| {
+            let mut parts = tag.as_slice().to_vec();
+            if parts[0] == "expiration" {
+                parts[1] = soon.clone();
+            }
+            Tag::parse(parts).expect("a tag")
+        })
+        .collect();
+    let expiring = EventBuilder::new(Kind::from(30_437), "")
+        .tags(tags)
+        .finalize(&tenant)
+        .expect("signs");
+    store(relay, &expiring).await;
+    let path = format!("/compute/d/{}/expiring", npub_of(&tenant));
+    assert_eq!(get(relay, &path).await.status, StatusCode::OK);
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    assert_eq!(get(relay, &path).await.status, StatusCode::NOT_FOUND);
 
     // An unmarked x breaks the shape.
     let broken = deployment_event(
