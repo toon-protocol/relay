@@ -64,6 +64,13 @@ pub(crate) struct Pages {
     previews: Previews,
 }
 
+impl Pages {
+    /// The host a preview card's footer names.
+    pub(crate) fn card_host(&self) -> Option<String> {
+        ui_preview::footer_host(&self.apps, self.relay_host.as_deref())
+    }
+}
+
 /// The app UI over `store`, with the host this relay is reached at
 /// (`TOON_UI_RELAY_URL`'s, for the site card) and the `apps` the relay serves
 /// (for the site bar and the links to `/social`).
@@ -84,6 +91,12 @@ pub fn app(store: ReadOnlyStore, relay_host: Option<String>, apps: Apps) -> AppU
         .route("/compute/{npub}/", get(unnamed_listing_page))
         .route("/compute/assets/{name}", get(asset))
         .route("/compute/og/site.png", get(site_card))
+        .route("/compute/og/p/{file}", get(provider::provider_card))
+        .route("/compute/og/l/{npub}/{file}", get(provider::listing_card))
+        .route(
+            "/compute/og/d/{npub}/{file}",
+            get(deployment::deployment_card),
+        )
         .fallback(fallback)
         .with_state(Pages {
             store,
@@ -102,13 +115,24 @@ async fn asset(Path(name): Path<String>) -> Response {
 }
 
 async fn site_card(State(pages): State<Pages>, headers: HeaderMap) -> Response {
-    let host = ui_preview::footer_host(&pages.apps, pages.relay_host.as_deref());
-    let card = ui_preview::site(Mark::Compute, host);
+    let card = ui_preview::site(Mark::Compute, pages.card_host());
     pages.previews.respond(&headers, Some(card)).await
 }
 
 /// A page with `/compute`'s policy.
 pub(crate) fn html(pages: &Pages, status: StatusCode, title: &str, body: &str) -> Response {
+    html_with(pages, status, title, body, &Preview::default())
+}
+
+/// [`html`], telling link unfurlers what `preview` says: the policy is the
+/// same, a card is only a meta tag.
+pub(crate) fn html_with(
+    pages: &Pages,
+    status: StatusCode,
+    title: &str,
+    body: &str,
+    preview: &Preview,
+) -> Response {
     let mut response = (
         status,
         Html(chrome::page_with(
@@ -118,7 +142,7 @@ pub(crate) fn html(pages: &Pages, status: StatusCode, title: &str, body: &str) -
             title,
             "",
             body,
-            &Preview::default(),
+            preview,
         )),
     )
         .into_response();
@@ -267,7 +291,7 @@ pub(crate) fn price(listing: &Listing) -> String {
     out
 }
 
-fn per_hour(hour: directory::PerHour) -> String {
+pub(crate) fn per_hour(hour: directory::PerHour) -> String {
     match hour.remainder {
         0 => format!("{} µUSDC", hour.whole),
         r => format!("{} + {}/{} µUSDC", hour.whole, r, hour.interval),
@@ -283,15 +307,26 @@ pub(crate) fn standby(listing: &Listing) -> String {
 
 /// The Listing's resources as `what amount` pairs.
 pub(crate) fn resources(listing: &Listing) -> String {
+    escape(&resources_text(listing))
+}
+
+/// [`resources`] as plain text, for a card.
+pub(crate) fn resources_text(listing: &Listing) -> String {
     listing
         .resources
         .iter()
         .map(|(what, amount)| match what.is_empty() {
-            true => escape(amount),
-            false => format!("{} {}", escape(what), escape(amount)),
+            true => amount.clone(),
+            false => format!("{what} {amount}"),
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// A card's file name `<stem>.png`: the stem, which may be empty (a Listing
+/// or a Deployment whose `d` is empty).
+pub(crate) fn card_stem(file: &str) -> Option<&str> {
+    file.strip_suffix(".png")
 }
 
 fn now() -> u64 {

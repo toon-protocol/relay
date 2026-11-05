@@ -88,6 +88,13 @@ page's Serving section and the `/social` badge; the other rows are the agreed sh
 | `/repo/<npub>/<d>/environments` | The repository's Environments tab: each environment's provider, commit, state and Visit link | 30437 by `#a` = `A`, signed by an authorized author |
 | `/social/p/<npub>` | A "Compute provider" badge when the key has a 10432 | the key's 10432 |
 
+**Link previews (ADR 0006).** The Provider, Listing and Deployment pages name a 1200×630 card
+in `og:image`, an absolute URL under `TOON_UI_PUBLIC_URL`, drawn from the same events as the page:
+`/compute/og/p/<npub>.png` (name, live status, number of Listings),
+`/compute/og/l/<npub>/<listing>.png` (resources, price per hour) and
+`/compute/og/d/<npub>/<environment>.png` (repository, environment, provider, state). Each answers
+`ETag`/`304`; a card for something the store does not hold is `404`. The pages' policy is unchanged.
+
 **A Deployment's state** is one of: running on a live provider until its
 expiration; provider down; evicted (an Eviction Notice for its workload id from
 a provider it names); taken over (a Takeover from a standby it names, naming

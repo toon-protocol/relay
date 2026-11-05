@@ -844,3 +844,124 @@ fn rebuild(keys: &Keys, source: &Event, change: impl Fn(&str) -> Option<String>)
         .finalize(keys)
         .expect("signs")
 }
+
+/// The `content` of the `<meta>` named `name` in `html`.
+fn meta(html: &str, name: &str) -> Option<String> {
+    let needle = format!("=\"{name}\" content=\"");
+    let start = html.find(&needle)? + needle.len();
+    let rest = &html[start..];
+    Some(rest[..rest.find('"')?].to_owned())
+}
+
+#[tokio::test]
+async fn provider_listing_and_deployment_pages_name_their_cards_which_are_pngs_with_etags() {
+    const ORIGIN: &str = "https://relay.test";
+    let running =
+        running_with(|name| (name == "TOON_UI_PUBLIC_URL").then(|| format!("{ORIGIN}/"))).await;
+    let relay = &running.relay;
+    let (tenant, primary, standby) = (Keys::generate(), Keys::generate(), Keys::generate());
+    let (tenant_npub, primary_npub) = (npub_of(&tenant), npub_of(&primary));
+    for provider in [&primary, &standby] {
+        store(
+            relay,
+            &event(
+                provider,
+                10_432,
+                r#"{"name":"Tidal"}"#,
+                &[&["L", "toon.network"]],
+            ),
+        )
+        .await;
+    }
+    listing(
+        relay,
+        &primary,
+        "small",
+        r#"{"name":"Small","resources":{"vcpu":2},"price":5,"lease_interval_s":60}"#,
+    )
+    .await;
+    store(relay, &event(&tenant, 30_617, "", &[&["d", "site"]])).await;
+    store(
+        relay,
+        &deployment_event(
+            &tenant,
+            "production",
+            &primary,
+            &standby,
+            &"ab".repeat(32),
+            &[],
+        ),
+    )
+    .await;
+
+    let pages = [
+        (
+            format!("/compute/p/{primary_npub}"),
+            format!("/compute/og/p/{primary_npub}.png"),
+        ),
+        (
+            format!("/compute/{primary_npub}/small"),
+            format!("/compute/og/l/{primary_npub}/small.png"),
+        ),
+        (
+            format!("/compute/d/{tenant_npub}/production"),
+            format!("/compute/og/d/{tenant_npub}/production.png"),
+        ),
+    ];
+    for (page, card) in pages {
+        let shown = get(relay, &page).await;
+        assert_eq!(shown.status, StatusCode::OK, "{page}");
+        // The page's policy is the directory's own.
+        assert_eq!(shown.policy.as_deref(), Some(POLICY), "{page}");
+        for tag in ["og:image", "twitter:image"] {
+            let image = meta(&shown.text, tag).unwrap_or_else(|| panic!("{page}: {tag}"));
+            assert_eq!(image, format!("{ORIGIN}{card}"), "{page}");
+        }
+        assert_eq!(
+            meta(&shown.text, "twitter:card").as_deref(),
+            Some("summary_large_image")
+        );
+
+        let response = relay
+            .read_router()
+            .oneshot(Request::get(&card).body(Body::empty()).expect("a request"))
+            .await
+            .expect("infallible");
+        assert_eq!(response.status(), StatusCode::OK, "{card}");
+        assert_eq!(response.headers()["content-type"], "image/png");
+        let etag = response.headers()["etag"].clone();
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "{card}");
+        let word = |at: usize| u32::from_be_bytes(bytes[at..at + 4].try_into().expect("four"));
+        assert_eq!((word(16), word(20)), (1200, 630), "{card}");
+
+        let again = relay
+            .read_router()
+            .oneshot(
+                Request::get(&card)
+                    .header("if-none-match", etag)
+                    .body(Body::empty())
+                    .expect("a request"),
+            )
+            .await
+            .expect("infallible");
+        assert_eq!(again.status(), StatusCode::NOT_MODIFIED, "{card}");
+    }
+
+    for missing in [
+        format!("/compute/og/p/{}.png", npub_of(&Keys::generate())),
+        format!("/compute/og/l/{primary_npub}/nope.png"),
+        format!("/compute/og/d/{tenant_npub}/nope.png"),
+    ] {
+        assert_eq!(
+            get(relay, &missing).await.status,
+            StatusCode::NOT_FOUND,
+            "{missing}"
+        );
+    }
+}
