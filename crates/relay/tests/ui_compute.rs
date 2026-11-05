@@ -970,3 +970,112 @@ async fn a_provider_page_logs_its_evictions_takeovers_and_deployments_newest_fir
         "{log}"
     );
 }
+
+#[tokio::test]
+async fn the_environments_tab_lists_only_the_owners_and_maintainers_deployments() {
+    let running = running_with(|_| None).await;
+    let relay = &running.relay;
+    let (owner, maintainer, stranger, primary, standby) = (
+        Keys::generate(),
+        Keys::generate(),
+        Keys::generate(),
+        Keys::generate(),
+        Keys::generate(),
+    );
+    let workload = "ab".repeat(32);
+    let repo = format!("30617:{}:site", owner.public_key().to_hex());
+    let of_owner = |keys: &Keys, env: &str| {
+        let made = deployment_event(keys, env, &primary, &standby, &workload, &[]);
+        rebuild(keys, &made, |tag| {
+            tag.starts_with("30617:").then(|| repo.clone())
+        })
+    };
+    let announce = |maintainers: &[&Keys], at: u64| {
+        let keys: Vec<String> = maintainers
+            .iter()
+            .map(|m| m.public_key().to_hex())
+            .collect();
+        let mut tags: Vec<Vec<String>> = vec![vec!["d".into(), "site".into()]];
+        if !keys.is_empty() {
+            let mut tag = vec!["maintainers".to_owned()];
+            tag.extend(keys);
+            tags.push(tag);
+        }
+        EventBuilder::new(Kind::from(30_617), "")
+            .tags(tags.into_iter().map(|t| Tag::parse(t).expect("a tag")))
+            .custom_created_at(nostr::types::Timestamp::from_secs(at))
+            .finalize(&owner)
+            .expect("signs")
+    };
+    let now = nostr::types::Timestamp::now().as_secs();
+    store(relay, &announce(&[&maintainer], now - 100)).await;
+    for (keys, env) in [
+        (&owner, "prod"),
+        (&maintainer, "staging"),
+        (&stranger, "fake"),
+    ] {
+        store(relay, &of_owner(keys, env)).await;
+    }
+
+    let tab = format!("/repo/{}/site/environments", npub_of(&owner));
+    let page = get(relay, &tab).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.text);
+    assert!(page.text.contains("data-environment=\"prod\""));
+    assert!(page.text.contains("data-environment=\"staging\""));
+    assert!(!page.text.contains("data-environment=\"fake\""));
+    assert!(page.text.contains("data-visit"));
+    assert!(
+        page.text.contains("running on a live provider") || page.text.contains("provider down")
+    );
+    // The stranger's Deployment still has its page, labelled as a claim.
+    let own = get(relay, &format!("/compute/d/{}/fake", npub_of(&stranger))).await;
+    assert_eq!(own.status, StatusCode::OK);
+    assert!(own.text.contains("data-claim"));
+    // Other tabs link to it.
+    let home = get(relay, &format!("/repo/{}/site", npub_of(&owner))).await;
+    assert!(home.text.contains("/environments"));
+
+    // The same state as the Deployment page.
+    let deployment = get(
+        relay,
+        &format!("/compute/d/{}/staging", npub_of(&maintainer)),
+    )
+    .await;
+    let state = |text: &str| {
+        text.split("data-state=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .map(str::to_owned)
+    };
+    let row = page
+        .text
+        .split("data-environment=\"staging\"")
+        .nth(1)
+        .and_then(|rest| rest.split("</tr>").next())
+        .expect("the staging row");
+    assert!(state(row).is_some(), "{row}");
+    assert_eq!(state(row), state(&deployment.text));
+    // Dropping the maintainer from the owner's 30617 drops their Deployment.
+    store(relay, &announce(&[], now)).await;
+    let page = get(relay, &tab).await;
+    assert!(page.text.contains("data-environment=\"prod\""));
+    assert!(!page.text.contains("data-environment=\"staging\""));
+}
+
+#[tokio::test]
+async fn with_compute_off_the_environments_tab_is_absent() {
+    let running =
+        running_with(|name| (name == "TOON_UI_APPS").then(|| "repo,social".to_owned())).await;
+    let relay = &running.relay;
+    let owner = Keys::generate();
+    store(relay, &event(&owner, 30_617, "", &[&["d", "site"]])).await;
+    let home = get(relay, &format!("/repo/{}/site", npub_of(&owner))).await;
+    assert_eq!(home.status, StatusCode::OK);
+    assert!(!home.text.contains("Environments"), "{}", home.text);
+    let tab = get(
+        relay,
+        &format!("/repo/{}/site/environments", npub_of(&owner)),
+    )
+    .await;
+    assert_eq!(tab.status, StatusCode::NOT_FOUND);
+}

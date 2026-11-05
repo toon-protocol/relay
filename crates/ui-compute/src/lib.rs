@@ -97,6 +97,15 @@ pub fn app(store: ReadOnlyStore, relay_host: Option<String>, apps: Apps) -> AppU
     AppUi::new(PREFIX, router)
 }
 
+/// What `/repo`'s Environments tab draws with: the Deployments of a
+/// repository that its owner and maintainers signed (see [`deployment`]).
+pub fn environments(store: ReadOnlyStore, apps: Apps) -> ui_nip34::Environments {
+    std::sync::Arc::new(move |repo, authorized| {
+        let (store, apps) = (store.clone(), apps.clone());
+        Box::pin(async move { deployment::environments(&store, &apps, &repo, &authorized).await })
+    })
+}
+
 async fn asset(Path(name): Path<String>) -> Response {
     if name == relay_ui::stylesheet_name() {
         return relay_ui::stylesheet_response();
