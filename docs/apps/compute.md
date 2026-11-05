@@ -76,8 +76,8 @@ anyone else still has its own page, shown as that key's claim.
 
 Built so far: `/compute`, the Provider and Listing pages (`/compute/<naddr>` redirects
 to the Listing's page), the Deployment page (its `naddr` redirects too), the provider
-page's Serving section and activity log, and the `/social` badge; the other rows are the agreed shape
-(ADR 0012).
+page's Serving section and activity log, the `/social` badge and the `/repo` Environments
+tab; the other rows are the agreed shape (ADR 0012).
 
 | Path | What it shows | What it reads |
 | --- | --- | --- |

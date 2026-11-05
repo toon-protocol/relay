@@ -11,7 +11,8 @@ use axum::response::Response;
 use nostr::event::{Event, Kind};
 use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
-use relay_ui::chrome::{self, App, Identicon, Profiles, escape};
+use relay_ui::ReadOnlyStore;
+use relay_ui::chrome::{self, App, Apps, Identicon, Profiles, escape};
 use relay_ui::meta::{Preview, summary};
 use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors, owner_announcement};
 use ui_preview::{Card, Face};
@@ -275,7 +276,7 @@ pub(crate) fn deployment_path(signer: &PublicKey, environment: &str) -> String {
 
 /// The Deployments in `events` that have the shape and have not expired,
 /// newest first, each with its state read from the store.
-async fn with_states(pages: &Pages, events: &[Event]) -> Vec<(Deployment, Standing)> {
+async fn with_states(store: &ReadOnlyStore, events: &[Event]) -> Vec<(Deployment, Standing)> {
     let now = crate::now();
     let mut deployments: Vec<Deployment> = events
         .iter()
@@ -288,21 +289,19 @@ async fn with_states(pages: &Pages, events: &[Event]) -> Vec<(Deployment, Standi
     let workloads: Vec<String> = deployments.iter().map(|d| d.workload.clone()).collect();
     let primaries: Vec<PublicKey> = deployments.iter().map(|d| d.primary).collect();
     let (evictions, takeovers, liveness) = tokio::join!(
-        pages.store.query(
+        store.query(
             Filter::new()
                 .kind(Kind::from(EVICTION_KIND))
                 .custom_tags(SingleLetterTag::LOWERCASE_X, workloads.clone())
                 .limit(crate::READ_LIMIT)
         ),
-        pages.store.query(
+        store.query(
             Filter::new()
                 .kind(Kind::from(TAKEOVER_KIND))
                 .identifiers(workloads)
                 .limit(crate::READ_LIMIT)
         ),
-        pages
-            .store
-            .query(directory_filter(LIVENESS_KIND).authors(primaries)),
+        store.query(directory_filter(LIVENESS_KIND).authors(primaries)),
     );
     deployments
         .into_iter()
@@ -327,7 +326,7 @@ pub(crate) async fn serving(pages: &Pages, provider: &PublicKey) -> Vec<(Deploym
                 .custom_tag(SingleLetterTag::LOWERCASE_P, provider.to_hex()),
         )
         .await;
-    with_states(pages, &events)
+    with_states(&pages.store, &events)
         .await
         .into_iter()
         .filter(|(d, _)| d.names(provider))
@@ -387,6 +386,31 @@ fn keys(deployment: &Deployment, state: &Standing) -> Vec<PublicKey> {
     keys
 }
 
+/// The names of every key the `served` Deployments name, looked up once.
+async fn names_of(
+    store: &ReadOnlyStore,
+    served: &[(Deployment, Standing)],
+) -> HashMap<PublicKey, String> {
+    let mut all: Vec<PublicKey> = served.iter().flat_map(|(d, s)| keys(d, s)).collect();
+    all.sort();
+    all.dedup();
+    Profiles::load(store, &all).await.into_names()
+}
+
+/// A Deployment's commit, shown as `label`, linked into `/repo` while that
+/// app is on.
+fn commit_html(deployment: &Deployment, repo_on: bool, label: &str) -> String {
+    match repo_on {
+        true => format!(
+            "<a class=\"mono\" href=\"{}/commit/{}\">{}</a>",
+            deployment.repo.repo_path(),
+            chrome::percent_encode(&deployment.commit),
+            escape(label)
+        ),
+        false => format!("<span class=\"mono\">{}</span>", escape(label)),
+    }
+}
+
 /// The Serving section of a provider page. `served` is [`serving`]'s answer for the provider.
 pub(crate) async fn serving_section(pages: &Pages, served: &[(Deployment, Standing)]) -> String {
     let mut body = String::from("<h2>Serving</h2>");
@@ -394,10 +418,7 @@ pub(crate) async fn serving_section(pages: &Pages, served: &[(Deployment, Standi
         body.push_str("<div class=\"box\"><div class=\"empty\">No Deployments name this provider.</div></div>");
         return body;
     }
-    let mut all: Vec<PublicKey> = served.iter().flat_map(|(d, s)| keys(d, s)).collect();
-    all.sort();
-    all.dedup();
-    let names = Profiles::load(&pages.store, &all).await.into_names();
+    let names = names_of(&pages.store, served).await;
     body.push_str(
         "<div class=\"box\"><div class=\"table-wrap\"><table class=\"data-table\">\
          <thead><tr><th>Deployment</th><th>Repository</th><th>State</th></tr></thead><tbody>",
@@ -411,6 +432,64 @@ pub(crate) async fn serving_section(pages: &Pages, served: &[(Deployment, Standi
             escape(&d.environment),
             chrome::name(&names, &d.signer),
             repo_link(pages, &d.repo),
+            state_html(s, &names),
+        ));
+    }
+    body.push_str("</tbody></table></div></div>");
+    body
+}
+
+/// The Environments tab's body for `repo` on `/repo`: the Deployments of
+/// `repo` signed by one of `authorized` (its owner and the maintainers its
+/// owner's latest announcement names, ADR 0002). Another key's Deployment of
+/// the same repository has its own page but is not listed.
+pub(crate) async fn environments(
+    store: &ReadOnlyStore,
+    apps: &Apps,
+    repo: &RepoAddress,
+    authorized: &[PublicKey],
+) -> String {
+    let events = store
+        .query(
+            directory_filter(DEPLOYMENT_KIND)
+                .custom_tag(SingleLetterTag::LOWERCASE_A, repo.coordinate())
+                .authors(authorized.iter().copied()),
+        )
+        .await;
+    let served: Vec<(Deployment, Standing)> = with_states(store, &events)
+        .await
+        .into_iter()
+        .filter(|(d, _)| d.repo == *repo)
+        .collect();
+    if served.is_empty() {
+        return "<div class=\"box\"><div class=\"empty\">No environments: the repository's \
+                owner and maintainers have published no Deployment of it to this relay.</div></div>"
+            .to_owned();
+    }
+    let names = names_of(store, &served).await;
+    let repo_on = apps.serves(App::Repo);
+    let mut body = String::from(
+        "<div class=\"box\"><div class=\"table-wrap\"><table class=\"data-table\">\
+         <thead><tr><th>Environment</th><th>Provider</th><th>Commit</th><th>State</th>\
+         <th>Visit</th></tr></thead><tbody>",
+    );
+    for (d, s) in &served {
+        let commit = commit_html(d, repo_on, &d.commit[..7]);
+        let visit = match &d.visit {
+            Some(url) => format!(
+                "<a data-visit href=\"{0}\" rel=\"nofollow noopener\">Visit</a>",
+                escape(url)
+            ),
+            None => String::new(),
+        };
+        body.push_str(&format!(
+            "<tr data-environment=\"{}\"><td class=\"strong\"><a href=\"{}\">{}</a> {}</td>\
+             <td>{}</td><td>{commit}</td><td>{}</td><td>{visit}</td></tr>",
+            escape(&d.environment),
+            deployment_path(&d.signer, &d.environment),
+            escape(&d.environment),
+            chrome::name(&names, &d.signer),
+            provider_link(&names, &d.primary),
             state_html(s, &names),
         ));
     }
@@ -446,7 +525,7 @@ async fn load(
         .max_by_key(|e| (e.created_at, e.id))
         .into_iter()
         .collect();
-    with_states(pages, &events)
+    with_states(&pages.store, &events)
         .await
         .into_iter()
         .find(|(d, _)| d.environment == environment)
@@ -532,16 +611,7 @@ pub(crate) async fn deployment_page(
     all.dedup();
     let names = Profiles::load(&pages.store, &all).await.into_names();
 
-    let repo_on = pages.apps.serves(App::Repo);
-    let commit = match repo_on {
-        true => format!(
-            "<a class=\"mono\" href=\"{}/commit/{}\">{}</a>",
-            d.repo.repo_path(),
-            chrome::percent_encode(&d.commit),
-            escape(&d.commit)
-        ),
-        false => format!("<span class=\"mono\">{}</span>", escape(&d.commit)),
-    };
+    let commit = commit_html(&d, pages.apps.serves(App::Repo), &d.commit);
     let mut rows = vec![
         ("State", state_html(&s, &names)),
         (

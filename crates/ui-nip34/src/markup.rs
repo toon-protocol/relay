@@ -31,6 +31,7 @@ pub(crate) enum Tab {
     Issues,
     Pulls,
     Commits,
+    Environments,
 }
 
 /// The repo header: its glyph, `owner / name`, the visibility pill, the
@@ -84,6 +85,12 @@ pub(crate) fn repo_header(
     .into_iter()
     .map(|(which, label, icon, href)| chrome::Tab::new(label, icon, href).current(which == tab))
     .collect();
+    if apps.serves(App::Compute) {
+        tabs.push(
+            chrome::Tab::new("Environments", icon::PLAY, format!("{base}/environments"))
+                .current(tab == Tab::Environments),
+        );
+    }
     if apps.serves(App::Social) {
         tabs.push(chrome::Tab::new(
             "Community",
