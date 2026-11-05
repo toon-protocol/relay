@@ -118,7 +118,9 @@ pub(crate) async fn provider_page(
     } else {
         body.push_str(&listing_table(&held.listings));
     }
-    body.push_str(&deployment::serving_section(&pages, &key).await);
+    let served = deployment::serving(&pages, &key).await;
+    body.push_str(&deployment::serving_section(&pages, &served).await);
+    body.push_str(&crate::activity::section(&pages, &key, &served).await);
     html(&pages, StatusCode::OK, &shown, &body)
 }
 
