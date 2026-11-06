@@ -20,6 +20,7 @@
 //! The words are TOON Compute's: Provider, Listing, Liveness.
 
 mod activity;
+mod agent;
 mod deployment;
 mod directory;
 mod provider;

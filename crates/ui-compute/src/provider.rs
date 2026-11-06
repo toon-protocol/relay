@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, RawQuery, State};
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
@@ -353,6 +353,7 @@ fn listing_table(listings: &[Listing]) -> String {
 pub(crate) async fn listing_page(
     State(pages): State<Pages>,
     Path((npub, d)): Path<(String, String)>,
+    RawQuery(query): RawQuery,
 ) -> Response {
     let Some(held) = async {
         let key = parse_pubkey(&npub)?;
@@ -390,6 +391,11 @@ pub(crate) async fn listing_page(
         escape(&chrome::plain_name(&names, &key)),
         escape(&listing.name),
         facts(&rows),
+    ) + &crate::agent::section(
+        listing,
+        &chrome::plain_name(&names, &key),
+        query.as_deref(),
+        &listing_path(listing),
     );
     let description = match (listing.per_hour(), resources_text(listing)) {
         (Some(hour), resources) if !resources.is_empty() => {
@@ -415,8 +421,9 @@ pub(crate) async fn listing_page(
 pub(crate) async fn unnamed_listing_page(
     pages: State<Pages>,
     Path(npub): Path<String>,
+    query: RawQuery,
 ) -> Response {
-    listing_page(pages, Path((npub, String::new()))).await
+    listing_page(pages, Path((npub, String::new())), query).await
 }
 
 /// `/compute/<naddr>`: a Listing's `naddr` redirects to its page.

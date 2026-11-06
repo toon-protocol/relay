@@ -430,4 +430,48 @@ describe('relay image conformance: the /compute app UI', () => {
       ).not.toContain('/compute');
     }
   );
+
+  conformanceTest(
+    'a Listing page works out the lease for an agent: intervals, an exact total, and a request to copy',
+    async () => {
+      const path = `/compute/${npub(provider)}/small`;
+      const naddr = nip19.naddrEncode({
+        kind: 30432,
+        pubkey: getPublicKey(provider),
+        identifier: 'small',
+      });
+      const empty = await html(path);
+      expect(empty).toContain('Use with an agent');
+      expect(empty).not.toContain('data-agent-request');
+      expect(empty).toContain('a spawn would fail until the Provider is live');
+
+      const two = await fetch(`${relay.readUrl}${path}?hours=2&image=nginx`);
+      expect(two.status).toBe(200);
+      expect(two.headers.get('content-security-policy')).toBe(POLICY);
+      const text = await two.text();
+      expect(text).toContain('120 Lease Intervals, 600 µUSDC');
+      expect(text).toContain(`Run \`nginx\` on Listing \`${naddr}\``);
+      expect(text).toContain('port &lt;port&gt;');
+      expect(text).toContain('at most 600 µUSDC');
+      expect(await html(`${path}?intervals=5`)).toContain('25 µUSDC');
+
+      expect(await html(`${path}?hours=1&image=%3Cscript%3E`)).not.toContain(
+        '<script>'
+      );
+      for (const query of [
+        'hours=abc',
+        'hours=0',
+        'hours=-1',
+        'hours=721',
+        'hours=1&intervals=2',
+        'intervals=99999999999999999999',
+      ]) {
+        const page = await html(`${path}?${query}`);
+        expect(page, query).toContain('data-agent-note');
+        expect(page, query).not.toContain('data-agent-request');
+      }
+      const none = await html(`/compute/${npub(provider)}/large?hours=1`);
+      expect(none).toContain('states no price or interval');
+    }
+  );
 });
