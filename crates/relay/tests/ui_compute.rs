@@ -1270,6 +1270,7 @@ async fn a_listing_page_works_out_a_request_for_an_agent() {
     assert_eq!(empty.status, StatusCode::OK);
     assert!(empty.text.contains("Use with an agent"));
     assert!(!empty.text.contains("data-agent-request"));
+    assert!(!empty.text.contains("data-agent-command"));
     assert!(
         empty
             .text
@@ -1294,11 +1295,47 @@ async fn a_listing_page_works_out_a_request_for_an_agent() {
             .contains("for 2 hours (12 × 10 min Lease Intervals), port &lt;port&gt;")
     );
     assert!(two.text.contains("at most 10800 µUSDC"));
+    assert!(
+        two.text.contains(&format!(
+            "<pre data-agent-command>toon compute spawn {naddr} --image nginx --port &lt;port&gt; \
+             --max 10800 --intervals 12 --yes</pre>"
+        )),
+        "{}",
+        two.text
+    );
 
     let five = get(relay, &format!("{base}?intervals=5")).await;
     assert!(five.text.contains("5 × 10 min Lease Intervals"));
     assert!(five.text.contains("4500 µUSDC"));
     assert!(five.text.contains("&lt;image&gt;"));
+    assert!(five.text.contains(
+        "--image &lt;repo&gt;@sha256:&lt;digest&gt; --port &lt;port&gt; --max 4500 --intervals 5 --yes</pre>"
+    ));
+    let digest = "a".repeat(64);
+    let pinned = get(
+        relay,
+        &format!("{base}?intervals=3&image=ghcr.io/x/y@sha256:{digest}&port=8080"),
+    )
+    .await;
+    assert!(
+        pinned.text.contains(&format!(
+            "--image ghcr.io/x/y@sha256:{digest} --port 8080 --max 2700 --intervals 3 --yes</pre>"
+        )),
+        "{}",
+        pinned.text
+    );
+    let typed = get(
+        relay,
+        &format!("{base}?intervals=3&image=a%22%3Cb%3E&port=80%26x"),
+    )
+    .await;
+    assert!(
+        typed.text.contains(
+            "--image a&quot;&lt;b&gt; --port 80&amp;x --max 2700 --intervals 3 --yes</pre>"
+        ),
+        "{}",
+        typed.text
+    );
     let quick = get(relay, &format!("/compute/{npub}/quick?hours=2")).await;
     assert!(
         quick.text.contains("1029 Lease Intervals, 3087 µUSDC"),
@@ -1326,6 +1363,7 @@ async fn a_listing_page_works_out_a_request_for_an_agent() {
         assert_eq!(page.status, StatusCode::OK, "{query}");
         assert!(page.text.contains("data-agent-note"), "{query}");
         assert!(!page.text.contains("data-agent-request"), "{query}");
+        assert!(!page.text.contains("data-agent-command"), "{query}");
         assert!(!page.text.contains("value=\"1"), "{query}");
         assert!(!page.text.contains("value=\"abc"), "{query}");
     }

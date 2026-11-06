@@ -1,5 +1,6 @@
-//! The Listing page's "Use with an agent" box: a script-free GET form, and
-//! the request a person copies to their agent. The relay only does the
+//! The Listing page's "Use with an agent" box: a script-free GET form, the
+//! request a person copies to their agent, and the `toon compute spawn`
+//! command line that buys the same lease. The relay only does the
 //! arithmetic and the text; every number comes from the Listing.
 
 use nostr::event::Kind;
@@ -169,18 +170,24 @@ pub(crate) fn section(
         true => placeholder.to_owned(),
         false => value,
     };
+    let image = or(text("image"), "<repo>@sha256:<digest>");
+    let port = or(text("port"), "<port>");
+    let command = format!(
+        "toon compute spawn {naddr} --image {image} --port {port} --max {} --intervals {} --yes",
+        lease.total, lease.intervals,
+    );
     let request = format!(
         "Run `{}` on Listing `{naddr}` ({} / {}) for {phrase}, port {}, at most {} µUSDC. \
          Extend only while the job is still running; end the lease when it finishes.",
         or(text("image"), "<image>"),
         provider,
         listing.d,
-        or(text("port"), "<port>"),
+        port,
         lease.total,
     );
     out.push_str(&format!(
         "<p class=\"small\" data-agent-total>{} Lease Intervals, {} µUSDC in total{}.</p>\
-         <pre data-agent-request>{}</pre>",
+         <pre data-agent-request>{}</pre><pre data-agent-command>{}</pre>",
         lease.intervals,
         lease.total,
         lease
@@ -188,6 +195,7 @@ pub(crate) fn section(
             .map(|s| format!("; {s} µUSDC for one Warm Standby"))
             .unwrap_or_default(),
         escape(&request),
+        escape(&command),
     ));
     out
 }
