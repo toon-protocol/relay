@@ -105,7 +105,7 @@ ended.
 and the Deployments naming it, newest first.
 
 **Hidden Providers** carry `l` `hidden:true` on their Profile or a Listing, or
-`"hidden": true` in their Profile; their pages say "Anyone-only" and show no
+`"hidden": true` in their Profile; their pages say "Anyone" and show no
 host.
 
 **Out of v1:** Templates, Image Registry entries and Blob Records

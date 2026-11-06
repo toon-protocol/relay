@@ -248,12 +248,12 @@ macro_rules! anyone_mark {
     };
 }
 
-/// The Anyone-only mark of a Hidden Provider, with the Anyone logo.
+/// The Anyone mark of a Hidden Provider, with the Anyone logo.
 pub(crate) const ANYONE_ONLY: &str = concat!(
     "<span class=\"chip chip-hidden\" data-hidden=\"true\" title=\"Reachable only through \
      Anyone; it publishes no host\">",
     anyone_mark!(),
-    "Anyone-only</span>"
+    "Anyone</span>"
 );
 
 /// One Listing as a card; `with_provider` names its Provider on it.

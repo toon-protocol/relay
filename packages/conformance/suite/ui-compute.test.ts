@@ -343,12 +343,12 @@ describe('relay image conformance: the /compute app UI', () => {
   );
 
   conformanceTest(
-    'the filter form works without script, each row shows what its filters match, and a Hidden Provider is Anyone-only with no host',
+    'the filter form works without script, each row shows what its filters match, and a Hidden Provider shows Anyone and no host',
     async () => {
       const page = await html('/compute?arch=x86_64');
       expect(page).toContain('method="get"');
       expect(page).toContain('value="x86_64"');
-      expect(row(page, 'Hid')).toContain('Anyone-only');
+      expect(row(page, 'Hid')).toContain('>Anyone</span>');
       const open = row(await html('/compute'), 'Open') ?? '';
       for (const shown of [
         '>vm</span>',
@@ -365,7 +365,7 @@ describe('relay image conformance: the /compute app UI', () => {
       ]) {
         expect(await html(path), path).not.toContain('secret.example.net');
       }
-      expect(await html(`/compute/p/${npub(hidden)}`)).toContain('Anyone-only');
+      expect(await html(`/compute/p/${npub(hidden)}`)).toContain('>Anyone</span>');
     }
   );
 

@@ -373,6 +373,6 @@ fn filter_form(filters: &Filters, options: &FilterOptions) -> String {
         select("cap", "Capability", &filters.cap, &options.cap),
         hidden(None, "Any"),
         hidden(Some(false), "Public host"),
-        hidden(Some(true), "Anyone-only"),
+        hidden(Some(true), "Anyone"),
     )
 }

@@ -330,13 +330,13 @@ async fn compute_filters_by_query_and_marks_hidden_providers_without_a_host() {
         assert!(one.text.contains(shown), "{shown}: {}", one.text);
     }
 
-    // A Listing labelled hidden makes its Provider Anyone-only on every page.
+    // A Listing labelled hidden makes its Provider Anyone on every page.
     let page = get(relay, &format!("/compute/p/{}", npub_of(&hidden))).await;
-    assert!(page.text.contains("Anyone-only"), "{}", page.text);
+    assert!(page.text.contains(">Anyone</span>"), "{}", page.text);
     assert!(!page.text.contains("secret.example.net"), "{}", page.text);
 
     let page = get(relay, "/compute?arch=x86_64").await;
-    assert!(page.text.contains("Anyone-only"));
+    assert!(page.text.contains(">Anyone</span>"));
     assert!(page.text.contains("value=\"x86_64\""));
     assert!(page.text.contains("method=\"get\""));
     assert!(!page.text.contains("secret.example.net"));
