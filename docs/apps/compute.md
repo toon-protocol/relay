@@ -82,8 +82,8 @@ tab; the other rows are the agreed shape (ADR 0012).
 | Path | What it shows | What it reads |
 | --- | --- | --- |
 | `/compute` | The Provider Directory: live providers first, then by price; `?arch=`, `?isolation=`, `?gpu=`, `?cap=`, `?hidden=` filter | kinds 10432, 30432, 10433 by `#L` |
-| `/compute/p/<npub>` | One provider: its Listings, live status, what it is serving, its activity log, a link to `/social/p/<npub>` | its 10432, 30432, 10433 and 4433; 30433 by its Deployments' workload ids; 30437 by `#p` |
-| `/compute/<npub>/<listing>` | One Listing: resources, price, capacity, capabilities, the provider | the 30432 at that address, the provider's 10432 and 10433 |
+| `/compute/p/<npub>` | One provider: its Listings, live status and when its Liveness was signed, what it is serving, its activity log, a link to `/social/p/<npub>` | its 10432, 30432, 10433 and 4433; 30433 by its Deployments' workload ids; 30437 by `#p` |
+| `/compute/<npub>/<listing>` | One Listing: resources, arch, isolation, price, capacity, capabilities (its content's and its `t` tags, which `?cap=` matches), the provider | the 30432 at that address, the provider's 10432 and 10433 |
 | `/compute/d/<npub>/<environment>` | One Deployment: repository at its commit, provider and Listing, image, Visit link, state | the 30437 at that address; the 30617 it names; the provider's 10433; 4433 by `#x`; 30433 by `#d` |
 | `/repo/<npub>/<d>/environments` | The repository's Environments tab: each environment's provider, commit, state and Visit link | 30437 by `#a` = `A`, signed by an authorized author |
 | `/social/p/<npub>` | A "Compute provider" badge when the key has a 10432 | the key's 10432 |
@@ -104,8 +104,9 @@ ended.
 **A provider's activity log** is its Eviction Notices, the Takeovers naming it
 and the Deployments naming it, newest first.
 
-**Hidden Providers** carry `l` `hidden:true`; their pages say "Anyone-only"
-and show no host.
+**Hidden Providers** carry `l` `hidden:true` on their Profile or a Listing, or
+`"hidden": true` in their Profile; their pages say "Anyone-only" and show no
+host.
 
 **Out of v1:** Templates, Image Registry entries and Blob Records
 (30434–30436), and Deployments in the `/social` feed.

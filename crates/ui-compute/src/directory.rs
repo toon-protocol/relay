@@ -33,17 +33,18 @@ pub(crate) struct Listing {
     /// `what: amount` for each resource the Listing sells.
     pub(crate) resources: Vec<(String, String)>,
     pub(crate) arch: Option<String>,
+    /// The Listing's own `l` `isolation:` label, else its Profile's isolation.
+    pub(crate) isolation: Option<String>,
     /// The Listing's every `l` tag as `name:value`, lowercased: isolation,
     /// arch, hidden, gpu.
     labels: Vec<String>,
-    /// Every `t` tag, lowercased: the capabilities.
-    caps: Vec<String>,
     /// Whether the Listing or its Profile is tagged `l` `hidden:true`: an
     /// Anyone-only provider, whose host is never shown.
     pub(crate) hidden: bool,
     /// The Listing's `d` tag: the key of its capacity in a Liveness.
     pub(crate) d: String,
-    /// What the Listing's `capabilities` says it can do, as text.
+    /// What the Listing can do: its content's `capabilities`, then each `t`
+    /// tag not among them. `?cap=` matches these.
     pub(crate) capabilities: Vec<String>,
     /// µUSDC per Lease Interval.
     pub(crate) price: Option<u64>,
@@ -249,21 +250,46 @@ fn read(listing: &Event, profile: &Event) -> Option<Listing> {
     let arch = text(&content, "arch")
         .or_else(|| label(listing, "arch"))
         .map(|arch| summary(&arch, FIELD_CHARS));
+    let isolation = label(listing, "isolation")
+        .or_else(|| text(&json(&profile.content), "isolation"))
+        .or_else(|| label(profile, "isolation"))
+        .map(|isolation| summary(&isolation, FIELD_CHARS));
+    let mut resources = resources(content.get("resources"));
+    if let Some(gpu) = label(listing, "gpu")
+        && !resources
+            .iter()
+            .any(|(what, _)| what.eq_ignore_ascii_case("gpu"))
+    {
+        resources.push(("gpu".to_owned(), summary(&gpu, FIELD_CHARS)));
+    }
+    let mut capabilities = capabilities(content.get("capabilities"));
+    for cap in tag_values(listing, "t") {
+        if !capabilities
+            .iter()
+            .any(|had| had.eq_ignore_ascii_case(&cap))
+        {
+            capabilities.push(summary(&cap, FIELD_CHARS));
+        }
+    }
     let labels = tag_values(listing, "l");
-    let hidden = [&labels, &tag_values(profile, "l")]
-        .iter()
-        .any(|labels| labels.iter().any(|l| l == "hidden:true"));
+    let hidden = json(&profile.content)
+        .get("hidden")
+        .and_then(Value::as_bool)
+        == Some(true)
+        || [&labels, &tag_values(profile, "l")]
+            .iter()
+            .any(|labels| labels.iter().any(|l| l == "hidden:true"));
     Some(Listing {
         provider: listing.pubkey,
         provider_name: text(&json(&profile.content), "name"),
         name: text(&content, "name").unwrap_or_else(|| d.to_owned()),
-        resources: resources(content.get("resources")),
+        resources,
         arch,
+        isolation,
         hidden,
         labels,
-        caps: tag_values(listing, "t"),
         d: d.to_owned(),
-        capabilities: capabilities(content.get("capabilities")),
+        capabilities,
         price: content.get("price").and_then(count),
         standby_price: content.get("standby_price").and_then(count),
         lease_interval_s: content.get("lease_interval_s").and_then(count),
@@ -394,11 +420,18 @@ fn capabilities(value: Option<&Value>) -> Vec<String> {
 /// Whether `key` holds a Liveness among `liveness` that is unexpired at
 /// `now`; its newest decides.
 pub(crate) fn is_live(liveness: &[Event], key: &PublicKey, now: u64) -> bool {
+    live_since(liveness, key, now).is_some()
+}
+
+/// When `key`'s current Liveness among `liveness` was signed, while it is
+/// unexpired at `now`; its newest decides.
+pub(crate) fn live_since(liveness: &[Event], key: &PublicKey, now: u64) -> Option<u64> {
     liveness
         .iter()
         .filter(|e| e.kind == Kind::from(LIVENESS_KIND) && e.pubkey == *key)
         .max_by_key(|e| (e.created_at, e.id))
-        .is_some_and(|event| expiration(event).is_none_or(|at| at > now))
+        .filter(|event| expiration(event).is_none_or(|at| at > now))
+        .map(|event| event.created_at.as_secs())
 }
 
 /// The first value of each `name` tag, lowercased.
@@ -459,10 +492,21 @@ impl Filters {
                 listing.labels.contains(&want)
             }
         };
-        label("arch", &self.arch)
-            && label("isolation", &self.isolation)
+        // Arch and isolation match what the row shows, wherever it came from.
+        let shown = |value: &Option<String>, want: &str| {
+            want.is_empty()
+                || value
+                    .as_deref()
+                    .is_some_and(|value| value.eq_ignore_ascii_case(want))
+        };
+        shown(&listing.arch, &self.arch)
+            && shown(&listing.isolation, &self.isolation)
             && label("gpu", &self.gpu)
-            && (self.cap.is_empty() || listing.caps.contains(&self.cap.to_lowercase()))
+            && (self.cap.is_empty()
+                || listing
+                    .capabilities
+                    .iter()
+                    .any(|cap| cap.eq_ignore_ascii_case(&self.cap)))
             && self.hidden.is_none_or(|hidden| hidden == listing.hidden)
     }
 }
@@ -858,5 +902,106 @@ mod tests {
         );
         assert!(names(f("arm64", "container", "", "", None)).is_empty());
         assert!(names(f("riscv64", "", "", "", None)).is_empty());
+    }
+
+    #[test]
+    fn a_listings_isolation_gpu_and_capabilities_are_what_its_filters_match() {
+        let provider = Keys::generate();
+        let a = format!("10432:{}:", provider.public_key().to_hex());
+        let profile = signed(&provider, PROFILE_KIND, r#"{"isolation":"vm"}"#, &[]);
+        let labelled = signed(
+            &provider,
+            LISTING_KIND,
+            r#"{"capabilities":["nesting"]}"#,
+            &[
+                tag(&["d", "labelled"]),
+                tag(&["a", &a]),
+                tag(&["l", "isolation:container"]),
+                tag(&["l", "gpu:a100"]),
+                tag(&["t", "Docker"]),
+            ],
+        );
+        let plain = signed(
+            &provider,
+            LISTING_KIND,
+            r#"{"resources":{"gpu":"1x h100"}}"#,
+            &[
+                tag(&["d", "plain"]),
+                tag(&["a", &a]),
+                tag(&["l", "gpu:h100"]),
+            ],
+        );
+        let joined = join(&[profile], &[labelled, plain]);
+        let of = |d: &str| joined.iter().find(|l| l.d == d).expect("joined");
+
+        // A Listing's own label wins; else its Profile's isolation.
+        assert_eq!(of("labelled").isolation.as_deref(), Some("container"));
+        assert_eq!(of("plain").isolation.as_deref(), Some("vm"));
+        // A Profile that says it is hidden makes its Listings Anyone-only.
+        let quiet = signed(&provider, PROFILE_KIND, r#"{"hidden":true}"#, &[]);
+        let unlabelled = signed(
+            &provider,
+            LISTING_KIND,
+            "{}",
+            &[tag(&["d", "q"]), tag(&["a", &a])],
+        );
+        assert!(join(&[quiet], &[unlabelled])[0].hidden);
+        // `?isolation=` and `?arch=` match what the row shows.
+        let isolation = |want: &str| Filters {
+            isolation: want.into(),
+            ..Filters::default()
+        };
+        assert!(isolation("VM").matches(of("plain")));
+        assert!(!isolation("vm").matches(of("labelled")));
+        assert!(isolation("container").matches(of("labelled")));
+        let arm = signed(
+            &provider,
+            LISTING_KIND,
+            r#"{"arch":"arm64"}"#,
+            &[tag(&["d", "arm"]), tag(&["a", &a])],
+        );
+        let profile = signed(&provider, PROFILE_KIND, "{}", &[]);
+        let arm = &join(&[profile], &[arm])[0];
+        let arch = |want: &str| Filters {
+            arch: want.into(),
+            ..Filters::default()
+        };
+        assert!(arch("arm64").matches(arm));
+        assert!(!arch("x86_64").matches(arm));
+        // The GPU label is shown when the resources name no GPU of their own.
+        assert!(
+            of("labelled")
+                .resources
+                .contains(&("gpu".into(), "a100".into()))
+        );
+        assert_eq!(
+            of("plain").resources,
+            vec![("gpu".to_owned(), "1x h100".to_owned())]
+        );
+        // The capabilities are the content's and the `t` tags', and `?cap`
+        // matches every one shown.
+        assert_eq!(of("labelled").capabilities, ["nesting", "docker"]);
+        for cap in ["nesting", "Docker"] {
+            let filter = Filters {
+                cap: cap.into(),
+                ..Filters::default()
+            };
+            assert!(filter.matches(of("labelled")), "{cap}");
+            assert!(!filter.matches(of("plain")), "{cap}");
+        }
+    }
+
+    #[test]
+    fn a_live_provider_is_live_since_its_current_liveness_was_signed() {
+        let provider = Keys::generate();
+        let key = provider.public_key();
+        let now = Timestamp::now().as_secs();
+        let current = liveness(&provider, "{}", now + 60);
+        assert_eq!(
+            live_since(std::slice::from_ref(&current), &key, now),
+            Some(current.created_at.as_secs())
+        );
+        assert_eq!(live_since(&[current], &key, now + 61), None);
+        assert_eq!(live_since(&[], &key, now), None);
     }
 }

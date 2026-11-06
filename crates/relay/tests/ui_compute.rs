@@ -211,6 +211,13 @@ async fn compute_shows_live_status_price_and_standby_live_and_cheapest_first() {
     let cheap_down = row("CheapDown");
     assert!(cheap_down.contains("data-status=\"down\""), "{cheap_down}");
     assert!(cheap_down.contains("1 µUSDC per 3600 s (1 µUSDC per hour)"));
+
+    // A live Provider's page says when its current Liveness was signed.
+    let shown = get(relay, &format!("/compute/p/{}", npub_of(&up))).await;
+    assert!(shown.text.contains("data-live-since=\""), "{}", shown.text);
+    assert!(shown.text.contains("Liveness signed"), "{}", shown.text);
+    let shown = get(relay, &format!("/compute/p/{}", npub_of(&down))).await;
+    assert!(!shown.text.contains("data-live-since"), "{}", shown.text);
 }
 
 #[tokio::test]
@@ -307,6 +314,25 @@ async fn compute_filters_by_query_and_marks_hidden_providers_without_a_host() {
         ),
         (true, false)
     );
+    // Each row shows what its filters match: isolation, GPU, capabilities.
+    let page = get(relay, "/compute").await;
+    let open_row = {
+        let rest = &page.text[page.text.find("data-listing=\"Open\"").expect("Open")..];
+        rest[..rest.find("</tr>").expect("a row end")].to_owned()
+    };
+    for shown in ["<td>vm</td>", "gpu a100", "<td>docker</td>"] {
+        assert!(open_row.contains(shown), "{shown}: {open_row}");
+    }
+    let one = get(relay, &format!("/compute/{}/Open", npub_of(&open))).await;
+    for shown in ["Isolation", "vm", "Capabilities", "docker"] {
+        assert!(one.text.contains(shown), "{shown}: {}", one.text);
+    }
+
+    // A Listing labelled hidden makes its Provider Anyone-only on every page.
+    let page = get(relay, &format!("/compute/p/{}", npub_of(&hidden))).await;
+    assert!(page.text.contains("Anyone-only"), "{}", page.text);
+    assert!(!page.text.contains("secret.example.net"), "{}", page.text);
+
     let page = get(relay, "/compute?arch=x86_64").await;
     assert!(page.text.contains("Anyone-only"));
     assert!(page.text.contains("value=\"x86_64\""));
