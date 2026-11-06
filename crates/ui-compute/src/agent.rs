@@ -1,5 +1,6 @@
-//! The Listing page's "Use with an agent" box: a script-free GET form, and
-//! the request a person copies to their agent. The relay only does the
+//! The Listing page's "Use with an agent" box: a script-free GET form, the
+//! request a person copies to their agent, and the `toon compute spawn`
+//! command line that buys the same lease. The relay only does the
 //! arithmetic and the text; every number comes from the Listing.
 
 use nostr::event::Kind;
@@ -172,8 +173,8 @@ pub(crate) fn section(
     let image = or(text("image"), "<repo>@sha256:<digest>");
     let port = or(text("port"), "<port>");
     let command = format!(
-        "toon compute spawn {naddr} --intervals {} --max {} --image {image} --port {port} --yes",
-        lease.intervals, lease.total,
+        "toon compute spawn {naddr} --image {image} --port {port} --max {} --intervals {} --yes",
+        lease.total, lease.intervals,
     );
     let request = format!(
         "Run `{}` on Listing `{naddr}` ({} / {}) for {phrase}, port {}, at most {} µUSDC. \
@@ -181,7 +182,7 @@ pub(crate) fn section(
         or(text("image"), "<image>"),
         provider,
         listing.d,
-        or(text("port"), "<port>"),
+        port,
         lease.total,
     );
     out.push_str(&format!(

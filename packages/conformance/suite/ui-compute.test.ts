@@ -461,7 +461,7 @@ describe('relay image conformance: the /compute app UI', () => {
       expect(text).toContain('port &lt;port&gt;');
       expect(text).toContain('at most 600 µUSDC');
       expect(text).toContain(
-        `<pre data-agent-command>toon compute spawn ${naddr} --intervals 120 --max 600 --image nginx --port &lt;port&gt; --yes</pre>`
+        `<pre data-agent-command>toon compute spawn ${naddr} --image nginx --port &lt;port&gt; --max 600 --intervals 120 --yes</pre>`
       );
       expect(text).not.toContain('Warm Standby');
       const five = await html(`${path}?intervals=5`);
@@ -469,16 +469,18 @@ describe('relay image conformance: the /compute app UI', () => {
       expect(five).toContain('25 µUSDC');
       expect(five).toContain('Run `&lt;image&gt;`');
       expect(five).toContain(
-        '--intervals 5 --max 25 --image &lt;repo&gt;@sha256:&lt;digest&gt; --port &lt;port&gt; --yes</pre>'
+        '--image &lt;repo&gt;@sha256:&lt;digest&gt; --port &lt;port&gt; --max 25 --intervals 5 --yes</pre>'
       );
       const typed = await html(
         `${path}?intervals=3&image=ghcr.io/x/y@sha256:${'a'.repeat(64)}&port=8080`
       );
       expect(typed).toContain(
-        `--intervals 3 --max 15 --image ghcr.io/x/y@sha256:${'a'.repeat(64)} --port 8080 --yes</pre>`
+        `--image ghcr.io/x/y@sha256:${'a'.repeat(64)} --port 8080 --max 15 --intervals 3 --yes</pre>`
       );
-      expect(await html(`${path}?intervals=1&image=%3Cb%3E&port=%26`)).toContain(
-        '--image &lt;b&gt; --port &amp; --yes</pre>'
+      expect(
+        await html(`${path}?intervals=1&image=%3Cb%3E&port=%26`)
+      ).toContain(
+        '--image &lt;b&gt; --port &amp; --max 5 --intervals 1 --yes</pre>'
       );
 
       // A live Provider, a 7 s interval and a Warm Standby.

@@ -1297,8 +1297,8 @@ async fn a_listing_page_works_out_a_request_for_an_agent() {
     assert!(two.text.contains("at most 10800 µUSDC"));
     assert!(
         two.text.contains(&format!(
-            "<pre data-agent-command>toon compute spawn {naddr} --intervals 12 --max 10800 \
-             --image nginx --port &lt;port&gt; --yes</pre>"
+            "<pre data-agent-command>toon compute spawn {naddr} --image nginx --port &lt;port&gt; \
+             --max 10800 --intervals 12 --yes</pre>"
         )),
         "{}",
         two.text
@@ -1308,7 +1308,22 @@ async fn a_listing_page_works_out_a_request_for_an_agent() {
     assert!(five.text.contains("5 × 10 min Lease Intervals"));
     assert!(five.text.contains("4500 µUSDC"));
     assert!(five.text.contains("&lt;image&gt;"));
-    assert!(five.text.contains("--intervals 5 --max 4500 --image &lt;repo&gt;@sha256:&lt;digest&gt; --port &lt;port&gt; --yes</pre>"));
+    assert!(five.text.contains(
+        "--image &lt;repo&gt;@sha256:&lt;digest&gt; --port &lt;port&gt; --max 4500 --intervals 5 --yes</pre>"
+    ));
+    let digest = "a".repeat(64);
+    let pinned = get(
+        relay,
+        &format!("{base}?intervals=3&image=ghcr.io/x/y@sha256:{digest}&port=8080"),
+    )
+    .await;
+    assert!(
+        pinned.text.contains(&format!(
+            "--image ghcr.io/x/y@sha256:{digest} --port 8080 --max 2700 --intervals 3 --yes</pre>"
+        )),
+        "{}",
+        pinned.text
+    );
     let typed = get(
         relay,
         &format!("{base}?intervals=3&image=a%22%3Cb%3E&port=80%26x"),
@@ -1316,7 +1331,7 @@ async fn a_listing_page_works_out_a_request_for_an_agent() {
     .await;
     assert!(
         typed.text.contains(
-            "--intervals 3 --max 2700 --image a&quot;&lt;b&gt; --port 80&amp;x --yes</pre>"
+            "--image a&quot;&lt;b&gt; --port 80&amp;x --max 2700 --intervals 3 --yes</pre>"
         ),
         "{}",
         typed.text
