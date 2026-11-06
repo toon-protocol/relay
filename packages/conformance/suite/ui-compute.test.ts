@@ -438,6 +438,7 @@ describe('relay image conformance: the /compute app UI', () => {
       const empty = await html(path);
       expect(empty).toContain('Use with an agent');
       expect(empty).not.toContain('data-agent-request');
+      expect(empty).not.toContain('data-agent-command');
       expect(empty).toContain('a spawn would fail until the Provider is live');
 
       const two = await fetch(`${relay.readUrl}${path}?hours=2&image=nginx`);
@@ -459,11 +460,26 @@ describe('relay image conformance: the /compute app UI', () => {
       });
       expect(text).toContain('port &lt;port&gt;');
       expect(text).toContain('at most 600 µUSDC');
+      expect(text).toContain(
+        `<pre data-agent-command>toon compute spawn ${naddr} --intervals 120 --max 600 --image nginx --port &lt;port&gt; --yes</pre>`
+      );
       expect(text).not.toContain('Warm Standby');
       const five = await html(`${path}?intervals=5`);
       expect(five).toContain('5 × 1 min Lease Intervals');
       expect(five).toContain('25 µUSDC');
       expect(five).toContain('Run `&lt;image&gt;`');
+      expect(five).toContain(
+        '--intervals 5 --max 25 --image &lt;repo&gt;@sha256:&lt;digest&gt; --port &lt;port&gt; --yes</pre>'
+      );
+      const typed = await html(
+        `${path}?intervals=3&image=ghcr.io/x/y@sha256:${'a'.repeat(64)}&port=8080`
+      );
+      expect(typed).toContain(
+        `--intervals 3 --max 15 --image ghcr.io/x/y@sha256:${'a'.repeat(64)} --port 8080 --yes</pre>`
+      );
+      expect(await html(`${path}?intervals=1&image=%3Cb%3E&port=%26`)).toContain(
+        '--image &lt;b&gt; --port &amp; --yes</pre>'
+      );
 
       // A live Provider, a 7 s interval and a Warm Standby.
       const dear = await html(`/compute/${npub(up)}/dear-up?hours=2`);
@@ -491,6 +507,7 @@ describe('relay image conformance: the /compute app UI', () => {
         const page = await html(`${path}?${query}`);
         expect(page, query).toContain('data-agent-note');
         expect(page, query).not.toContain('data-agent-request');
+        expect(page, query).not.toContain('data-agent-command');
       }
       const none = await html(`/compute/${npub(provider)}/large?hours=1`);
       expect(none).toContain('states no price or interval');

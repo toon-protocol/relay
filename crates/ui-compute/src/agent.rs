@@ -169,6 +169,12 @@ pub(crate) fn section(
         true => placeholder.to_owned(),
         false => value,
     };
+    let image = or(text("image"), "<repo>@sha256:<digest>");
+    let port = or(text("port"), "<port>");
+    let command = format!(
+        "toon compute spawn {naddr} --intervals {} --max {} --image {image} --port {port} --yes",
+        lease.intervals, lease.total,
+    );
     let request = format!(
         "Run `{}` on Listing `{naddr}` ({} / {}) for {phrase}, port {}, at most {} µUSDC. \
          Extend only while the job is still running; end the lease when it finishes.",
@@ -180,7 +186,7 @@ pub(crate) fn section(
     );
     out.push_str(&format!(
         "<p class=\"small\" data-agent-total>{} Lease Intervals, {} µUSDC in total{}.</p>\
-         <pre data-agent-request>{}</pre>",
+         <pre data-agent-request>{}</pre><pre data-agent-command>{}</pre>",
         lease.intervals,
         lease.total,
         lease
@@ -188,6 +194,7 @@ pub(crate) fn section(
             .map(|s| format!("; {s} µUSDC for one Warm Standby"))
             .unwrap_or_default(),
         escape(&request),
+        escape(&command),
     ));
     out
 }
