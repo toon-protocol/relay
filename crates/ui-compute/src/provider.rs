@@ -9,17 +9,14 @@ use axum::response::{IntoResponse, Redirect, Response};
 use nostr::event::{Event, Kind};
 use nostr::key::PublicKey;
 use nostr::nips::nip19::{FromBech32, Nip19, Nip19Coordinate};
-use nostr::types::Timestamp;
-use relay_ui::chrome::{self, App, Apps, Identicon, Profiles, escape};
+use relay_ui::chrome::{self, App, Identicon, Profiles, escape};
 use relay_ui::meta::Preview;
 use ui_preview::{Card, Face};
 
 use crate::deployment;
 use crate::directory::{self, LISTING_KIND, LIVENESS_KIND, Listing, PROFILE_KIND, Provider};
-use crate::{
-    PREFIX, Pages, capability_list, card_stem, directory_filter, fallback, html_with, per_hour,
-    price, resources, resources_text, standby, status,
-};
+use crate::view;
+use crate::{PREFIX, Pages, card_stem, directory_filter, fallback, html_with};
 
 /// A key's name, linking to its `/compute` Provider page.
 pub(crate) fn provider_link(names: &HashMap<PublicKey, String>, key: &PublicKey) -> String {
@@ -30,7 +27,7 @@ pub(crate) fn provider_link(names: &HashMap<PublicKey, String>, key: &PublicKey)
     )
 }
 
-fn provider_path(key: &PublicKey) -> String {
+pub(crate) fn provider_path(key: &PublicKey) -> String {
     format!("{PREFIX}/p/{}", chrome::npub(key))
 }
 
@@ -119,27 +116,43 @@ pub(crate) async fn provider_page(
     };
     let key = held.provider.key;
     let names = names(&pages, &held.provider).await;
-    let shown = chrome::plain_name(&names, &key);
-    let mut body = format!(
-        "<p class=\"muted small\"><a href=\"{PREFIX}\">Compute</a></p>\
-         <h1 class=\"page-title\">{}{}</h1>",
-        chrome::person_avatar(&pages.apps, &key, false),
-        escape(&shown),
-    );
-    body.push_str(&provider_facts(
-        &pages.apps,
-        &held.provider,
-        held.live_since,
-    ));
-    body.push_str("<h2>Listings</h2>");
-    if held.listings.is_empty() {
-        body.push_str("<div class=\"box\"><div class=\"empty\">No Listings here.</div></div>");
-    } else {
-        body.push_str(&listing_table(&held.listings));
-    }
+    let shown = chrome::shown_name(&names, &key);
     let served = deployment::serving(&pages, &key).await;
-    body.push_str(&deployment::serving_section(&pages, &served).await);
-    body.push_str(&crate::activity::section(&pages, &key, &served).await);
+    let listings = match held.listings.is_empty() {
+        true => view::blankslate("This Provider publishes no Listings here."),
+        false => view::listing_grid(&pages.apps, &names, &held.listings, false),
+    };
+    let body = format!(
+        "<nav class=\"compute-crumbs\"><a href=\"{PREFIX}\">Compute</a><span>/</span><span>Provider</span></nav>\
+         <header class=\"compute-hero\">{avatar}<div class=\"who\"><h1>{name}{hidden}</h1>\
+         <div class=\"meta\"><span class=\"npub\" title=\"{npub}\">{short}</span>{social}</div></div>\
+         <div class=\"side\">{status}</div></header>\
+         <div class=\"split\"><div class=\"main\">\
+         <section class=\"compute-section\"><div class=\"section-head\"><h2 class=\"section-title\">Listings \
+         <span class=\"count\">{count}</span></h2></div>{listings}</section>{serving}{activity}</div>\
+         <aside class=\"compute-side\">{about}</aside></div>",
+        avatar = chrome::person_avatar(&pages.apps, &key, false),
+        name = escape(&shown),
+        hidden = if held.provider.hidden {
+            view::ANYONE_ONLY
+        } else {
+            ""
+        },
+        npub = chrome::npub(&key),
+        short = short_npub(&key),
+        social = match pages.apps.serves(App::Social) {
+            true => format!(
+                "<a data-social href=\"{}\">Social profile</a>",
+                chrome::profile_path(&key)
+            ),
+            false => String::new(),
+        },
+        status = view::provider_status(held.live_since),
+        count = held.listings.len(),
+        serving = deployment::serving_section(&pages, &served).await,
+        activity = crate::activity::section(&pages, &key, &served).await,
+        about = provider_about(&held.provider),
+    );
     // A key with no name is its npub's start, as the cards name it, not
     // the initials the page heads with.
     let named = chrome::shown_name(&names, &key);
@@ -156,7 +169,7 @@ pub(crate) async fn provider_page(
         provider_card_path(&key),
         format!("{named}, a Compute Provider"),
     );
-    html_with(&pages, StatusCode::OK, &shown, &body, &preview)
+    html_with(&pages, StatusCode::OK, &named, &body, &preview)
 }
 
 fn liveness_word(live: bool) -> &'static str {
@@ -229,10 +242,10 @@ pub(crate) async fn listing_card(
                 name: listing.name.clone(),
                 provider: chrome::shown_name(&names, &key),
                 avatar: Identicon::of(&key),
-                resources: resources_text(listing),
+                resources: view::spec_text(listing),
                 per_hour: listing
                     .per_hour()
-                    .map(|hour| format!("{} per hour", per_hour(hour))),
+                    .map(|hour| format!("{} per hour", view::hourly(hour))),
                 live: listing.live,
             }),
         ))
@@ -241,112 +254,83 @@ pub(crate) async fn listing_card(
     pages.previews.respond(&headers, card).await
 }
 
-/// The Provider's Profile fields.
-fn provider_facts(apps: &Apps, provider: &Provider, live_since: Option<u64>) -> String {
-    let mut rows = vec![(
-        "Status",
-        match live_since {
-            Some(at) => format!(
-                "<span data-status=\"live\">live</span> \
-                 <span class=\"muted small\" data-live-since=\"{at}\">Liveness signed {}</span>",
-                chrome::ago(Timestamp::from_secs(at)),
-            ),
-            None => "<span data-status=\"down\">down</span>".to_owned(),
-        },
-    )];
-    if provider.hidden {
-        rows.push((
-            "Visibility",
-            "<span data-hidden=\"true\">Anyone-only</span>".to_owned(),
-        ));
-    }
+/// `npub1abcdefgh…uvwxyz`, the whole of it in its title.
+pub(crate) fn short_npub(key: &PublicKey) -> String {
+    let npub = chrome::npub(key);
+    format!("{}…{}", &npub[..12], &npub[npub.len() - 6..])
+}
+
+/// A long token or address as its two ends, the whole of it in its title.
+fn short_code(text: &str) -> String {
+    let shown = match text.chars().count() > 18 {
+        true => {
+            let chars: Vec<char> = text.chars().collect();
+            format!(
+                "{}…{}",
+                chars[..8].iter().collect::<String>(),
+                chars[chars.len() - 6..].iter().collect::<String>()
+            )
+        }
+        false => text.to_owned(),
+    };
+    format!("<code title=\"{}\">{}</code>", escape(text), escape(&shown))
+}
+
+/// The Provider's Profile fields, for the side of its page.
+fn provider_about(provider: &Provider) -> String {
+    let mut rows: Vec<(&str, String)> = Vec::new();
     if let Some(isolation) = &provider.isolation {
         rows.push(("Isolation", escape(isolation)));
     }
-    if let Some(host) = &provider.host {
-        rows.push(("Host", escape(host)));
-    }
-    if !provider.settlement.is_empty() {
-        let chains = provider
-            .settlement
-            .iter()
-            .map(|(chain, tokens)| match tokens.is_empty() {
-                true => escape(chain),
-                false => format!(
-                    "{}: {}",
-                    escape(chain),
-                    tokens
-                        .iter()
-                        .map(|token| escape(token))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-            })
-            .collect::<Vec<_>>()
-            .join("; ");
-        rows.push((
-            "Settlement",
-            format!("<span data-settlement>{chains}</span>"),
-        ));
-    }
-    if !provider.relay_set.is_empty() {
-        let relays = provider
-            .relay_set
-            .iter()
-            .map(|relay| format!("<code>{}</code>", escape(relay)))
-            .collect::<Vec<_>>()
-            .join(" ");
-        rows.push(("Relay Set", relays));
+    match (&provider.host, provider.hidden) {
+        (_, true) => rows.push((
+            "Host",
+            "None published: reachable only through Anyone".to_owned(),
+        )),
+        (Some(host), false) => rows.push(("Host", format!("<code>{}</code>", escape(host)))),
+        (None, false) => {}
     }
     if let Some(seconds) = provider.liveness_interval_s {
-        rows.push(("Liveness every", format!("{seconds} s")));
+        rows.push(("Liveness", format!("every {}", view::interval(seconds))));
     }
-    if apps.serves(App::Social) {
-        rows.push((
-            "Profile",
-            format!(
-                "<a data-social href=\"{}\">Social profile</a>",
-                chrome::profile_path(&provider.key)
-            ),
-        ));
+    let mut out = String::from("<div class=\"side-card\"><h2>About this Provider</h2>");
+    if !rows.is_empty() {
+        out.push_str("<dl class=\"kv\">");
+        for (label, value) in rows {
+            out.push_str(&format!("<dt>{label}</dt><dd>{value}</dd>"));
+        }
+        out.push_str("</dl>");
     }
-    facts(&rows)
-}
-
-pub(crate) fn facts(rows: &[(&str, String)]) -> String {
-    let mut out = String::from(
-        "<div class=\"box\"><div class=\"table-wrap\"><table class=\"data-table\"><tbody>",
-    );
-    for (label, value) in rows {
-        out.push_str(&format!("<tr><th>{label}</th><td>{value}</td></tr>"));
+    if !provider.settlement.is_empty() {
+        out.push_str("<h3>Settlement</h3><ul data-settlement>");
+        for (chain, tokens) in &provider.settlement {
+            let tokens: String = tokens.iter().map(|t| short_code(t)).collect();
+            out.push_str(&format!(
+                "<li><span class=\"chip\">{}</span>{tokens}</li>",
+                escape(chain)
+            ));
+        }
+        out.push_str("</ul>");
     }
-    out.push_str("</tbody></table></div></div>");
+    if !provider.relay_set.is_empty() {
+        out.push_str("<h3>Relay Set</h3><ul>");
+        for relay in &provider.relay_set {
+            out.push_str(&format!("<li><code>{}</code></li>", escape(relay)));
+        }
+        out.push_str("</ul>");
+    }
+    out.push_str("</div>");
     out
 }
 
-/// A Provider's Listings, one per row.
-fn listing_table(listings: &[Listing]) -> String {
-    let mut body = String::from(
-        "<div class=\"box\"><div class=\"table-wrap\"><table class=\"data-table\">\
-         <thead><tr><th>Listing</th><th>Resources</th><th>Arch</th><th>Status</th><th>Price</th>\
-         <th>Standby</th></tr></thead><tbody>",
-    );
-    for listing in listings {
-        body.push_str(&format!(
-            "<tr data-listing=\"{}\"><td class=\"strong\"><a href=\"{}\">{}</a></td>\
-             <td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
-            escape(&listing.name),
-            listing_path(listing),
-            escape(&listing.name),
-            resources(listing),
-            listing.arch.as_deref().map(escape).unwrap_or_default(),
-            status(listing),
-            price(listing),
-            standby(listing),
-        ));
+/// Rows of label and value, as a definition list.
+pub(crate) fn facts(rows: &[(&str, String)]) -> String {
+    let mut out = String::from("<dl class=\"kv\">");
+    for (label, value) in rows {
+        out.push_str(&format!("<dt>{label}</dt><dd>{value}</dd>"));
     }
-    body.push_str("</tbody></table></div></div>");
-    body
+    out.push_str("</dl>");
+    out
 }
 
 /// `/compute/<npub>/<listing>`: one Listing with its Provider.
@@ -367,35 +351,66 @@ pub(crate) async fn listing_page(
         return fallback(State(pages)).await;
     };
     let names = names(&pages, &held.provider).await;
-    let mut rows = vec![
-        ("Provider", provider_link(&names, &key)),
-        ("Status", status(listing)),
-        ("Resources", resources(listing)),
-    ];
+    let mut details: Vec<(&str, String)> = Vec::new();
     if let Some(arch) = &listing.arch {
-        rows.push(("Arch", escape(arch)));
+        details.push(("Arch", escape(arch)));
     }
     if let Some(isolation) = &listing.isolation {
-        rows.push(("Isolation", escape(isolation)));
+        details.push(("Isolation", escape(isolation)));
     }
-    rows.push(("Price", price(listing)));
-    rows.push(("Standby", standby(listing)));
-    if !listing.capabilities.is_empty() {
-        rows.push(("Capabilities", capability_list(listing)));
+    details.push((
+        "Capabilities",
+        match listing.capabilities.is_empty() {
+            true => "None stated".to_owned(),
+            false => listing
+                .capabilities
+                .iter()
+                .map(|c| format!("<span class=\"chip chip-topic\">{}</span>", escape(c)))
+                .collect::<Vec<_>>()
+                .join(" "),
+        },
+    ));
+    if let Some(s) = listing.lease_interval_s {
+        details.push(("Lease Interval", view::interval(s)));
     }
+    let spec = view::spec_html(listing, true);
     let body = format!(
-        "<p class=\"muted small\"><a href=\"{PREFIX}\">Compute</a> / <a href=\"{}\">{}</a></p>\
-         <h1 class=\"page-title\">{}</h1>{}",
-        provider_path(&key),
-        escape(&chrome::plain_name(&names, &key)),
-        escape(&listing.name),
-        facts(&rows),
+        "<nav class=\"compute-crumbs\"><a href=\"{PREFIX}\">Compute</a><span>/</span>\
+         <a href=\"{provider}\">{provider_name}</a><span>/</span><span>Listing</span></nav>\
+         <header class=\"compute-hero\"><div class=\"who\"><h1>{name}{chip}</h1>\
+         <div class=\"meta\">{avatar}<a href=\"{provider}\">{provider_name}</a>{hidden}</div></div></header>\
+         <div class=\"split\"><div class=\"main\">\
+         <div class=\"price-panel\">{price}<span class=\"muted small\">{standby}</span></div>\
+         {resources}\
+         <section class=\"compute-section\"><h2 class=\"section-title\">Details</h2>\
+         <div class=\"box box-body compute-side\">{details}</div></section></div>\
+         <aside class=\"compute-side\">{about}</aside></div>",
+        provider = provider_path(&key),
+        provider_name = escape(&chrome::shown_name(&names, &key)),
+        name = escape(&listing.name),
+        chip = view::status_chip(listing),
+        avatar = chrome::person_avatar(&pages.apps, &key, true),
+        hidden = if listing.hidden {
+            view::ANYONE_ONLY
+        } else {
+            ""
+        },
+        price = view::price_tag(listing),
+        standby = view::standby_text(listing),
+        resources = match spec.is_empty() {
+            true => String::new(),
+            false => format!(
+                "<section class=\"compute-section\"><h2 class=\"section-title\">Resources</h2>{spec}</section>"
+            ),
+        },
+        details = facts(&details),
+        about = provider_about(&held.provider),
     );
-    let description = match (listing.per_hour(), resources_text(listing)) {
+    let description = match (listing.per_hour(), view::spec_text(listing)) {
         (Some(hour), resources) if !resources.is_empty() => {
-            format!("{resources}, {} per hour.", per_hour(hour))
+            format!("{resources}, {} per hour.", view::hourly(hour))
         }
-        (Some(hour), _) => format!("{} per hour.", per_hour(hour)),
+        (Some(hour), _) => format!("{} per hour.", view::hourly(hour)),
         (None, resources) => resources,
     };
     let preview = Preview::new(

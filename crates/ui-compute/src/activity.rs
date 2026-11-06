@@ -105,9 +105,14 @@ pub(crate) async fn section(
         }
     );
     let log = entries(provider, &deployments, &evictions, &takeovers);
-    let mut body = String::from("<h2>Activity</h2>");
+    let mut body = String::from(
+        "<section class=\"compute-section\"><h2 class=\"section-title\">Activity</h2>",
+    );
     if log.is_empty() {
-        body.push_str("<div class=\"box\"><div class=\"empty\">No activity yet.</div></div>");
+        body.push_str(&crate::view::blankslate(
+            "No Eviction Notices, Takeovers or Deployments name this Provider yet.",
+        ));
+        body.push_str("</section>");
         return body;
     }
     let mut all: Vec<PublicKey> = log
@@ -121,19 +126,21 @@ pub(crate) async fn section(
     all.sort();
     all.dedup();
     let names: HashMap<PublicKey, String> = Profiles::load(&pages.store, &all).await.into_names();
-    body.push_str(
-        "<div class=\"box\"><div class=\"table-wrap\"><table class=\"data-table\" data-activity>\
-         <thead><tr><th>When</th><th>Event</th><th>Details</th></tr></thead><tbody>",
-    );
+    body.push_str("<ol class=\"timeline\" data-activity>");
     for (at, entry) in &log {
-        let when = escape(&chrome::date(i64::try_from(*at).unwrap_or(i64::MAX)));
-        let (kind, details) = match entry {
+        let when = chrome::ago(nostr::types::Timestamp::from_secs(*at));
+        let (kind, label, details) = match entry {
             Entry::Eviction { reason, message } => (
                 "eviction",
-                notes_html(reason.as_deref(), message.as_deref()),
+                "Eviction Notice",
+                format!(
+                    "Evicted a workload{}",
+                    notes_html(reason.as_deref(), message.as_deref())
+                ),
             ),
             Entry::Takeover { winner, primary } => (
                 "takeover",
+                "Takeover",
                 format!(
                     "{} took over from {}",
                     provider_link(&names, winner),
@@ -142,8 +149,9 @@ pub(crate) async fn section(
             ),
             Entry::Deployment(d) => (
                 "deployment",
+                "Deployment",
                 format!(
-                    "<a href=\"{}\">{}</a> {}",
+                    "<a href=\"{}\">{}</a> deployed by {}",
                     deployment_path(&d.signer, &d.environment),
                     escape(&d.environment),
                     chrome::name(&names, &d.signer)
@@ -151,11 +159,11 @@ pub(crate) async fn section(
             ),
         };
         body.push_str(&format!(
-            "<tr data-activity-kind=\"{kind}\" data-at=\"{at}\"><td>{when}</td><td>{kind}</td>\
-             <td>{details}</td></tr>"
+            "<li data-activity-kind=\"{kind}\" data-at=\"{at}\"><span class=\"what\">\
+             <span class=\"kind\">{label}</span><br>{details}</span><span class=\"when\">{when}</span></li>"
         ));
     }
-    body.push_str("</tbody></table></div></div>");
+    body.push_str("</ol></section>");
     body
 }
 

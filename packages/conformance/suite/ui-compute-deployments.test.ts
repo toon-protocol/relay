@@ -245,7 +245,7 @@ describe('relay image conformance: Deployments on /compute', () => {
     async () => {
       const page = await html(`/compute/d/${npub(owner)}/moved`);
       // The state itself names the winner, not only the Standby row.
-      const at = page.indexOf('<span data-state="taken-over">');
+      const at = page.indexOf('data-state="taken-over">');
       expect(at).toBeGreaterThan(-1);
       const shown = page.slice(at, page.indexOf('</a>', at));
       expect(shown).toContain('taken over by');

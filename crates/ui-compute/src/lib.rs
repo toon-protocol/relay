@@ -23,6 +23,7 @@ mod activity;
 mod deployment;
 mod directory;
 mod provider;
+mod view;
 
 use std::collections::HashMap;
 
@@ -41,9 +42,7 @@ use relay_ui::{AppUi, ReadOnlyStore};
 use ui_preview::{Mark, Previews};
 
 use directory::{Filters, LABEL_NAMESPACE, LISTING_KIND, LIVENESS_KIND, Listing, PROFILE_KIND};
-use provider::{
-    by_naddr, listing_page, listing_path, provider_link, provider_page, unnamed_listing_page,
-};
+use provider::{by_naddr, listing_page, provider_page, unnamed_listing_page};
 
 /// The mount prefix.
 pub const PREFIX: &str = "/compute";
@@ -198,6 +197,7 @@ async fn index(State(pages): State<Pages>, RawQuery(query): RawQuery) -> Respons
         pages.store.query(directory_filter(LIVENESS_KIND)),
     );
     let mut listings = directory::join(&profiles, &listings);
+    let options = FilterOptions::of(&listings);
     listings.retain(|l| filters.matches(l));
     let keys: Vec<PublicKey> = {
         let mut keys: Vec<PublicKey> = listings.iter().map(|l| l.provider).collect();
@@ -225,7 +225,7 @@ async fn index(State(pages): State<Pages>, RawQuery(query): RawQuery) -> Respons
         &pages,
         StatusCode::OK,
         "Compute",
-        &directory_page(&pages.apps, &names, &listings, &filters),
+        &directory_page(&pages.apps, &names, &listings, &filters, &options),
     )
 }
 
@@ -234,113 +234,43 @@ fn directory_page(
     names: &HashMap<PublicKey, String>,
     listings: &[Listing],
     filters: &Filters,
+    options: &FilterOptions,
 ) -> String {
-    let mut body = String::from(
-        "<h1 class=\"page-title\">Compute</h1>\
-         <p class=\"muted small\" data-notice=\"relay-only\">This lists only Providers that publish \
-         to this relay. A Provider whose Relay Set leaves this relay out is not listed here.</p>",
+    let providers: std::collections::HashSet<&PublicKey> =
+        listings.iter().map(|l| &l.provider).collect();
+    let live: std::collections::HashSet<&PublicKey> = listings
+        .iter()
+        .filter(|l| l.live)
+        .map(|l| &l.provider)
+        .collect();
+    let stat = |n: usize, one: &str, many: &str| {
+        format!(
+            "<div><strong>{n}</strong>{}</div>",
+            if n == 1 { one } else { many }
+        )
+    };
+    let mut body = format!(
+        "<div class=\"stack\"><div class=\"compute-head\"><div><h1 class=\"page-title\">Compute</h1>\
+         <p class=\"lead\">Rent a slice of a Provider's machine for a Lease Interval at a time, \
+         paid in µUSDC. Live Providers come first, then the cheapest per hour.</p>\
+         <p class=\"compute-note\" data-notice=\"relay-only\">This lists only Providers that publish \
+         to this relay. A Provider whose Relay Set leaves this relay out is not listed here.</p></div>\
+         <div class=\"compute-stats\">{}{}{}</div></div>",
+        stat(providers.len(), "Provider", "Providers"),
+        stat(live.len(), "live", "live"),
+        stat(listings.len(), "Listing", "Listings"),
     );
-    body.push_str(&filter_form(filters));
+    body.push_str(&filter_form(filters, options));
     if listings.is_empty() {
-        let none = match filters.is_empty() {
+        body.push_str(&view::blankslate(match filters.is_empty() {
             true => "No Listings here yet.",
             false => "No Listings match these filters.",
-        };
-        body.push_str(&format!(
-            "<div class=\"box\"><div class=\"empty\">{none}</div></div>"
-        ));
-        return body;
+        }));
+    } else {
+        body.push_str(&view::listing_grid(apps, names, listings, true));
     }
-    body.push_str(
-        "<div class=\"box\"><div class=\"table-wrap\"><table class=\"data-table\">\
-         <thead><tr><th>Provider</th><th>Listing</th><th>Resources</th><th>Arch</th><th>Isolation</th><th>Capabilities</th><th>Status</th><th>Price</th><th>Standby</th></tr></thead><tbody>",
-    );
-    for listing in listings {
-        body.push_str(&format!(
-            "<tr data-listing=\"{}\"><td><span>{}{}</span>{}</td><td class=\"strong\"><a href=\"{}\">{}</a></td>\
-             <td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
-            escape(&listing.name),
-            chrome::person_avatar(apps, &listing.provider, true),
-            provider_link(names, &listing.provider),
-            match listing.hidden {
-                true => " <span class=\"muted small\" data-hidden=\"true\">Anyone-only</span>",
-                false => "",
-            },
-            listing_path(listing),
-            escape(&listing.name),
-            resources(listing),
-            listing.arch.as_deref().map(escape).unwrap_or_default(),
-            listing.isolation.as_deref().map(escape).unwrap_or_default(),
-            capability_list(listing),
-            status(listing),
-            price(listing),
-            standby(listing),
-        ));
-    }
-    body.push_str("</tbody></table></div></div>");
+    body.push_str("</div>");
     body
-}
-
-/// What the Listing can do, comma-separated.
-pub(crate) fn capability_list(listing: &Listing) -> String {
-    let caps: Vec<String> = listing.capabilities.iter().map(|c| escape(c)).collect();
-    caps.join(", ")
-}
-
-/// Live with its capacity, or down.
-pub(crate) fn status(listing: &Listing) -> String {
-    match (listing.live, listing.available) {
-        (true, Some(n)) => format!("<span data-status=\"live\">live, {n} available</span>"),
-        (true, None) => "<span data-status=\"live\">live</span>".to_owned(),
-        (false, _) => "<span data-status=\"down\">down</span>".to_owned(),
-    }
-}
-
-/// The price per Lease Interval and per hour, exactly.
-pub(crate) fn price(listing: &Listing) -> String {
-    let Some(price) = listing.price else {
-        return String::new();
-    };
-    let mut out = match listing.lease_interval_s {
-        Some(s) => format!("{price} µUSDC per {s} s"),
-        None => format!("{price} µUSDC"),
-    };
-    if let Some(hour) = listing.per_hour() {
-        out.push_str(&format!(" ({} per hour)", per_hour(hour)));
-    }
-    out
-}
-
-pub(crate) fn per_hour(hour: directory::PerHour) -> String {
-    match hour.remainder {
-        0 => format!("{} µUSDC", hour.whole),
-        r => format!("{} + {}/{} µUSDC", hour.whole, r, hour.interval),
-    }
-}
-
-pub(crate) fn standby(listing: &Listing) -> String {
-    match listing.standby_price {
-        Some(price) => format!("{price} µUSDC"),
-        None => "no standbys".to_owned(),
-    }
-}
-
-/// The Listing's resources as `what amount` pairs.
-pub(crate) fn resources(listing: &Listing) -> String {
-    escape(&resources_text(listing))
-}
-
-/// [`resources`] as plain text, for a card.
-pub(crate) fn resources_text(listing: &Listing) -> String {
-    listing
-        .resources
-        .iter()
-        .map(|(what, amount)| match what.is_empty() {
-            true => amount.clone(),
-            false => format!("{what} {amount}"),
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 /// A card's file name `<stem>.png`: the stem, which may be empty (a Listing
@@ -353,14 +283,55 @@ fn now() -> u64 {
     u64::try_from(chrome::now()).unwrap_or(0)
 }
 
+/// The values the directory's filters can take: those its Listings hold.
+pub(crate) struct FilterOptions {
+    arch: Vec<String>,
+    isolation: Vec<String>,
+    gpu: Vec<String>,
+    cap: Vec<String>,
+}
+
+impl FilterOptions {
+    fn of(listings: &[Listing]) -> Self {
+        let collect = |values: &mut dyn Iterator<Item = String>| {
+            let mut values: Vec<String> = values.map(|v| v.to_lowercase()).collect();
+            values.sort();
+            values.dedup();
+            values
+        };
+        Self {
+            arch: collect(&mut listings.iter().filter_map(|l| l.arch.clone())),
+            isolation: collect(&mut listings.iter().filter_map(|l| l.isolation.clone())),
+            gpu: collect(&mut listings.iter().filter_map(|l| l.gpu().map(str::to_owned))),
+            cap: collect(&mut listings.iter().flat_map(|l| l.capabilities.clone())),
+        }
+    }
+}
+
 /// The GET form that narrows the directory: it works without script, keeps
 /// the current values, and its URL is the filtered page.
-fn filter_form(filters: &Filters) -> String {
-    let field = |name: &str, label: &str, value: &str| {
+fn filter_form(filters: &Filters, options: &FilterOptions) -> String {
+    let select = |name: &str, label: &str, current: &str, values: &[String]| {
+        let mut values = values.to_vec();
+        if !current.is_empty() && !values.iter().any(|v| v.eq_ignore_ascii_case(current)) {
+            values.push(current.to_owned());
+        }
+        let options: String = values
+            .iter()
+            .map(|value| {
+                format!(
+                    "<option value=\"{0}\"{1}>{0}</option>",
+                    escape(value),
+                    if value.eq_ignore_ascii_case(current) {
+                        " selected"
+                    } else {
+                        ""
+                    }
+                )
+            })
+            .collect();
         format!(
-            "<label class=\"small muted\">{label} <input type=\"text\" name=\"{name}\" \
-             value=\"{}\"></label> ",
-            escape(value)
+            "<label>{label}<select name=\"{name}\"><option value=\"\">Any</option>{options}</select></label>"
         )
     };
     let hidden = |value: Option<bool>, text: &str| {
@@ -371,16 +342,25 @@ fn filter_form(filters: &Filters) -> String {
         let value = value.map(|v| v.to_string()).unwrap_or_default();
         format!("<option value=\"{value}\"{selected}>{text}</option>")
     };
+    let clear = match filters.is_empty() {
+        true => String::new(),
+        false => format!("<a href=\"{PREFIX}\">Clear</a>"),
+    };
     format!(
-        "<form method=\"get\" action=\"{PREFIX}\" class=\"box\" data-filters>{}{}{}{}\
-         <label class=\"small muted\">Hidden <select name=\"hidden\">{}{}{}</select></label> \
-         <button type=\"submit\">Filter</button> <a href=\"{PREFIX}\">Clear</a></form>",
-        field("arch", "Arch", &filters.arch),
-        field("isolation", "Isolation", &filters.isolation),
-        field("gpu", "GPU", &filters.gpu),
-        field("cap", "Capability", &filters.cap),
-        hidden(None, "any"),
+        "<form method=\"get\" action=\"{PREFIX}\" class=\"filter-bar\" data-filters>{}{}{}{}\
+         <label>Reachability<select name=\"hidden\">{}{}{}</select></label>\
+         <div class=\"go\"><button class=\"btn\" type=\"submit\">Filter</button>{clear}</div></form>",
+        select("arch", "Arch", &filters.arch, &options.arch),
+        select(
+            "isolation",
+            "Isolation",
+            &filters.isolation,
+            &options.isolation
+        ),
+        select("gpu", "GPU", &filters.gpu, &options.gpu),
+        select("cap", "Capability", &filters.cap, &options.cap),
+        hidden(None, "Any"),
+        hidden(Some(false), "Public host"),
         hidden(Some(true), "Anyone-only"),
-        hidden(Some(false), "not hidden"),
     )
 }

@@ -337,11 +337,12 @@ pub(crate) async fn serving(pages: &Pages, provider: &PublicKey) -> Vec<(Deploym
 fn state_html(state: &Standing, names: &HashMap<PublicKey, String>) -> String {
     match state {
         Standing::Running { until } => format!(
-            "<span data-state=\"running\">running on a live provider until {}</span>",
+            "<span class=\"dstate running\" data-state=\"running\">running on a live provider until {}</span>",
             escape(&chrome::date(i64::try_from(*until).unwrap_or(i64::MAX)))
         ),
         Standing::ProviderDown => {
-            "<span data-state=\"provider-down\">provider down</span>".to_owned()
+            "<span class=\"dstate provider-down\" data-state=\"provider-down\">provider down</span>"
+                .to_owned()
         }
         Standing::Evicted {
             by,
@@ -349,14 +350,14 @@ fn state_html(state: &Standing, names: &HashMap<PublicKey, String>) -> String {
             message,
         } => {
             let mut out = format!(
-                "<span data-state=\"evicted\">evicted by {}</span>",
+                "<span class=\"dstate evicted\" data-state=\"evicted\">evicted by {}</span>",
                 provider_link(names, by)
             );
             out.push_str(&notes_html(reason.as_deref(), message.as_deref()));
             out
         }
         Standing::TakenOver { winner } => format!(
-            "<span data-state=\"taken-over\">taken over by {}</span>",
+            "<span class=\"dstate taken-over\" data-state=\"taken-over\">taken over by {}</span>",
             provider_link(names, winner)
         ),
     }
@@ -366,10 +367,16 @@ fn state_html(state: &Standing, names: &HashMap<PublicKey, String>) -> String {
 pub(crate) fn notes_html(reason: Option<&str>, message: Option<&str>) -> String {
     let mut out = String::new();
     if let Some(reason) = reason {
-        out.push_str(&format!(" <span data-reason>{}</span>", escape(reason)));
+        out.push_str(&format!(
+            " <span class=\"chip\" data-reason>{}</span>",
+            escape(reason)
+        ));
     }
     if let Some(message) = message {
-        out.push_str(&format!(" <span data-message>{}</span>", escape(message)));
+        out.push_str(&format!(
+            "<span class=\"evict-note\" data-message>{}</span>",
+            escape(message)
+        ));
     }
     out
 }
@@ -413,29 +420,35 @@ fn commit_html(deployment: &Deployment, repo_on: bool, label: &str) -> String {
 
 /// The Serving section of a provider page. `served` is [`serving`]'s answer for the provider.
 pub(crate) async fn serving_section(pages: &Pages, served: &[(Deployment, Standing)]) -> String {
-    let mut body = String::from("<h2>Serving</h2>");
+    let mut body = format!(
+        "<section class=\"compute-section\"><h2 class=\"section-title\">Serving \
+         <span class=\"count\">{}</span></h2>",
+        served.len()
+    );
     if served.is_empty() {
-        body.push_str("<div class=\"box\"><div class=\"empty\">No Deployments name this provider.</div></div>");
+        body.push_str(&crate::view::blankslate(
+            "No Deployments name this Provider. A tenant publishes one to say where its \
+             repository runs.",
+        ));
+        body.push_str("</section>");
         return body;
     }
     let names = names_of(&pages.store, served).await;
-    body.push_str(
-        "<div class=\"box\"><div class=\"table-wrap\"><table class=\"data-table\">\
-         <thead><tr><th>Deployment</th><th>Repository</th><th>State</th></tr></thead><tbody>",
-    );
+    body.push_str("<ul class=\"row-list\">");
     for (d, s) in served {
         body.push_str(&format!(
-            "<tr data-deployment=\"{}\"><td class=\"strong\"><a href=\"{}\">{}</a> {}</td>\
-             <td>{}</td><td>{}</td></tr>",
+            "<li data-deployment=\"{}\"><div class=\"main\"><span class=\"title\">{} \
+             <span class=\"muted\">/</span> <a href=\"{}\">{}</a></span>\
+             <span class=\"muted small\">by {}</span></div>{}</li>",
             escape(&d.environment),
+            repo_link(pages, &d.repo),
             deployment_path(&d.signer, &d.environment),
             escape(&d.environment),
             chrome::name(&names, &d.signer),
-            repo_link(pages, &d.repo),
             state_html(s, &names),
         ));
     }
-    body.push_str("</tbody></table></div></div>");
+    body.push_str("</ul></section>");
     body
 }
 
@@ -483,7 +496,8 @@ pub(crate) async fn environments(
             None => String::new(),
         };
         body.push_str(&format!(
-            "<tr data-environment=\"{}\"><td class=\"strong\"><a href=\"{}\">{}</a> {}</td>\
+            "<tr data-environment=\"{}\"><td><span class=\"env-name\"><a class=\"strong\" href=\"{}\">{}</a>\
+             <span class=\"muted small\">by {}</span></span></td>\
              <td>{}</td><td>{commit}</td><td>{}</td><td>{visit}</td></tr>",
             escape(&d.environment),
             deployment_path(&d.signer, &d.environment),
@@ -612,8 +626,7 @@ pub(crate) async fn deployment_page(
     let names = Profiles::load(&pages.store, &all).await.into_names();
 
     let commit = commit_html(&d, pages.apps.serves(App::Repo), &d.commit);
-    let mut rows = vec![
-        ("State", state_html(&s, &names)),
+    let mut running = vec![
         (
             "Repository",
             format!(
@@ -623,6 +636,11 @@ pub(crate) async fn deployment_page(
             ),
         ),
         ("Commit", commit),
+    ];
+    if let Some(image) = &d.image {
+        running.push(("Image", format!("<code>sha256:{}</code>", escape(image))));
+    }
+    let mut placed = vec![
         ("Provider", provider_link(&names, &d.primary)),
         (
             "Listing",
@@ -636,35 +654,42 @@ pub(crate) async fn deployment_page(
     ];
     if !d.standby.is_empty() {
         let standby: Vec<String> = d.standby.iter().map(|k| provider_link(&names, k)).collect();
-        rows.push(("Standby", standby.join(", ")));
+        placed.push(("Standby", standby.join(", ")));
     }
-    if let Some(image) = &d.image {
-        rows.push(("Image", format!("<code>sha256:{}</code>", escape(image))));
-    }
-    if let Some(url) = &d.visit {
-        rows.push((
-            "Visit",
-            format!(
-                "<a data-visit href=\"{0}\" rel=\"nofollow noopener\">{0}</a>",
-                escape(url)
-            ),
-        ));
-    }
-    rows.push(("Signed by", chrome::name(&names, &d.signer)));
+    let visit = match &d.visit {
+        Some(url) => format!(
+            "<a class=\"btn btn-success\" data-visit href=\"{0}\" rel=\"nofollow noopener\">Visit</a>\
+             <span class=\"muted small\">{0}</span>",
+            escape(url)
+        ),
+        None => String::new(),
+    };
     let claim = match authorized {
         true => String::new(),
         false => format!(
-            "<p class=\"muted small\" data-claim=\"signer\">This is {}'s claim: that key is not \
-             the repository's owner or one of its maintainers.</p>",
+            "<div class=\"callout claim\" data-claim=\"signer\"><div class=\"text\">This is {}'s \
+             claim: that key is not the repository's owner or one of its maintainers.</div></div>",
             chrome::name(&names, &d.signer)
         ),
     };
     let title = format!("{} · {}", d.repo.d(), d.environment);
     let body = format!(
-        "<p class=\"muted small\"><a href=\"{PREFIX}\">Compute</a></p>\
-         <h1 class=\"page-title\">{}</h1>{claim}{}",
-        escape(&title),
-        crate::provider::facts(&rows),
+        "<nav class=\"compute-crumbs\"><a href=\"{PREFIX}\">Compute</a><span>/</span><span>Deployment</span></nav>\
+         <div class=\"stack\"><header class=\"compute-hero\"><div class=\"who\">\
+         <h1>{repo}<span class=\"muted\">/</span>{env}</h1>\
+         <div class=\"meta\">{state}<span>signed by {signer}</span></div></div>\
+         <div class=\"side\">{visit}</div></header>{claim}\
+         <div class=\"deploy-grid\">\
+         <section class=\"compute-section\"><h2 class=\"section-title\">Workload</h2>\
+         <div class=\"box box-body compute-side\">{running}</div></section>\
+         <section class=\"compute-section\"><h2 class=\"section-title\">Placement</h2>\
+         <div class=\"box box-body compute-side\">{placed}</div></section></div></div>",
+        repo = escape(d.repo.d()),
+        env = escape(&d.environment),
+        state = state_html(&s, &names),
+        signer = chrome::name(&names, &d.signer),
+        running = crate::provider::facts(&running),
+        placed = crate::provider::facts(&placed),
     );
     let preview = Preview::new(
         title.clone(),

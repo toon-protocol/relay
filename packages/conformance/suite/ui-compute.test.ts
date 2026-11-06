@@ -72,7 +72,7 @@ function row(page: string, name: string): string | undefined {
   const at = page.indexOf(`data-listing="${name}"`);
   if (at < 0) return undefined;
   const rest = page.slice(at);
-  return rest.slice(0, rest.indexOf('</tr>'));
+  return rest.slice(0, rest.indexOf('</article>'));
 }
 
 beforeAll(async () => {
@@ -291,18 +291,18 @@ describe('relay image conformance: the /compute app UI', () => {
       expect(at('DearUp')).toBeLessThan(at('CheapDown'));
 
       const cheapUp = row(page, 'CheapUp') ?? '';
-      expect(cheapUp).toContain('live, 3 available');
-      expect(cheapUp).toContain('50 µUSDC per 60 s (3000 µUSDC per hour)');
-      expect(cheapUp).toContain('no standbys');
+      expect(cheapUp).toContain('Live · 3 available');
+      expect(cheapUp).toContain('3,000 µUSDC');
+      expect(cheapUp).toContain('50 µUSDC per 1 min Lease Interval');
+      expect(cheapUp).toContain('No standbys');
       const dearUp = row(page, 'DearUp') ?? '';
       expect(dearUp).toContain('data-status="live"');
-      expect(dearUp).toContain(
-        '1000 µUSDC per 7 s (514285 + 5/7 µUSDC per hour)'
-      );
-      expect(dearUp).toContain('<td>40 µUSDC</td>');
+      expect(dearUp).toContain('514,285 + 5/7 µUSDC');
+      expect(dearUp).toContain('1,000 µUSDC per 7 s Lease Interval');
+      expect(dearUp).toContain('Standby 40 µUSDC per 7 s');
       const cheapDown = row(page, 'CheapDown') ?? '';
       expect(cheapDown).toContain('data-status="down"');
-      expect(cheapDown).toContain('1 µUSDC per 3600 s (1 µUSDC per hour)');
+      expect(cheapDown).toContain('1 µUSDC per 1 h Lease Interval');
     }
   );
 
@@ -350,7 +350,11 @@ describe('relay image conformance: the /compute app UI', () => {
       expect(page).toContain('value="x86_64"');
       expect(row(page, 'Hid')).toContain('Anyone-only');
       const open = row(await html('/compute'), 'Open') ?? '';
-      for (const shown of ['<td>vm</td>', 'gpu a100', '<td>docker</td>']) {
+      for (const shown of [
+        '>vm</span>',
+        '<dt>GPU</dt><dd>a100</dd>',
+        '>docker</span>',
+      ]) {
         expect(open).toContain(shown);
       }
       for (const path of [
@@ -372,16 +376,17 @@ describe('relay image conformance: the /compute app UI', () => {
       for (const shown of [
         'Tidal Metal',
         'vm',
-        'base: USDC',
+        'base',
+        'USDC',
         'wss://relay.example',
-        '5 µUSDC per 60 s',
+        '5 µUSDC per 1 min',
         `href="/compute/${npub(provider)}/small"`,
         `href="/social/p/${npub(provider)}"`,
       ]) {
         expect(page).toContain(shown);
       }
       const one = await html(`/compute/${npub(provider)}/small`);
-      expect(one).toContain('vcpu 2');
+      expect(one).toContain('2 vCPU');
       expect(one).toContain(`href="/compute/p/${npub(provider)}"`);
       const index = await html('/compute');
       expect(index).toContain(`href="/compute/p/${npub(provider)}"`);

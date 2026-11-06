@@ -124,7 +124,7 @@ async fn compute_lists_listings_whose_profile_the_relay_holds() {
     assert_eq!(page.status, StatusCode::OK);
     assert_eq!(page.policy.as_deref(), Some(POLICY));
     assert!(!page.text.contains("<script"));
-    for shown in ["Small", "Large", "vcpu 2", "32 GiB", "arm64", "x86_64"] {
+    for shown in ["Small", "Large", "2 vCPU", "32 GiB", "arm64", "x86_64"] {
         assert!(page.text.contains(shown), "{shown}: {}", page.text);
     }
     assert!(page.text.contains("Tidal &lt;b&gt;Metal&lt;/b&gt;"));
@@ -198,19 +198,21 @@ async fn compute_shows_live_status_price_and_standby_live_and_cheapest_first() {
     assert!(at("DearUp") < at("CheapDown"));
     let row = |name: &str| {
         let rest = &page.text[at(name)..];
-        rest[..rest.find("</tr>").expect("a row end")].to_owned()
+        rest[..rest.find("</article>").expect("a card end")].to_owned()
     };
     let cheap_up = row("CheapUp");
-    assert!(cheap_up.contains("live, 3 available"), "{cheap_up}");
-    assert!(cheap_up.contains("50 µUSDC per 60 s (3000 µUSDC per hour)"));
-    assert!(cheap_up.contains("no standbys"));
+    assert!(cheap_up.contains("Live · 3 available"), "{cheap_up}");
+    assert!(cheap_up.contains("3,000 µUSDC"), "{cheap_up}");
+    assert!(cheap_up.contains("50 µUSDC per 1 min Lease Interval"));
+    assert!(cheap_up.contains("No standbys"));
     let dear_up = row("DearUp");
     assert!(dear_up.contains("data-status=\"live\""), "{dear_up}");
-    assert!(dear_up.contains("1000 µUSDC per 7 s (514285 + 5/7 µUSDC per hour)"));
-    assert!(dear_up.contains("<td>40 µUSDC</td>"));
+    assert!(dear_up.contains("514,285 + 5/7 µUSDC"), "{dear_up}");
+    assert!(dear_up.contains("1,000 µUSDC per 7 s Lease Interval"));
+    assert!(dear_up.contains("Standby 40 µUSDC per 7 s"));
     let cheap_down = row("CheapDown");
     assert!(cheap_down.contains("data-status=\"down\""), "{cheap_down}");
-    assert!(cheap_down.contains("1 µUSDC per 3600 s (1 µUSDC per hour)"));
+    assert!(cheap_down.contains("1 µUSDC per 1 h Lease Interval"));
 
     // A live Provider's page says when its current Liveness was signed.
     let shown = get(relay, &format!("/compute/p/{}", npub_of(&up))).await;
@@ -318,9 +320,9 @@ async fn compute_filters_by_query_and_marks_hidden_providers_without_a_host() {
     let page = get(relay, "/compute").await;
     let open_row = {
         let rest = &page.text[page.text.find("data-listing=\"Open\"").expect("Open")..];
-        rest[..rest.find("</tr>").expect("a row end")].to_owned()
+        rest[..rest.find("</article>").expect("a card end")].to_owned()
     };
-    for shown in ["<td>vm</td>", "gpu a100", "<td>docker</td>"] {
+    for shown in [">vm</span>", "<dt>GPU</dt><dd>a100</dd>", ">docker</span>"] {
         assert!(open_row.contains(shown), "{shown}: {open_row}");
     }
     let one = get(relay, &format!("/compute/{}/Open", npub_of(&open))).await;
@@ -421,10 +423,11 @@ async fn a_provider_and_a_listing_have_pages_linked_with_social() {
     for shown in [
         "Tidal",
         "vm",
-        "base: USDC",
+        "base",
+        "USDC",
         "wss://relay.example",
-        "vcpu 2",
-        "5 µUSDC per 60 s",
+        "2 vCPU",
+        "5 µUSDC per 1 min",
         &format!("href=\"/compute/{npub}/small\""),
         &format!("href=\"/social/p/{npub}\""),
     ] {
@@ -433,7 +436,7 @@ async fn a_provider_and_a_listing_have_pages_linked_with_social() {
 
     let one = get(relay, &format!("/compute/{npub}/small")).await;
     assert_eq!(one.status, StatusCode::OK, "{}", one.text);
-    assert!(one.text.contains("vcpu 2"));
+    assert!(one.text.contains("2 vCPU"));
     assert!(one.text.contains(&format!("href=\"/compute/p/{npub}\"")));
 
     let index = get(relay, "/compute").await;

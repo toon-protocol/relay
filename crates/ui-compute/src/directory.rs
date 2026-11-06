@@ -59,6 +59,11 @@ pub(crate) struct Listing {
 }
 
 impl Listing {
+    /// The GPU its `l` `gpu:` label names.
+    pub(crate) fn gpu(&self) -> Option<&str> {
+        self.labels.iter().find_map(|l| l.strip_prefix("gpu:"))
+    }
+
     /// The price per hour, when the Listing states a price and an interval.
     pub(crate) fn per_hour(&self) -> Option<PerHour> {
         price_per_hour(self.price?, self.lease_interval_s?)
