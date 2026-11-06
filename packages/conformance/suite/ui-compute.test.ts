@@ -435,11 +435,6 @@ describe('relay image conformance: the /compute app UI', () => {
     'a Listing page works out the lease for an agent: intervals, an exact total, and a request to copy',
     async () => {
       const path = `/compute/${npub(provider)}/small`;
-      const naddr = nip19.naddrEncode({
-        kind: 30432,
-        pubkey: getPublicKey(provider),
-        identifier: 'small',
-      });
       const empty = await html(path);
       expect(empty).toContain('Use with an agent');
       expect(empty).not.toContain('data-agent-request');
@@ -450,7 +445,20 @@ describe('relay image conformance: the /compute app UI', () => {
       expect(two.headers.get('content-security-policy')).toBe(POLICY);
       const text = await two.text();
       expect(text).toContain('120 Lease Intervals, 600 µUSDC');
-      expect(text).toContain(`Run \`nginx\` on Listing \`${naddr}\``);
+      // NIP-19 does not fix the TLV order, so the naddr is compared decoded.
+      const naddr = /Run `nginx` on Listing `(naddr1[0-9a-z]+)`/.exec(
+        text
+      )?.[1];
+      expect(naddr).toBeDefined();
+      expect(nip19.decode(naddr!)).toEqual({
+        type: 'naddr',
+        data: {
+          kind: 30432,
+          pubkey: getPublicKey(provider),
+          identifier: 'small',
+          relays: [],
+        },
+      });
       expect(text).toContain('port &lt;port&gt;');
       expect(text).toContain('at most 600 µUSDC');
       expect(text).not.toContain('Warm Standby');
