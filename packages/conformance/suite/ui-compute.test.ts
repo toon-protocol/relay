@@ -446,11 +446,9 @@ describe('relay image conformance: the /compute app UI', () => {
       const text = await two.text();
       expect(text).toContain('120 Lease Intervals, 600 µUSDC');
       // NIP-19 does not fix the TLV order, so the naddr is compared decoded.
-      const naddr = /Run `nginx` on Listing `(naddr1[0-9a-z]+)`/.exec(
-        text
-      )?.[1];
-      expect(naddr).toBeDefined();
-      expect(nip19.decode(naddr!)).toEqual({
+      const naddr =
+        /Run `nginx` on Listing `(naddr1[0-9a-z]+)`/.exec(text)?.[1] ?? '';
+      expect(nip19.decode(naddr)).toEqual({
         type: 'naddr',
         data: {
           kind: 30432,
