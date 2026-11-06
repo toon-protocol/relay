@@ -368,6 +368,7 @@ pub(crate) async fn listing_page(
         return fallback(State(pages)).await;
     };
     let names = names(&pages, &held.provider).await;
+    let provider_name = chrome::plain_name(&names, &key);
     let mut rows = vec![
         ("Provider", provider_link(&names, &key)),
         ("Status", status(listing)),
@@ -388,12 +389,12 @@ pub(crate) async fn listing_page(
         "<p class=\"muted small\"><a href=\"{PREFIX}\">Compute</a> / <a href=\"{}\">{}</a></p>\
          <h1 class=\"page-title\">{}</h1>{}",
         provider_path(&key),
-        escape(&chrome::plain_name(&names, &key)),
+        escape(&provider_name),
         escape(&listing.name),
         facts(&rows),
     ) + &crate::agent::section(
         listing,
-        &chrome::plain_name(&names, &key),
+        &provider_name,
         query.as_deref(),
         &listing_path(listing),
     );

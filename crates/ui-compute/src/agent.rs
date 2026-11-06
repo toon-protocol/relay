@@ -42,25 +42,18 @@ fn work_out(listing: &Listing, duration: &Duration) -> Result<Lease, &'static st
         return Err("This Listing states no price or interval to work from.");
     };
     let too_long = "A lease runs from one Lease Interval to 30 days.";
+    let too_large = "That lease costs more than can be worked out.";
     let intervals = match *duration {
-        Duration::Intervals(n) => n,
-        Duration::Hours(h) => {
-            let seconds = h.checked_mul(3600).ok_or(too_long)?;
-            seconds.div_ceil(interval)
-        }
+        Duration::Hours(h) if h > MAX_SECONDS / 3600 => return Err(too_long),
+        Duration::Hours(h) => (h * 3600).div_ceil(interval),
+        Duration::Intervals(n) => match n.checked_mul(interval) {
+            Some(seconds) if seconds <= MAX_SECONDS => n,
+            _ => return Err(too_long),
+        },
     };
-    if let Duration::Hours(h) = duration
-        && *h > MAX_SECONDS / 3600
-    {
-        return Err(too_long);
-    }
-    let seconds = intervals.checked_mul(interval).ok_or(too_long)?;
-    if seconds > MAX_SECONDS {
-        return Err(too_long);
-    }
-    let total = price.checked_mul(intervals).ok_or(too_long)?;
+    let total = price.checked_mul(intervals).ok_or(too_large)?;
     let standby = match listing.standby_price {
-        Some(p) => Some(p.checked_mul(intervals).ok_or(too_long)?),
+        Some(p) => Some(p.checked_mul(intervals).ok_or(too_large)?),
         None => None,
     };
     Ok(Lease {
@@ -109,66 +102,80 @@ pub(crate) fn section(
             .map(|v| v.trim().to_owned())
             .unwrap_or_default()
     };
-    let (image, port) = (text("image"), text("port"));
-    let field = |name: &str, label: &str, value: String| {
+    let worked = asked(query).and_then(|duration| match duration {
+        None => Ok(None),
+        Some(duration) => {
+            let lease = work_out(listing, &duration)?;
+            let naddr = naddr(listing).ok_or("This Listing has no address to name.")?;
+            Ok(Some((duration, lease, naddr)))
+        }
+    });
+    // A request echoes what it was worked out from; anything else leaves
+    // the form empty.
+    let shown = |name: &str| match worked {
+        Ok(Some(_)) => text(name),
+        _ => String::new(),
+    };
+    let field = |name: &str, label: &str| {
         format!(
             "<label class=\"small muted\">{label} <input type=\"text\" name=\"{name}\" \
              value=\"{}\"></label> ",
-            escape(&value)
+            escape(&shown(name))
         )
     };
-    let echo = |name: &str| param(query, name).unwrap_or_default().trim().to_owned();
-    let form = format!(
-        "<form method=\"get\" action=\"{}\" class=\"box\" data-agent-form>{}{}{}{}\
+    let mut out = format!(
+        "<h2>Use with an agent</h2>\
+         <form method=\"get\" action=\"{}\" class=\"box\" data-agent-form>{}{}{}{}\
          <button type=\"submit\">Work out request</button></form>",
         escape(action),
-        field("hours", "Hours", echo("hours")),
-        field("intervals", "or intervals", echo("intervals")),
-        field("image", "Image", image.clone()),
-        field("port", "Port", port.clone()),
+        field("hours", "Hours"),
+        field("intervals", "or intervals"),
+        field("image", "Image"),
+        field("port", "Port"),
     );
-    let mut out = format!("<h2>Use with an agent</h2>{form}");
     if !listing.live {
         out.push_str(
             "<p class=\"muted small\" data-agent-down>This Listing's Provider is down: a spawn \
              would fail until the Provider is live again.</p>",
         );
     }
-    let duration = match asked(query) {
-        Ok(Some(duration)) => duration,
+    let (duration, lease, naddr) = match worked {
+        Ok(Some(worked)) => worked,
         Ok(None) => return out,
-        Err(note) => return note_after(out, note),
-    };
-    let lease = match work_out(listing, &duration) {
-        Ok(lease) => lease,
-        Err(note) => return note_after(out, note),
-    };
-    let Some(naddr) = naddr(listing) else {
-        return note_after(out, "This Listing has no address to name.");
+        Err(note) => {
+            out.push_str(&format!(
+                "<p class=\"muted small\" data-agent-note>{note}</p>"
+            ));
+            return out;
+        }
     };
     let interval = listing
         .lease_interval_s
         .map(interval_text)
         .unwrap_or_default();
+    let intervals = |n: u64| match n {
+        1 => format!("1 × {interval} Lease Interval"),
+        _ => format!("{n} × {interval} Lease Intervals"),
+    };
     let phrase = match duration {
         Duration::Hours(h) => format!(
-            "{h} {} ({} × {interval} Lease Intervals)",
+            "{h} {} ({})",
             if h == 1 { "hour" } else { "hours" },
-            lease.intervals
+            intervals(lease.intervals)
         ),
-        Duration::Intervals(n) => format!("{n} × {interval} Lease Intervals"),
+        Duration::Intervals(n) => intervals(n),
     };
-    let or = |value: &str, placeholder: &str| match value.is_empty() {
+    let or = |value: String, placeholder: &str| match value.is_empty() {
         true => placeholder.to_owned(),
-        false => value.to_owned(),
+        false => value,
     };
     let request = format!(
         "Run `{}` on Listing `{naddr}` ({} / {}) for {phrase}, port {}, at most {} µUSDC. \
          Extend only while the job is still running; end the lease when it finishes.",
-        or(&image, "<image>"),
+        or(text("image"), "<image>"),
         provider,
         listing.d,
-        or(&port, "<port>"),
+        or(text("port"), "<port>"),
         lease.total,
     );
     out.push_str(&format!(
@@ -181,13 +188,6 @@ pub(crate) fn section(
             .map(|s| format!("; {s} µUSDC for one Warm Standby"))
             .unwrap_or_default(),
         escape(&request),
-    ));
-    out
-}
-
-fn note_after(mut out: String, note: &str) -> String {
-    out.push_str(&format!(
-        "<p class=\"muted small\" data-agent-note>{note}</p>"
     ));
     out
 }

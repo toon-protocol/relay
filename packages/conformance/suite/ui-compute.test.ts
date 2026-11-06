@@ -453,17 +453,33 @@ describe('relay image conformance: the /compute app UI', () => {
       expect(text).toContain(`Run \`nginx\` on Listing \`${naddr}\``);
       expect(text).toContain('port &lt;port&gt;');
       expect(text).toContain('at most 600 µUSDC');
-      expect(await html(`${path}?intervals=5`)).toContain('25 µUSDC');
+      expect(text).not.toContain('Warm Standby');
+      const five = await html(`${path}?intervals=5`);
+      expect(five).toContain('5 × 1 min Lease Intervals');
+      expect(five).toContain('25 µUSDC');
+      expect(five).toContain('Run `&lt;image&gt;`');
 
-      expect(await html(`${path}?hours=1&image=%3Cscript%3E`)).not.toContain(
-        '<script>'
+      // A live Provider, a 7 s interval and a Warm Standby.
+      const dear = await html(`/compute/${npub(up)}/dear-up?hours=2`);
+      expect(dear).not.toContain('a spawn would fail');
+      expect(dear).toContain('1029 Lease Intervals, 1029000 µUSDC');
+      expect(dear).toContain('41160 µUSDC for one Warm Standby');
+      expect(await html(`/compute/${npub(up)}/dear-up?intervals=5`)).toContain(
+        '200 µUSDC for one Warm Standby'
       );
+
+      const script = await html(`${path}?hours=1&image=%3Cscript%3E`);
+      expect(script).toContain('&lt;script&gt;');
+      expect(script).not.toContain('<script>');
       for (const query of [
         'hours=abc',
         'hours=0',
         'hours=-1',
         'hours=721',
         'hours=1&intervals=2',
+        'hours=18446744073709551615',
+        'intervals=0',
+        'intervals=43201',
         'intervals=99999999999999999999',
       ]) {
         const page = await html(`${path}?${query}`);

@@ -1306,6 +1306,10 @@ async fn a_listing_page_works_out_a_request_for_an_agent() {
         quick.text
     );
     assert!(!quick.text.contains("Warm Standby"));
+    let month = get(relay, &format!("/compute/{npub}/quick?hours=720")).await;
+    assert!(month.text.contains("data-agent-request"), "{}", month.text);
+    let one = get(relay, &format!("{base}?intervals=1")).await;
+    assert!(one.text.contains("for 1 × 10 min Lease Interval, port"));
 
     for query in [
         "hours=abc",
@@ -1322,6 +1326,8 @@ async fn a_listing_page_works_out_a_request_for_an_agent() {
         assert_eq!(page.status, StatusCode::OK, "{query}");
         assert!(page.text.contains("data-agent-note"), "{query}");
         assert!(!page.text.contains("data-agent-request"), "{query}");
+        assert!(!page.text.contains("value=\"1"), "{query}");
+        assert!(!page.text.contains("value=\"abc"), "{query}");
     }
     let bare = get(relay, &format!("/compute/{npub}/bare?hours=1")).await;
     assert_eq!(bare.status, StatusCode::OK);
