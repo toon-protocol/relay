@@ -1226,3 +1226,115 @@ async fn provider_listing_and_deployment_pages_name_their_cards_which_are_pngs_w
         );
     }
 }
+
+#[tokio::test]
+async fn a_listing_page_works_out_a_request_for_an_agent() {
+    let running = running_with(|_| None).await;
+    let relay = &running.relay;
+    let provider = Keys::generate();
+    let npub = npub_of(&provider);
+    store(
+        relay,
+        &event(
+            &provider,
+            10_432,
+            r#"{"name":"Tidal"}"#,
+            &[&["L", "toon.network"]],
+        ),
+    )
+    .await;
+    listing(
+        relay,
+        &provider,
+        "slow",
+        r#"{"name":"Slow","price":900,"lease_interval_s":600,"standby_price":40}"#,
+    )
+    .await;
+    listing(
+        relay,
+        &provider,
+        "quick",
+        r#"{"name":"Quick","price":3,"lease_interval_s":7}"#,
+    )
+    .await;
+    listing(relay, &provider, "bare", r#"{"name":"Bare"}"#).await;
+    let naddr = nostr::nips::nip19::ToBech32::to_bech32(&nostr::nips::nip19::Nip19Coordinate::new(
+        nostr::nips::nip01::Coordinate::new(Kind::from(30_432), provider.public_key())
+            .identifier("slow"),
+        [],
+    ))
+    .expect("naddr");
+
+    let base = format!("/compute/{npub}/slow");
+    let empty = get(relay, &base).await;
+    assert_eq!(empty.status, StatusCode::OK);
+    assert!(empty.text.contains("Use with an agent"));
+    assert!(!empty.text.contains("data-agent-request"));
+    assert!(
+        empty
+            .text
+            .contains("a spawn would fail until the Provider is live")
+    );
+
+    let two = get(relay, &format!("{base}?hours=2&image=nginx")).await;
+    assert_eq!(two.status, StatusCode::OK);
+    assert_eq!(two.policy.as_deref(), Some(POLICY));
+    assert!(
+        two.text.contains("12 Lease Intervals, 10800 µUSDC"),
+        "{}",
+        two.text
+    );
+    assert!(two.text.contains("480 µUSDC for one Warm Standby"));
+    assert!(
+        two.text
+            .contains(&format!("Run `nginx` on Listing `{naddr}` (Tidal / slow)"))
+    );
+    assert!(
+        two.text
+            .contains("for 2 hours (12 × 10 min Lease Intervals), port &lt;port&gt;")
+    );
+    assert!(two.text.contains("at most 10800 µUSDC"));
+
+    let five = get(relay, &format!("{base}?intervals=5")).await;
+    assert!(five.text.contains("5 × 10 min Lease Intervals"));
+    assert!(five.text.contains("4500 µUSDC"));
+    assert!(five.text.contains("&lt;image&gt;"));
+    let quick = get(relay, &format!("/compute/{npub}/quick?hours=2")).await;
+    assert!(
+        quick.text.contains("1029 Lease Intervals, 3087 µUSDC"),
+        "{}",
+        quick.text
+    );
+    assert!(!quick.text.contains("Warm Standby"));
+    let month = get(relay, &format!("/compute/{npub}/quick?hours=720")).await;
+    assert!(month.text.contains("data-agent-request"), "{}", month.text);
+    let one = get(relay, &format!("{base}?intervals=1")).await;
+    assert!(one.text.contains("for 1 × 10 min Lease Interval, port"));
+
+    for query in [
+        "hours=abc",
+        "hours=0",
+        "hours=-1",
+        "hours=721",
+        "hours=1&intervals=2",
+        "intervals=0",
+        "intervals=99999999999999999999",
+        "hours=18446744073709551615",
+        "intervals=4321",
+    ] {
+        let page = get(relay, &format!("{base}?{query}")).await;
+        assert_eq!(page.status, StatusCode::OK, "{query}");
+        assert!(page.text.contains("data-agent-note"), "{query}");
+        assert!(!page.text.contains("data-agent-request"), "{query}");
+        assert!(!page.text.contains("value=\"1"), "{query}");
+        assert!(!page.text.contains("value=\"abc"), "{query}");
+    }
+    let bare = get(relay, &format!("/compute/{npub}/bare?hours=1")).await;
+    assert_eq!(bare.status, StatusCode::OK);
+    assert!(bare.text.contains("states no price or interval"));
+    assert!(!bare.text.contains("data-agent-request"));
+
+    let script = get(relay, &format!("{base}?hours=1&image=%3Cscript%3E")).await;
+    assert!(script.text.contains("&lt;script&gt;"));
+    assert!(!script.text.contains("<script>"));
+}
