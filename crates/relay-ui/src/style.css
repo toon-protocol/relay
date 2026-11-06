@@ -32,6 +32,8 @@
   --attention-border: #d4a72c;
   --attention-fg: #7d4e00;
   --done-bg: #fbefff;
+  --anyone-bg: #e3f6f8;
+  --anyone-fg: #06606f;
   --media-bg: #1f2328;
   --contrib-0: #eff2f5;
   --contrib-1: #aceebb;
@@ -71,6 +73,8 @@
     --attention-border: #9e6a03;
     --attention-fg: #e3b341;
     --done-bg: rgba(163, 113, 247, 0.15);
+    --anyone-bg: rgba(20, 181, 198, 0.15);
+    --anyone-fg: #5fd3df;
     --media-bg: #010409;
     --contrib-0: #151b23;
     --contrib-1: #033a16;
@@ -941,7 +945,10 @@ mark { background: var(--brand-soft); color: inherit; border-radius: 2px; paddin
 .live-chip.live::before { background: var(--success); opacity: 1; }
 .live-chip.full { border-color: var(--attention-border); background: var(--attention-bg); color: var(--attention-fg); }
 .live-chip.full::before { background: var(--attention); opacity: 1; }
-.chip-hidden { background: var(--done-bg); border-color: transparent; color: var(--done); }
+.chip-hidden { display: inline-flex; align-items: center; gap: 5px; background: var(--anyone-bg); border-color: transparent; color: var(--anyone-fg); }
+.anyone-mark { width: 13px; height: 13px; flex-shrink: 0; }
+.anyone-band { fill: #06606f; }
+.anyone-ring { fill: #14b5c6; }
 .dstate { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 2px 10px; border-radius: 2em; font-size: 12px; font-weight: 600; line-height: 18px; border: 1px solid transparent; }
 .dstate a { color: inherit; text-decoration: underline; }
 .dstate.running { background: var(--add-bg); color: var(--add-fg); }

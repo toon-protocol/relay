@@ -238,9 +238,23 @@ pub(crate) fn tag_chips(listing: &Listing) -> String {
     }
 }
 
-/// The Anyone-only mark of a Hidden Provider.
-pub(crate) const ANYONE_ONLY: &str = "<span class=\"chip chip-hidden\" data-hidden=\"true\" title=\"Reachable only through Anyone; \
-     it publishes no host\">Anyone-only</span>";
+/// The Anyone network's logo, drawn inline like the other icons (the page
+/// policy loads no image from elsewhere). A macro so `concat!` can take it.
+macro_rules! anyone_mark {
+    () => {
+        "<svg class=\"anyone-mark\" viewBox=\"0 0 483 483\" aria-hidden=\"true\">\
+     <path class=\"anyone-band\" d=\"M478 288C474 311 466 332 456 352C446 371 434 388 420 404C376 452 312 483 241 483C170 483 107 452 63 404C49 388 37 371 27 352C17 334 10 314 6 294C21 319 49 335 81 335C84 335 87 335 90 335C92 338 94 340 95 343C128 389 181 419 242 419C302 419 355 389 388 344C389 341 391 338 393 335C395 335 397 335 400 335C434 335 463 316 478 288C478 288 478 288 478 288z\"/>\
+     <path class=\"anyone-ring\" d=\"M416 242C415 253 406 261 394 261C390 261 385 260 382 258C381 257 381 257 380 256C362 243 342 232 320 224C295 215 269 210 241 210C214 210 187 215 163 224C141 232 121 243 102 256C102 257 101 257 101 258C97 260 93 261 89 261C77 261 67 252 67 240C67 240 67 240 67 239C67 239 67 238 67 238C67 210 73 183 85 160C104 121 138 91 178 75C178 75 178 75 178 75C198 67 219 63 241 63C252 63 263 64 273 66C328 76 374 112 398 160C410 183 416 210 416 238C416 238 416 239 416 240C416 240 416 241 416 242C416 242 416 242 416 242C416 242 416 242 416 242zM241 0C108 0 0 108 0 241C0 242 0 242 0 242C0 243 0 243 0 244C1 276 19 303 46 317C57 322 69 325 83 325C83 325 84 325 84 325C86 325 88 325 90 325C104 324 117 319 128 311C130 310 132 309 134 307C164 286 201 273 241 273C281 273 318 286 349 307C351 309 352 310 354 311C365 319 379 324 393 325C395 325 397 325 399 325C399 325 400 325 400 325C413 325 426 322 437 317C463 303 482 276 483 244C483 243 483 243 483 242C483 242 483 242 483 241C483 108 374 0 241 0C241 0 241 0 241 0C241 0 241 0 241 0z\"/></svg>"
+    };
+}
+
+/// The Anyone-only mark of a Hidden Provider, with the Anyone logo.
+pub(crate) const ANYONE_ONLY: &str = concat!(
+    "<span class=\"chip chip-hidden\" data-hidden=\"true\" title=\"Reachable only through \
+     Anyone; it publishes no host\">",
+    anyone_mark!(),
+    "Anyone-only</span>"
+);
 
 /// One Listing as a card; `with_provider` names its Provider on it.
 pub(crate) fn listing_card(
