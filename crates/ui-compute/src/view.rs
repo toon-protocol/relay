@@ -186,9 +186,10 @@ pub(crate) fn price_tag(listing: &Listing) -> String {
     };
     match listing.per_hour() {
         Some(hour) => format!(
-            "<div class=\"price-tag\" data-price-hour=\"{}\"><span class=\"hourly\">{} \
+            "<div class=\"price-tag\" data-price-hour=\"{}\"><span class=\"hourly{}\">{} \
              <span class=\"unit\">per hour</span></span><span class=\"exact\">{exact}</span></div>",
             hour.whole,
+            if hour.remainder == 0 { "" } else { " fraction" },
             escape(&hourly(hour)),
         ),
         None => format!(

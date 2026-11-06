@@ -126,7 +126,7 @@ pub(crate) async fn section(
     all.sort();
     all.dedup();
     let names: HashMap<PublicKey, String> = Profiles::load(&pages.store, &all).await.into_names();
-    body.push_str("<ol class=\"timeline\" data-activity>");
+    body.push_str("<ol class=\"activity-log\" data-activity>");
     for (at, entry) in &log {
         let when = chrome::ago(nostr::types::Timestamp::from_secs(*at));
         let (kind, label, details) = match entry {

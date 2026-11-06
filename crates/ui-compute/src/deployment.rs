@@ -638,7 +638,10 @@ pub(crate) async fn deployment_page(
         ("Commit", commit),
     ];
     if let Some(image) = &d.image {
-        running.push(("Image", format!("<code>sha256:{}</code>", escape(image))));
+        running.push((
+            "Image",
+            format!("<code class=\"hash\">sha256:{}</code>", escape(image)),
+        ));
     }
     let mut placed = vec![
         ("Provider", provider_link(&names, &d.primary)),
@@ -659,7 +662,7 @@ pub(crate) async fn deployment_page(
     let visit = match &d.visit {
         Some(url) => format!(
             "<a class=\"btn btn-success\" data-visit href=\"{0}\" rel=\"nofollow noopener\">Visit</a>\
-             <span class=\"muted small\">{0}</span>",
+             <span class=\"muted small visit-url\" title=\"{0}\">{0}</span>",
             escape(url)
         ),
         None => String::new(),
@@ -674,11 +677,12 @@ pub(crate) async fn deployment_page(
     };
     let title = format!("{} · {}", d.repo.d(), d.environment);
     let body = format!(
-        "<nav class=\"compute-crumbs\"><a href=\"{PREFIX}\">Compute</a><span>/</span><span>Deployment</span></nav>\
+        "<nav class=\"compute-crumbs\"><a href=\"{PREFIX}\">Compute</a><span>/</span><span>Deployments</span><span>/</span><span>{repo}</span></nav>\
          <div class=\"stack\"><header class=\"compute-hero\"><div class=\"who\">\
          <h1>{repo}<span class=\"muted\">/</span>{env}</h1>\
-         <div class=\"meta\">{state}<span>signed by {signer}</span></div></div>\
-         <div class=\"side\">{visit}</div></header>{claim}\
+         <div class=\"meta\"><span>signed by {signer}</span></div></div>\
+         <div class=\"side\">{visit}</div></header>\
+         <div class=\"state-banner\" data-banner=\"{banner}\">{state}</div>{claim}\
          <div class=\"deploy-grid\">\
          <section class=\"compute-section\"><h2 class=\"section-title\">Workload</h2>\
          <div class=\"box box-body compute-side\">{running}</div></section>\
@@ -687,6 +691,12 @@ pub(crate) async fn deployment_page(
         repo = escape(d.repo.d()),
         env = escape(&d.environment),
         state = state_html(&s, &names),
+        banner = match &s {
+            Standing::Running { .. } => "running",
+            Standing::ProviderDown => "provider-down",
+            Standing::Evicted { .. } => "evicted",
+            Standing::TakenOver { .. } => "taken-over",
+        },
         signer = chrome::name(&names, &d.signer),
         running = crate::provider::facts(&running),
         placed = crate::provider::facts(&placed),

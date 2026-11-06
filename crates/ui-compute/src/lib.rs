@@ -267,7 +267,19 @@ fn directory_page(
             false => "No Listings match these filters.",
         }));
     } else {
-        body.push_str(&view::listing_grid(apps, names, listings, true));
+        // Live first already; the down ones get their own heading.
+        let down = listings.partition_point(|l| l.live);
+        let (live, down) = listings.split_at(down);
+        if !live.is_empty() {
+            body.push_str(&view::listing_grid(apps, names, live, true));
+        }
+        if !down.is_empty() {
+            body.push_str(&format!(
+                "<h2 class=\"group-head\" data-group=\"down\">Not live right now · {}</h2>",
+                down.len()
+            ));
+            body.push_str(&view::listing_grid(apps, names, down, true));
+        }
     }
     body.push_str("</div>");
     body
