@@ -92,9 +92,10 @@ the connector — never re-implement it here.**
 
 ## Shared skills, docs & project context
 
-Cross-cutting agent skills, docs and project context once lived in
-toon-protocol/toon-meta, which is being retired. Nothing this repo needs to
-build, test or ship depends on it; CI, including the no-op merge guard
+Cross-repo context (where each TOON repo lives, the cross-repo glossary, the
+decisions that bind several repos and the shared skills) lives in
+toon-protocol/toon-meta, the org's private home repo. Nothing this repo needs
+to build, test or ship depends on it; CI, including the no-op merge guard
 (`.github/scripts/no-op-merge-guard.sh`), is self-contained.
 
 ## Releasing
