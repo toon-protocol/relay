@@ -91,6 +91,13 @@ const HAS_TAG: &str = "CASE WHEN json_valid(events.tags) THEN EXISTS (\
      SELECT 1 FROM json_each(events.tags) AS tag \
      WHERE json_extract(tag.value, '$[0]') = ? AND json_extract(tag.value, '$[1]') IN";
 
+/// The value of the first tag named by the parameter, or `NULL` when there is
+/// none: the one tag NIP-29 reads an event's group from. `json_valid` comes
+/// first for the reason [`HAS_TAG`] gives.
+const FIRST_TAG_VALUE: &str = "CASE WHEN json_valid(events.tags) THEN (\
+     SELECT json_extract(tag.value, '$[1]') FROM json_each(events.tags) AS tag \
+     WHERE json_extract(tag.value, '$[0]') = ? ORDER BY tag.key LIMIT 1) END";
+
 /// The largest whole number the TypeScript relay reads from an `expiration`
 /// tag: JavaScript's `Number.MAX_SAFE_INTEGER`.
 const MAX_EXPIRATION: u64 = (1 << 53) - 1;
@@ -336,13 +343,18 @@ pub struct Query {
     pub hidden: Vec<Hidden>,
 }
 
-/// Events a query leaves out: those whose `tag` has one of `values`, among
-/// the kinds in `kinds` (`within`) or among all the others (not `within`).
+/// Events a query leaves out: those whose first `tag` has one of `values`,
+/// among the kinds in `kinds` (`within`) or among all the others (not
+/// `within`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hidden {
+    /// The tag whose first occurrence is read, as NIP-29 reads a group.
     pub tag: String,
+    /// The values that hide an event; none hides nothing.
     pub values: Vec<String>,
+    /// The kinds the condition applies to, or does not, by `within`.
     pub kinds: std::ops::RangeInclusive<u16>,
+    /// Whether the condition applies to the kinds in `kinds` or the others.
     pub within: bool,
 }
 
@@ -739,8 +751,11 @@ fn run_query(
         .iter()
         .filter(|hidden| !hidden.values.is_empty())
     {
+        // Hidden when the kind is (or, not `within`, is not) in the range
+        // and the first such tag names one of the values. A missing tag or
+        // value is `NULL`, which `COALESCE` reads as not hidden.
         conditions.push(format!(
-            "NOT ((kind BETWEEN ? AND ?) = ? AND {HAS_TAG} ({})) ELSE 0 END)",
+            "NOT ((kind BETWEEN ? AND ?) = ? AND COALESCE(({FIRST_TAG_VALUE}) IN ({}), 0))",
             placeholders(hidden.values.len())
         ));
         parameters.push(i64::from(*hidden.kinds.start()).into());

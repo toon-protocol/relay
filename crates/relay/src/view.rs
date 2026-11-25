@@ -1,8 +1,8 @@
 //! A reader's view: what one reader may see of the store.
 //!
 //! A reader is anonymous or holds proven keys (NIP-42). What it may see is
-//! the NIP-42 policy's and the NIP-29 groups' rules together. They are asked
-//! here and nowhere else, in two forms that agree: the conditions a store
+//! the NIP-42 policy's and the NIP-29 groups' rules together. The WebSocket
+//! session asks them here, in two forms that agree: the conditions a store
 //! query carries, so `limit` counts only what the reader may see, and a check
 //! of one event, for the live events that reach a subscription without a
 //! query.
@@ -93,7 +93,6 @@ mod tests {
     /// people who read it.
     struct World {
         store: Store,
-        events: Vec<Event>,
         groups: GroupView,
         member: PublicKey,
         wrapped: PublicKey,
@@ -142,7 +141,6 @@ mod tests {
         }
         World {
             store,
-            events,
             groups,
             member: owner.public_key(),
             wrapped: wrapped.public_key(),
@@ -151,59 +149,106 @@ mod tests {
         }
     }
 
-    fn filters() -> Vec<Filter> {
-        vec![
-            Filter::new(),
-            Filter::new().kind(Kind::from(1)),
-            Filter::new().kinds([Kind::from(1), Kind::from(9)]),
-            Filter::new().kind(Kind::from(1059)),
-            Filter::new().kind(Kind::from(39000)),
-        ]
+    /// A small deterministic source of choices, so a failing case is the
+    /// same case on every run.
+    struct Choices(u64);
+
+    impl Choices {
+        /// The next of `n` choices (splitmix64).
+        fn below(&mut self, n: usize) -> usize {
+            self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut z = self.0;
+            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            let n = u64::try_from(n).expect("a small count");
+            usize::try_from((z ^ (z >> 31)) % n).expect("below a usize")
+        }
+
+        fn pick<'a, T>(&mut self, of: &'a [T]) -> &'a T {
+            &of[self.below(of.len())]
+        }
+
+        fn some<T: Clone>(&mut self, of: &[T]) -> Vec<T> {
+            of.iter().filter(|_| self.below(2) == 0).cloned().collect()
+        }
     }
 
+    const GROUPS: [&str; 4] = ["secret", "shut", "open", "unknown"];
+    const KINDS: [u16; 6] = [1, 9, 1059, 39000, 39001, 30023];
+
     #[tokio::test]
-    async fn a_limit_counts_only_what_the_reader_may_see_and_the_check_agrees() {
+    async fn for_generated_readers_filters_and_events_a_limit_counts_only_what_the_check_shows() {
         let world = world().await;
-        let readers = [
-            HashSet::new(),
-            HashSet::from([world.member]),
-            HashSet::from([world.wrapped]),
-            HashSet::from([world.stranger]),
-            HashSet::from([world.member, world.wrapped]),
-        ];
+        let people = [world.member, world.wrapped, world.stranger];
+        let author = Keys::generate();
         let policy = AuthPolicy::default().recipient_only(true);
-        for policy in [None, Some(&policy)] {
-            let rules = Rules {
-                policy,
-                groups: Some(&world.groups),
-            };
-            for keys in &readers {
-                let conditions = rules.conditions(keys);
-                for filter in filters() {
-                    let mut visible: Vec<&Event> = world
-                        .events
-                        .iter()
-                        .filter(|event| {
-                            filter.match_event(event, nostr::filter::MatchEventOptions::new())
-                        })
-                        .filter(|event| rules.may_see(event, keys))
-                        .collect();
-                    visible.sort_by(|a, b| b.created_at.cmp(&a.created_at).then(a.id.cmp(&b.id)));
-                    let unlimited = conditions.apply(Query::from(filter.clone()));
-                    let found = world.store.query(unlimited).await.expect("it runs");
-                    assert_eq!(
-                        found.iter().collect::<Vec<_>>(),
-                        visible,
-                        "the conditions and the check disagree for {filter:?}"
-                    );
-                    for limit in [1, 2, 5, 100] {
-                        let query = conditions.apply(Query::from(filter.clone().limit(limit)));
-                        let found = world.store.query(query).await.expect("it runs");
-                        assert_eq!(found.len(), limit.min(visible.len()));
-                        assert!(found.iter().all(|event| rules.may_see(event, keys)));
-                    }
+        let mut choices = Choices(369);
+        for _ in 0..48 {
+            let dir = tempdir().expect("a temp dir");
+            let store = Store::open(&dir.path().join("relay.db")).expect("a store opens");
+            for at in 0..choices.below(40) {
+                let kind = *choices.pick(&KINDS);
+                let mut tags: Vec<Vec<String>> = Vec::new();
+                for _ in 0..choices.below(4) {
+                    let name = *choices.pick(&["h", "d", "p"]);
+                    let value = match name {
+                        "p" => choices.pick(&people).to_hex(),
+                        _ => (*choices.pick(&GROUPS)).to_string(),
+                    };
+                    tags.push(vec![name.to_string(), value]);
                 }
+                let tags: Vec<Vec<&str>> = tags
+                    .iter()
+                    .map(|tag| tag.iter().map(String::as_str).collect())
+                    .collect();
+                let tags: Vec<&[&str]> = tags.iter().map(Vec::as_slice).collect();
+                let event = signed(
+                    &author,
+                    kind,
+                    1000 + u64::try_from(at).expect("small"),
+                    &tags,
+                );
+                let event = VerifiedEvent::verify(event).expect("the event verifies");
+                store.save(&event).await.expect("the event is saved");
             }
+            let stored = store.query(Filter::new()).await.expect("it runs");
+
+            let rules = Rules {
+                policy: *choices.pick(&[None, Some(&policy)]),
+                groups: *choices.pick(&[None, Some(&world.groups)]),
+            };
+            let keys: HashSet<PublicKey> = choices.some(&people).into_iter().collect();
+            let mut filter = Filter::new();
+            let kinds = choices.some(&KINDS);
+            if !kinds.is_empty() {
+                filter = filter.kinds(kinds.into_iter().map(Kind::from));
+            }
+            if choices.below(3) == 0 {
+                let group = *choices.pick(&GROUPS);
+                filter = filter.custom_tag(
+                    nostr::filter::SingleLetterTag::from_char('h').expect("h is a tag letter"),
+                    group,
+                );
+            }
+            let visible: Vec<&Event> = stored
+                .iter()
+                .filter(|event| filter.match_event(event, nostr::filter::MatchEventOptions::new()))
+                .filter(|event| rules.may_see(event, &keys))
+                .collect();
+
+            let conditions = rules.conditions(&keys);
+            let unlimited = conditions.apply(Query::from(filter.clone()));
+            let found = store.query(unlimited).await.expect("it runs");
+            assert_eq!(
+                found.iter().collect::<Vec<_>>(),
+                visible,
+                "the conditions and the check disagree for {filter:?}"
+            );
+            let limit = choices.below(12);
+            let query = conditions.apply(Query::from(filter.clone().limit(limit)));
+            let found = store.query(query).await.expect("it runs");
+            assert_eq!(found.len(), limit.min(visible.len()));
+            assert!(found.iter().all(|event| rules.may_see(event, &keys)));
         }
     }
 

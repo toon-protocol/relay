@@ -708,11 +708,6 @@ impl Session {
         }
     }
 
-    /// Whether `event` may be shown on this connection.
-    fn may_read(&self, event: &Event) -> bool {
-        self.rules().may_see(event, self.proven_keys())
-    }
-
     /// End `id` with `reason`. A `CLOSED` says the subscription of that id is
     /// over (NIP-01), so one the refused REQ would have replaced ends too.
     fn refuse(&mut self, id: &str, reason: &str) -> Reply {
@@ -818,10 +813,9 @@ impl Session {
         let mut seen = HashSet::new();
         let mut events: Vec<Event> = Vec::new();
         for found in found {
+            // The store's conditions already left out what the connection
+            // may not see.
             for event in found {
-                if !self.may_read(&event) {
-                    continue;
-                }
                 if seen.insert(event.id) {
                     events.push(event);
                 }
@@ -851,7 +845,7 @@ impl Session {
         for live in waiting {
             frames.extend(self.live_frames(live));
             if !seen.contains(&live.event.id)
-                && self.may_read(&live.event)
+                && self.rules().may_see(&live.event, self.proven_keys())
                 && subscription.feed.admits(live)
                 && subscription.filters.iter().any(|f| f.matches(&live.event))
             {
@@ -887,7 +881,7 @@ impl Session {
         &'a self,
         live: &'a LiveEvent,
     ) -> impl Iterator<Item = String> + 'a {
-        let readable = self.may_read(&live.event);
+        let readable = self.rules().may_see(&live.event, self.proven_keys());
         self.subscriptions
             .values()
             .filter(move |_| readable)
