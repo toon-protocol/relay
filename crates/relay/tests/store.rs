@@ -505,6 +505,7 @@ async fn a_multi_letter_tag_key_is_a_condition_of_the_query_before_the_limit() {
         multi_letter_tags: keys(pairs),
         wrap_recipients: None,
         hidden: Vec::new(),
+        hidden_kinds: Vec::new(),
     };
 
     let kind_one = Filter::new().kind(nostr::event::Kind::from(1));
@@ -568,6 +569,7 @@ async fn a_newer_event_without_the_multi_letter_key_does_not_hide_the_one_with_i
         multi_letter_tags: vec![("ab".to_string(), ["x".to_string()].into())],
         wrap_recipients: None,
         hidden: Vec::new(),
+        hidden_kinds: Vec::new(),
     };
     let found = store.query(query).await.expect("runs");
     assert_eq!(ids(&found), ids(std::slice::from_ref(&tagged)));

@@ -341,6 +341,9 @@ pub struct Query {
     /// Events the reader may not see, each a condition of the query so that
     /// `limit` counts only what is kept.
     pub hidden: Vec<Hidden>,
+    /// Kinds the reader may not see at all. A condition, so `limit` counts
+    /// only what is kept.
+    pub hidden_kinds: Vec<u16>,
 }
 
 /// Events a query leaves out: those whose first `tag` has one of `values`,
@@ -373,6 +376,7 @@ impl From<Filter> for Query {
             multi_letter_tags: Vec::new(),
             wrap_recipients: None,
             hidden: Vec::new(),
+            hidden_kinds: Vec::new(),
         }
     }
 }
@@ -763,6 +767,19 @@ fn run_query(
         parameters.push(i64::from(hidden.within).into());
         parameters.push(hidden.tag.clone().into());
         parameters.extend(hidden.values.iter().cloned().map(Value::from));
+    }
+
+    if !query.hidden_kinds.is_empty() {
+        conditions.push(format!(
+            "kind NOT IN ({})",
+            placeholders(query.hidden_kinds.len())
+        ));
+        parameters.extend(
+            query
+                .hidden_kinds
+                .iter()
+                .map(|kind| i64::from(*kind).into()),
+        );
     }
 
     let mut sql = SELECT.to_string();

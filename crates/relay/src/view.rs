@@ -2,10 +2,11 @@
 //!
 //! A reader is anonymous or holds proven keys (NIP-42). What it may see is
 //! the NIP-42 policy's and the NIP-29 groups' rules together. The WebSocket
-//! session asks them here, in two forms that agree: the conditions a store
-//! query carries, so `limit` counts only what the reader may see, and a check
-//! of one event, for the live events that reach a subscription without a
-//! query.
+//! session and the app UIs ask them here, in two forms that agree: the
+//! conditions a store query carries, so `limit` counts only what the reader
+//! may see, and a check of one event, for the live events that reach a
+//! subscription without a query. An app UI's page cannot sign in for its
+//! visitor, so it reads as the anonymous reader.
 
 use std::collections::HashSet;
 
@@ -35,7 +36,21 @@ impl Rules<'_> {
             hidden: self
                 .groups
                 .map_or_else(Vec::new, |groups| groups.hidden_from(keys)),
+            hidden_kinds: self
+                .policy
+                .map_or_else(Vec::new, |policy| policy.hidden_kinds(keys)),
         }
+    }
+
+    /// The conditions of a query for the anonymous reader, which has proven
+    /// no key: no kind the policy restricts, no gift wrap meant for its
+    /// recipients alone, and nothing of a group closed to strangers.
+    #[cfg_attr(
+        not(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute")),
+        allow(dead_code)
+    )]
+    pub(crate) fn anonymous(&self) -> Conditions {
+        self.conditions(&HashSet::new())
     }
 
     /// Whether a reader that has proven `keys` may see `event`.
@@ -53,6 +68,7 @@ impl Rules<'_> {
 pub(crate) struct Conditions {
     wrap_recipients: Option<Vec<String>>,
     hidden: Vec<Hidden>,
+    hidden_kinds: Vec<u16>,
 }
 
 impl Conditions {
@@ -60,7 +76,36 @@ impl Conditions {
     pub(crate) fn apply(&self, mut query: Query) -> Query {
         query.wrap_recipients.clone_from(&self.wrap_recipients);
         query.hidden.extend(self.hidden.iter().cloned());
+        query.hidden_kinds.extend(self.hidden_kinds.iter().copied());
         query
+    }
+}
+
+/// The relay's rules for readers, held rather than borrowed: what an app UI's
+/// read-only handle keeps for as long as the relay serves it.
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(
+    not(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute")),
+    allow(dead_code)
+)]
+pub(crate) struct HeldRules {
+    /// NIP-42's policy, while it is on.
+    pub(crate) policy: Option<AuthPolicy>,
+    /// NIP-29's groups, while it is on.
+    pub(crate) groups: Option<GroupView>,
+}
+
+#[cfg_attr(
+    not(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute")),
+    allow(dead_code)
+)]
+impl HeldRules {
+    /// These rules, as the readers' rules are asked.
+    pub(crate) fn rules(&self) -> Rules<'_> {
+        Rules {
+            policy: self.policy.as_ref(),
+            groups: self.groups.as_ref(),
+        }
     }
 }
 
@@ -182,6 +227,7 @@ mod tests {
         let people = [world.member, world.wrapped, world.stranger];
         let author = Keys::generate();
         let policy = AuthPolicy::default().recipient_only(true);
+        let restricting = AuthPolicy::requiring([9, 30023]).recipient_only(true);
         let mut choices = Choices(369);
         for _ in 0..48 {
             let dir = tempdir().expect("a temp dir");
@@ -214,7 +260,7 @@ mod tests {
             let stored = store.query(Filter::new()).await.expect("it runs");
 
             let rules = Rules {
-                policy: *choices.pick(&[None, Some(&policy)]),
+                policy: *choices.pick(&[None, Some(&policy), Some(&restricting)]),
                 groups: *choices.pick(&[None, Some(&world.groups)]),
             };
             let keys: HashSet<PublicKey> = choices.some(&people).into_iter().collect();
@@ -291,5 +337,30 @@ mod tests {
                 .count(),
             6
         );
+    }
+
+    #[tokio::test]
+    async fn an_anonymous_reader_sees_no_restricted_kind_and_keys_see_them() {
+        let world = world().await;
+        let policy = AuthPolicy::requiring([9]);
+        let rules = Rules {
+            policy: Some(&policy),
+            groups: None,
+        };
+        let chat = Query::from(Filter::new().kind(Kind::from(9)));
+        let anonymous = world
+            .store
+            .query(rules.anonymous().apply(chat.clone()))
+            .await
+            .expect("it runs");
+        assert!(anonymous.is_empty(), "{anonymous:?}");
+
+        let keys = HashSet::from([world.stranger]);
+        let proven = world
+            .store
+            .query(rules.conditions(&keys).apply(chat))
+            .await
+            .expect("it runs");
+        assert_eq!(proven.len(), 12);
     }
 }
