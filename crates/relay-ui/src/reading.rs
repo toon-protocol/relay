@@ -103,6 +103,72 @@ impl fmt::Display for Address {
     }
 }
 
+/// A kind 0 profile, read from its content. Every text field is trimmed and
+/// absent when blank. Fields are as written: a UI that draws a picture or
+/// links a website filters it itself (ADR 0005).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Profile {
+    /// `display_name`.
+    pub display_name: Option<String>,
+    /// `name`.
+    pub name: Option<String>,
+    /// `nip05`, the claim as written and unverified.
+    pub nip05: Option<String>,
+    /// `picture`.
+    pub picture: Option<String>,
+    /// `banner`.
+    pub banner: Option<String>,
+    /// `about`.
+    pub about: Option<String>,
+    /// `website`.
+    pub website: Option<String>,
+    /// NIP-24 `bot`: true only for a JSON `true`.
+    pub bot: bool,
+}
+
+impl Profile {
+    /// The profile `event`'s content spells; empty if it is not a JSON object.
+    pub fn of(event: &Event) -> Self {
+        let Ok(serde_json::Value::Object(fields)) = serde_json::from_str(&event.content) else {
+            return Self::default();
+        };
+        let text = |field: &str| {
+            fields
+                .get(field)
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+        };
+        Self {
+            display_name: text("display_name"),
+            name: text("name"),
+            nip05: text("nip05"),
+            picture: text("picture"),
+            banner: text("banner"),
+            about: text("about"),
+            website: text("website"),
+            bot: fields.get("bot") == Some(&serde_json::Value::Bool(true)),
+        }
+    }
+
+    /// The name to show: `display_name`, else `name`.
+    pub fn shown_name(&self) -> Option<&str> {
+        self.display_name.as_deref().or(self.name.as_deref())
+    }
+}
+
+/// The NIP-40 `expiration` of `event`, in seconds, if it has a parseable one.
+pub fn expiration(event: &Event) -> Option<u64> {
+    first_tag_value(event, "expiration")?.trim().parse().ok()
+}
+
+/// Whether `event` has expired at `now`: its `expiration` is at or before
+/// `now`. A missing or unparseable one never expires.
+pub fn is_expired(event: &Event, now: u64) -> bool {
+    expiration(event).is_some_and(|at| at <= now)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,5 +271,70 @@ mod tests {
         assert_eq!(every_tag_value(&event, "t"), ["a", "c"]);
         assert_eq!(d_tag(&event), "id");
         assert_eq!(first_tag_value(&event, "nope"), None);
+    }
+
+    fn profile_event(content: &str) -> Event {
+        event(&Keys::generate(), 0, 1, content)
+    }
+
+    #[test]
+    fn a_profile_reads_the_same_whatever_the_field_order() {
+        let fields = [
+            r#""display_name":"Maya""#,
+            r#""name":"maya""#,
+            r#""nip05":"maya@tide.dev""#,
+            r#""picture":"http://x.test/a.png""#,
+            r#""bot":true"#,
+        ];
+        let forward = Profile::of(&profile_event(&format!("{{{}}}", fields.join(","))));
+        let mut backward = fields;
+        backward.reverse();
+        let backward = Profile::of(&profile_event(&format!("{{{}}}", backward.join(","))));
+        assert_eq!(forward, backward);
+        assert_eq!(forward.display_name.as_deref(), Some("Maya"));
+        assert_eq!(forward.name.as_deref(), Some("maya"));
+        assert_eq!(forward.shown_name(), Some("Maya"));
+        assert_eq!(forward.nip05.as_deref(), Some("maya@tide.dev"));
+        assert!(forward.bot);
+        // As written: no scheme filter here (that is the UI's, ADR 0005).
+        assert_eq!(forward.picture.as_deref(), Some("http://x.test/a.png"));
+    }
+
+    #[test]
+    fn a_blank_display_name_falls_back_to_name() {
+        let profile = Profile::of(&profile_event(r#"{"display_name":"  ","name":" maya "}"#));
+        assert_eq!(profile.shown_name(), Some("maya"));
+        assert_eq!(Profile::of(&profile_event("{}")).shown_name(), None);
+    }
+
+    #[test]
+    fn a_profile_that_is_not_an_object_reads_empty() {
+        for content in ["", "nope", "[1]", "\"x\""] {
+            assert_eq!(Profile::of(&profile_event(content)), Profile::default());
+        }
+        assert!(!Profile::of(&profile_event(r#"{"bot":"true"}"#)).bot);
+    }
+
+    #[test]
+    fn expiry_is_at_or_before_now() {
+        let keys = Keys::generate();
+        let with = |tags: &[&[&str]]| {
+            EventBuilder::new(nostr::event::Kind::from(1), "")
+                .tags(tags.iter().map(|t| Tag::parse(t.iter().copied()).unwrap()))
+                .finalize(&keys)
+                .unwrap()
+        };
+        let at = with(&[&["expiration", "100"]]);
+        assert!(is_expired(&at, 100));
+        assert!(is_expired(&at, 101));
+        assert!(!is_expired(&at, 99));
+        assert_eq!(expiration(&at), Some(100));
+        for event in [
+            with(&[]),
+            with(&[&["expiration", "soon"]]),
+            with(&[&["expiration"]]),
+        ] {
+            assert!(!is_expired(&event, u64::MAX), "{event:?}");
+        }
     }
 }

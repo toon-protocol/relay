@@ -14,11 +14,11 @@ use nostr::key::PublicKey;
 use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{self, App, Apps, Identicon, Profiles, escape};
 use relay_ui::meta::{Preview, summary};
-use relay_ui::reading::{Address, newest};
+use relay_ui::reading::{self, Address, newest};
 use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors, owner_announcement};
 use ui_preview::{Card, Face};
 
-use crate::directory::{self, LISTING_KIND, LIVENESS_KIND, expiration, json};
+use crate::directory::{self, LISTING_KIND, LIVENESS_KIND, json};
 use crate::provider::{parse_pubkey, provider_link};
 use crate::{PREFIX, Pages, card_stem, directory_filter, fallback, html_with};
 
@@ -93,7 +93,7 @@ impl Deployment {
         if event.kind != Kind::from(DEPLOYMENT_KIND) {
             return None;
         }
-        let expires = expiration(event).filter(|at| *at > now)?;
+        let expires = reading::expiration(event).filter(|at| *at > now)?;
         let (mut d, mut commit, mut repo, mut listing) = (None, None, None, None);
         let (mut primary, mut standby) = (None, Vec::new());
         let (mut workload, mut image, mut visit) = (None, None, None);

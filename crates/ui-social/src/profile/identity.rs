@@ -10,7 +10,7 @@
 use nostr::event::{Event, Kind};
 use nostr::key::PublicKey;
 use relay_ui::chrome::nip05_identifier;
-use relay_ui::reading::{d_tag, first_tag_value, newest};
+use relay_ui::reading::{self, d_tag, first_tag_value, newest};
 use ui_nip34::repo::RepoAddress;
 
 use crate::media::Media;
@@ -55,27 +55,24 @@ pub(crate) fn metadata(key: &PublicKey, events: &[Event]) -> Metadata {
         identities: identities(profile),
         ..Metadata::default()
     };
-    let Ok(serde_json::Value::Object(fields)) = serde_json::from_str(&profile.content) else {
-        return read;
-    };
-    let text = |field: &str| {
+    let fields = reading::Profile::of(profile);
+    read.name = fields.shown_name().map(str::to_owned);
+    read.handle = fields.name.clone().filter(|name| {
         fields
-            .get(field)
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned)
-    };
-    let display = text("display_name");
-    let name = text("name");
-    read.name = display.clone().or_else(|| name.clone());
-    read.handle = name.filter(|name| display.as_ref().is_some_and(|shown| shown != name));
-    read.about = text("about");
-    read.website = text("website").filter(|url| web_url(url));
-    read.picture = text("picture").and_then(|url| crate::media::https(&url).map(str::to_owned));
-    read.banner = text("banner").and_then(|url| Media::new(&url, Some("image/*")));
-    read.bot = fields.get("bot").and_then(serde_json::Value::as_bool) == Some(true);
-    read.nip05 = text("nip05").and_then(|claim| nip05_identifier(&claim));
+            .display_name
+            .as_ref()
+            .is_some_and(|shown| shown != name)
+    });
+    read.about = fields.about;
+    read.website = fields.website.filter(|url| web_url(url));
+    read.picture = fields
+        .picture
+        .and_then(|url| crate::media::https(&url).map(str::to_owned));
+    read.banner = fields
+        .banner
+        .and_then(|url| Media::new(&url, Some("image/*")));
+    read.bot = fields.bot;
+    read.nip05 = fields.nip05.and_then(|claim| nip05_identifier(&claim));
     read
 }
 
@@ -215,9 +212,7 @@ pub(crate) fn statuses(key: &PublicKey, events: &[Event], now: i64) -> Vec<Statu
         })) else {
             continue;
         };
-        let expired = first_tag_value(status, "expiration")
-            .and_then(|at| at.trim().parse::<i64>().ok())
-            .is_some_and(|at| at <= now);
+        let expired = reading::is_expired(status, u64::try_from(now).unwrap_or(0));
         let text = status.content.trim();
         if expired || text.is_empty() {
             continue;
