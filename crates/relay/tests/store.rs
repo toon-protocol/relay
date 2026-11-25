@@ -172,7 +172,9 @@ fn sorted(events: &[&nostr::event::Event]) -> Vec<String> {
 async fn a_replaceable_kind_keeps_the_newest_event_per_author_and_kind() {
     let dir = tempdir().expect("a temp dir");
     let store = Store::open(&typescript_database(dir.path())).expect("it opens");
-    for kind in [0, 3, 10_000, 10_002, 10_031, 10_100, 19_999] {
+    for kind in [
+        0, 3, 10_000, 10_002, 10_031, 10_032, 10_050, 10_099, 10_100, 19_999,
+    ] {
         let author = Keys::generate();
         let old = signed_by(&author, kind, 1_000, &[]);
         let newer = signed_by(&author, kind, 2_000, &[]);
@@ -248,7 +250,7 @@ async fn rows_a_replaceable_kind_already_accumulated_are_left_until_a_newer_even
 async fn an_addressable_kind_keeps_the_newest_event_per_author_kind_and_d_tag() {
     let dir = tempdir().expect("a temp dir");
     let store = Store::open(&typescript_database(dir.path())).expect("it opens");
-    for kind in [10_032, 10_050, 10_099, 30_000, 30_023, 39_999] {
+    for kind in [30_000, 30_023, 39_999] {
         let author = Keys::generate();
         let a_old = signed_by(&author, kind, 1_000, &[&["d", "a"]]);
         let a_new = signed_by(&author, kind, 2_000, &[&["d", "a"]]);
@@ -531,4 +533,49 @@ async fn a_newer_event_without_the_multi_letter_key_does_not_hide_the_one_with_i
     };
     let found = store.query(query).await.expect("runs");
     assert_eq!(ids(&found), ids(std::slice::from_ref(&tagged)));
+}
+
+#[tokio::test]
+async fn a_replaceable_kind_ignores_the_d_tag() {
+    let dir = tempdir().expect("a temp dir");
+    let store = Store::open(&typescript_database(dir.path())).expect("it opens");
+    let author = Keys::generate();
+    let old = signed_by(&author, 10_050, 1_000, &[&["d", "a"]]);
+    let newer = signed_by(&author, 10_050, 2_000, &[&["d", "b"]]);
+    store.save(&verified(&old)).await.expect("saved");
+    store.save(&verified(&newer)).await.expect("saved");
+    assert_eq!(held(&store, &author, 10_050).await, sorted(&[&newer]));
+}
+
+#[tokio::test]
+async fn opening_a_file_that_holds_several_events_of_a_kind_in_10032_to_10099_keeps_the_newest() {
+    let dir = tempdir().expect("a temp dir");
+    let path = typescript_database(dir.path());
+    let author = Keys::generate();
+    let other = Keys::generate();
+    let connection = Connection::open(&path).expect("the database opens");
+    let rows = [
+        ("ab", &author, "a", 1000),
+        ("ef", &author, "b", 2000),
+        ("cd", &author, "c", 2000),
+        ("12", &other, "a", 1000),
+    ];
+    for (id, keys, d, at) in rows {
+        connection
+            .execute(
+                "INSERT INTO events VALUES (?, ?, 10050, '', ?, ?, ?, 1, NULL)",
+                rusqlite::params![
+                    id.repeat(32),
+                    keys.public_key().to_hex(),
+                    format!("[[\"d\",\"{d}\"]]"),
+                    at,
+                    "ef".repeat(64)
+                ],
+            )
+            .expect("a row");
+    }
+    drop(connection);
+    let store = Store::open(&path).expect("it opens");
+    assert_eq!(held(&store, &author, 10_050).await, vec!["cd".repeat(32)]);
+    assert_eq!(held(&store, &other, 10_050).await, vec!["12".repeat(32)]);
 }
