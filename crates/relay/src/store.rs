@@ -20,6 +20,10 @@
 //!   like any regular event.
 //! - An id on the operator's blocklist is dropped silently, and swept from
 //!   the file when the store opens.
+//! - Kinds 10032-10099 were kept per `d` tag before #355; opening a file
+//!   deletes all but the newest per author and kind, as a replaceable kind
+//!   keeps. Other replaceable kinds' accumulated rows are left until a newer
+//!   event replaces them.
 //! - With expiration enforced, a query leaves out an event whose
 //!   `expires_at` has passed, and [`Store::reap_expired`] deletes the ones
 //!   that expired longer ago than a grace period.
@@ -134,14 +138,17 @@ pub struct Store {
 
 impl Store {
     /// Open the database at `path`, creating the file and the schema if they
-    /// are not there. An existing database is opened as it is.
+    /// are not there. An existing database keeps its schema; what
+    /// [`Store::open_with`] deletes on opening is the only change to its rows.
     pub fn open(path: &Path) -> Result<Self, RelayError> {
         Self::open_with(path, Retention::default())
     }
 
     /// [`Store::open`] under the operator's retention settings. Blocked ids
     /// the file already holds are deleted now: refusing them on arrival
-    /// helps only with events that have not arrived yet.
+    /// helps only with events that have not arrived yet. So are all but the
+    /// newest event per author of each kind 10032-10099, which a file
+    /// written before #355 may hold several of, one per `d` tag.
     pub fn open_with(path: &Path, retention: Retention) -> Result<Self, RelayError> {
         let open = || {
             let connection = Connection::open(path)?;
@@ -159,6 +166,16 @@ impl Store {
                 purge.execute([id])?;
             }
             drop(purge);
+            // Kinds 10032-10099 were kept per `d` tag until #355. A file
+            // written then may hold several per author and kind: keep the
+            // one a replaceable kind keeps (newest, then lower id).
+            connection.execute(
+                "DELETE FROM events WHERE kind BETWEEN 10032 AND 10099 AND EXISTS (\
+                 SELECT 1 FROM events newer WHERE newer.pubkey = events.pubkey \
+                 AND newer.kind = events.kind AND (newer.created_at > events.created_at \
+                 OR (newer.created_at = events.created_at AND newer.id < events.id)))",
+                [],
+            )?;
             Ok(connection)
         };
         let connection = open().map_err(|source| RelayError::StoreOpen {
@@ -327,8 +344,7 @@ impl From<Filter> for Query {
 }
 
 /// How a kind is kept. The ranges are #185's, not the protocol crate's,
-/// which also calls kind 41 replaceable and classifies 10032-10099 as
-/// replaceable where this relay keys them by `d` tag.
+/// which also calls kind 41 replaceable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Rule {
     /// One row per event.
@@ -349,7 +365,7 @@ fn rule(kind: u16) -> Rule {
     match kind {
         5 => Rule::Deletion,
         20_000..=29_999 => Rule::Ephemeral,
-        10_032..=10_099 | 30_000..=39_999 => Rule::Addressable,
+        30_000..=39_999 => Rule::Addressable,
         0 | 3 | 10_000..=19_999 => Rule::Replaceable,
         _ => Rule::Regular,
     }
