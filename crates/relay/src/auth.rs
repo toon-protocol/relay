@@ -70,8 +70,13 @@ impl AuthPolicy {
     }
 
     /// Whether `event` may be shown to a connection that has proven `keys`,
-    /// as far as this policy goes: a gift wrap needs one of its recipients.
+    /// as far as this policy goes: a connection that has proven none is not
+    /// shown a kind this policy restricts, and a gift wrap needs one of its
+    /// recipients.
     pub(crate) fn may_read(&self, event: &Event, keys: &HashSet<PublicKey>) -> bool {
+        if keys.is_empty() && self.required_kinds.contains(&event.kind) {
+            return false;
+        }
         if !self.recipient_only || event.kind != Kind::GiftWrap {
             return true;
         }
@@ -81,16 +86,17 @@ impl AuthPolicy {
             .any(|recipient| keys.contains(&recipient))
     }
 
-    /// Whether `event` may be shown to a connection that has not
-    /// authenticated: not a kind this policy restricts, and not a gift wrap
-    /// only its recipients may read. What an app UI's page reads, since a
-    /// page cannot sign in for its visitor.
-    #[cfg_attr(
-        not(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute")),
-        allow(dead_code)
-    )]
-    pub(crate) fn shows_unauthenticated(&self, event: &Event) -> bool {
-        !self.required_kinds.contains(&event.kind) && self.may_read(event, &HashSet::new())
+    /// The kinds a connection that has proven `keys` is not shown at all, as
+    /// a store condition: what [`AuthPolicy::may_read`] refuses it by kind.
+    pub(crate) fn hidden_kinds(&self, keys: &HashSet<PublicKey>) -> Vec<u16> {
+        if keys.is_empty() {
+            self.required_kinds
+                .iter()
+                .map(|kind| kind.as_u16())
+                .collect()
+        } else {
+            Vec::new()
+        }
     }
 
     /// Whether a connection that has not authenticated may not be answered

@@ -699,6 +699,7 @@ async fn dissolve(store: &Store, group: &str) -> Result<(), crate::RelayError> {
         multi_letter_tags: vec![("d".to_string(), HashSet::from([group.to_string()]))],
         wrap_recipients: None,
         hidden: Vec::new(),
+        hidden_kinds: Vec::new(),
     };
     doomed.extend(store.query(metadata).await?.iter().map(|e| e.id.to_hex()));
     store.remove(doomed).await?;
@@ -712,6 +713,7 @@ fn in_group(group: &str) -> Query {
         multi_letter_tags: vec![("h".to_string(), HashSet::from([group.to_string()]))],
         wrap_recipients: None,
         hidden: Vec::new(),
+        hidden_kinds: Vec::new(),
     }
 }
 

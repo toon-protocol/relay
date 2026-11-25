@@ -177,8 +177,8 @@ impl Relay {
                 public_url: ui::public_url(config.ui_public_url.as_deref(), relay_url),
                 nsite_gateway: config.ui_nsite_gateway.as_deref(),
                 group_signer: config.nip29_groups.then_some(config.identity),
-                reads: ui::Unauthenticated {
-                    auth: auth.clone(),
+                reads: view::HeldRules {
+                    policy: auth.clone(),
                     groups: groups.as_ref().map(groups::GroupRules::view),
                 },
             },
