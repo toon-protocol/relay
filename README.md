@@ -211,16 +211,17 @@ that names it rather than a setting silently ignored.
 ### What the connector sends the relay
 
 The connector replays the payer's own request beneath the route's
-`handler_url`, and adds three headers when **it** was the hop that verified the
+`handler_url`, and adds these headers when **it** was the hop that verified the
 payment:
 
-| Header          | Value                                                          |
-| --------------- | -------------------------------------------------------------- |
-| `X-TOON-Payer`  | the client channel key — `evm:0x<64 hex>` or `solana:<base58>` |
-| `X-TOON-Amount` | the route's price, in base units                               |
-| `X-TOON-Chain`  | `evm` or `solana`                                              |
+| Header           | Value                                                                                                                                            |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `X-TOON-Payer`   | the payer, namespaced — a channel key (`evm:0x<64 hex>`, `solana:<base58>`, `xrpl:<key>`) or an allowance's claim key (`zk-note:<allowance id>`) |
+| `X-TOON-Amount`  | the route's price, in base units                                                                                                                 |
+| `X-TOON-Chain`   | the chain it settles on — `evm`, `solana`, `xrpl`, `mina`, or any namespace the connector adds                                                   |
+| `X-TOON-Network` | the network within that chain, when the connector names one (e.g. `mina:devnet`)                                                                 |
 
-The relay records a well-formed triple on the write's response and its log
+The relay records a well-formed statement on the write's response and its log
 line. **Absence means "this hop did not take the payment" — never "unpaid".**
 They are absent on a forwarded packet and on every free route, which is why
 the ephemeral lane never sees them.

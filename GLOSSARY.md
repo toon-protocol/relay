@@ -61,3 +61,9 @@ Reading a stored Nostr event the way NIP-01 says: its tags, which version of a r
 addressable event is current, its coordinate, its kind 0 profile and its expiry. One module in
 `relay-ui`.
 _Avoid_: helpers, utils
+
+**Repo engagement**:
+Who starred, followed or forked a repo, read from this relay's store: a star is a kind 7 `+` naming
+the repo with `k` 30617, a follow is a kind 10018 naming it, a fork is a kind 30617 whose `u` names
+it. One module in ui-nip34.
+_Avoid_: social stats, metrics

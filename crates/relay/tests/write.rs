@@ -125,6 +125,86 @@ async fn a_solana_payment_is_echoed_as_stated() {
 }
 
 #[tokio::test]
+async fn an_xrpl_payment_is_echoed_as_stated() {
+    let running = running().await;
+    let stated = [
+        ("X-TOON-Payer", "xrpl:rN7n7otQDd6FczFgLdSqtcsAUxDkw6fzRH"),
+        ("X-TOON-Amount", "12"),
+        ("X-TOON-Chain", "xrpl"),
+        ("X-TOON-Network", "xrpl:testnet"),
+    ];
+
+    let (status, body) = write_stating(&running.relay, delivery(&signed(1, 1, &[])), &stated).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(
+        body["payment"],
+        json!({
+            "payer": "xrpl:rN7n7otQDd6FczFgLdSqtcsAUxDkw6fzRH",
+            "amount": "12",
+            "chain": "xrpl",
+            "network": "xrpl:testnet"
+        })
+    );
+}
+
+#[tokio::test]
+async fn an_allowance_payment_keeps_its_claim_key_and_network() {
+    let running = running().await;
+    let stated = [
+        ("X-TOON-Payer", "zk-note:42"),
+        ("X-TOON-Amount", "3"),
+        ("X-TOON-Chain", "mina"),
+        ("X-TOON-Network", "mina:devnet"),
+    ];
+
+    let (status, body) = write_stating(&running.relay, delivery(&signed(1, 1, &[])), &stated).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(
+        body["payment"],
+        json!({ "payer": "zk-note:42", "amount": "3", "chain": "mina", "network": "mina:devnet" })
+    );
+}
+
+#[tokio::test]
+async fn a_chain_the_relay_has_not_heard_of_is_kept_as_stated() {
+    let running = running().await;
+    let stated = [
+        ("X-TOON-Payer", "bitcoin:bc1qexample"),
+        ("X-TOON-Amount", "1"),
+        ("X-TOON-Chain", "bitcoin"),
+    ];
+
+    let (status, body) = write_stating(&running.relay, delivery(&signed(1, 1, &[])), &stated).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(
+        body["payment"],
+        json!({ "payer": "bitcoin:bc1qexample", "amount": "1", "chain": "bitcoin" })
+    );
+}
+
+#[tokio::test]
+async fn a_badly_stated_network_is_dropped_and_the_rest_of_the_statement_kept() {
+    let running = running().await;
+    let stated = [
+        ("X-TOON-Payer", "zk-note:42"),
+        ("X-TOON-Amount", "3"),
+        ("X-TOON-Chain", "mina"),
+        ("X-TOON-Network", "mina devnet"),
+    ];
+
+    let (status, body) = write_stating(&running.relay, delivery(&signed(1, 1, &[])), &stated).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(
+        body["payment"],
+        json!({ "payer": "zk-note:42", "amount": "3", "chain": "mina" })
+    );
+}
+
+#[tokio::test]
 async fn a_statement_that_is_not_whole_and_well_formed_is_discarded_and_the_write_succeeds() {
     let running = running().await;
     let upper_case_key = format!("evm:0x{}", "AB".repeat(32));
@@ -164,11 +244,11 @@ async fn a_statement_that_is_not_whole_and_well_formed_is_discarded_and_the_writ
             ],
         ),
         (
-            "an unknown chain",
+            "a chain that is not a namespace",
             &[
                 ("X-TOON-Payer", EVM_PAYER),
                 ("X-TOON-Amount", "1000"),
-                ("X-TOON-Chain", "bitcoin"),
+                ("X-TOON-Chain", "bit coin"),
             ],
         ),
         (

@@ -36,10 +36,11 @@ use nostr::key::PublicKey;
 use nostr::types::Timestamp;
 use relay_ui::chrome::{self, App, Profiles, ago, date, escape, icon, name, npub, svg};
 use relay_ui::reading::{first_tag_value, newest};
-use ui_nip34::card::{self, Links, RepoCard, plural};
+use ui_nip34::card::{Links, RepoCard, plural};
+use ui_nip34::engagement;
 use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors, topics};
 
-use crate::kinds::{ARTICLE, FOLLOWED_REPOS, FOLLOWS, NOTE, REACTION};
+use crate::kinds::{ARTICLE, FOLLOWED_REPOS, FOLLOWS, NOTE};
 use crate::mute::Mutes;
 use crate::post::{self, View};
 use crate::{PREFIX, Pages, content, html_with, load_cards, not_found, parse_pubkey};
@@ -170,25 +171,6 @@ fn kept_repos(key: &PublicKey, announcements: &[Event]) -> Vec<(RepoAddress, Rol
     kept.into_iter()
         .map(|(address, role, _)| (address, role))
         .collect()
-}
-
-/// The repos `key` starred among `reactions`, newest first, each once. A
-/// pure function.
-fn starred(key: &PublicKey, reactions: &[Event]) -> Vec<RepoAddress> {
-    let mut reactions: Vec<&Event> = reactions
-        .iter()
-        .filter(|event| event.pubkey == *key)
-        .collect();
-    reactions.sort_by(|a, b| (b.created_at, a.id).cmp(&(a.created_at, b.id)));
-    let mut found: Vec<RepoAddress> = Vec::new();
-    for event in reactions {
-        for repo in RepoAddress::tagged(event, "a") {
-            if card::is_star(event, &repo.coordinate()) && !found.contains(&repo) {
-                found.push(repo);
-            }
-        }
-    }
-    found
 }
 
 /// The repos `key`'s newest pinned list names, in its order, that `key`
@@ -325,18 +307,7 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
     );
     let who = relay_ui::stored!(who(pages, key, &lists, now).await);
     let kept = relay_ui::stored!(load_kept(store, &key).await);
-    let reactions = relay_ui::stored!(
-        store
-            .query(
-                Filter::new()
-                    .kind(Kind::from(REACTION))
-                    .author(key)
-                    .custom_tag(SingleLetterTag::LOWERCASE_K, ANNOUNCEMENT.to_string())
-                    .limit(LIMIT),
-            )
-            .await
-    );
-    let mut stars = starred(&key, &reactions);
+    let mut stars = relay_ui::stored!(engagement::starred_by(store, &key).await);
     let starred_all = stars.len();
     stars.retain(|repo| !mutes.hides_key(repo.owner()));
     let starred_muted = starred_all - stars.len();
@@ -1284,28 +1255,6 @@ mod tests {
                 ("new", Role::Owner),
                 ("old", Role::Owner),
                 ("theirs", Role::Maintainer)
-            ]
-        );
-    }
-
-    #[test]
-    fn a_star_is_counted_once_and_only_a_plus_on_a_repo() {
-        let (me, owner) = (Keys::generate(), Keys::generate());
-        let a = format!("30617:{}:r", owner.public_key().to_hex());
-        let b = format!("30617:{}:s", owner.public_key().to_hex());
-        let reactions = [
-            signed(&me, REACTION, 1, "+", &[&["a", &a], &["k", "30617"]]),
-            signed(&me, REACTION, 2, "+", &[&["a", &a], &["k", "30617"]]),
-            signed(&me, REACTION, 3, "-", &[&["a", &b], &["k", "30617"]]),
-            signed(&me, REACTION, 4, "+", &[&["a", &b], &["k", "30617"]]),
-            signed(&owner, REACTION, 5, "+", &[&["a", &a], &["k", "30617"]]),
-        ];
-        let found = starred(&me.public_key(), &reactions);
-        assert_eq!(
-            found,
-            [
-                RepoAddress::parse(&b).unwrap(),
-                RepoAddress::parse(&a).unwrap()
             ]
         );
     }

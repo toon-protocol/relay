@@ -16,6 +16,7 @@
 //! body `ui-compute` draws ([`Environments`], #337).
 
 pub mod card;
+pub mod engagement;
 mod git;
 pub mod lineage;
 mod markup;

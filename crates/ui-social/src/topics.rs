@@ -34,6 +34,7 @@ use nostr::key::PublicKey;
 use relay_ui::chrome::{self, Profiles, escape, icon, percent_encode, plain_name, svg};
 use relay_ui::reading::{first_tag_value, supersedes};
 use ui_nip34::card::{Links, plural};
+use ui_nip34::engagement::{self, Act};
 use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors, repo_name, topics};
 
 use crate::kinds::LABEL;
@@ -411,9 +412,14 @@ pub(crate) async fn page(
         .collect();
     let muted = listed - tagged.len();
     let repos: Vec<RepoAddress> = tagged.iter().map(|tagged| tagged.repo.clone()).collect();
-    let counts = relay_ui::stored!(trending::stars_and_forks(store, &repos).await);
-    let others =
-        relay_ui::stored!(trending::stars_from_others(store, &repos, &catalog.makers()).await);
+    let counts = relay_ui::stored!(engagement::load(store, &repos, &[Act::Star, Act::Fork]).await);
+    let makers = catalog.makers();
+    let none = Vec::new();
+    let others = |repo: &RepoAddress| {
+        counts
+            .of(repo)
+            .star_count_besides(makers.get(repo).unwrap_or(&none))
+    };
     let mut keys: Vec<PublicKey> = lens.into_iter().collect();
     for key in tagged.iter().flat_map(|tagged| {
         catalog
@@ -431,11 +437,11 @@ pub(crate) async fn page(
     let mut rows: Vec<(&Tagged, usize, usize)> = tagged
         .iter()
         .map(|tagged| {
-            let (stars, forks) = counts.get(&tagged.repo).copied().unwrap_or_default();
-            (tagged, stars, forks)
+            let engaged = counts.of(&tagged.repo);
+            (tagged, engaged.star_count(), engaged.fork_count())
         })
         .collect();
-    let from_others = |tagged: &Tagged| others.get(&tagged.repo).copied().unwrap_or_default();
+    let from_others = |tagged: &Tagged| others(&tagged.repo);
     rows.sort_by(|(a, _, _), (b, _, _)| {
         from_others(b)
             .cmp(&from_others(a))

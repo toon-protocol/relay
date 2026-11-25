@@ -212,15 +212,21 @@ fn verified_event(relay: &Relay, event: Value) -> Result<VerifiedEvent, Refusal>
 fn log_line(event: &Value, handler: &str, payment: Option<&PaymentStatement>) -> String {
     let id = event.get("id").and_then(Value::as_str).unwrap_or("");
     let attribution = payment.map_or_else(String::new, |payment| {
-        attribution(payment.payer(), payment.amount(), payment.chain())
+        attribution(
+            payment.payer(),
+            payment.amount(),
+            payment.chain(),
+            payment.network(),
+        )
     });
     format!("[write] event={id} handler={handler}{attribution}")
 }
 
 /// The payment's part of a logged write. It takes the statement's parts, not
 /// the statement, because only the paid-write handler may build one.
-fn attribution(payer: &str, amount: &str, chain: Chain) -> String {
-    format!(" payer={payer} amount={amount} chain={chain}")
+fn attribution(payer: &str, amount: &str, chain: &Chain, network: Option<&str>) -> String {
+    let network = network.map_or_else(String::new, |network| format!(" network={network}"));
+    format!(" payer={payer} amount={amount} chain={chain}{network}")
 }
 
 /// Whether JavaScript's `!value` is true of a JSON value.
@@ -244,9 +250,17 @@ mod tests {
 
     #[test]
     fn a_logged_write_names_the_payer_amount_and_chain_when_stated() {
+        let evm = attribution(PAYER, "10", &Chain::named("evm"), None);
+        assert_eq!(evm, format!(" payer={PAYER} amount=10 chain=evm"));
+        let allowance = attribution(
+            "zk-note:7",
+            "10",
+            &Chain::named("mina"),
+            Some("mina:devnet"),
+        );
         assert_eq!(
-            attribution(PAYER, "10", Chain::Evm),
-            format!(" payer={PAYER} amount=10 chain=evm")
+            allowance,
+            " payer=zk-note:7 amount=10 chain=mina network=mina:devnet"
         );
         assert_eq!(
             log_line(&json!({ "id": "abc" }), "write-ephemeral", None),

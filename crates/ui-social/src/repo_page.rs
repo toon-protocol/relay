@@ -33,6 +33,7 @@ use nostr::types::Timestamp;
 use relay_ui::chrome::{self, Profiles, ago, escape, icon, name, svg};
 use relay_ui::reading::{first_tag_value, first_tag_values};
 use ui_nip34::card::{self, RepoCard, clone_urls, plural};
+use ui_nip34::engagement::{self, Act};
 use ui_nip34::repo::{RepoAddress, topics};
 
 use crate::demo::{self, Demo};
@@ -282,8 +283,9 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab, query: Option<&str>
         .filter(|event| snippet_names(event, &repo, nip05)),
     );
     let sections = sections(events, |key| card.is_maker(key));
-    let stars = relay_ui::stored!(card::stargazers(store, &repo).await);
-    let followers = relay_ui::stored!(card::followers(store, &repo).await);
+    let engaged =
+        relay_ui::stored!(engagement::load_one(store, &repo, &[Act::Star, Act::Follow]).await);
+    let (stars, followers) = (engaged.stars().to_vec(), engaged.followers().to_vec());
 
     let lineage = relay_ui::stored!(Lineage::load(store, &card).await);
     let (choices, handler_profiles) =

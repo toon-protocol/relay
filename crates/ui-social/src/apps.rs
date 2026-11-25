@@ -488,7 +488,7 @@ pub(crate) fn vouchers(
     coordinate: &str,
     within: Option<&HashSet<PublicKey>>,
 ) -> Vec<(PublicKey, Timestamp)> {
-    ui_nip34::card::people(events, |event| {
+    ui_nip34::engagement::people(events, |event| {
         (is_app_star(event, coordinate) || lists(event, coordinate))
             && within.is_none_or(|keys| keys.contains(&event.pubkey))
     })
