@@ -104,7 +104,7 @@ function envArgs(env: Env): string[] {
 /**
  * Start `image` plus a stub connector, and wait for the relay's /health.
  * Only the image's two documented ports are touched, from outside. If the
- * environment moves a port (`TOON_BLS_PORT`, `TOON_RELAY_PORT`) the harness
+ * environment moves a port (`TOON_WRITE_PORT`, `TOON_RELAY_PORT`) the harness
  * follows it.
  */
 export async function startRelay(
@@ -124,7 +124,7 @@ export async function startRelay(
     }),
     ...options.env,
   };
-  const writePort = Number(env['TOON_BLS_PORT'] ?? WRITE_PORT);
+  const writePort = Number(env['TOON_WRITE_PORT'] ?? WRITE_PORT);
   const readPort = Number(env['TOON_RELAY_PORT'] ?? READ_PORT);
   let container: string | undefined;
   try {

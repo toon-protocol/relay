@@ -38,6 +38,12 @@ const SECRET_KEY: Setting = Setting {
 /// The alias the connector's compose files use; `TOON_SECRET_KEY` wins.
 const SECRET_KEY_ALIAS: &str = "NOSTR_SECRET_KEY";
 const WRITE_PORT: Setting = Setting {
+    flag: "--write-port",
+    env: "TOON_WRITE_PORT",
+};
+/// The write port's old name ("BLS" is a retired term), accepted for one
+/// release as a deprecated alias; the new name wins when both are set.
+const WRITE_PORT_ALIAS: Setting = Setting {
     flag: "--bls-port",
     env: "TOON_BLS_PORT",
 };
@@ -206,11 +212,12 @@ const UI_PUBLIC_URL: Setting = Setting {
 };
 
 /// The flags that take a value, and the ones that stand alone.
-const VALUE_FLAGS: [&str; 35] = [
+const VALUE_FLAGS: [&str; 36] = [
     MNEMONIC.flag,
     SECRET_KEY.flag,
     READ_PORT.flag,
     WRITE_PORT.flag,
+    WRITE_PORT_ALIAS.flag,
     READ_HOST.flag,
     WRITE_HOST.flag,
     DATA_DIR.flag,
@@ -298,7 +305,8 @@ Options (each flag beats its environment variable):
   --mnemonic <words>                       TOON_MNEMONIC
   --secret-key <hex>                       TOON_SECRET_KEY, NOSTR_SECRET_KEY
   --relay-port <port>                      TOON_RELAY_PORT (default 7100)
-  --bls-port <port>                        TOON_BLS_PORT (default 3100)
+  --write-port <port>                      TOON_WRITE_PORT (default 3100)
+  --bls-port <port>                        TOON_BLS_PORT: deprecated alias of --write-port
   --host <host>                            TOON_HOST (default 0.0.0.0)
   --write-host <host>                      TOON_WRITE_HOST (default 0.0.0.0)
   --data-dir <path>                        TOON_DATA_DIR (default ./data)
@@ -388,6 +396,13 @@ pub struct SubscribeSettings {
     pub relay_url: String,
 }
 
+/// A deprecated setting name that was used, and the name that replaces it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Renamed {
+    pub used: &'static str,
+    pub replacement: &'static str,
+}
+
 /// A complete, validated configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -396,8 +411,11 @@ pub struct Config {
     /// The host the write port (`POST /write`, `GET /health`) listens on: an
     /// IP address or a name, resolved when the listener binds.
     pub write_host: String,
-    /// The write port: `TOON_BLS_PORT`, 3100 unless set.
+    /// The write port: `TOON_WRITE_PORT`, 3100 unless set.
     pub write_port: u16,
+    /// The deprecated name the write port was set under, if it was: the binary
+    /// warns once at startup, naming the setting that replaces it.
+    pub deprecated_write_port_name: Option<Renamed>,
     /// The host the read side (the NIP-01 WebSocket) listens on.
     pub read_host: String,
     /// The read port: `TOON_RELAY_PORT`, 7100 unless set.
@@ -558,13 +576,37 @@ impl Sources<'_> {
     }
 
     fn port(&self, setting: &Setting, default: u16) -> Result<u16, RelayError> {
-        match self.text(setting) {
-            None => Ok(default),
-            Some((name, value)) => match value.parse::<u16>() {
-                Ok(port) if port != 0 => Ok(port),
-                _ => Err(RelayError::InvalidPort { name, value }),
-            },
-        }
+        self.text(setting)
+            .map_or(Ok(default), |(name, value)| port(name, value))
+    }
+
+    /// A port set under `current` or under its deprecated `alias`, and the
+    /// alias's name if that is the one that was used. The current name, flag or
+    /// variable, beats the alias; empty is unset, as for [`Self::port`].
+    fn aliased_port(
+        &self,
+        current: &Setting,
+        alias: &Setting,
+        default: u16,
+    ) -> Result<(u16, Option<Renamed>), RelayError> {
+        let chosen = self.text(current).or_else(|| self.text(alias));
+        let Some((name, value)) = chosen else {
+            return Ok((default, None));
+        };
+        let renamed = if name == alias.flag {
+            Some(Renamed {
+                used: name,
+                replacement: current.flag,
+            })
+        } else if name == alias.env {
+            Some(Renamed {
+                used: name,
+                replacement: current.env,
+            })
+        } else {
+            None
+        };
+        Ok((port(name, value)?, renamed))
     }
 
     /// A whole number in `range`, or `None` when unset or empty.
@@ -747,6 +789,8 @@ impl Config {
                 });
             }
         };
+        let (write_port, deprecated_write_port_name) =
+            sources.aliased_port(&WRITE_PORT, &WRITE_PORT_ALIAS, DEFAULT_WRITE_PORT)?;
         let nip29_groups = sources.on(&NIP29_GROUPS);
         let nip17_recipient_only = sources.on(&NIP17_RECIPIENT_ONLY);
         let text = |setting: &Setting| sources.text(setting).map(|(_, value)| value);
@@ -757,7 +801,8 @@ impl Config {
             identity,
             signer: crate::groups::Signer::new(keys),
             write_host: sources.host(&WRITE_HOST),
-            write_port: sources.port(&WRITE_PORT, DEFAULT_WRITE_PORT)?,
+            write_port,
+            deprecated_write_port_name,
             read_host: sources.host(&READ_HOST),
             read_port: sources.port(&READ_PORT, DEFAULT_READ_PORT)?,
             data_dir: text(&DATA_DIR)
@@ -1012,6 +1057,14 @@ impl Sources<'_> {
     }
 }
 
+/// `value`, given under `name`, as a port in 1..=65535.
+fn port(name: &'static str, value: String) -> Result<u16, RelayError> {
+    match value.parse::<u16>() {
+        Ok(port) if port != 0 => Ok(port),
+        _ => Err(RelayError::InvalidPort { name, value }),
+    }
+}
+
 /// The ids in `raw` (separated by commas or white space) as lower-case hex,
 /// each once, and the entries that are not 64 hex characters.
 fn blocked_ids(raw: &str) -> (Vec<String>, Vec<String>) {
@@ -1138,15 +1191,78 @@ mod tests {
     }
 
     #[test]
-    fn the_write_listener_follows_toon_bls_port_and_toon_write_host() {
+    fn the_write_listener_follows_toon_write_port_and_toon_write_host() {
         let config = config(&[
             ("TOON_SECRET_KEY", &ones()),
-            ("TOON_BLS_PORT", "3200"),
+            ("TOON_WRITE_PORT", "3200"),
             ("TOON_WRITE_HOST", "127.0.0.1"),
         ])
         .expect("a valid port and host");
         assert_eq!(config.write_host, "127.0.0.1");
         assert_eq!(config.write_port, 3200);
+        assert_eq!(config.deprecated_write_port_name, None);
+    }
+
+    #[test]
+    fn the_deprecated_bls_port_is_still_read_and_names_itself() {
+        let from_env = config(&[("TOON_SECRET_KEY", &ones()), ("TOON_BLS_PORT", "3200")])
+            .expect("the alias is accepted");
+        assert_eq!(from_env.write_port, 3200);
+        assert_eq!(
+            from_env.deprecated_write_port_name,
+            Some(Renamed {
+                used: "TOON_BLS_PORT",
+                replacement: "TOON_WRITE_PORT"
+            })
+        );
+
+        let from_flag = run(&["--bls-port=3300"], &[("TOON_SECRET_KEY", &ones())])
+            .expect("the alias flag is accepted");
+        assert_eq!(from_flag.write_port, 3300);
+        assert_eq!(
+            from_flag.deprecated_write_port_name,
+            Some(Renamed {
+                used: "--bls-port",
+                replacement: "--write-port"
+            })
+        );
+    }
+
+    #[test]
+    fn the_new_write_port_name_beats_the_deprecated_one() {
+        let both_env = config(&[
+            ("TOON_SECRET_KEY", &ones()),
+            ("TOON_BLS_PORT", "3200"),
+            ("TOON_WRITE_PORT", "3400"),
+        ])
+        .expect("valid");
+        assert_eq!(both_env.write_port, 3400);
+        assert_eq!(both_env.deprecated_write_port_name, None);
+
+        let both_flags = run(
+            &["--bls-port", "3200", "--write-port", "3500"],
+            &[("TOON_SECRET_KEY", &ones())],
+        )
+        .expect("valid");
+        assert_eq!(both_flags.write_port, 3500);
+        assert_eq!(both_flags.deprecated_write_port_name, None);
+
+        let old_flag_new_env = run(
+            &["--bls-port", "3200"],
+            &[("TOON_SECRET_KEY", &ones()), ("TOON_WRITE_PORT", "3600")],
+        )
+        .expect("valid");
+        assert_eq!(old_flag_new_env.write_port, 3600);
+        assert_eq!(old_flag_new_env.deprecated_write_port_name, None);
+
+        let new_empty = config(&[
+            ("TOON_SECRET_KEY", &ones()),
+            ("TOON_WRITE_PORT", ""),
+            ("TOON_BLS_PORT", "3200"),
+        ])
+        .expect("valid");
+        assert_eq!(new_empty.write_port, 3200);
+        assert!(new_empty.deprecated_write_port_name.is_some());
     }
 
     #[test]
@@ -1161,7 +1277,7 @@ mod tests {
         let empty = config(&[
             ("TOON_SECRET_KEY", &ones()),
             ("TOON_WRITE_HOST", ""),
-            ("TOON_BLS_PORT", ""),
+            ("TOON_WRITE_PORT", ""),
         ])
         .expect("empty settings are the defaults");
         assert_eq!(empty.write_host, "0.0.0.0");
@@ -1170,7 +1286,7 @@ mod tests {
 
     #[test]
     fn a_port_outside_1_to_65535_is_refused_by_name() {
-        for name in ["TOON_BLS_PORT", "TOON_RELAY_PORT"] {
+        for name in ["TOON_WRITE_PORT", "TOON_BLS_PORT", "TOON_RELAY_PORT"] {
             for bad in ["x", "0", "65536", "-1", "3100abc"] {
                 let error =
                     config(&[("TOON_SECRET_KEY", &ones()), (name, bad)]).expect_err("not a port");
@@ -1249,7 +1365,7 @@ mod tests {
     fn a_flag_beats_its_variable() {
         let config = run(
             &[
-                "--bls-port",
+                "--write-port",
                 "3300",
                 "--relay-name=flagged",
                 "--max-connections",
@@ -1257,7 +1373,7 @@ mod tests {
             ],
             &[
                 ("TOON_SECRET_KEY", &ones()),
-                ("TOON_BLS_PORT", "3200"),
+                ("TOON_WRITE_PORT", "3200"),
                 ("TOON_RELAY_NAME", "from env"),
                 ("TOON_MAX_CONNECTIONS", "5"),
             ],
