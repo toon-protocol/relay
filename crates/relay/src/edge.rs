@@ -74,7 +74,8 @@ impl WriteEdge {
     /// its writes are paid at, out of `connector`'s self-description.
     ///
     /// Every failure is a [`RelayError`] that says what the connector did not
-    /// publish; the caller's part is to say so and advertise nothing.
+    /// publish, or published in a shape no one price pays for; the caller's
+    /// part is to say so and advertise nothing.
     pub fn read(configured: &str, connector: &NodeSelfDescription) -> Result<Self, RelayError> {
         let connector_url =
             published(&connector.http_endpoint).ok_or(RelayError::ConnectorPublishesNoUrl)?;
@@ -85,13 +86,12 @@ impl WriteEdge {
             .filter(|key| !key.is_empty())
             .ok_or(RelayError::ConnectorPublishesNoSealKey)?;
         let route = TerminatedRoute::confirm(configured, connector)?;
+        let address = || route.address().to_string();
         if route.price_per_kib().is_some() {
-            return Err(RelayError::WriteRouteNotFlat {
-                address: route.address().to_string(),
-            });
+            return Err(RelayError::WriteRouteNotFlat { address: address() });
         }
         let price = whole_price(route.price()).ok_or_else(|| RelayError::RoutePriceNotWhole {
-            address: route.address().to_string(),
+            address: address(),
             price: route.price().to_string(),
         })?;
         let carriage = route_carriage(&route, connector);
