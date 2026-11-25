@@ -20,8 +20,9 @@
 //! repo's aggregate, a different author and no `a`/`A` tag is an uncredited
 //! copy ("same site"); it is found by its `x` tag and then checked.
 //!
-//! The tab counts people: the distinct keys that forked or copied, the
-//! repo's own makers left out.
+//! The sidebar's "people who forked or copied" counts the distinct keys that
+//! forked or copied, the repo's own makers left out. The fork count is not
+//! this: it comes from `ui_nip34::engagement`, as on every other page.
 
 use std::collections::{HashMap, HashSet};
 
@@ -271,8 +272,8 @@ impl Lineage {
         self.network.same_first_commit(&self.repo)
     }
 
-    /// The Forks tab's count: the distinct people who forked or copied this
-    /// repo or its sites, its makers left out.
+    /// The distinct people who forked or copied this repo or its sites, its
+    /// makers left out. Labelled as people, never as a fork count.
     pub(crate) fn people(&self) -> usize {
         let mut keys: HashSet<PublicKey> = HashSet::new();
         for repo in self.forks().iter().chain(&self.same_first_commit()) {
@@ -716,8 +717,8 @@ pub(crate) fn tab(
 }
 
 /// The sidebar's "Lineage at a glance".
-pub(crate) fn glance(lineage: &Lineage) -> String {
-    let forks = lineage.forks().len();
+/// `forks` is the repo's fork count, from the repo engagement module.
+pub(crate) fn glance(lineage: &Lineage, forks: usize) -> String {
     let remixes = lineage.remixes();
     let identical = remixes.iter().filter(|(_, same)| *same).count() + lineage.uncredited.len();
     let remixed = remixes.len() - remixes.iter().filter(|(_, same)| *same).count();

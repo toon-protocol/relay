@@ -21,13 +21,14 @@ use axum::http::HeaderMap;
 use axum::response::Response;
 use nostr::event::EventId;
 use nostr::key::PublicKey;
+use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{Profiles, npub, percent_encode, shown_name};
 use ui_nip34::card::RepoCard;
+use ui_nip34::engagement::{self, Act};
 use ui_nip34::repo::RepoAddress;
 use ui_preview::{Card, Face, Mark};
 
 use crate::article::{self, ArticleAddress};
-use crate::lineage::Lineage;
 use crate::{PREFIX, Pages, event_by_id, load_cards, parse_event_id, parse_pubkey, post, ship};
 
 /// A profile's card.
@@ -116,9 +117,15 @@ pub(crate) async fn article(
     pages.previews.respond(&headers, card).await
 }
 
-/// A repo as its page counts it: forks as the Forks tab does.
+/// A repo as its page counts it: forks from the repo engagement module.
 async fn repo_face(pages: &Pages, card: &RepoCard) -> ui_preview::Repo {
-    let forks = Lineage::load(&pages.store, card).await.people();
+    face_of(&pages.store, card).await
+}
+
+async fn face_of(store: &ReadOnlyStore, card: &RepoCard) -> ui_preview::Repo {
+    let forks = engagement::load_one(store, card.address(), &[Act::Fork])
+        .await
+        .fork_count();
     card.preview(Some(forks))
 }
 
@@ -176,4 +183,71 @@ async fn article_card(pages: &Pages, author: &str, file: &str) -> Option<Card> {
         summary: article::summary_of(&event),
     });
     Some(Card::new(pages.card_host(), face))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+
+    use nostr::event::{Event, EventBuilder, FinalizeEvent, Kind, Tag};
+    use nostr::filter::{Filter, MatchEventOptions};
+    use nostr::key::Keys;
+    use relay_ui::EventSource;
+
+    use super::*;
+
+    struct Held(Arc<Vec<Event>>);
+
+    impl EventSource for Held {
+        fn query(&self, filter: Filter) -> Pin<Box<dyn Future<Output = Vec<Event>> + Send + '_>> {
+            let found = self
+                .0
+                .iter()
+                .filter(|event| filter.match_event(event, MatchEventOptions::new()))
+                .cloned()
+                .collect();
+            Box::pin(async move { found })
+        }
+    }
+
+    fn announce(keys: &Keys, d: &str, tags: &[&[&str]]) -> Event {
+        EventBuilder::new(Kind::from(30_617), "")
+            .tags(
+                [&["d", d][..]]
+                    .into_iter()
+                    .chain(tags.iter().copied())
+                    .map(|tag| Tag::parse(tag.iter().copied()).unwrap()),
+            )
+            .finalize(keys)
+            .unwrap()
+    }
+
+    /// One repo, two forks (a bare coordinate and `|<git url>`) and a copy
+    /// that only shares the earliest unique commit: the card says 2 forks.
+    #[tokio::test]
+    async fn the_preview_card_counts_distinct_fork_repos() {
+        let (owner, bare, url, copier) = (
+            Keys::generate(),
+            Keys::generate(),
+            Keys::generate(),
+            Keys::generate(),
+        );
+        let commit = "b".repeat(40);
+        let parent = announce(&owner, "r", &[&["r", &commit, "euc"]]);
+        let coordinate = RepoAddress::of(&parent).unwrap().coordinate();
+        let store = ReadOnlyStore::new(Held(Arc::new(vec![
+            parent.clone(),
+            announce(&bare, "r", &[&["u", &coordinate]]),
+            announce(
+                &url,
+                "r",
+                &[&["u", &format!("{coordinate}|https://example.com/r.git")]],
+            ),
+            announce(&copier, "copy", &[&["r", &commit, "euc"]]),
+        ])));
+        let card = RepoCard::from_announcement(&parent).unwrap();
+        assert_eq!(face_of(&store, &card).await.forks, Some(2));
+    }
 }

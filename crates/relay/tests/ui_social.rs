@@ -532,8 +532,8 @@ async fn forks_remixes_and_open_in_are_read_from_written_events() {
     assert!(html.contains("aria-current=\"true\""));
     assert!(html.contains(">same first commit<"));
     assert!(
-        html.contains("Forks<span class=\"count\">3</span>"),
-        "ruth, dan and leo"
+        html.contains("Forks<span class=\"count\">1</span>"),
+        "ruth's fork; dan's copy and leo's remix are not forks"
     );
     assert!(html.contains(&format!("Forked from <a href=\"{base}/forks\">")));
     // Remix and Open in, from the recommended handler, the naddr filled in.

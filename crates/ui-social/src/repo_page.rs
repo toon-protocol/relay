@@ -14,7 +14,8 @@
 //! | Snippets  | `/snippets` | code snippets (kind 1337) that `a`-tag it or name it in `repo` |
 //!
 //! Counts are of people where people are what is counted (stars, followers,
-//! talk, forks), and the store has already applied every NIP-09 deletion.
+//! talk); forks are the distinct fork repos, from `ui_nip34::engagement`. The
+//! store has already applied every NIP-09 deletion.
 //!
 //! `?as=<npub>` names a viewer, whose follows rank the "Open in…" apps
 //! ([`crate::handlers`]); the tab links carry it.
@@ -277,8 +278,9 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab, query: Option<&str>
             .filter(|event| snippet_names(event, &repo, nip05)),
     );
     let sections = sections(events, |key| card.is_maker(key));
-    let engaged = engagement::load_one(store, &repo, &[Act::Star, Act::Follow]).await;
+    let engaged = engagement::load_one(store, &repo, &[Act::Star, Act::Follow, Act::Fork]).await;
     let (stars, followers) = (engaged.stars().to_vec(), engaged.followers().to_vec());
+    let forks = engaged.fork_count();
 
     let lineage = Lineage::load(store, &card).await;
     let (choices, handler_profiles) = handlers::load(store, viewer.as_ref()).await;
@@ -351,7 +353,7 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab, query: Option<&str>
         Tab::Writing => sections.writing.len(),
         Tab::Stars => stars.len(),
         Tab::Followers => followers.len(),
-        Tab::Forks => lineage.people(),
+        Tab::Forks => forks,
         Tab::Media => sections.media.len(),
         Tab::Snippets => sections.snippets.len(),
     };
@@ -368,13 +370,7 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab, query: Option<&str>
             crate::viewer::as_query(viewer.as_ref(), true)
         )),
     );
-    body.push_str(&header(
-        &view,
-        &card,
-        stars.len(),
-        followers.len(),
-        lineage.people(),
-    ));
+    body.push_str(&header(&view, &card, stars.len(), followers.len(), forks));
     let mut tabs: Vec<chrome::Tab> = Vec::new();
     if let Some(code) = links.repo_path(&repo) {
         tabs.push(chrome::Tab::new("Code", icon::CODE, code.clone()));
@@ -475,7 +471,7 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab, query: Option<&str>
             &handler_profiles,
             &links,
         ));
-        before.push_str(&lineage::glance(&lineage));
+        before.push_str(&lineage::glance(&lineage, forks));
     }
     before.push_str(&handlers::open_in_card(
         &choices,
