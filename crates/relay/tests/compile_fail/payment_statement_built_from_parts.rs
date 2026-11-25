@@ -4,11 +4,12 @@
 
 use relay::{Chain, PaymentStatement};
 
-fn claim(payer: String, amount: String) -> PaymentStatement {
+fn claim(payer: String, amount: String, chain: Chain) -> PaymentStatement {
     PaymentStatement {
         payer,
         amount,
-        chain: Chain::Evm,
+        chain,
+        network: None,
     }
 }
 

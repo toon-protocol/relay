@@ -7,8 +7,8 @@
 //! it charged, and on which chain. The relay does not and cannot check any of
 //! it: it holds no chain state and speaks no ILP, so the connector's
 //! statement is the whole trust model. What this module adds is that a
-//! statement is all three headers, well-formed and agreeing with each other,
-//! or it is nothing.
+//! statement is all three headers, well-formed, or it is nothing. A fourth,
+//! `X-TOON-Network`, rides along when stated (connector ADR 0086).
 //!
 //! **Absence is not "unpaid".** The headers are there only when this
 //! connector took the payment and the route's price is not zero. A longer
@@ -21,7 +21,7 @@
 //! and has no payment to state, so it must not be built inside `write`.
 //! `tests/compile_fail/` shows the other ways in failing to build.
 //!
-//! The three header names are defined here and nowhere else in the relay
+//! The header names are defined here and nowhere else in the relay
 //! (`deploy/rust-workspace.test.ts`). The connector's own definition lives in
 //! a crate too heavy to depend on (#185).
 
@@ -34,6 +34,8 @@ const PAYER_HEADER: &str = "X-TOON-Payer";
 const AMOUNT_HEADER: &str = "X-TOON-Amount";
 /// The chain the paying channel lives on.
 const CHAIN_HEADER: &str = "X-TOON-Chain";
+/// The network within that chain, when the connector names one (ADR 0086).
+const NETWORK_HEADER: &str = "X-TOON-Network";
 
 /// A payment the terminating connector states it verified. Serialized, it is
 /// the `payment` object of a `200` from `POST /write`.
@@ -42,56 +44,73 @@ pub struct PaymentStatement {
     payer: String,
     amount: String,
     chain: Chain,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    network: Option<String>,
 }
 
-/// The chain a paying channel lives on: the namespace of its key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Chain {
-    /// An `evm:` channel key.
-    Evm,
-    /// A `solana:` channel key.
-    Solana,
+/// The chain a payment settles on, as the connector names it: `evm`,
+/// `solana`, `xrpl`, `mina`, or any namespace a later connector adds. The
+/// relay never validates a payment (ADR 0040), so a chain it has not heard of
+/// is kept as stated.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct Chain(String);
+
+impl Chain {
+    /// A chain as a test names it, without reading headers.
+    #[cfg(test)]
+    pub(super) fn named(namespace: &str) -> Self {
+        Self(namespace.to_string())
+    }
+
+    /// The chain's namespace, as stated.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 impl std::fmt::Display for Chain {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Evm => "evm",
-            Self::Solana => "solana",
-        })
+        f.write_str(&self.0)
     }
 }
 
 impl PaymentStatement {
     /// Read the connector's statement off the headers of a paid write.
     ///
-    /// `None` unless all three headers are stated once each, each is
-    /// well-formed, and the payer's namespace is the chain stated beside it.
-    /// Anything less is discarded whole: half a statement would be recorded
-    /// and echoed as if it were all of one.
+    /// `None` unless the payer, amount and chain are stated once each and are
+    /// well-formed: a `namespace:key` payer (a channel key, or a claim key
+    /// such as `zk-note:<allowance id>`), base-unit digits, and a lowercase
+    /// chain token. For the chains whose key shape the relay has always
+    /// checked, `evm` and `solana`, the payer must also be that chain's key.
+    /// `X-TOON-Network` is kept when stated once and well-formed; stated
+    /// badly, it is dropped without discarding the rest. Anything less than a
+    /// whole statement is discarded: half a statement would be recorded and
+    /// echoed as if it were all of one.
     pub(super) fn stated_on(headers: &HeaderMap) -> Option<Self> {
         let payer = stated_once(headers, PAYER_HEADER)?;
         let amount = stated_once(headers, AMOUNT_HEADER)?;
-        let chain = match stated_once(headers, CHAIN_HEADER)? {
-            "evm" => Chain::Evm,
-            "solana" => Chain::Solana,
-            _ => return None,
-        };
+        let chain = stated_once(headers, CHAIN_HEADER)?;
         let well_formed = is_base_units(amount)
+            && is_namespace(chain)
             && match chain {
-                Chain::Evm => is_evm_channel_key(payer),
-                Chain::Solana => is_solana_channel_key(payer),
+                "evm" => is_evm_channel_key(payer),
+                "solana" => is_solana_channel_key(payer),
+                _ => is_namespaced_key(payer),
             };
+        let network = stated_once(headers, NETWORK_HEADER)
+            .filter(|network| network.bytes().all(|byte| byte.is_ascii_graphic()))
+            .map(str::to_string);
         well_formed.then(|| Self {
             payer: payer.to_string(),
             amount: amount.to_string(),
-            chain,
+            chain: Chain(chain.to_string()),
+            network,
         })
     }
 
-    /// The client channel key, namespaced: `evm:0x<64 hex>` or
-    /// `solana:<base58>`.
+    /// The payer, namespaced: a channel key such as `evm:0x<64 hex>` or
+    /// `solana:<base58>`, or the claim key of an allowance.
     pub fn payer(&self) -> &str {
         &self.payer
     }
@@ -103,10 +122,35 @@ impl PaymentStatement {
         &self.amount
     }
 
-    /// The chain the payer's key is namespaced to.
-    pub fn chain(&self) -> Chain {
-        self.chain
+    /// The chain the connector stated.
+    pub fn chain(&self) -> &Chain {
+        &self.chain
     }
+
+    /// The network within the chain, when the connector stated one.
+    pub fn network(&self) -> Option<&str> {
+        self.network.as_deref()
+    }
+}
+
+/// A lowercase namespace token: `[a-z0-9-]+`, starting with a letter.
+fn is_namespace(token: &str) -> bool {
+    token
+        .bytes()
+        .next()
+        .is_some_and(|byte| byte.is_ascii_lowercase())
+        && token
+            .bytes()
+            .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'-'))
+}
+
+/// `namespace:key`, with a non-empty key of printable ASCII.
+fn is_namespaced_key(payer: &str) -> bool {
+    payer.split_once(':').is_some_and(|(namespace, key)| {
+        is_namespace(namespace)
+            && !key.is_empty()
+            && key.bytes().all(|byte| byte.is_ascii_graphic())
+    })
 }
 
 /// What the connector says it charged for a delivery, in base units, when it
