@@ -223,6 +223,24 @@ fn a_flag_beats_its_variable() {
 }
 
 #[test]
+fn the_deprecated_bls_port_still_works_and_warns_naming_its_replacement() {
+    let data = tempfile::tempdir().expect("a temp dir");
+    let mut command = command(&data);
+    let (write, _) = ports(&mut command);
+    command
+        .env_remove("TOON_WRITE_PORT")
+        .env("TOON_BLS_PORT", write.to_string());
+    let child = start(&mut command, write);
+    signal(&child, "TERM");
+    let output = exit_within(child, 10);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("TOON_BLS_PORT is deprecated") && stderr.contains("Use TOON_WRITE_PORT"),
+        "no deprecation warning in {stderr:?}"
+    );
+}
+
+#[test]
 fn metrics_has_the_verify_block_and_the_lane_bounds_and_no_event_loop() {
     let data = tempfile::tempdir().expect("a temp dir");
     let mut command = command(&data);

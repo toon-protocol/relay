@@ -396,6 +396,13 @@ pub struct SubscribeSettings {
     pub relay_url: String,
 }
 
+/// A deprecated setting name that was used, and the name that replaces it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Renamed {
+    pub used: &'static str,
+    pub replacement: &'static str,
+}
+
 /// A complete, validated configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -407,8 +414,8 @@ pub struct Config {
     /// The write port: `TOON_WRITE_PORT`, 3100 unless set.
     pub write_port: u16,
     /// The deprecated name the write port was set under, if it was: the binary
-    /// warns once at startup that `TOON_WRITE_PORT` replaces it.
-    pub deprecated_write_port_name: Option<&'static str>,
+    /// warns once at startup, naming the setting that replaces it.
+    pub deprecated_write_port_name: Option<Renamed>,
     /// The host the read side (the NIP-01 WebSocket) listens on.
     pub read_host: String,
     /// The read port: `TOON_RELAY_PORT`, 7100 unless set.
@@ -569,48 +576,37 @@ impl Sources<'_> {
     }
 
     fn port(&self, setting: &Setting, default: u16) -> Result<u16, RelayError> {
-        match self.text(setting) {
-            None => Ok(default),
-            Some((name, value)) => match value.parse::<u16>() {
-                Ok(port) if port != 0 => Ok(port),
-                _ => Err(RelayError::InvalidPort { name, value }),
-            },
-        }
+        self.text(setting)
+            .map_or(Ok(default), |(name, value)| port(name, value))
     }
 
     /// A port set under `current` or under its deprecated `alias`, and the
-    /// alias's name if that is the one that was used. A flag beats a variable,
-    /// and within each the current name beats the alias.
+    /// alias's name if that is the one that was used. The current name, flag or
+    /// variable, beats the alias; empty is unset, as for [`Self::port`].
     fn aliased_port(
         &self,
         current: &Setting,
         alias: &Setting,
         default: u16,
-    ) -> Result<(u16, Option<&'static str>), RelayError> {
-        let flag = |setting: &Setting| {
-            self.flags
-                .values
-                .get(setting.flag)
-                .filter(|value| !value.is_empty())
-                .map(|value| (setting.flag, value.clone()))
-        };
-        let env = |setting: &Setting| {
-            (self.lookup)(setting.env)
-                .filter(|value| !value.is_empty())
-                .map(|value| (setting.env, value))
-        };
-        let chosen = flag(current)
-            .or_else(|| flag(alias))
-            .or_else(|| env(current))
-            .or_else(|| env(alias));
+    ) -> Result<(u16, Option<Renamed>), RelayError> {
+        let chosen = self.text(current).or_else(|| self.text(alias));
         let Some((name, value)) = chosen else {
             return Ok((default, None));
         };
-        let deprecated = (name == alias.flag || name == alias.env).then_some(name);
-        match value.parse::<u16>() {
-            Ok(port) if port != 0 => Ok((port, deprecated)),
-            _ => Err(RelayError::InvalidPort { name, value }),
-        }
+        let renamed = if name == alias.flag {
+            Some(Renamed {
+                used: name,
+                replacement: current.flag,
+            })
+        } else if name == alias.env {
+            Some(Renamed {
+                used: name,
+                replacement: current.env,
+            })
+        } else {
+            None
+        };
+        Ok((port(name, value)?, renamed))
     }
 
     /// A whole number in `range`, or `None` when unset or empty.
@@ -1061,6 +1057,14 @@ impl Sources<'_> {
     }
 }
 
+/// `value`, given under `name`, as a port in 1..=65535.
+fn port(name: &'static str, value: String) -> Result<u16, RelayError> {
+    match value.parse::<u16>() {
+        Ok(port) if port != 0 => Ok(port),
+        _ => Err(RelayError::InvalidPort { name, value }),
+    }
+}
+
 /// The ids in `raw` (separated by commas or white space) as lower-case hex,
 /// each once, and the entries that are not 64 hex characters.
 fn blocked_ids(raw: &str) -> (Vec<String>, Vec<String>) {
@@ -1204,12 +1208,24 @@ mod tests {
         let from_env = config(&[("TOON_SECRET_KEY", &ones()), ("TOON_BLS_PORT", "3200")])
             .expect("the alias is accepted");
         assert_eq!(from_env.write_port, 3200);
-        assert_eq!(from_env.deprecated_write_port_name, Some("TOON_BLS_PORT"));
+        assert_eq!(
+            from_env.deprecated_write_port_name,
+            Some(Renamed {
+                used: "TOON_BLS_PORT",
+                replacement: "TOON_WRITE_PORT"
+            })
+        );
 
         let from_flag = run(&["--bls-port=3300"], &[("TOON_SECRET_KEY", &ones())])
             .expect("the alias flag is accepted");
         assert_eq!(from_flag.write_port, 3300);
-        assert_eq!(from_flag.deprecated_write_port_name, Some("--bls-port"));
+        assert_eq!(
+            from_flag.deprecated_write_port_name,
+            Some(Renamed {
+                used: "--bls-port",
+                replacement: "--write-port"
+            })
+        );
     }
 
     #[test]
@@ -1230,6 +1246,23 @@ mod tests {
         .expect("valid");
         assert_eq!(both_flags.write_port, 3500);
         assert_eq!(both_flags.deprecated_write_port_name, None);
+
+        let old_flag_new_env = run(
+            &["--bls-port", "3200"],
+            &[("TOON_SECRET_KEY", &ones()), ("TOON_WRITE_PORT", "3600")],
+        )
+        .expect("valid");
+        assert_eq!(old_flag_new_env.write_port, 3600);
+        assert_eq!(old_flag_new_env.deprecated_write_port_name, None);
+
+        let new_empty = config(&[
+            ("TOON_SECRET_KEY", &ones()),
+            ("TOON_WRITE_PORT", ""),
+            ("TOON_BLS_PORT", "3200"),
+        ])
+        .expect("valid");
+        assert_eq!(new_empty.write_port, 3200);
+        assert!(new_empty.deprecated_write_port_name.is_some());
     }
 
     #[test]

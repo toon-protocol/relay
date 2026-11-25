@@ -43,15 +43,11 @@ async fn run() -> Result<(), RelayError> {
         }
         Invocation::Run(config) => config,
     };
-    if let Some(old) = config.deprecated_write_port_name {
+    if let Some(renamed) = config.deprecated_write_port_name {
         eprintln!(
-            "Warning: {old} is deprecated and will be removed in the next release. \
+            "Warning: {} is deprecated and will be removed in the next release. \
              Use {} instead.",
-            if old.starts_with("--") {
-                "--write-port"
-            } else {
-                "TOON_WRITE_PORT"
-            }
+            renamed.used, renamed.replacement
         );
     }
     if let Some(workers) = config.verify_workers {
