@@ -207,7 +207,7 @@ services:
     labels:
       com.centurylinklabs.watchtower.enable: 'true'
     environment:
-      TOON_BLS_PORT: '3100' # writes  — private
+      TOON_WRITE_PORT: '3100' # writes  — private
       TOON_RELAY_PORT: '7100' # reads   — fronted by Caddy
       TOON_DATA_DIR: /data
       # The relay's own Nostr IDENTITY (not money). It will not boot without

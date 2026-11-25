@@ -377,7 +377,8 @@ CLI flags override environment variables. `deploy/` sets these through
 | `TOON_SECRET_KEY` / `NOSTR_SECRET_KEY`          | —         | 64-hex identity key. One of this or `TOON_MNEMONIC` is **required** |
 | `TOON_MNEMONIC`                                 | —         | BIP-39 mnemonic, NIP-06 derivation                                  |
 | `TOON_RELAY_PORT`                               | `7100`    | WebSocket read port                                                 |
-| `TOON_BLS_PORT`                                 | `3100`    | HTTP write / health / metrics port                                  |
+| `TOON_WRITE_PORT`                               | `3100`    | HTTP write / health / metrics port                                  |
+| `TOON_BLS_PORT`                                 |           | Deprecated alias of `TOON_WRITE_PORT` (removed next release; the new name wins) |
 | `TOON_HOST`                                     | `0.0.0.0` | read-port bind address                                              |
 | `TOON_WRITE_HOST`                               | `0.0.0.0` | write-port bind address                                             |
 | `TOON_DATA_DIR`                                 | `./data`  | where `events.db` lives                                             |
@@ -401,7 +402,7 @@ CLI flags override environment variables. `deploy/` sets these through
 | `TOON_UI_PUBLIC_URL`                            | —         | Rust relay: the `https` origin (no path) visitors reach the app UIs at. Pages name their link preview card (`og:image`, `twitter:image`, ADR 0006) and `og:url` absolutely on it; unset, the `https` origin of a `wss://` or `https://` `TOON_UI_RELAY_URL` stands in, and with neither a page carries its title and description but no image. Anything but an `https` origin is refused at startup |
 | `TOON_NIP17_RECIPIENT_ONLY`                     | `false`   | Rust relay: `true` serves a kind 1059 gift wrap only to a connection that has proven (NIP-42) a key in one of its `p` tags, in every answer and live; a `REQ` naming 1059 from an unauthenticated connection is closed `auth-required:`, one naming no kinds is answered without the wraps; no operator exception; implies `TOON_NIP42_AUTH` |
 | `TOON_CONNECTOR_URL`                            | —         | the connector's `GET /ilp` this relay reads its write edge from     |
-| `TOON_WRITE_ILP_ADDRESS`                        | —         | which of that connector's routes reaches this relay's `POST /write` |
+| `TOON_WRITE_ILP_ADDRESS`                        | —         | which of that connector's routes reaches this relay's `POST /write`; it must charge a flat price (no `pricePerKib`), or the relay names no write edge |
 | `TOON_WRITE_CARRIAGE`                           | —         | the carriage that route pins; fills silence only (TOON_Network#111) |
 | `TOON_SUBSCRIBE_ILP_ADDRESS`                    | —         | sells the live feed: the connector route that reaches `POST /subscribe` ([docs/paid-feed.md](docs/paid-feed.md)) |
 | `TOON_BROADCAST_PRICE`                          | —         | what one broadcast event debits from a subscriber (with the two around it) |
