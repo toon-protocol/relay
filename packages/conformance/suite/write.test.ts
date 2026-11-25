@@ -119,13 +119,65 @@ describe('relay image conformance: payment attribution', () => {
     });
   });
 
+  const kept: [string, Record<string, string>, Record<string, string>][] = [
+    [
+      'an XRPL statement with its network',
+      {
+        'X-TOON-Payer': 'xrpl:rN7n7otQDd6FczFgLdSqtcsAUxDkw6fzRH',
+        'X-TOON-Amount': '12',
+        'X-TOON-Chain': 'xrpl',
+        'X-TOON-Network': 'xrpl:testnet',
+      },
+      {
+        payer: 'xrpl:rN7n7otQDd6FczFgLdSqtcsAUxDkw6fzRH',
+        amount: '12',
+        chain: 'xrpl',
+        network: 'xrpl:testnet',
+      },
+    ],
+    [
+      'a zk allowance statement with its claim key',
+      {
+        'X-TOON-Payer': 'zk-note:42',
+        'X-TOON-Amount': '3',
+        'X-TOON-Chain': 'mina',
+        'X-TOON-Network': 'mina:devnet',
+      },
+      {
+        payer: 'zk-note:42',
+        amount: '3',
+        chain: 'mina',
+        network: 'mina:devnet',
+      },
+    ],
+    [
+      'a statement on a chain the relay has not heard of',
+      {
+        'X-TOON-Payer': 'bitcoin:bc1qexample',
+        'X-TOON-Amount': '1',
+        'X-TOON-Chain': 'bitcoin',
+      },
+      { payer: 'bitcoin:bc1qexample', amount: '1', chain: 'bitcoin' },
+    ],
+  ];
+  for (const [name, headers, payment] of kept) {
+    conformanceTest(`${name} is echoed as stated`, async () => {
+      const response = await write({ event: signedEvent(1) }, headers);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ payment });
+    });
+  }
+
   const discarded: [string, Record<string, string>][] = [
     ['absent', {}],
     ['missing the payer', without('X-TOON-Payer')],
     ['missing the amount', without('X-TOON-Amount')],
     ['missing the chain', without('X-TOON-Chain')],
     ['carrying an empty payer', { ...TRIPLE, 'X-TOON-Payer': '' }],
-    ['an unknown chain', { ...TRIPLE, 'X-TOON-Chain': 'bitcoin' }],
+    [
+      'a chain that is not a namespace',
+      { ...TRIPLE, 'X-TOON-Chain': 'bit coin' },
+    ],
     ['a non-integer amount', { ...TRIPLE, 'X-TOON-Amount': '10.5' }],
     ['a malformed payer', { ...TRIPLE, 'X-TOON-Payer': 'evm:0x1234' }],
     ['a payer of the wrong chain', { ...TRIPLE, 'X-TOON-Chain': 'solana' }],
