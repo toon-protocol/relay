@@ -222,9 +222,7 @@ async fn picture(State(pages): State<Pages>, Path(npub): Path<String>) -> Respon
             .store
             .query(Filter::new().kind(nostr::event::Kind::Metadata).author(key))
             .await;
-        let newest = profiles
-            .iter()
-            .max_by(|a, b| (a.created_at, b.id).cmp(&(b.created_at, a.id)))?;
+        let newest = relay_ui::reading::newest(&profiles)?;
         let fields: serde_json::Value = serde_json::from_str(&newest.content).ok()?;
         let url = media::https(fields.get("picture")?.as_str()?)?;
         HeaderValue::from_str(url).ok()

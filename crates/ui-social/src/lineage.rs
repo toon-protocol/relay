@@ -30,7 +30,7 @@ use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{self, escape, icon, svg};
-use relay_ui::reading::{first_tag_value, supersedes};
+use relay_ui::reading::{Address, first_tag_value, supersedes};
 use sha2::{Digest, Sha256};
 use ui_nip34::card::{Links, RepoCard, clone_urls, plural};
 use ui_nip34::lineage::ForkNetwork;
@@ -582,7 +582,8 @@ fn tree(lineage: &Lineage, card: &RepoCard, demo_url: Option<&str>, draw: &Draw<
                 chrome::shown_name(draw.names, site.author()),
                 title.unwrap_or_else(|| {
                     Some(site.coordinate())
-                        .and_then(|c| c.rsplit(':').next().map(str::to_owned))
+                        .and_then(|c| Address::parse(&c))
+                        .map(|address| address.d)
                         .filter(|d| !d.is_empty())
                         .unwrap_or_else(|| "root site".to_owned())
                 })

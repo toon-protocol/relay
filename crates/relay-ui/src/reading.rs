@@ -110,8 +110,8 @@ mod tests {
     use nostr::key::Keys;
     use nostr::types::Timestamp;
 
-    fn event(keys: &Keys, kind: u16, at: u64, tag: &str) -> Event {
-        EventBuilder::new(nostr::event::Kind::from(kind), tag)
+    fn event(keys: &Keys, kind: u16, at: u64, content: &str) -> Event {
+        EventBuilder::new(nostr::event::Kind::from(kind), content)
             .tags([Tag::parse(["d", "x"]).unwrap()])
             .custom_created_at(Timestamp::from_secs(at))
             .finalize(keys)
@@ -185,7 +185,7 @@ mod tests {
             assert_eq!(Address::parse(&address.to_string()), Some(address), "{d:?}");
         }
         assert_eq!(Address::parse("30023:nothex:d"), None);
-        assert_eq!(Address::parse("x:".to_owned().as_str()), None);
+        assert_eq!(Address::parse("x:"), None);
         assert_eq!(Address::parse(&format!("30023:{}", key.to_hex())), None);
     }
 

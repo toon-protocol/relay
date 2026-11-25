@@ -33,7 +33,7 @@ use nostr::nips::nip19::{FromBech32, Nip19Coordinate, ToBech32};
 use nostr::types::Timestamp;
 use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{Profiles, ago, escape, icon, name, npub, percent_encode, plain_name, svg};
-use relay_ui::reading::{self, every_tag_value, first_tag_value, newest, supersedes};
+use relay_ui::reading::{self, d_tag, every_tag_value, first_tag_value, newest, supersedes};
 use ui_nip34::card::{Links, RepoCard, plural};
 use ui_nip34::repo::RepoAddress;
 
@@ -88,11 +88,7 @@ impl Address {
 
     /// The address of an addressable event.
     pub(crate) fn of(event: &Event) -> Option<Self> {
-        Self::new(
-            event.kind.as_u16(),
-            event.pubkey,
-            relay_ui::reading::d_tag(event),
-        )
+        Self::new(event.kind.as_u16(), event.pubkey, d_tag(event))
     }
 
     /// The addresses of `kind` that `event` names in `a` tags, once each.
@@ -287,7 +283,7 @@ impl Release {
             .map(str::trim)
             .filter(|version| !version.is_empty())
             .or_else(|| {
-                relay_ui::reading::d_tag(&self.event)
+                d_tag(&self.event)
                     .rsplit_once('@')
                     .map(|(_, version)| version)
             })
@@ -333,7 +329,7 @@ pub(crate) fn releases_of(app: &Address, events: Vec<Event>) -> Vec<Release> {
         {
             continue;
         }
-        let d = relay_ui::reading::d_tag(&event).to_owned();
+        let d = d_tag(&event).to_owned();
         match held.get(&d) {
             Some(current) if !supersedes(&event, current) => {}
             _ => {
@@ -507,9 +503,11 @@ async fn load_app(store: &ReadOnlyStore, address: &Address) -> Option<App> {
                 .identifier(address.d()),
         )
         .await;
-    newest(events.iter().filter(|event| {
-        event.pubkey == *address.author() && relay_ui::reading::d_tag(event) == address.d()
-    }))
+    newest(
+        events
+            .iter()
+            .filter(|event| event.pubkey == *address.author() && d_tag(event) == address.d()),
+    )
     .cloned()
     .and_then(App::of)
 }
@@ -893,7 +891,7 @@ fn set_title(set: &Event) -> String {
         .or_else(|| first_tag_value(set, "name"))
         .map(str::trim)
         .filter(|title| !title.is_empty())
-        .unwrap_or_else(|| relay_ui::reading::d_tag(set))
+        .unwrap_or_else(|| d_tag(set))
         .to_owned()
 }
 
@@ -1461,9 +1459,11 @@ pub(crate) async fn set(State(pages): State<Pages>, Path(target): Path<String>) 
                 .identifier(address.d()),
         )
         .await;
-    let Some(set) = newest(events.iter().filter(|event| {
-        event.pubkey == *address.author() && relay_ui::reading::d_tag(event) == address.d()
-    }))
+    let Some(set) = newest(
+        events
+            .iter()
+            .filter(|event| event.pubkey == *address.author() && d_tag(event) == address.d()),
+    )
     .cloned() else {
         return not_found(&pages);
     };

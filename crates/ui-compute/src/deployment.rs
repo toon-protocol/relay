@@ -14,7 +14,7 @@ use nostr::key::PublicKey;
 use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{self, App, Apps, Identicon, Profiles, escape};
 use relay_ui::meta::{Preview, summary};
-use relay_ui::reading::newest;
+use relay_ui::reading::{Address, newest};
 use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors, owner_announcement};
 use ui_preview::{Card, Face};
 
@@ -112,10 +112,9 @@ impl Deployment {
                         if repo.replace(RepoAddress::parse(value)?).is_some() {
                             return None;
                         }
-                    } else if let Some(rest) = value.strip_prefix(&format!("{LISTING_KIND}:")) {
-                        let (key, name) = rest.split_once(':')?;
-                        let key = PublicKey::from_hex(key).ok()?;
-                        if listing.replace((key, name.to_owned())).is_some() {
+                    } else if value.starts_with(&format!("{LISTING_KIND}:")) {
+                        let address = Address::parse(value)?;
+                        if listing.replace((address.pubkey, address.d)).is_some() {
                             return None;
                         }
                     }

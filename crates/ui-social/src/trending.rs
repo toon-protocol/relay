@@ -42,7 +42,7 @@ use nostr::key::PublicKey;
 use nostr::types::Timestamp;
 use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{self, Profiles, ago, escape, npub, percent_encode, plain_name};
-use relay_ui::reading::first_tag_value;
+use relay_ui::reading::{first_tag_value, newest};
 use ui_nip34::card::{is_star, plural};
 use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors};
 
@@ -579,17 +579,17 @@ pub(crate) async fn page(State(pages): State<Pages>, RawQuery(query): RawQuery) 
         .await;
     let providers = providers(&assertions);
     let trusted = match &asked.viewer {
-        Some(viewer) => store
-            .query(
-                Filter::new()
-                    .kind(Kind::from(TRUSTED_PROVIDERS))
-                    .author(*viewer),
-            )
-            .await
-            .iter()
-            .max_by_key(|list| list.created_at)
-            .map(trusted_providers)
-            .unwrap_or_default(),
+        Some(viewer) => newest(
+            &store
+                .query(
+                    Filter::new()
+                        .kind(Kind::from(TRUSTED_PROVIDERS))
+                        .author(*viewer),
+                )
+                .await,
+        )
+        .map(trusted_providers)
+        .unwrap_or_default(),
         None => Vec::new(),
     };
     let provider = asked
