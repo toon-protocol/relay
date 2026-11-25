@@ -18,7 +18,8 @@ use nostr::event::{Event, Kind};
 use nostr::key::PublicKey;
 use nostr::nips::nip19::{FromBech32, Nip19};
 use relay_ui::chrome::npub;
-use ui_nip34::repo::{RepoAddress, first_tag};
+use relay_ui::reading::{Address, first_tag_value};
+use ui_nip34::repo::RepoAddress;
 
 use crate::kinds::{APP_HANDLER, NOTE, SITE_NAMED, SITE_ROOT};
 use crate::media;
@@ -64,7 +65,7 @@ impl Site {
             }),
             SITE_NAMED => Some(Self {
                 author: event.pubkey,
-                name: Some(ui_nip34::repo::d_tag(event).to_owned()),
+                name: Some(relay_ui::reading::d_tag(event).to_owned()),
             }),
             _ => None,
         }
@@ -88,16 +89,25 @@ impl Site {
     /// The site an `a` or `A` tag value names: `35128:<hex>:<d>`, or a root
     /// site `15128:<hex>` with or without the trailing colon.
     pub(crate) fn parse(coordinate: &str) -> Option<Self> {
-        let mut parts = coordinate.splitn(3, ':');
-        let (kind, author) = (parts.next()?, parts.next()?);
-        let d = parts.next();
-        let author = PublicKey::from_hex(author).ok()?;
-        match kind.parse::<u16>().ok()? {
+        // A root site may drop the trailing colon: `15128:<hex>`.
+        let spelled;
+        let coordinate = if coordinate.matches(':').count() == 1 {
+            spelled = format!("{coordinate}:");
+            &spelled
+        } else {
+            coordinate
+        };
+        let Address {
+            kind,
+            pubkey: author,
+            d,
+        } = Address::parse(coordinate)?;
+        match kind {
             SITE_NAMED => Some(Self {
                 author,
-                name: Some(d.filter(|d| !d.is_empty())?.to_owned()),
+                name: Some(Some(d).filter(|d| !d.is_empty())?),
             }),
-            SITE_ROOT if d.is_none_or(str::is_empty) => Some(Self { author, name: None }),
+            SITE_ROOT if d.is_empty() => Some(Self { author, name: None }),
             _ => None,
         }
     }
@@ -270,7 +280,7 @@ fn base36(bytes: &[u8]) -> String {
 /// its name and its description, when given.
 pub(crate) fn app_metadata(event: &Event) -> (Option<String>, Option<String>) {
     let Ok(serde_json::Value::Object(fields)) = serde_json::from_str(&event.content) else {
-        return (first_tag(event, "name").map(str::to_owned), None);
+        return (first_tag_value(event, "name").map(str::to_owned), None);
     };
     let text = |key: &str| {
         fields

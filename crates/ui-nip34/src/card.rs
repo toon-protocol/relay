@@ -18,9 +18,10 @@ use relay_ui::chrome::{self, App, Apps, Profiles, ago, escape, icon, npub, perce
 
 use crate::lineage::ForkOf;
 use crate::repo::{
-    ANNOUNCEMENT, RepoAddress, STATE, authorized_authors, first_tag, head_branch, honoured_state,
+    ANNOUNCEMENT, RepoAddress, STATE, authorized_authors, head_branch, honoured_state,
     owner_announcement, repo_name, topics,
 };
+use relay_ui::reading::first_tag_value;
 
 /// NIP-25 reaction: a star when it is `+` on a repo.
 pub const REACTION: u16 = 7;
@@ -249,7 +250,7 @@ impl RepoCard {
 
     /// The announcement's description, if it has one.
     pub fn description(&self) -> Option<&str> {
-        first_tag(&self.announcement, "description")
+        first_tag_value(&self.announcement, "description")
             .map(str::trim)
             .filter(|text| !text.is_empty())
     }

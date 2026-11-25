@@ -18,8 +18,8 @@ use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{escape, name};
+use relay_ui::reading::first_tag_value;
 use ui_nip34::card::plural;
-use ui_nip34::repo::first_tag;
 
 use crate::kinds::{TIP_ACKNOWLEDGEMENT, TIP_ROUTE};
 
@@ -135,7 +135,7 @@ pub(crate) fn tally(events: &[Event], recipient: &PublicKey, subject: &Subject) 
         .filter(|ack| ack.kind == Kind::from(TIP_ACKNOWLEDGEMENT) && ack.pubkey == *recipient)
         .filter(|ack| subject.is_tipped_by(ack))
         .filter_map(|ack| {
-            let receipt = first_tag(ack, "receipt").filter(|receipt| !receipt.is_empty())?;
+            let receipt = first_tag_value(ack, "receipt").filter(|receipt| !receipt.is_empty())?;
             Some((ack, receipt, amount_of(ack)?))
         })
         .collect();
@@ -153,7 +153,7 @@ pub(crate) fn tally(events: &[Event], recipient: &PublicKey, subject: &Subject) 
             Some((_, total)) => *total = total.saturating_add(base),
             None => per_unit.push((unit, base)),
         }
-        payers.extend(first_tag(ack, "p").and_then(|key| PublicKey::from_hex(key).ok()));
+        payers.extend(first_tag_value(ack, "p").and_then(|key| PublicKey::from_hex(key).ok()));
     }
     per_unit.sort();
     Totals {

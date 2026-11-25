@@ -30,10 +30,11 @@ use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{self, escape, icon, svg};
+use relay_ui::reading::{Address, first_tag_value, supersedes};
 use sha2::{Digest, Sha256};
 use ui_nip34::card::{Links, RepoCard, clone_urls, plural};
 use ui_nip34::lineage::ForkNetwork;
-use ui_nip34::repo::{RepoAddress, first_tag, repo_name, supersedes};
+use ui_nip34::repo::{RepoAddress, repo_name};
 
 use crate::demo;
 use crate::handlers::{self, Choice};
@@ -178,7 +179,7 @@ impl Lineage {
             }
             for hash in [
                 aggregate(site),
-                first_tag(site, "x").map(str::to_ascii_lowercase),
+                first_tag_value(site, "x").map(str::to_ascii_lowercase),
             ]
             .into_iter()
             .flatten()
@@ -395,7 +396,7 @@ fn repo_node(
     let mut note: Vec<String> = Vec::new();
     match held {
         Some(announcement) => {
-            if let Some(description) = first_tag(announcement, "description")
+            if let Some(description) = first_tag_value(announcement, "description")
                 .map(str::trim)
                 .filter(|text| !text.is_empty())
             {
@@ -424,12 +425,12 @@ fn repo_node(
 /// A site's node: who copied it, its title, its source repo, and a link to
 /// try it through the gateway.
 fn site_node(lineage: &Lineage, site: &Event, chip: &str, note: &str, draw: &Draw<'_>) -> String {
-    let title_text = first_tag(site, "title")
+    let title_text = first_tag_value(site, "title")
         .map(str::trim)
         .filter(|title| !title.is_empty())
         .map(str::to_owned)
         .or_else(|| {
-            (site.kind.as_u16() == SITE_NAMED).then(|| ui_nip34::repo::d_tag(site).to_owned())
+            (site.kind.as_u16() == SITE_NAMED).then(|| relay_ui::reading::d_tag(site).to_owned())
         })
         .unwrap_or_else(|| "root site".to_owned());
     let mut title = format!(
@@ -439,7 +440,7 @@ fn site_node(lineage: &Lineage, site: &Event, chip: &str, note: &str, draw: &Dra
         escape(&title_text)
     );
     let mut notes: Vec<String> = Vec::new();
-    if let Some(description) = first_tag(site, "description")
+    if let Some(description) = first_tag_value(site, "description")
         .map(str::trim)
         .filter(|text| !text.is_empty())
     {
@@ -575,13 +576,14 @@ fn tree(lineage: &Lineage, card: &RepoCard, demo_url: Option<&str>, draw: &Draw<
         let named = |site: &Site| {
             let title = lineage
                 .site(&site.coordinate())
-                .and_then(|held| first_tag(held, "title").map(str::to_owned));
+                .and_then(|held| first_tag_value(held, "title").map(str::to_owned));
             escape(&format!(
                 "{} / {}",
                 chrome::shown_name(draw.names, site.author()),
                 title.unwrap_or_else(|| {
                     Some(site.coordinate())
-                        .and_then(|c| c.rsplit(':').next().map(str::to_owned))
+                        .and_then(|c| Address::parse(&c))
+                        .map(|address| address.d)
                         .filter(|d| !d.is_empty())
                         .unwrap_or_else(|| "root site".to_owned())
                 })

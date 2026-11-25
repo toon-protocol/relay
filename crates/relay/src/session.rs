@@ -70,6 +70,7 @@ use crate::ledger::{Charged, ConnectionId};
 use crate::proof::client_authentication;
 use crate::store::Query;
 use crate::subscribe::Sale;
+use crate::view::{Conditions, Rules};
 
 /// The most subscriptions one connection holds. Replacing one is not another.
 pub(crate) const MAX_SUBSCRIPTIONS: usize = 20;
@@ -380,17 +381,13 @@ impl Wanted {
 
     /// The filter as the store is asked: with the limit it is answered to,
     /// and the tag keys the protocol crate does not read.
-    fn query(&self, wrap_recipients: Option<&[String]>) -> Query {
+    fn query(&self, conditions: &Conditions) -> Query {
         let mut filter = self.base.clone();
         let requested = filter
             .limit
             .unwrap_or_else(|| filter.ids.as_ref().map_or(MAX_LIMIT, |ids| ids.len()));
         filter.limit = Some(requested.min(MAX_LIMIT));
-        Query {
-            filter,
-            multi_letter_tags: self.multi.clone(),
-            wrap_recipients: wrap_recipients.map(<[String]>::to_vec),
-        }
+        conditions.apply(Query::from(filter).with_multi_letter_tags(self.multi.clone()))
     }
 }
 
@@ -442,9 +439,8 @@ impl Subscription {
 #[derive(Debug)]
 pub(crate) struct Request {
     id: String,
-    /// The keys the connection had proven when it asked, when gift wraps are
-    /// served only to their recipients.
-    wrap_recipients: Option<Vec<String>>,
+    /// What the connection could see when it asked.
+    conditions: Conditions,
     subscription: Subscription,
 }
 
@@ -459,7 +455,7 @@ impl Request {
         self.subscription
             .filters
             .iter()
-            .map(|wanted| wanted.query(self.wrap_recipients.as_deref()))
+            .map(|wanted| wanted.query(&self.conditions))
             .collect()
     }
 }
@@ -677,13 +673,9 @@ impl Session {
         }
         let filters: Arc<[Wanted]> = filters.into();
         let feed = self.feed_for(&id, &filters);
-        let wrap_recipients = self
-            .auth
-            .as_ref()
-            .filter(|auth| auth.policy.is_recipient_only())
-            .map(|auth| auth.proven.iter().map(PublicKey::to_hex).collect());
+        let conditions = self.rules().conditions(self.proven_keys());
         Reply::Ask(Request {
-            wrap_recipients,
+            conditions,
             subscription: Subscription {
                 filters,
                 feed,
@@ -708,18 +700,12 @@ impl Session {
         self.auth.as_ref().map_or(&NONE, |auth| &auth.proven)
     }
 
-    /// Whether `event` may be shown on this connection, given the groups it
-    /// belongs to, the keys the connection has proven and, for a gift wrap,
-    /// whether one of those keys is a recipient.
-    fn may_read(&self, event: &Event) -> bool {
-        let keys = self.proven_keys();
-        self.auth
-            .as_ref()
-            .is_none_or(|auth| auth.policy.may_read(event, keys))
-            && self
-                .groups
-                .as_ref()
-                .is_none_or(|groups| groups.may_read(event, keys))
+    /// The relay's rules for what this connection may see.
+    fn rules(&self) -> Rules<'_> {
+        Rules {
+            policy: self.auth.as_ref().map(|auth| &auth.policy),
+            groups: self.groups.as_ref(),
+        }
     }
 
     /// End `id` with `reason`. A `CLOSED` says the subscription of that id is
@@ -827,10 +813,9 @@ impl Session {
         let mut seen = HashSet::new();
         let mut events: Vec<Event> = Vec::new();
         for found in found {
+            // The store's conditions already left out what the connection
+            // may not see.
             for event in found {
-                if !self.may_read(&event) {
-                    continue;
-                }
                 if seen.insert(event.id) {
                     events.push(event);
                 }
@@ -860,7 +845,7 @@ impl Session {
         for live in waiting {
             frames.extend(self.live_frames(live));
             if !seen.contains(&live.event.id)
-                && self.may_read(&live.event)
+                && self.rules().may_see(&live.event, self.proven_keys())
                 && subscription.feed.admits(live)
                 && subscription.filters.iter().any(|f| f.matches(&live.event))
             {
@@ -896,7 +881,7 @@ impl Session {
         &'a self,
         live: &'a LiveEvent,
     ) -> impl Iterator<Item = String> + 'a {
-        let readable = self.may_read(&live.event);
+        let readable = self.rules().may_see(&live.event, self.proven_keys());
         self.subscriptions
             .values()
             .filter(move |_| readable)

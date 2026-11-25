@@ -26,8 +26,9 @@ use std::collections::HashMap;
 use nostr::event::{Event, Kind};
 use nostr::filter::{Filter, SingleLetterTag};
 use relay_ui::ReadOnlyStore;
+use relay_ui::reading::{first_tag_value, newest};
 use ui_nip34::card::RepoCard;
-use ui_nip34::repo::{RepoAddress, first_tag, newest};
+use ui_nip34::repo::RepoAddress;
 
 use crate::kinds::{APP_HANDLER, SITE_NAMED, SITE_ROOT, SOFTWARE_APP};
 use crate::ship::{self, Site};
@@ -92,7 +93,7 @@ fn of_app(event: &Event, card: &RepoCard) -> Option<Demo> {
     }
     match event.kind.as_u16() {
         APP_HANDLER => of_app_event(event, card),
-        SOFTWARE_APP => first_tag(event, "url")
+        SOFTWARE_APP => first_tag_value(event, "url")
             .map(str::trim)
             .filter(|url| url.starts_with("https://") && !url.contains(char::is_whitespace))
             .map(|url| Demo::Website(url.to_owned())),

@@ -10,7 +10,7 @@
 //! so only the public tags count here.
 
 use nostr::event::Event;
-use ui_nip34::repo::{d_tag, first_tag, newest};
+use relay_ui::reading::{d_tag, first_tag_value, newest};
 
 use crate::article::ArticleAddress;
 use crate::kinds::CURATION_SET;
@@ -55,12 +55,12 @@ pub(crate) fn series_of(sets: &[Event], article: &ArticleAddress) -> Vec<Series>
         let Some(current) = parts.iter().position(|part| part == article) else {
             continue;
         };
-        let title = first_tag(set, "title")
+        let title = first_tag_value(set, "title")
             .map(str::trim)
             .filter(|title| !title.is_empty())
             .unwrap_or(d)
             .to_owned();
-        let description = first_tag(set, "description")
+        let description = first_tag_value(set, "description")
             .map(str::trim)
             .filter(|text| !text.is_empty())
             .map(str::to_owned);

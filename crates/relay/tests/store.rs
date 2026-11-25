@@ -216,6 +216,42 @@ async fn a_tie_on_created_at_keeps_the_lower_id_whichever_arrived_first() {
 }
 
 #[tokio::test]
+async fn the_event_the_store_keeps_in_a_slot_is_the_one_event_reading_calls_newest() {
+    let dir = tempdir().expect("a temp dir");
+    let store = Store::open(&typescript_database(dir.path())).expect("it opens");
+    // Few distinct times, so ties are common; each generated set is saved in
+    // the order it was generated, and the one row left is compared with
+    // `relay_ui::reading::newest` over the whole set.
+    let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+    for round in 0..60 {
+        let author = Keys::generate();
+        let (kind, d) = if round % 2 == 0 {
+            (10_002, None)
+        } else {
+            (30_023, Some("a:b"))
+        };
+        let mut events = Vec::new();
+        for n in 0..(1 + round % 6) {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let at = 1_000 + (seed >> 60) % 3;
+            let n = n.to_string();
+            let event = match d {
+                Some(d) => signed_by(&author, kind, at, &[&["d", d], &["n", &n]]),
+                None => signed_by(&author, kind, at, &[&["n", &n]]),
+            };
+            store.save(&verified(&event)).await.expect("saved");
+            events.push(event);
+        }
+        let newest = relay_ui::reading::newest(&events).expect("a set is never empty");
+        assert_eq!(
+            held(&store, &author, kind).await,
+            sorted(&[newest]),
+            "round {round}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn rows_a_replaceable_kind_already_accumulated_are_left_until_a_newer_event_replaces_them() {
     let dir = tempdir().expect("a temp dir");
     let path = typescript_database(dir.path());
@@ -468,6 +504,8 @@ async fn a_multi_letter_tag_key_is_a_condition_of_the_query_before_the_limit() {
         filter,
         multi_letter_tags: keys(pairs),
         wrap_recipients: None,
+        hidden: Vec::new(),
+        hidden_kinds: Vec::new(),
     };
 
     let kind_one = Filter::new().kind(nostr::event::Kind::from(1));
@@ -530,6 +568,8 @@ async fn a_newer_event_without_the_multi_letter_key_does_not_hide_the_one_with_i
         filter: Filter::new().kind(nostr::event::Kind::from(1)).limit(1),
         multi_letter_tags: vec![("ab".to_string(), ["x".to_string()].into())],
         wrap_recipients: None,
+        hidden: Vec::new(),
+        hidden_kinds: Vec::new(),
     };
     let found = store.query(query).await.expect("runs");
     assert_eq!(ids(&found), ids(std::slice::from_ref(&tagged)));

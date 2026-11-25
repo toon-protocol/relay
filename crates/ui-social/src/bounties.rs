@@ -28,8 +28,9 @@ use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{Profiles, ago, escape, name, percent_encode};
+use relay_ui::reading::{first_tag_value, supersedes};
 use ui_nip34::card::{RepoCard, plural};
-use ui_nip34::repo::{RepoAddress, first_tag, supersedes};
+use ui_nip34::repo::RepoAddress;
 
 use crate::apps::Address;
 use crate::content::{clip, first_line};
@@ -82,7 +83,7 @@ pub(crate) fn status_of(listing: &Event, resolved: bool) -> Status {
     if resolved {
         return Status::Resolved;
     }
-    match first_tag(listing, "status").map(|status| status.trim().to_lowercase()) {
+    match first_tag_value(listing, "status").map(|status| status.trim().to_lowercase()) {
         Some(status) if status == "sold" || status == "claimed" => Status::Claimed,
         _ => Status::Open,
     }
@@ -127,7 +128,7 @@ pub(crate) fn target(goal: &Event) -> Option<String> {
     if let Some((base, unit)) = crate::tips::amount_of(goal) {
         return Some(unit.show(base));
     }
-    let millisats: u64 = first_tag(goal, "amount")?.trim().parse().ok()?;
+    let millisats: u64 = first_tag_value(goal, "amount")?.trim().parse().ok()?;
     Some(if millisats.is_multiple_of(1_000) {
         format!("{} sats", grouped(millisats / 1_000))
     } else {
@@ -327,7 +328,7 @@ fn row(
 ) -> String {
     let links = pages.links();
     let listing = &bounty.listing;
-    let title = first_tag(listing, "title")
+    let title = first_tag_value(listing, "title")
         .map(str::trim)
         .filter(|title| !title.is_empty())
         .map(str::to_owned)
@@ -363,7 +364,7 @@ fn row(
         });
     }
     if let Some(issue) = &bounty.issue {
-        let subject = first_tag(issue, "subject")
+        let subject = first_tag_value(issue, "subject")
             .map(str::to_owned)
             .unwrap_or_else(|| first_line(&issue.content, 60));
         meta.push(match &issue_link {
@@ -377,7 +378,7 @@ fn row(
     }
     meta.push(format!("posted by {}", name(names, &listing.pubkey)));
     meta.push(ago(listing.created_at));
-    let summary = first_tag(listing, "summary")
+    let summary = first_tag_value(listing, "summary")
         .map(|summary| clip(summary, 240))
         .filter(|summary| !summary.trim().is_empty());
     format!(
@@ -442,7 +443,7 @@ fn goal_card(
         Some(href) => format!("<a href=\"{}\">{}</a>", escape(&href), escape(&label)),
         None => escape(&label),
     };
-    let heading = first_tag(goal, "summary")
+    let heading = first_tag_value(goal, "summary")
         .map(str::trim)
         .filter(|summary| !summary.is_empty())
         .map(str::to_owned)
@@ -462,7 +463,8 @@ fn goal_card(
             escape(&target)
         ));
     }
-    if let Some(closes) = first_tag(goal, "closed_at").and_then(|at| at.trim().parse::<i64>().ok())
+    if let Some(closes) =
+        first_tag_value(goal, "closed_at").and_then(|at| at.trim().parse::<i64>().ok())
     {
         out.push_str(&format!(
             "<p class=\"muted small\">Closes {}</p>",

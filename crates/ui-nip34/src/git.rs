@@ -18,12 +18,13 @@ use nostr::nips::nip19::FromBech32;
 use serde_json::json;
 
 use relay_ui::Assets;
+use relay_ui::reading::{d_tag, first_tag_values, newest};
 
 use crate::markup::{Tab, ref_menu, repo_header};
 use crate::{
     ANNOUNCEMENT, HIGHLIGHT_SCRIPT, PREFIX, Pages, SCRIPT, STATE, UNAVAILABLE, authorized_authors,
-    d_tag, escape, head_branch, honoured_state, html_with, names, newest, not_found,
-    percent_encode, refs, repo_name, repo_path, repo_preview, tag_values,
+    escape, head_branch, honoured_state, html_with, names, not_found, percent_encode, refs,
+    repo_name, repo_path, repo_preview,
 };
 
 /// What a git page may load: its own origin, its own WebAssembly, and `https`
@@ -142,7 +143,7 @@ pub(crate) fn candidates(
             _ => {}
         }
     }
-    let servers: Vec<&str> = tag_values(announcement, "blossoms")
+    let servers: Vec<&str> = first_tag_values(announcement, "blossoms")
         .iter()
         .filter_map(|server| https_url(server))
         .collect();

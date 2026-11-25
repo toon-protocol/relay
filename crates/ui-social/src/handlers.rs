@@ -30,7 +30,8 @@ use nostr::nips::nip19::{Nip19Coordinate, ToBech32};
 use nostr::types::RelayUrl;
 use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{Profiles, escape, percent_encode};
-use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, d_tag, newest};
+use relay_ui::reading::{d_tag, newest};
+use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress};
 
 use crate::kinds::{APP_HANDLER, FOLLOWS, GIT_AUTHORS, HANDLER_RECOMMENDATION};
 use crate::ship;
@@ -159,7 +160,7 @@ pub(crate) fn rank(
         event.kind == Kind::from(HANDLER_RECOMMENDATION) && d_tag(event) == ANNOUNCEMENT.to_string()
     }) {
         match newest_by.get(&event.pubkey) {
-            Some(held) if !ui_nip34::repo::supersedes(event, held) => {}
+            Some(held) if !relay_ui::reading::supersedes(event, held) => {}
             _ => {
                 newest_by.insert(event.pubkey, event);
             }
