@@ -254,14 +254,14 @@ async fn in_room(
 
 /// The live activities in room `id` (an `h` tag).
 async fn room_streams(store: &ReadOnlyStore, id: &str) -> Result<Vec<Event>, StoreError> {
-    Ok(store
+    store
         .query(
             Filter::new()
                 .kind(Kind::from(LIVE_ACTIVITY))
                 .custom_tag(SingleLetterTag::LOWERCASE_H, id.to_owned())
                 .limit(20),
         )
-        .await?)
+        .await
 }
 
 /// What stands where a chat input would.

@@ -451,7 +451,7 @@ async fn demos(
         .iter()
         .filter_map(|event| view.ship(event).map(|repo| (event, repo)))
         .collect();
-    Ok(demo::for_cards(&pages.store, view.cards, &launches, pages.gateway()).await?)
+    demo::for_cards(&pages.store, view.cards, &launches, pages.gateway()).await
 }
 
 #[cfg(test)]

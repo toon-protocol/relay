@@ -496,7 +496,7 @@ pub(crate) async fn post_banner(
     let link = launched
         .and_then(|card| links.social_path(card.address()))
         .map(|base| format!("{base}/reports{}", viewer::as_query(viewer.as_ref(), true)));
-    Ok(page_banner(store, &targets, query, link.as_deref()).await?)
+    page_banner(store, &targets, query, link.as_deref()).await
 }
 
 /// A page's report line for `targets`, read through the `?as=` lens in
