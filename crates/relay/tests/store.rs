@@ -548,18 +548,25 @@ async fn a_replaceable_kind_ignores_the_d_tag() {
 }
 
 #[tokio::test]
-async fn opening_a_file_that_holds_several_10050_events_keeps_the_newest() {
+async fn opening_a_file_that_holds_several_events_of_a_kind_in_10032_to_10099_keeps_the_newest() {
     let dir = tempdir().expect("a temp dir");
     let path = typescript_database(dir.path());
     let author = Keys::generate();
+    let other = Keys::generate();
     let connection = Connection::open(&path).expect("the database opens");
-    for (id, d, at) in [("ab", "a", 1000), ("cd", "b", 2000)] {
+    let rows = [
+        ("ab", &author, "a", 1000),
+        ("ef", &author, "b", 2000),
+        ("cd", &author, "c", 2000),
+        ("12", &other, "a", 1000),
+    ];
+    for (id, keys, d, at) in rows {
         connection
             .execute(
                 "INSERT INTO events VALUES (?, ?, 10050, '', ?, ?, ?, 1, NULL)",
                 rusqlite::params![
                     id.repeat(32),
-                    author.public_key().to_hex(),
+                    keys.public_key().to_hex(),
                     format!("[[\"d\",\"{d}\"]]"),
                     at,
                     "ef".repeat(64)
@@ -570,4 +577,5 @@ async fn opening_a_file_that_holds_several_10050_events_keeps_the_newest() {
     drop(connection);
     let store = Store::open(&path).expect("it opens");
     assert_eq!(held(&store, &author, 10_050).await, vec!["cd".repeat(32)]);
+    assert_eq!(held(&store, &other, 10_050).await, vec!["12".repeat(32)]);
 }

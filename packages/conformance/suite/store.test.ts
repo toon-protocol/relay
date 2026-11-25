@@ -98,6 +98,30 @@ describe('relay image conformance: replaceable kinds', () => {
       ).toEqual(ids(newer));
     }
   );
+
+  conformanceTestEach(
+    [10032, 10050, 10099, 10100],
+    (kind) => `kind ${kind} is replaceable: the d tag is ignored`,
+    async (kind) => {
+      const { secretKey, pubkey } = author();
+      const t = now();
+      const older = sign(secretKey, {
+        kind,
+        created_at: t - 10,
+        tags: [['d', 'a']],
+      });
+      const newer = sign(secretKey, {
+        kind,
+        created_at: t,
+        tags: [['d', 'b']],
+      });
+      await publishOk(relay, older);
+      await publishOk(relay, newer);
+      expect(
+        await storedIds(relay, { authors: [pubkey], kinds: [kind] })
+      ).toEqual(ids(newer));
+    }
+  );
 });
 
 describe('relay image conformance: addressable kinds', () => {
@@ -146,30 +170,6 @@ describe('relay image conformance: addressable kinds', () => {
       await storedIds(relay, { authors: [pubkey], kinds: [30023] })
     ).toEqual(ids(empty));
   });
-
-  conformanceTestEach(
-    [10032, 10050, 10099, 10100],
-    (kind) => `kind ${kind} is replaceable: the d tag is ignored`,
-    async (kind) => {
-      const { secretKey, pubkey } = author();
-      const t = now();
-      const older = sign(secretKey, {
-        kind,
-        created_at: t - 10,
-        tags: [['d', 'a']],
-      });
-      const newer = sign(secretKey, {
-        kind,
-        created_at: t,
-        tags: [['d', 'b']],
-      });
-      await publishOk(relay, older);
-      await publishOk(relay, newer);
-      expect(
-        await storedIds(relay, { authors: [pubkey], kinds: [kind] })
-      ).toEqual(ids(newer));
-    }
-  );
 
   conformanceTest(
     'a d tag containing % or _ replaces only its own event',
