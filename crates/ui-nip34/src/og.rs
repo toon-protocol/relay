@@ -10,6 +10,7 @@ use axum::http::HeaderMap;
 use axum::response::Response;
 use nostr::key::PublicKey;
 use nostr::nips::nip19::FromBech32;
+use relay_ui::StoreError;
 use ui_preview::{Card, Face, Mark};
 
 use crate::Pages;
@@ -30,21 +31,28 @@ pub(crate) async fn repo(
     headers: HeaderMap,
 ) -> Response {
     let card = repo_card(&pages, &owner, &file).await;
-    pages.previews.respond(&headers, card).await
+    pages.previews.respond_result(&headers, card).await
 }
 
-async fn repo_card(pages: &Pages, owner: &str, file: &str) -> Option<Card> {
-    let owner = PublicKey::from_bech32(owner).ok()?;
-    let address = RepoAddress::new(owner, ui_preview::stem(file)?)?;
-    let card = RepoCard::load(&pages.store, &address).await?;
+async fn repo_card(pages: &Pages, owner: &str, file: &str) -> Result<Option<Card>, StoreError> {
+    let Ok(owner) = PublicKey::from_bech32(owner) else {
+        return Ok(None);
+    };
+    let Some(address) = ui_preview::stem(file).and_then(|stem| RepoAddress::new(owner, stem))
+    else {
+        return Ok(None);
+    };
+    let Some(card) = RepoCard::load(&pages.store, &address).await? else {
+        return Ok(None);
+    };
     let forks = ForkNetwork::load(&pages.store, card.announcement())
-        .await
+        .await?
         .forks(&address)
         .len();
-    Some(Card::new(
+    Ok(Some(Card::new(
         host(pages),
         Face::Repo(card.preview(Some(forks))),
-    ))
+    )))
 }
 
 fn host(pages: &Pages) -> Option<String> {

@@ -18,8 +18,8 @@ use nostr::key::PublicKey;
 use nostr::nips::nip19::ToBech32;
 use nostr::types::Timestamp;
 
-use crate::ReadOnlyStore;
 use crate::meta::{Preview, PublicUrl};
+use crate::{ReadOnlyStore, StoreError};
 
 /// An app UI the relay can serve, by the name `TOON_UI_APPS` gives it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -597,14 +597,14 @@ pub struct Profiles {
 
 impl Profiles {
     /// The newest profile of each of `keys` in the store.
-    pub async fn load(store: &ReadOnlyStore, keys: &[PublicKey]) -> Self {
+    pub async fn load(store: &ReadOnlyStore, keys: &[PublicKey]) -> Result<Self, StoreError> {
         if keys.is_empty() {
-            return Self::default();
+            return Ok(Self::default());
         }
         let events = store
             .query(Filter::new().kind(Kind::Metadata).authors(keys.to_vec()))
-            .await;
-        Self::from_events(keys, &events)
+            .await?;
+        Ok(Self::from_events(keys, &events))
     }
 
     /// The newest of `events` for each of `keys`, read. A pure function.
@@ -663,8 +663,11 @@ pub fn bot_chip(bots: &HashSet<PublicKey>, key: &PublicKey) -> &'static str {
 }
 
 /// Display names from kind 0 profiles, by pubkey.
-pub async fn names(store: &ReadOnlyStore, keys: &[PublicKey]) -> HashMap<PublicKey, String> {
-    Profiles::load(store, keys).await.into_names()
+pub async fn names(
+    store: &ReadOnlyStore,
+    keys: &[PublicKey],
+) -> Result<HashMap<PublicKey, String>, StoreError> {
+    Ok(Profiles::load(store, keys).await?.into_names())
 }
 
 /// A NIP-05 identifier, `local@domain` in lower case, if `claim` is one: a

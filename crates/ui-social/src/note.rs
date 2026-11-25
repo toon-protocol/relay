@@ -5,6 +5,7 @@
 //! maker's replies marked. An article or a snippet named here is sent on to
 //! its own page (`/social/a/...`, `/social/s/...`).
 
+use relay_ui::StoreError;
 use std::collections::{HashMap, HashSet};
 
 use axum::extract::{Path, RawQuery, State};
@@ -31,7 +32,10 @@ const LIMIT: usize = 2_000;
 
 /// The replies to `event`: kind 1 notes whose `e` tags name it (not as a
 /// mention) and NIP-22 comments whose root `E` names it, oldest first.
-pub(crate) async fn replies(store: &relay_ui::ReadOnlyStore, event: &Event) -> Vec<Event> {
+pub(crate) async fn replies(
+    store: &relay_ui::ReadOnlyStore,
+    event: &Event,
+) -> Result<Vec<Event>, StoreError> {
     let id = event.id.to_hex();
     let notes = store
         .query(
@@ -40,7 +44,7 @@ pub(crate) async fn replies(store: &relay_ui::ReadOnlyStore, event: &Event) -> V
                 .event(event.id)
                 .limit(LIMIT),
         )
-        .await;
+        .await?;
     let comments = store
         .query(
             Filter::new()
@@ -48,7 +52,7 @@ pub(crate) async fn replies(store: &relay_ui::ReadOnlyStore, event: &Event) -> V
                 .custom_tag(SingleLetterTag::UPPERCASE_E, id.clone())
                 .limit(LIMIT),
         )
-        .await;
+        .await?;
     let mut found: Vec<Event> = notes
         .into_iter()
         .filter(|note| answers(note, &id))
@@ -62,7 +66,7 @@ pub(crate) async fn replies(store: &relay_ui::ReadOnlyStore, event: &Event) -> V
         .collect();
     found.sort_by_key(|event| (event.created_at, event.id));
     found.dedup_by_key(|event| event.id);
-    found
+    Ok(found)
 }
 
 /// Whether a note's `e` tags name `id` other than as a mention.
@@ -107,7 +111,7 @@ pub(crate) async fn page(
         return not_found(&pages);
     };
     let store = &pages.store;
-    let Some(event) = event_by_id(store, id).await else {
+    let Some(event) = relay_ui::stored!(event_by_id(store, id).await) else {
         return not_found(&pages);
     };
     // An article and a snippet have pages of their own.
@@ -119,19 +123,21 @@ pub(crate) async fn page(
             .into_response();
     }
     let repos = post::repos_of(&event);
-    let cards = load_cards(store, repos.clone()).await;
-    let replies = replies(store, &event).await;
-    let reactions: Vec<Event> = store
-        .query(
-            Filter::new()
-                .kind(Kind::from(REACTION))
-                .event(event.id)
-                .limit(LIMIT),
-        )
-        .await
-        .into_iter()
-        .filter(|reaction| answers(reaction, &event.id.to_hex()))
-        .collect();
+    let cards = relay_ui::stored!(load_cards(store, repos.clone()).await);
+    let replies = relay_ui::stored!(replies(store, &event).await);
+    let reactions: Vec<Event> = relay_ui::stored!(
+        store
+            .query(
+                Filter::new()
+                    .kind(Kind::from(REACTION))
+                    .event(event.id)
+                    .limit(LIMIT),
+            )
+            .await
+    )
+    .into_iter()
+    .filter(|reaction| answers(reaction, &event.id.to_hex()))
+    .collect();
     let mut keys: Vec<PublicKey> = vec![event.pubkey];
     for key in replies
         .iter()
@@ -147,7 +153,7 @@ pub(crate) async fn page(
             keys.push(key);
         }
     }
-    let profiles = Profiles::load(store, &keys).await;
+    let profiles = relay_ui::stored!(Profiles::load(store, &keys).await);
     let links = pages.links();
     let no_demos = HashMap::new();
     let view = View {
@@ -161,7 +167,7 @@ pub(crate) async fn page(
     let ship = view.ship(&event);
     let launches: Vec<(&Event, RepoAddress)> =
         ship.iter().map(|repo| (&event, repo.clone())).collect();
-    let demos = demo::for_cards(store, &cards, &launches, pages.gateway()).await;
+    let demos = relay_ui::stored!(demo::for_cards(store, &cards, &launches, pages.gateway()).await);
     let view = View {
         demos: &demos,
         ..view
@@ -171,17 +177,19 @@ pub(crate) async fn page(
         None => plain(&view, &event, &repos, &reactions),
     };
     let maker_of = ship.as_ref().or(repos.first());
-    let mut body = crate::reports::post_banner(
-        store,
-        &event,
-        ship.as_ref().and_then(|repo| cards.get(repo)),
-        &pages.links(),
-        query.as_deref(),
-    )
-    .await;
-    let tips = crate::tips::received_card(
-        &crate::tips::totals(store, &event.pubkey, &crate::tips::Subject::Event(event.id)).await,
+    let mut body = relay_ui::stored!(
+        crate::reports::post_banner(
+            store,
+            &event,
+            ship.as_ref().and_then(|repo| cards.get(repo)),
+            &pages.links(),
+            query.as_deref(),
+        )
+        .await
     );
+    let tips = crate::tips::received_card(&relay_ui::stored!(
+        crate::tips::totals(store, &event.pubkey, &crate::tips::Subject::Event(event.id)).await
+    ));
     body.push_str(&format!(
         "<div class=\"split\"><div class=\"main\">{main}{tips}</div>{}</div>",
         rail(&view, &replies, maker_of)

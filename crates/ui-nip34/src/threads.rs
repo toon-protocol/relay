@@ -8,9 +8,9 @@ use axum::response::Response;
 use nostr::event::{Event, EventId, Kind};
 use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
-use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::Apps;
 use relay_ui::meta::Preview;
+use relay_ui::{ReadOnlyStore, StoreError};
 
 use super::markup::{Tab, ago, avatar, icon, name, repo_header, svg};
 use super::{
@@ -178,12 +178,12 @@ async fn statuses_of(
     store: &ReadOnlyStore,
     authorized: &[PublicKey],
     targets: &[&Event],
-) -> Vec<Status> {
-    let events = status_events(store, authorized, targets).await;
-    targets
+) -> Result<Vec<Status>, StoreError> {
+    let events = status_events(store, authorized, targets).await?;
+    Ok(targets
         .iter()
         .map(|target| resolve_status(authorized, target, &events))
-        .collect()
+        .collect())
 }
 
 /// The statuses stored for `targets` by the keys that may set them.
@@ -191,9 +191,9 @@ async fn status_events(
     store: &ReadOnlyStore,
     authorized: &[PublicKey],
     targets: &[&Event],
-) -> Vec<Event> {
+) -> Result<Vec<Event>, StoreError> {
     if targets.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     // Only honoured keys are read, so a stranger's statuses cannot crowd an
     // honoured one out of the query's limit.
@@ -226,7 +226,7 @@ pub(crate) async fn open_counts(
     store: &ReadOnlyStore,
     coordinate: &str,
     authorized: &[PublicKey],
-) -> (usize, usize) {
+) -> Result<(usize, usize), StoreError> {
     let events: Vec<Event> = store
         .query(
             Filter::new()
@@ -238,7 +238,7 @@ pub(crate) async fn open_counts(
                 .custom_tag(SingleLetterTag::LOWERCASE_A, coordinate.to_owned())
                 .limit(LIMIT),
         )
-        .await
+        .await?
         .into_iter()
         .filter(|event| belongs_to(event, coordinate))
         .collect();
@@ -259,10 +259,10 @@ pub(crate) async fn open_counts(
         })
         .collect();
     let open = |statuses: Vec<Status>| statuses.into_iter().filter(|s| s.is_open()).count();
-    (
-        open(statuses_of(store, authorized, &issues).await),
-        open(statuses_of(store, authorized, &pulls).await),
-    )
+    Ok((
+        open(statuses_of(store, authorized, &issues).await?),
+        open(statuses_of(store, authorized, &pulls).await?),
+    ))
 }
 
 /// Newest first, a tie to the lowest id: the order of the lists.
@@ -284,18 +284,25 @@ struct Repo {
 }
 
 impl Repo {
-    async fn resolve(store: &ReadOnlyStore, apps: &Apps, npub: &str, d: &str) -> Option<Self> {
-        let (owner, announcement) = resolve_repo(store, npub, d).await?;
+    async fn resolve(
+        store: &ReadOnlyStore,
+        apps: &Apps,
+        npub: &str,
+        d: &str,
+    ) -> Result<Option<Self>, StoreError> {
+        let Some((owner, announcement)) = resolve_repo(store, npub, d).await? else {
+            return Ok(None);
+        };
         let authorized = authorized_authors(&announcement);
-        let names = names(store, &crate::lineage::named_keys(&announcement)).await;
-        Some(Self {
+        let names = names(store, &crate::lineage::named_keys(&announcement)).await?;
+        Ok(Some(Self {
             owner,
             d: d.to_owned(),
             announcement,
             authorized,
             names,
             apps: apps.clone(),
-        })
+        }))
     }
 
     fn base(&self) -> String {
@@ -330,19 +337,19 @@ impl Repo {
     }
 
     /// The events of `kinds` that name this repo.
-    async fn events(&self, store: &ReadOnlyStore, kinds: &[u16]) -> Vec<Event> {
+    async fn events(&self, store: &ReadOnlyStore, kinds: &[u16]) -> Result<Vec<Event>, StoreError> {
         let coordinate = self.coordinate();
-        store
+        Ok(store
             .query(
                 Filter::new()
                     .kinds(kinds.iter().map(|kind| Kind::from(*kind)))
                     .custom_tag(SingleLetterTag::LOWERCASE_A, coordinate.clone())
                     .limit(LIMIT),
             )
-            .await
+            .await?
             .into_iter()
             .filter(|event| belongs_to(event, &coordinate))
-            .collect()
+            .collect())
     }
 }
 
@@ -495,17 +502,17 @@ pub(super) async fn issues(
     Path((npub, d)): Path<(String, String)>,
     RawQuery(query): RawQuery,
 ) -> Response {
-    let Some(repo) = Repo::resolve(&store, &apps, &npub, &d).await else {
+    let Some(repo) = relay_ui::stored!(Repo::resolve(&store, &apps, &npub, &d).await) else {
         return not_found(&apps);
     };
-    let events = repo.events(&store, &[ISSUE]).await;
+    let events = relay_ui::stored!(repo.events(&store, &[ISSUE]).await);
     let mut issues: Vec<&Event> = events
         .iter()
         .filter(|event| event.kind == Kind::from(ISSUE))
         .collect();
     sort_newest_first(&mut issues);
-    let statuses = statuses_of(&store, &repo.authorized, &issues).await;
-    let names = names(&store, &authors_of(&issues)).await;
+    let statuses = relay_ui::stored!(statuses_of(&store, &repo.authorized, &issues).await);
+    let names = relay_ui::stored!(names(&store, &authors_of(&issues)).await);
     let threads: Vec<_> = issues.into_iter().zip(statuses).collect();
     let body = thread_list(
         &repo,
@@ -530,10 +537,10 @@ pub(super) async fn pulls(
     Path((npub, d)): Path<(String, String)>,
     RawQuery(query): RawQuery,
 ) -> Response {
-    let Some(repo) = Repo::resolve(&store, &apps, &npub, &d).await else {
+    let Some(repo) = relay_ui::stored!(Repo::resolve(&store, &apps, &npub, &d).await) else {
         return not_found(&apps);
     };
-    let events = repo.events(&store, &[PATCH, PULL_REQUEST]).await;
+    let events = relay_ui::stored!(repo.events(&store, &[PATCH, PULL_REQUEST]).await);
     let patches: Vec<String> = events
         .iter()
         .filter(|event| event.kind == Kind::from(PATCH))
@@ -547,8 +554,8 @@ pub(super) async fn pulls(
         })
         .collect();
     sort_newest_first(&mut pulls);
-    let statuses = statuses_of(&store, &repo.authorized, &pulls).await;
-    let names = names(&store, &authors_of(&pulls)).await;
+    let statuses = relay_ui::stored!(statuses_of(&store, &repo.authorized, &pulls).await);
+    let names = relay_ui::stored!(names(&store, &authors_of(&pulls)).await);
     let threads: Vec<_> = pulls.into_iter().zip(statuses).collect();
     let body = thread_list(
         &repo,
@@ -565,16 +572,27 @@ pub(super) async fn pulls(
 }
 
 /// The target `id` if it is an event of one of `kinds` for `repo`.
-async fn target(store: &ReadOnlyStore, repo: &Repo, id: &str, kinds: &[u16]) -> Option<Event> {
-    let id = parse_id(id)?;
-    let found = store.query(Filter::new().id(id)).await;
-    let event = found.into_iter().find(|event| event.id == id)?;
-    (kinds.contains(&event.kind.as_u16()) && belongs_to(&event, &repo.coordinate()))
-        .then_some(event)
+async fn target(
+    store: &ReadOnlyStore,
+    repo: &Repo,
+    id: &str,
+    kinds: &[u16],
+) -> Result<Option<Event>, StoreError> {
+    let Some(id) = parse_id(id) else {
+        return Ok(None);
+    };
+    let found = store.query(Filter::new().id(id)).await?;
+    let Some(event) = found.into_iter().find(|event| event.id == id) else {
+        return Ok(None);
+    };
+    Ok(
+        (kinds.contains(&event.kind.as_u16()) && belongs_to(&event, &repo.coordinate()))
+            .then_some(event),
+    )
 }
 
 /// The comments on `target`: NIP-22 (`E`) and legacy kind 1622 (`e`), in order.
-async fn comments(store: &ReadOnlyStore, target: &Event) -> Vec<Event> {
+async fn comments(store: &ReadOnlyStore, target: &Event) -> Result<Vec<Event>, StoreError> {
     let modern = store
         .query(
             Filter::new()
@@ -582,7 +600,7 @@ async fn comments(store: &ReadOnlyStore, target: &Event) -> Vec<Event> {
                 .custom_tag(SingleLetterTag::UPPERCASE_E, target.id.to_hex())
                 .limit(LIMIT),
         )
-        .await;
+        .await?;
     let legacy = store
         .query(
             Filter::new()
@@ -590,7 +608,7 @@ async fn comments(store: &ReadOnlyStore, target: &Event) -> Vec<Event> {
                 .event(target.id)
                 .limit(LIMIT),
         )
-        .await;
+        .await?;
     let id = target.id.to_hex();
     let mut found: Vec<Event> = modern
         .into_iter()
@@ -601,7 +619,7 @@ async fn comments(store: &ReadOnlyStore, target: &Event) -> Vec<Event> {
         .collect();
     found.sort_by_key(|event| (event.created_at, event.id));
     found.dedup_by_key(|event| event.id);
-    found
+    Ok(found)
 }
 
 /// Markdown from someone else, as safe HTML.
@@ -759,23 +777,23 @@ pub(super) async fn issue(
     }): State<super::Pages>,
     Path((npub, d, id)): Path<(String, String, String)>,
 ) -> Response {
-    let Some(repo) = Repo::resolve(&store, &apps, &npub, &d).await else {
+    let Some(repo) = relay_ui::stored!(Repo::resolve(&store, &apps, &npub, &d).await) else {
         return not_found(&apps);
     };
-    let Some(issue) = target(&store, &repo, &id, &[ISSUE]).await else {
+    let Some(issue) = relay_ui::stored!(target(&store, &repo, &id, &[ISSUE]).await) else {
         return not_found(&apps);
     };
-    let statuses = status_events(&store, &repo.authorized, &[&issue]).await;
+    let statuses = relay_ui::stored!(status_events(&store, &repo.authorized, &[&issue]).await);
     let set_by = honoured_status(&repo.authorized, &issue, &statuses);
     let status = (resolve_status(&repo.authorized, &issue, &statuses), set_by);
-    let comments = comments(&store, &issue).await;
+    let comments = relay_ui::stored!(comments(&store, &issue).await);
     let mut people: Vec<PublicKey> = people(&issue, &comments);
     if let Some(set) = set_by
         && !people.contains(&set.pubkey)
     {
         people.push(set.pubkey);
     }
-    let names = names(&store, &people).await;
+    let names = relay_ui::stored!(names(&store, &people).await);
     let body = thread_body(&repo, &issue, status, &names, "", &comments);
     let title = title_of(&issue);
     let at = format!("{}/issues/{}", repo.base(), issue.id.to_hex());
@@ -792,23 +810,24 @@ pub(super) async fn pull(
     }): State<super::Pages>,
     Path((npub, d, id)): Path<(String, String, String)>,
 ) -> Response {
-    let Some(repo) = Repo::resolve(&store, &apps, &npub, &d).await else {
+    let Some(repo) = relay_ui::stored!(Repo::resolve(&store, &apps, &npub, &d).await) else {
         return not_found(&apps);
     };
-    let Some(pull) = target(&store, &repo, &id, &[PATCH, PULL_REQUEST]).await else {
+    let Some(pull) = relay_ui::stored!(target(&store, &repo, &id, &[PATCH, PULL_REQUEST]).await)
+    else {
         return not_found(&apps);
     };
-    let statuses = status_events(&store, &repo.authorized, &[&pull]).await;
+    let statuses = relay_ui::stored!(status_events(&store, &repo.authorized, &[&pull]).await);
     let set_by = honoured_status(&repo.authorized, &pull, &statuses);
     let status = (resolve_status(&repo.authorized, &pull, &statuses), set_by);
-    let comments = comments(&store, &pull).await;
+    let comments = relay_ui::stored!(comments(&store, &pull).await);
     let mut people: Vec<PublicKey> = people(&pull, &comments);
     if let Some(set) = set_by
         && !people.contains(&set.pubkey)
     {
         people.push(set.pubkey);
     }
-    let names = names(&store, &people).await;
+    let names = relay_ui::stored!(names(&store, &people).await);
 
     let mut facts: Vec<(&str, String)> = Vec::new();
     if pull.kind == Kind::from(PULL_REQUEST) {
@@ -825,14 +844,16 @@ pub(super) async fn pull(
             facts.push(("Tip", tip.to_owned()));
         }
         // Only the PR's own author moves its tip.
-        let updates = store
-            .query(
-                Filter::new()
-                    .kind(Kind::from(PULL_REQUEST_UPDATE))
-                    .custom_tag(SingleLetterTag::UPPERCASE_E, pull.id.to_hex())
-                    .limit(LIMIT),
-            )
-            .await;
+        let updates = relay_ui::stored!(
+            store
+                .query(
+                    Filter::new()
+                        .kind(Kind::from(PULL_REQUEST_UPDATE))
+                        .custom_tag(SingleLetterTag::UPPERCASE_E, pull.id.to_hex())
+                        .limit(LIMIT),
+                )
+                .await
+        );
         let pull_id = pull.id.to_hex();
         let updates: Vec<&Event> = updates
             .iter()

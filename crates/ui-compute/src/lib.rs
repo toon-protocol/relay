@@ -198,6 +198,11 @@ async fn index(State(pages): State<Pages>, RawQuery(query): RawQuery) -> Respons
         pages.store.query(directory_filter(LISTING_KIND)),
         pages.store.query(directory_filter(LIVENESS_KIND)),
     );
+    let (profiles, listings, liveness) = (
+        relay_ui::stored!(profiles),
+        relay_ui::stored!(listings),
+        relay_ui::stored!(liveness),
+    );
     let mut listings = directory::join(&profiles, &listings);
     listings.retain(|l| filters.matches(l));
     let keys: Vec<PublicKey> = {
@@ -205,7 +210,7 @@ async fn index(State(pages): State<Pages>, RawQuery(query): RawQuery) -> Respons
         keys.dedup();
         keys
     };
-    let mut names = Profiles::load(&pages.store, &keys).await.into_names();
+    let mut names = relay_ui::stored!(Profiles::load(&pages.store, &keys).await).into_names();
     // A Provider Profile's own name beats the key's kind 0.
     for listing in &listings {
         if let Some(name) = &listing.provider_name {

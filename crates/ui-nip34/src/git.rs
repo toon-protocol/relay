@@ -304,14 +304,16 @@ async fn page(
     let Ok(owner) = PublicKey::from_bech32(owner) else {
         return not_found(&apps);
     };
-    let announcements = store
-        .query(
-            Filter::new()
-                .kind(Kind::from(ANNOUNCEMENT))
-                .author(owner)
-                .identifier(d.to_owned()),
-        )
-        .await;
+    let announcements = relay_ui::stored!(
+        store
+            .query(
+                Filter::new()
+                    .kind(Kind::from(ANNOUNCEMENT))
+                    .author(owner)
+                    .identifier(d.to_owned()),
+            )
+            .await
+    );
     let Some(announcement) = newest(
         announcements
             .iter()
@@ -319,14 +321,16 @@ async fn page(
     ) else {
         return not_found(&apps);
     };
-    let states = store
-        .query(
-            Filter::new()
-                .kind(Kind::from(STATE))
-                .authors(authorized_authors(announcement))
-                .identifier(d.to_owned()),
-        )
-        .await;
+    let states = relay_ui::stored!(
+        store
+            .query(
+                Filter::new()
+                    .kind(Kind::from(STATE))
+                    .authors(authorized_authors(announcement))
+                    .identifier(d.to_owned()),
+            )
+            .await
+    );
     let Some(state) = honoured_state(announcement, &states) else {
         return not_found(&apps);
     };
@@ -363,7 +367,7 @@ async fn page(
     }
 
     let base = repo_path(&owner, d);
-    let names = names(&store, &crate::lineage::named_keys(announcement)).await;
+    let names = relay_ui::stored!(names(&store, &crate::lineage::named_keys(announcement)).await);
     let tab = match kind {
         PageKind::Tree | PageKind::Blob => Tab::Code,
         PageKind::Commits | PageKind::Commit => Tab::Commits,

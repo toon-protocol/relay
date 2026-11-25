@@ -8,6 +8,7 @@
 //! sidebar's "trending today" is [`crate::trending`]'s ranking of the last
 //! day, and its Topics box is [`crate::topics`]'s.
 
+use relay_ui::StoreError;
 use std::collections::HashMap;
 
 use axum::extract::{Path, RawQuery, State};
@@ -82,19 +83,20 @@ pub(crate) async fn everyone(State(pages): State<Pages>, RawQuery(query): RawQue
     if let Some(until) = until(query.as_deref()) {
         filter = filter.until(until);
     }
-    let events = pages.store.query(filter).await;
+    let events = relay_ui::stored!(pages.store.query(filter).await);
     let lens = crate::viewer::as_key(query.as_deref());
-    let mutes = match &lens {
+    let mutes = relay_ui::stored!(match &lens {
         Some(key) => Mutes::load(&pages.store, key).await,
-        None => Mutes::default(),
-    };
+        None => Ok(Mutes::default()),
+    });
     let mut intro = "<p class=\"muted small\">Everything builders posted to this relay: notes, launches, \
                  articles, merges and new repos. Every post here was a paid write; this page writes nothing.</p>"
         .to_owned();
     if let Some(key) = &lens {
-        intro.push_str(&muted_line(&pages, key, &mutes).await);
+        intro.push_str(&relay_ui::stored!(muted_line(&pages, key, &mutes).await));
     }
-    let body = feed_page(&pages, events, None, &intro, &mutes, lens.as_ref()).await;
+    let body =
+        relay_ui::stored!(feed_page(&pages, events, None, &intro, &mutes, lens.as_ref()).await);
     html(
         &pages,
         crate::Nav::Home,
@@ -177,17 +179,19 @@ pub(crate) async fn following(
         return crate::not_found(&pages);
     };
     let store = &pages.store;
-    let lists = store
-        .query(
-            Filter::new()
-                .kinds([
-                    Kind::from(FOLLOWS),
-                    Kind::from(GIT_AUTHORS),
-                    Kind::from(FOLLOWED_REPOS),
-                ])
-                .author(viewer),
-        )
-        .await;
+    let lists = relay_ui::stored!(
+        store
+            .query(
+                Filter::new()
+                    .kinds([
+                        Kind::from(FOLLOWS),
+                        Kind::from(GIT_AUTHORS),
+                        Kind::from(FOLLOWED_REPOS),
+                    ])
+                    .author(viewer),
+            )
+            .await
+    );
     let mut people = listed_keys(newest_list(&lists, &viewer, FOLLOWS));
     for key in listed_keys(newest_list(&lists, &viewer, GIT_AUTHORS)) {
         if !people.contains(&key) {
@@ -208,7 +212,7 @@ pub(crate) async fn following(
         if let Some(until) = until {
             filter = filter.until(until);
         }
-        events.extend(store.query(filter).await);
+        events.extend(relay_ui::stored!(store.query(filter).await));
     }
     if !repos.is_empty() {
         let mut filter = Filter::new()
@@ -226,9 +230,9 @@ pub(crate) async fn following(
         if let Some(until) = until {
             filter = filter.until(until);
         }
-        events.extend(store.query(filter).await);
+        events.extend(relay_ui::stored!(store.query(filter).await));
     }
-    let names = Profiles::load(store, &[viewer]).await;
+    let names = relay_ui::stored!(Profiles::load(store, &[viewer]).await);
     let intro = format!(
         "<p class=\"muted small\">What {} follows: {} {} (kind 3 and 10017) and {} {} (kind 10018). \
          This page writes nothing; follows are changed in a client.</p>",
@@ -242,10 +246,13 @@ pub(crate) async fn following(
         repos.len(),
         if repos.len() == 1 { "repo" } else { "repos" },
     );
-    let mutes = Mutes::load(store, &viewer).await;
+    let mutes = relay_ui::stored!(Mutes::load(store, &viewer).await);
     let mut intro = intro;
-    intro.push_str(&muted_line(&pages, &viewer, &mutes).await);
-    let body = feed_page(&pages, events, Some(&viewer), &intro, &mutes, None).await;
+    intro.push_str(&relay_ui::stored!(
+        muted_line(&pages, &viewer, &mutes).await
+    ));
+    let body =
+        relay_ui::stored!(feed_page(&pages, events, Some(&viewer), &intro, &mutes, None).await);
     html(
         &pages,
         crate::Nav::Home,
@@ -267,17 +274,21 @@ fn hidden(mutes: &Mutes, event: &Event) -> bool {
 }
 
 /// The line that says whose mute list a feed applies.
-async fn muted_line(pages: &Pages, viewer: &PublicKey, mutes: &Mutes) -> String {
-    let names = Profiles::load(&pages.store, &[*viewer]).await;
+async fn muted_line(
+    pages: &Pages,
+    viewer: &PublicKey,
+    mutes: &Mutes,
+) -> Result<String, StoreError> {
+    let names = Profiles::load(&pages.store, &[*viewer]).await?;
     let (people, hashtags) = mutes.counts();
-    format!(
+    Ok(format!(
         "<p class=\"muted small\" data-muted>Read as {}: what their mute list (NIP-51 kind 10000) \
          names is left out here, {people} {} and {hashtags} {} among it. Only its public items are \
          read.</p>",
         chrome::name(names.names(), viewer),
         if people == 1 { "person" } else { "people" },
         if hashtags == 1 { "hashtag" } else { "hashtags" },
-    )
+    ))
 }
 
 /// A feed's page: its tabs, its posts and the sidebar.
@@ -288,7 +299,7 @@ async fn feed_page(
     intro: &str,
     mutes: &Mutes,
     lens: Option<&PublicKey>,
-) -> String {
+) -> Result<String, StoreError> {
     let store = &pages.store;
     events.sort_by(|a, b| (b.created_at, a.id).cmp(&(a.created_at, b.id)));
     events.dedup_by_key(|event| event.id);
@@ -309,7 +320,7 @@ async fn feed_page(
             }
         }
     }
-    let cards = load_cards(store, repos).await;
+    let cards = load_cards(store, repos).await?;
     let target_ids: Vec<nostr::event::EventId> = shown
         .iter()
         .filter(|event| event.kind == Kind::from(STATUS_APPLIED))
@@ -324,7 +335,7 @@ async fn feed_page(
     } else {
         store
             .query(Filter::new().ids(target_ids))
-            .await
+            .await?
             .into_iter()
             .map(|event| (event.id.to_hex(), event))
             .collect()
@@ -342,7 +353,7 @@ async fn feed_page(
             keys.push(key);
         }
     }
-    let profiles = Profiles::load(store, &keys).await;
+    let profiles = Profiles::load(store, &keys).await?;
     let links = pages.links();
     let no_demos = HashMap::new();
     let view = View {
@@ -353,7 +364,7 @@ async fn feed_page(
         demos: &no_demos,
         gateway: pages.gateway(),
     };
-    let demos = demos(pages, &view, &shown).await;
+    let demos = demos(pages, &view, &shown).await?;
     let view = View {
         demos: &demos,
         ..view
@@ -415,10 +426,10 @@ async fn feed_page(
         ));
     }
     body.push_str("</div><aside class=\"sidebar\">");
-    let catalog = Catalog::load(store).await;
-    body.push_str(&trending::sidebar_card(pages, &catalog, viewer.or(lens)).await);
+    let catalog = Catalog::load(store).await?;
+    body.push_str(&trending::sidebar_card(pages, &catalog, viewer.or(lens)).await?);
     body.push_str(&topics::sidebar_card(&catalog));
-    body.push_str(&crate::events::coming_up(pages).await);
+    body.push_str(&crate::events::coming_up(pages).await?);
     body.push_str(
         "<div class=\"side-card\"><h2>How this works</h2><p class=\"muted small\">Stars, follows, \
          replies and launches are written by a Nostr client and paid for one write each; this page \
@@ -426,17 +437,21 @@ async fn feed_page(
          kind 10018 list, and a launch is a maker's note tagged <code>ship</code>.</p></div>",
     );
     body.push_str("</aside></div>");
-    body
+    Ok(body)
 }
 
 /// The live demos of the repos whose cards are drawn, a launch's own site
 /// first ([`crate::demo`]).
-async fn demos(pages: &Pages, view: &View<'_>, shown: &[Event]) -> HashMap<RepoAddress, Demo> {
+async fn demos(
+    pages: &Pages,
+    view: &View<'_>,
+    shown: &[Event],
+) -> Result<HashMap<RepoAddress, Demo>, StoreError> {
     let launches: Vec<(&Event, RepoAddress)> = shown
         .iter()
         .filter_map(|event| view.ship(event).map(|repo| (event, repo)))
         .collect();
-    demo::for_cards(&pages.store, view.cards, &launches, pages.gateway()).await
+    Ok(demo::for_cards(&pages.store, view.cards, &launches, pages.gateway()).await?)
 }
 
 #[cfg(test)]

@@ -31,6 +31,7 @@
 //! provider's ranking, ordered by its `rank` tag. The relay does not compute
 //! or check those ranks; it shows what the provider signed.
 
+use relay_ui::StoreError;
 use std::collections::{HashMap, HashSet};
 
 use axum::extract::{RawQuery, State};
@@ -277,11 +278,16 @@ pub(crate) fn levels(buckets: &[usize; BUCKETS]) -> [usize; BUCKETS] {
 }
 
 /// The `p` keys of `viewer`'s newest kind 3, once each.
-async fn follows_of(store: &ReadOnlyStore, viewer: &PublicKey) -> Vec<PublicKey> {
+async fn follows_of(
+    store: &ReadOnlyStore,
+    viewer: &PublicKey,
+) -> Result<Vec<PublicKey>, StoreError> {
     let lists = store
         .query(Filter::new().kind(Kind::from(FOLLOWS)).author(*viewer))
-        .await;
-    crate::feed::listed_keys(crate::feed::newest_list(&lists, viewer, FOLLOWS))
+        .await?;
+    Ok(crate::feed::listed_keys(crate::feed::newest_list(
+        &lists, viewer, FOLLOWS,
+    )))
 }
 
 /// A ranking of a window.
@@ -306,7 +312,7 @@ pub(crate) async fn rank(
     window: Window,
     now: u64,
     viewer: Option<&PublicKey>,
-) -> Ranking {
+) -> Result<Ranking, StoreError> {
     let since = now.saturating_sub(window.seconds());
     let mut events = store
         .query(
@@ -324,7 +330,7 @@ pub(crate) async fn rank(
                 .since(Timestamp::from(since))
                 .limit(ACT_LIMIT),
         )
-        .await;
+        .await?;
     let mut full = events.len() >= ACT_LIMIT;
     let notes = store
         .query(
@@ -333,18 +339,18 @@ pub(crate) async fn rank(
                 .since(Timestamp::from(since))
                 .limit(NOTE_LIMIT),
         )
-        .await;
+        .await?;
     full |= notes.len() >= NOTE_LIMIT;
     events.extend(notes);
 
     let mutes = match viewer {
-        Some(viewer) => Mutes::load(store, viewer).await,
+        Some(viewer) => Mutes::load(store, viewer).await?,
         None => Mutes::default(),
     };
     events.retain(|event| !mutes.hides(event));
     let (follows, reported) = match viewer {
         Some(viewer) => {
-            let follows = follows_of(store, viewer).await;
+            let follows = follows_of(store, viewer).await?;
             let mut reporters = follows.clone();
             reporters.push(*viewer);
             let reports = store
@@ -354,7 +360,7 @@ pub(crate) async fn rank(
                         .authors(reporters)
                         .limit(REPORT_LIMIT),
                 )
-                .await;
+                .await?;
             let reported: HashSet<RepoAddress> = reports
                 .iter()
                 .flat_map(|report| RepoAddress::tagged(report, "a"))
@@ -375,13 +381,13 @@ pub(crate) async fn rank(
     let hidden = before - scores.len();
     let before = scores.len();
     scores.retain(|score| !muted_repo(&mutes, catalog, &score.repo));
-    Ranking {
+    Ok(Ranking {
         hidden,
         muted: before - scores.len(),
         scores,
         follows,
         full,
-    }
+    })
 }
 
 /// Whether `mutes` drops `repo`: its owner is muted, or one of its own
@@ -394,10 +400,10 @@ pub(crate) fn muted_repo(mutes: &Mutes, catalog: &Catalog, repo: &RepoAddress) -
 pub(crate) async fn stars_and_forks(
     store: &ReadOnlyStore,
     repos: &[RepoAddress],
-) -> HashMap<RepoAddress, (usize, usize)> {
+) -> Result<HashMap<RepoAddress, (usize, usize)>, StoreError> {
     let mut counts = HashMap::new();
     if repos.is_empty() {
-        return counts;
+        return Ok(counts);
     }
     let coordinates: Vec<String> = repos.iter().map(RepoAddress::coordinate).collect();
     let reactions = store
@@ -407,7 +413,7 @@ pub(crate) async fn stars_and_forks(
                 .custom_tags(SingleLetterTag::LOWERCASE_A, coordinates)
                 .limit(COUNT_LIMIT),
         )
-        .await;
+        .await?;
     // Not `#u`: a fork's `u` may carry `|<git url>` after the coordinate,
     // which an exact tag match misses (#354). `fork_of` reads it instead.
     let forks = store
@@ -416,7 +422,7 @@ pub(crate) async fn stars_and_forks(
                 .kind(Kind::from(ANNOUNCEMENT))
                 .limit(COUNT_LIMIT),
         )
-        .await;
+        .await?;
     for repo in repos {
         let coordinate = repo.coordinate();
         let stars: HashSet<PublicKey> = reactions
@@ -431,7 +437,7 @@ pub(crate) async fn stars_and_forks(
             .collect();
         counts.insert(repo.clone(), (stars.len(), forked.len()));
     }
-    counts
+    Ok(counts)
 }
 
 /// Distinct people other than each repo's `makers` (ADR 0002) who starred
@@ -441,9 +447,9 @@ pub(crate) async fn stars_from_others(
     store: &ReadOnlyStore,
     repos: &[RepoAddress],
     makers: &HashMap<RepoAddress, Vec<PublicKey>>,
-) -> HashMap<RepoAddress, usize> {
+) -> Result<HashMap<RepoAddress, usize>, StoreError> {
     if repos.is_empty() {
-        return HashMap::new();
+        return Ok(HashMap::new());
     }
     let coordinates: Vec<String> = repos.iter().map(RepoAddress::coordinate).collect();
     let reactions = store
@@ -453,8 +459,8 @@ pub(crate) async fn stars_from_others(
                 .custom_tags(SingleLetterTag::LOWERCASE_A, coordinates)
                 .limit(COUNT_LIMIT),
         )
-        .await;
-    count_from_others(&reactions, repos, makers)
+        .await?;
+    Ok(count_from_others(&reactions, repos, makers))
 }
 
 /// [`stars_from_others`] over `reactions`. A pure function.
@@ -571,25 +577,27 @@ pub(crate) async fn page(State(pages): State<Pages>, RawQuery(query): RawQuery) 
     };
     let store = &pages.store;
     let now = u64::try_from(chrome::now()).unwrap_or(0);
-    let catalog = Catalog::load(store).await;
-    let assertions = store
-        .query(
-            Filter::new()
-                .kind(Kind::from(ADDRESS_ASSERTION))
-                .limit(ASSERTION_LIMIT),
-        )
-        .await;
+    let catalog = relay_ui::stored!(Catalog::load(store).await);
+    let assertions = relay_ui::stored!(
+        store
+            .query(
+                Filter::new()
+                    .kind(Kind::from(ADDRESS_ASSERTION))
+                    .limit(ASSERTION_LIMIT),
+            )
+            .await
+    );
     let providers = providers(&assertions);
     let trusted = match &asked.viewer {
-        Some(viewer) => newest(
-            &store
+        Some(viewer) => newest(&relay_ui::stored!(
+            store
                 .query(
                     Filter::new()
                         .kind(Kind::from(TRUSTED_PROVIDERS))
                         .author(*viewer),
                 )
-                .await,
-        )
+                .await
+        ))
         .map(trusted_providers)
         .unwrap_or_default(),
         None => Vec::new(),
@@ -613,7 +621,9 @@ pub(crate) async fn page(State(pages): State<Pages>, RawQuery(query): RawQuery) 
                 .collect(),
         ),
         None => {
-            let ranking = rank(store, &catalog, asked.window, now, asked.viewer.as_ref()).await;
+            let ranking = relay_ui::stored!(
+                rank(store, &catalog, asked.window, now, asked.viewer.as_ref()).await
+            );
             let rows = ranking
                 .scores
                 .iter()
@@ -633,7 +643,7 @@ pub(crate) async fn page(State(pages): State<Pages>, RawQuery(query): RawQuery) 
     rows.truncate(SHOWN);
 
     let repos: Vec<RepoAddress> = rows.iter().map(|row| row.repo.clone()).collect();
-    let counts = stars_and_forks(store, &repos).await;
+    let counts = relay_ui::stored!(stars_and_forks(store, &repos).await);
     let mut keys: Vec<PublicKey> = asked.viewer.into_iter().chain(asked.by).collect();
     keys.extend(providers.iter().map(|provider| provider.key));
     for repo in &repos {
@@ -643,7 +653,7 @@ pub(crate) async fn page(State(pages): State<Pages>, RawQuery(query): RawQuery) 
     }
     keys.sort_by_key(PublicKey::to_hex);
     keys.dedup();
-    let profiles = Profiles::load(store, &keys).await;
+    let profiles = relay_ui::stored!(Profiles::load(store, &keys).await);
     let names = profiles.names();
     let links = pages.links();
     let context = Rows {
@@ -1036,13 +1046,13 @@ pub(crate) async fn sidebar_card(
     pages: &Pages,
     catalog: &Catalog,
     viewer: Option<&PublicKey>,
-) -> String {
+) -> Result<String, StoreError> {
     let store = &pages.store;
     let now = u64::try_from(chrome::now()).unwrap_or(0);
-    let ranking = rank(store, catalog, Window::Day, now, viewer).await;
+    let ranking = rank(store, catalog, Window::Day, now, viewer).await?;
     let top: Vec<&Score> = ranking.scores.iter().take(SIDEBAR_SHOWN).collect();
     let owners: Vec<PublicKey> = top.iter().map(|score| *score.repo.owner()).collect();
-    let names = chrome::names(store, &owners).await;
+    let names = chrome::names(store, &owners).await?;
     let links = pages.links();
     let mut rows = String::new();
     for (index, score) in top.iter().enumerate() {
@@ -1063,7 +1073,7 @@ pub(crate) async fn sidebar_card(
     } else {
         format!("<ol class=\"ranked\">{rows}</ol>")
     };
-    format!(
+    Ok(format!(
         "<div class=\"side-card\" data-trending><h2>Trending today</h2>{list}<p class=\"muted small\">\
          Distinct people who starred, boosted, commented on, followed, forked or posted about a repo \
          here in the last 24 hours; makers do not count for their own repos.{} \
@@ -1074,7 +1084,7 @@ pub(crate) async fn sidebar_card(
             ""
         },
         escape(&path(Window::Day, viewer, None, None)),
-    )
+    ))
 }
 
 #[cfg(test)]

@@ -20,6 +20,7 @@
 //! icon, a screenshot or an asset: the visitor's browser loads the `https`
 //! images, under the `/social` policy.
 
+use relay_ui::StoreError;
 use std::collections::{HashMap, HashSet};
 
 use axum::extract::{Path, RawQuery, State};
@@ -494,7 +495,7 @@ pub(crate) fn vouchers(
 }
 
 /// The newest app event at `address`.
-async fn load_app(store: &ReadOnlyStore, address: &Address) -> Option<App> {
+async fn load_app(store: &ReadOnlyStore, address: &Address) -> Result<Option<App>, StoreError> {
     let events = store
         .query(
             Filter::new()
@@ -502,18 +503,18 @@ async fn load_app(store: &ReadOnlyStore, address: &Address) -> Option<App> {
                 .author(*address.author())
                 .identifier(address.d()),
         )
-        .await;
-    newest(
+        .await?;
+    Ok(newest(
         events
             .iter()
             .filter(|event| event.pubkey == *address.author() && d_tag(event) == address.d()),
     )
     .cloned()
-    .and_then(App::of)
+    .and_then(App::of))
 }
 
 /// The releases of `app`.
-async fn load_releases(store: &ReadOnlyStore, app: &Address) -> Vec<Release> {
+async fn load_releases(store: &ReadOnlyStore, app: &Address) -> Result<Vec<Release>, StoreError> {
     let events = store
         .query(
             Filter::new()
@@ -522,28 +523,34 @@ async fn load_releases(store: &ReadOnlyStore, app: &Address) -> Vec<Release> {
                 .custom_tag(SingleLetterTag::LOWERCASE_I, app.d())
                 .limit(LIMIT),
         )
-        .await;
-    releases_of(app, events)
+        .await?;
+    Ok(releases_of(app, events))
 }
 
 /// The assets with `ids`, by id.
-async fn load_assets(store: &ReadOnlyStore, ids: Vec<EventId>) -> HashMap<EventId, Event> {
+async fn load_assets(
+    store: &ReadOnlyStore,
+    ids: Vec<EventId>,
+) -> Result<HashMap<EventId, Event>, StoreError> {
     if ids.is_empty() {
-        return HashMap::new();
+        return Ok(HashMap::new());
     }
-    store
+    Ok(store
         .query(Filter::new().kind(Kind::from(SOFTWARE_ASSET)).ids(ids))
-        .await
+        .await?
         .into_iter()
         .filter(|event| event.kind == Kind::from(SOFTWARE_ASSET))
         .map(|event| (event.id, event))
-        .collect()
+        .collect())
 }
 
 /// The stars and set entries that may vouch for the apps at `coordinates`.
-async fn load_vouches(store: &ReadOnlyStore, coordinates: Vec<String>) -> Vec<Event> {
+async fn load_vouches(
+    store: &ReadOnlyStore,
+    coordinates: Vec<String>,
+) -> Result<Vec<Event>, StoreError> {
     if coordinates.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let mut events = store
         .query(
@@ -552,7 +559,7 @@ async fn load_vouches(store: &ReadOnlyStore, coordinates: Vec<String>) -> Vec<Ev
                 .custom_tags(SingleLetterTag::LOWERCASE_A, coordinates.clone())
                 .limit(PEOPLE_LIMIT),
         )
-        .await;
+        .await?;
     let sets = store
         .query(
             Filter::new()
@@ -560,9 +567,9 @@ async fn load_vouches(store: &ReadOnlyStore, coordinates: Vec<String>) -> Vec<Ev
                 .custom_tags(SingleLetterTag::LOWERCASE_A, coordinates)
                 .limit(PEOPLE_LIMIT),
         )
-        .await;
+        .await?;
     events.extend(latest_sets(sets));
-    events
+    Ok(events)
 }
 
 /// The newest event of each app set among `events`. A pure function.
@@ -589,7 +596,10 @@ fn latest_sets(events: Vec<Event>) -> Vec<Event> {
 
 /// The apps the makers of `card`'s repo publish for it: kind 32267 by an
 /// authorized author (ADR 0002) whose `a` tag names the repo.
-pub(crate) async fn apps_of_repo(store: &ReadOnlyStore, card: &RepoCard) -> Vec<App> {
+pub(crate) async fn apps_of_repo(
+    store: &ReadOnlyStore,
+    card: &RepoCard,
+) -> Result<Vec<App>, StoreError> {
     let repo = card.address();
     let events = store
         .query(
@@ -599,23 +609,28 @@ pub(crate) async fn apps_of_repo(store: &ReadOnlyStore, card: &RepoCard) -> Vec<
                 .custom_tag(SingleLetterTag::LOWERCASE_A, repo.coordinate())
                 .limit(LIMIT),
         )
-        .await;
-    latest_apps(events)
+        .await?;
+    Ok(latest_apps(events)
         .into_iter()
         .filter(|app| card.is_maker(app.address().author()) && app.repo().as_ref() == Some(repo))
-        .collect()
+        .collect())
 }
 
 /// What a report about `app` may name: its address, each release (by
 /// address and id) and each release's assets (by id and hash).
-pub(crate) async fn add_targets(store: &ReadOnlyStore, app: &App, targets: &mut Targets) {
-    let releases = load_releases(store, app.address()).await;
+pub(crate) async fn add_targets(
+    store: &ReadOnlyStore,
+    app: &App,
+    targets: &mut Targets,
+) -> Result<(), StoreError> {
+    let releases = load_releases(store, app.address()).await?;
     let assets = load_assets(
         store,
         releases.iter().flat_map(Release::asset_ids).collect(),
     )
-    .await;
+    .await?;
     add_known_targets(app, &releases, &assets, targets);
+    Ok(())
 }
 
 /// [`add_targets`] for what is already loaded. A pure function.
@@ -650,11 +665,14 @@ fn add_known_targets(
 
 /// The repo page's "Latest release" card: the newest release of each app
 /// the makers publish for the repo, or nothing when there is none.
-pub(crate) async fn repo_sidebar(store: &ReadOnlyStore, card: &RepoCard) -> String {
-    let apps = apps_of_repo(store, card).await;
+pub(crate) async fn repo_sidebar(
+    store: &ReadOnlyStore,
+    card: &RepoCard,
+) -> Result<String, StoreError> {
+    let apps = apps_of_repo(store, card).await?;
     let mut rows = String::new();
     for app in apps.iter().take(3) {
-        let releases = load_releases(store, app.address()).await;
+        let releases = load_releases(store, app.address()).await?;
         let Some(release) = latest_release(&releases) else {
             continue;
         };
@@ -670,19 +688,19 @@ pub(crate) async fn repo_sidebar(store: &ReadOnlyStore, card: &RepoCard) -> Stri
     }
     if rows.is_empty() {
         if let Some(app) = apps.first() {
-            return format!(
+            return Ok(format!(
                 "<div class=\"side-card\" data-latest-release><h2>App</h2><p><a href=\"{}\">{}</a></p>\
                  <p class=\"muted small\">Published for this repo; no release yet.</p></div>",
                 escape(&app.path()),
                 escape(app.name())
-            );
+            ));
         }
-        return String::new();
+        return Ok(String::new());
     }
-    format!(
+    Ok(format!(
         "<div class=\"side-card\" data-latest-release><h2>Latest release</h2><ul class=\"plain\">{rows}</ul>\
          <p class=\"muted small\">From the makers' app listing (NIP-82, an open draft).</p></div>"
-    )
+    ))
 }
 
 /// An app's icon: its `https` icon, else its initials.
@@ -763,7 +781,7 @@ pub(crate) async fn index(State(pages): State<Pages>, RawQuery(query): RawQuery)
     if let Some(topic) = &topic {
         filter = filter.custom_tag(SingleLetterTag::LOWERCASE_T, topic.clone());
     }
-    let apps: Vec<App> = latest_apps(store.query(filter).await)
+    let apps: Vec<App> = latest_apps(relay_ui::stored!(store.query(filter).await))
         .into_iter()
         .filter(|app| {
             topic.as_ref().is_none_or(|topic| {
@@ -773,16 +791,18 @@ pub(crate) async fn index(State(pages): State<Pages>, RawQuery(query): RawQuery)
             })
         })
         .collect();
-    let vouches = load_vouches(
-        store,
-        apps.iter().map(|app| app.address().coordinate()).collect(),
-    )
-    .await;
-    let sets = latest_sets(
+    let vouches = relay_ui::stored!(
+        load_vouches(
+            store,
+            apps.iter().map(|app| app.address().coordinate()).collect(),
+        )
+        .await
+    );
+    let sets = latest_sets(relay_ui::stored!(
         store
             .query(Filter::new().kind(Kind::from(APP_SET)).limit(50))
-            .await,
-    );
+            .await
+    ));
     let mut keys: Vec<PublicKey> = Vec::new();
     for key in apps
         .iter()
@@ -793,7 +813,7 @@ pub(crate) async fn index(State(pages): State<Pages>, RawQuery(query): RawQuery)
             keys.push(key);
         }
     }
-    let profiles = Profiles::load(store, &keys).await;
+    let profiles = relay_ui::stored!(Profiles::load(store, &keys).await);
     let names = profiles.names();
 
     let mut body = String::from("<div class=\"split\"><div class=\"main\">");
@@ -925,22 +945,27 @@ pub(crate) fn address_of_path(owner: &str, d: &str) -> Option<Address> {
 }
 
 /// The app at `address`, for the reports page.
-pub(crate) async fn find(store: &ReadOnlyStore, address: &Address) -> Option<App> {
+pub(crate) async fn find(
+    store: &ReadOnlyStore,
+    address: &Address,
+) -> Result<Option<App>, StoreError> {
     load_app(store, address).await
 }
 
 async fn app_page(pages: &Pages, address: &Address, query: Option<&str>) -> Response {
     let store = &pages.store;
-    let Some(app) = load_app(store, address).await else {
+    let Some(app) = relay_ui::stored!(load_app(store, address).await) else {
         return not_found(pages);
     };
     let viewer = as_key(query);
-    let releases = load_releases(store, address).await;
-    let assets = load_assets(
-        store,
-        releases.iter().flat_map(Release::asset_ids).collect(),
-    )
-    .await;
+    let releases = relay_ui::stored!(load_releases(store, address).await);
+    let assets = relay_ui::stored!(
+        load_assets(
+            store,
+            releases.iter().flat_map(Release::asset_ids).collect(),
+        )
+        .await
+    );
     let all_channels = channels(&releases);
     let channel = param(query, "channel")
         .filter(|wanted| all_channels.contains(wanted))
@@ -950,13 +975,17 @@ async fn app_page(pages: &Pages, address: &Address, query: Option<&str>) -> Resp
         .map(|channel| on_channel(&releases, channel))
         .unwrap_or_default();
     let card = match app.repo() {
-        Some(repo) => RepoCard::load(store, &repo).await,
+        Some(repo) => relay_ui::stored!(RepoCard::load(store, &repo).await),
         None => None,
     };
     let coordinate = address.coordinate();
-    let vouches = load_vouches(store, vec![coordinate.clone()]).await;
+    let vouches = relay_ui::stored!(load_vouches(store, vec![coordinate.clone()]).await);
     let follows: Option<HashSet<PublicKey>> = match &viewer {
-        Some(viewer) => Some(viewer::follows(store, viewer).await.into_iter().collect()),
+        Some(viewer) => Some(
+            relay_ui::stored!(viewer::follows(store, viewer).await)
+                .into_iter()
+                .collect(),
+        ),
         None => None,
     };
     let vouched = vouchers(&vouches, &coordinate, follows.as_ref());
@@ -966,7 +995,7 @@ async fn app_page(pages: &Pages, address: &Address, query: Option<&str>) -> Resp
         .collect();
     let mut targets = Targets::default();
     add_known_targets(&app, &releases, &assets, &mut targets);
-    let found_reports = reports::load(store, &targets).await;
+    let found_reports = relay_ui::stored!(reports::load(store, &targets).await);
 
     let mut keys: Vec<PublicKey> = vec![*address.author()];
     for key in vouched
@@ -981,7 +1010,7 @@ async fn app_page(pages: &Pages, address: &Address, query: Option<&str>) -> Resp
             keys.push(key);
         }
     }
-    let profiles = Profiles::load(store, &keys).await;
+    let profiles = relay_ui::stored!(Profiles::load(store, &keys).await);
     let names = profiles.names();
     let links = pages.links();
     let lens = as_query(viewer.as_ref(), false);
@@ -1451,14 +1480,16 @@ pub(crate) async fn set(State(pages): State<Pages>, Path(target): Path<String>) 
         return not_found(&pages);
     };
     let store = &pages.store;
-    let events = store
-        .query(
-            Filter::new()
-                .kind(Kind::from(APP_SET))
-                .author(*address.author())
-                .identifier(address.d()),
-        )
-        .await;
+    let events = relay_ui::stored!(
+        store
+            .query(
+                Filter::new()
+                    .kind(Kind::from(APP_SET))
+                    .author(*address.author())
+                    .identifier(address.d()),
+            )
+            .await
+    );
     let Some(set) = newest(
         events
             .iter()
@@ -1477,7 +1508,7 @@ pub(crate) async fn set(State(pages): State<Pages>, Path(target): Path<String>) 
     let apps: HashMap<Address, App> = if authors.is_empty() {
         HashMap::new()
     } else {
-        latest_apps(
+        latest_apps(relay_ui::stored!(
             store
                 .query(
                     Filter::new()
@@ -1485,8 +1516,8 @@ pub(crate) async fn set(State(pages): State<Pages>, Path(target): Path<String>) 
                         .authors(authors.clone())
                         .limit(LIMIT),
                 )
-                .await,
-        )
+                .await
+        ))
         .into_iter()
         .map(|app| (app.address().clone(), app))
         .collect()
@@ -1495,7 +1526,7 @@ pub(crate) async fn set(State(pages): State<Pages>, Path(target): Path<String>) 
     if !keys.contains(&set.pubkey) {
         keys.push(set.pubkey);
     }
-    let profiles = Profiles::load(store, &keys).await;
+    let profiles = relay_ui::stored!(Profiles::load(store, &keys).await);
     let names = profiles.names();
     let title = set_title(&set);
     let mut body = format!(

@@ -22,6 +22,7 @@
 //! does. The [`Catalog`] is also what [`crate::trending`] ranks over: every
 //! repo announced here, with the keys whose acts on it are the maker's own.
 
+use relay_ui::StoreError;
 use std::collections::{HashMap, HashSet};
 
 use axum::extract::{Path, RawQuery, State};
@@ -120,14 +121,14 @@ pub(crate) struct Catalog {
 
 impl Catalog {
     /// The catalog of this relay's store: two queries.
-    pub(crate) async fn load(store: &relay_ui::ReadOnlyStore) -> Self {
+    pub(crate) async fn load(store: &relay_ui::ReadOnlyStore) -> Result<Self, StoreError> {
         let announcements = store
             .query(
                 Filter::new()
                     .kind(Kind::from(ANNOUNCEMENT))
                     .limit(REPO_LIMIT),
             )
-            .await;
+            .await?;
         let labels = store
             .query(
                 Filter::new()
@@ -135,8 +136,8 @@ impl Catalog {
                     .custom_tag(SingleLetterTag::UPPERCASE_L, TOPIC_NAMESPACE)
                     .limit(LABEL_LIMIT),
             )
-            .await;
-        Self::from_events(&announcements, &labels)
+            .await?;
+        Ok(Self::from_events(&announcements, &labels))
     }
 
     /// The catalog of these events: each repo's newest announcement by its
@@ -343,7 +344,7 @@ fn about_card(topic: Option<&str>) -> String {
 
 /// `/social/t`: every topic, with the number of repos under it.
 pub(crate) async fn index(State(pages): State<Pages>) -> Response {
-    let catalog = Catalog::load(&pages.store).await;
+    let catalog = relay_ui::stored!(Catalog::load(&pages.store).await);
     let counts = catalog.counts();
     let mut body = String::from(
         "<div class=\"page-hero\"><h1>Topics</h1><p class=\"muted\">What the repos on this relay \
@@ -389,14 +390,14 @@ pub(crate) async fn page(
         return crate::not_found(&pages);
     };
     let store = &pages.store;
-    let catalog = Catalog::load(store).await;
+    let catalog = relay_ui::stored!(Catalog::load(store).await);
     // `?as=<npub>`: that key's mute list drops repos whose owner or own
     // topic it muted, and labels by people it muted.
     let lens = crate::viewer::as_key(query.as_deref());
-    let mutes = match &lens {
+    let mutes = relay_ui::stored!(match &lens {
         Some(key) => Mutes::load(store, key).await,
-        None => Mutes::default(),
-    };
+        None => Ok(Mutes::default()),
+    });
     let all = catalog.tagged(&topic);
     let listed = all.len();
     let tagged: Vec<Tagged> = all
@@ -410,8 +411,9 @@ pub(crate) async fn page(
         .collect();
     let muted = listed - tagged.len();
     let repos: Vec<RepoAddress> = tagged.iter().map(|tagged| tagged.repo.clone()).collect();
-    let counts = trending::stars_and_forks(store, &repos).await;
-    let others = trending::stars_from_others(store, &repos, &catalog.makers()).await;
+    let counts = relay_ui::stored!(trending::stars_and_forks(store, &repos).await);
+    let others =
+        relay_ui::stored!(trending::stars_from_others(store, &repos, &catalog.makers()).await);
     let mut keys: Vec<PublicKey> = lens.into_iter().collect();
     for key in tagged.iter().flat_map(|tagged| {
         catalog
@@ -425,7 +427,7 @@ pub(crate) async fn page(
             keys.push(key);
         }
     }
-    let profiles = Profiles::load(store, &keys).await;
+    let profiles = relay_ui::stored!(Profiles::load(store, &keys).await);
     let mut rows: Vec<(&Tagged, usize, usize)> = tagged
         .iter()
         .map(|tagged| {

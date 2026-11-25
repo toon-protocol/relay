@@ -47,6 +47,21 @@ impl Previews {
         Self::default()
     }
 
+    /// [`respond`](Self::respond), for a card whose lookup can fail: `500`
+    /// with no image when it did.
+    pub async fn respond_result<E>(
+        &self,
+        headers: &HeaderMap,
+        card: Result<Option<Card>, E>,
+    ) -> Response<Body> {
+        match card {
+            Ok(card) => self.respond(headers, card).await,
+            // The page's store failed: a 5xx with no image, so a broken
+            // store is not taken for a missing card.
+            Err(_) => plain(StatusCode::INTERNAL_SERVER_ERROR, "the relay had an error"),
+        }
+    }
+
     /// The answer to a request for `card` with `headers`: `404` when there
     /// is no such card, `304` when the request already holds it, else the
     /// PNG, from the cache or drawn now, or `503` while too many are being
