@@ -52,9 +52,10 @@ use ui_preview::Previews;
 use search::Sort;
 
 use markup::{Tab, ago, icon, ref_menu, repo_header, svg};
+use relay_ui::reading::{d_tag, first_tag_value, first_tag_values, newest, supersedes};
 use repo::{
-    ANNOUNCEMENT, RepoAddress, STATE, authorized_authors, d_tag, first_tag, head_branch,
-    honoured_state, newest, owner_announcement, refs, repo_name, supersedes, tag_values,
+    ANNOUNCEMENT, RepoAddress, STATE, authorized_authors, head_branch, honoured_state,
+    owner_announcement, refs, repo_name,
 };
 
 /// The mount prefix.
@@ -234,7 +235,7 @@ fn repo_preview(
         shown_name(names, &owner),
         repo_name(announcement)
     );
-    let description = first_tag(announcement, "description")
+    let description = first_tag_value(announcement, "description")
         .map(str::trim)
         .filter(|text| !text.is_empty())
         .map(str::to_owned)
@@ -390,7 +391,7 @@ fn result_row(
         escape(&repo_path(&repo.pubkey, d_tag(repo))),
         search::highlight(repo_name(repo), words),
     );
-    if let Some(description) = first_tag(repo, "description")
+    if let Some(description) = first_tag_value(repo, "description")
         .map(str::trim)
         .filter(|text| !text.is_empty())
     {
@@ -624,7 +625,7 @@ async fn home(
 /// names none is cloned over Nostr, by `nostr_urls` ([`card::clone_urls`]),
 /// as `/social` shows it.
 fn clone_menu(announcement: &Event, nostr_urls: &[(String, bool)]) -> String {
-    let urls = tag_values(announcement, "clone");
+    let urls = first_tag_values(announcement, "clone");
     let mut out = format!(
         "<details class=\"menu\"><summary class=\"btn btn-success\">{}Code{}</summary>\
          <div class=\"menu-panel right\"><div class=\"menu-title\">Clone</div><div class=\"menu-body\">",
@@ -671,14 +672,14 @@ fn about(
     names: &HashMap<PublicKey, String>,
 ) -> String {
     let mut out = String::from("<aside class=\"sidebar\"><div><h2>About</h2>");
-    match first_tag(announcement, "description")
+    match first_tag_value(announcement, "description")
         .map(str::trim)
         .filter(|text| !text.is_empty())
     {
         Some(description) => out.push_str(&format!("<p>{}</p>", escape(description))),
         None => out.push_str("<p class=\"muted\"><em>No description provided.</em></p>"),
     }
-    let web = tag_values(announcement, "web");
+    let web = first_tag_values(announcement, "web");
     if !web.is_empty() {
         out.push_str("<ul class=\"facts\">");
         for url in web {
@@ -763,12 +764,10 @@ async fn redirect(
         if name != "a" {
             continue;
         }
-        let mut parts = address.splitn(3, ':');
-        if let (Some(kind), Some(owner), Some(d)) = (parts.next(), parts.next(), parts.next())
-            && kind.parse() == Ok(ANNOUNCEMENT)
-            && let Ok(owner) = PublicKey::from_hex(owner)
+        if let Some(address) = relay_ui::reading::Address::parse(address)
+            && address.kind == ANNOUNCEMENT
         {
-            return moved(&repo_path(&owner, d));
+            return moved(&repo_path(&address.pubkey, &address.d));
         }
     }
     not_found(&apps)

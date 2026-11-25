@@ -14,10 +14,11 @@ use nostr::key::PublicKey;
 use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{self, App, Apps, Identicon, Profiles, escape};
 use relay_ui::meta::{Preview, summary};
+use relay_ui::reading::{self, Address, newest};
 use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors, owner_announcement};
 use ui_preview::{Card, Face};
 
-use crate::directory::{self, LISTING_KIND, LIVENESS_KIND, expiration, json};
+use crate::directory::{self, LISTING_KIND, LIVENESS_KIND, json};
 use crate::provider::{parse_pubkey, provider_link};
 use crate::{PREFIX, Pages, card_stem, directory_filter, fallback, html_with};
 
@@ -92,7 +93,7 @@ impl Deployment {
         if event.kind != Kind::from(DEPLOYMENT_KIND) {
             return None;
         }
-        let expires = expiration(event).filter(|at| *at > now)?;
+        let expires = reading::expiration(event).filter(|at| *at > now)?;
         let (mut d, mut commit, mut repo, mut listing) = (None, None, None, None);
         let (mut primary, mut standby) = (None, Vec::new());
         let (mut workload, mut image, mut visit) = (None, None, None);
@@ -111,10 +112,9 @@ impl Deployment {
                         if repo.replace(RepoAddress::parse(value)?).is_some() {
                             return None;
                         }
-                    } else if let Some(rest) = value.strip_prefix(&format!("{LISTING_KIND}:")) {
-                        let (key, name) = rest.split_once(':')?;
-                        let key = PublicKey::from_hex(key).ok()?;
-                        if listing.replace((key, name.to_owned())).is_some() {
+                    } else if value.starts_with(&format!("{LISTING_KIND}:")) {
+                        let address = Address::parse(value)?;
+                        if listing.replace((address.pubkey, address.d)).is_some() {
                             return None;
                         }
                     }
@@ -237,17 +237,18 @@ pub(crate) fn state(
     evictions: &[Event],
     takeovers: &[Event],
 ) -> Standing {
-    let evicted = evictions
-        .iter()
-        .filter(|e| e.kind == Kind::from(EVICTION_KIND))
-        .filter(|e| deployment.names(&e.pubkey))
-        .filter(|e| {
-            tag_slices(e).any(
-                |tag| matches!(tag, [name, value, ..] if name == "x" && *value == deployment.workload),
-            )
-        })
-        .max_by_key(|e| (e.created_at, e.id));
-    let taken = valid_takeovers(deployment, takeovers).max_by_key(|e| (e.created_at, e.id));
+    let evicted = newest(
+        evictions
+            .iter()
+            .filter(|e| e.kind == Kind::from(EVICTION_KIND))
+            .filter(|e| deployment.names(&e.pubkey))
+            .filter(|e| {
+                tag_slices(e).any(
+                    |tag| matches!(tag, [name, value, ..] if name == "x" && *value == deployment.workload),
+                )
+            }),
+    );
+    let taken = newest(valid_takeovers(deployment, takeovers));
     match (evicted, taken) {
         (Some(e), Some(t)) if t.created_at > e.created_at => {
             Standing::TakenOver { winner: t.pubkey }
@@ -520,11 +521,7 @@ async fn load(
                 .identifier(environment.to_owned()),
         )
         .await;
-    let events: Vec<Event> = events
-        .into_iter()
-        .max_by_key(|e| (e.created_at, e.id))
-        .into_iter()
-        .collect();
+    let events: Vec<Event> = newest(&events).cloned().into_iter().collect();
     with_states(&pages.store, &events)
         .await
         .into_iter()

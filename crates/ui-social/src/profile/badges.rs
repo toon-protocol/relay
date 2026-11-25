@@ -7,7 +7,7 @@
 
 use nostr::event::{Event, EventId, Kind};
 use nostr::key::PublicKey;
-use ui_nip34::repo::{d_tag, first_tag, newest};
+use relay_ui::reading::{Address, d_tag, first_tag_value, newest};
 
 /// NIP-58 badge award.
 pub(crate) const AWARD: u16 = 8;
@@ -66,14 +66,15 @@ pub(crate) fn shown(
     let key_hex = key.to_hex();
     let mut badges = Vec::new();
     for (coordinate, award_id) in pairs {
-        let mut parts = coordinate.splitn(3, ':');
-        let (Some(kind), Some(issuer), Some(d)) = (parts.next(), parts.next(), parts.next()) else {
-            continue;
-        };
-        let (Ok(DEFINITION), Ok(issuer)) = (kind.parse::<u16>(), PublicKey::from_hex(issuer))
+        let Some(Address {
+            kind: DEFINITION,
+            pubkey: issuer,
+            d,
+        }) = Address::parse(coordinate)
         else {
             continue;
         };
+        let d = d.as_str();
         let names = |event: &Event, name: &str, value: &str| {
             event
                 .tags
@@ -106,7 +107,7 @@ pub(crate) fn shown(
         badges.push(Badge {
             issuer,
             name: badge_name(definition),
-            description: first_tag(definition, "description")
+            description: first_tag_value(definition, "description")
                 .map(str::trim)
                 .filter(|text| !text.is_empty())
                 .map(str::to_owned),
@@ -118,7 +119,7 @@ pub(crate) fn shown(
 
 /// A definition's `name`, else its `d`.
 fn badge_name(definition: &Event) -> String {
-    first_tag(definition, "name")
+    first_tag_value(definition, "name")
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| d_tag(definition))

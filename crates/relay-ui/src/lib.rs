@@ -9,11 +9,13 @@
 //! [`chrome`] is what the apps' pages share, so they read as one site: the
 //! page shell and site bar, the repo header's pieces, names and dates.
 //! [`meta`] is what the shell tells a link unfurler: Open Graph and X card
-//! tags naming the card image a page has.
+//! tags naming the card image a page has. [`reading`] is how every app reads a
+//! stored event: its tags, its coordinate and which version is newest.
 
 mod assets;
 pub mod chrome;
 pub mod meta;
+pub mod reading;
 mod style;
 
 pub use assets::{Assets, CACHE_CONTROL_VALUE, MANIFEST_FILE};

@@ -14,8 +14,9 @@ use nostr::event::{Event, Kind};
 use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use relay_ui::chrome::{Profiles, ago, escape, icon, person, svg};
+use relay_ui::reading::first_tag_value;
 use ui_nip34::card::plural;
-use ui_nip34::repo::{RepoAddress, first_tag};
+use ui_nip34::repo::RepoAddress;
 
 use crate::demo;
 use crate::kinds::{APP_HANDLER, ARTICLE, COMMENT, NOTE, REACTION, SNIPPET};
@@ -187,7 +188,7 @@ pub(crate) async fn page(
     ));
     let title = match &ship {
         Some(_) => post::ship_title(&event),
-        None => first_tag(&event, "title")
+        None => first_tag_value(&event, "title")
             .map(str::to_owned)
             .unwrap_or_else(|| content::first_line(&event.content, 80)),
     };
@@ -308,7 +309,7 @@ fn plain(view: &View<'_>, event: &Event, repos: &[RepoAddress], reactions: &[Eve
     // An article is drawn by the reader (`crate::article`), not here.
     let media = crate::media::imeta(event);
     let hidden: Vec<String> = media.iter().map(|m| m.url().to_owned()).collect();
-    if let Some(title) = first_tag(event, "title") {
+    if let Some(title) = first_tag_value(event, "title") {
         out.push_str(&format!("<h2 class=\"post-title\">{}</h2>", escape(title)));
     }
     let text = content::render(&event.content, &hidden, view.names);

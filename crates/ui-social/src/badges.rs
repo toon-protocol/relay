@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use nostr::event::{Event, Kind};
 use nostr::key::PublicKey;
-use ui_nip34::repo::{d_tag, first_tag};
+use relay_ui::reading::{d_tag, first_tag_value};
 
 use crate::media::Media;
 
@@ -38,19 +38,19 @@ impl Badge {
             return None;
         }
         let d = d_tag(event).to_owned();
-        let name = first_tag(event, "name")
+        let name = first_tag_value(event, "name")
             .map(str::trim)
             .filter(|name| !name.is_empty())
             .map_or_else(|| d.clone(), str::to_owned);
-        let image = ui_nip34::repo::tag_values(event, "thumb")
+        let image = relay_ui::reading::first_tag_values(event, "thumb")
             .first()
-            .or_else(|| ui_nip34::repo::tag_values(event, "image").first())
+            .or_else(|| relay_ui::reading::first_tag_values(event, "image").first())
             .and_then(|url| Media::new(url, Some("image/*")));
         Some(Self {
             author: event.pubkey,
             d,
             name,
-            description: first_tag(event, "description")
+            description: first_tag_value(event, "description")
                 .map(str::trim)
                 .filter(|text| !text.is_empty())
                 .map(str::to_owned),
@@ -102,7 +102,7 @@ pub(crate) fn event_badges(
         }
         let key = (event.pubkey, d_tag(event).to_owned());
         match held.get(&key) {
-            Some(current) if !ui_nip34::repo::supersedes(event, current) => {}
+            Some(current) if !relay_ui::reading::supersedes(event, current) => {}
             _ => {
                 held.insert(key, event);
             }

@@ -8,6 +8,7 @@ use nostr::event::{Event, Kind};
 use nostr::key::PublicKey;
 use relay_ui::chrome::param;
 use relay_ui::meta::summary;
+use relay_ui::reading::{self, Address, every_tag_value, newest};
 use serde_json::Value;
 
 /// A Provider Profile.
@@ -132,7 +133,7 @@ pub(crate) fn apply_liveness(listings: &mut [Listing], liveness: &[Event], now: 
             newest.insert(event.pubkey, event);
         }
     }
-    newest.retain(|_, event| expiration(event).is_none_or(|at| at > now));
+    newest.retain(|_, event| !reading::is_expired(event, now));
     for listing in listings {
         let Some(event) = newest.get(&listing.provider) else {
             listing.live = false;
@@ -161,13 +162,6 @@ pub(crate) fn sort_for_buyers(listings: &mut [Listing]) {
                 (None, None) => std::cmp::Ordering::Equal,
             })
     });
-}
-
-pub(crate) fn expiration(event: &Event) -> Option<u64> {
-    event.tags.iter().find_map(|tag| match tag.as_slice() {
-        [name, at, ..] if name == "expiration" => at.parse().ok(),
-        _ => None,
-    })
 }
 
 /// A whole count written as a JSON number or a string of digits.
@@ -223,13 +217,9 @@ fn profile_of(listing: &Event) -> Option<PublicKey> {
         if name != "a" {
             return None;
         }
-        let mut parts = coordinate.split(':');
-        let (kind, key, d) = (parts.next()?, parts.next()?, parts.next()?);
-        if kind.parse() != Ok(PROFILE_KIND) || !d.is_empty() || parts.next().is_some() {
-            return None;
-        }
-        let key = PublicKey::from_hex(key).ok()?;
-        (key == listing.pubkey).then_some(key)
+        let address = Address::parse(coordinate)?;
+        (address.kind == PROFILE_KIND && address.d.is_empty() && address.pubkey == listing.pubkey)
+            .then_some(address.pubkey)
     })
 }
 
@@ -263,7 +253,7 @@ fn read(listing: &Event, profile: &Event) -> Option<Listing> {
         resources.push(("gpu".to_owned(), summary(&gpu, FIELD_CHARS)));
     }
     let mut capabilities = capabilities(content.get("capabilities"));
-    for cap in tag_values(listing, "t") {
+    for cap in lowercased_tag_values(listing, "t") {
         if !capabilities
             .iter()
             .any(|had| had.eq_ignore_ascii_case(&cap))
@@ -271,12 +261,12 @@ fn read(listing: &Event, profile: &Event) -> Option<Listing> {
             capabilities.push(summary(&cap, FIELD_CHARS));
         }
     }
-    let labels = tag_values(listing, "l");
+    let labels = lowercased_tag_values(listing, "l");
     let hidden = json(&profile.content)
         .get("hidden")
         .and_then(Value::as_bool)
         == Some(true)
-        || [&labels, &tag_values(profile, "l")]
+        || [&labels, &lowercased_tag_values(profile, "l")]
             .iter()
             .any(|labels| labels.iter().any(|l| l == "hidden:true"));
     Some(Listing {
@@ -318,10 +308,11 @@ pub(crate) struct Provider {
 
 /// The newest Provider Profile among `profiles` signed by `key`.
 pub(crate) fn provider(profiles: &[Event], key: &PublicKey) -> Option<Provider> {
-    let profile = profiles
-        .iter()
-        .filter(|e| e.kind == Kind::from(PROFILE_KIND) && e.pubkey == *key)
-        .max_by_key(|e| (e.created_at, e.id))?;
+    let profile = newest(
+        profiles
+            .iter()
+            .filter(|e| e.kind == Kind::from(PROFILE_KIND) && e.pubkey == *key),
+    )?;
     let content = json(&profile.content);
     let text = |field: &str| {
         content
@@ -426,23 +417,20 @@ pub(crate) fn is_live(liveness: &[Event], key: &PublicKey, now: u64) -> bool {
 /// When `key`'s current Liveness among `liveness` was signed, while it is
 /// unexpired at `now`; its newest decides.
 pub(crate) fn live_since(liveness: &[Event], key: &PublicKey, now: u64) -> Option<u64> {
-    liveness
-        .iter()
-        .filter(|e| e.kind == Kind::from(LIVENESS_KIND) && e.pubkey == *key)
-        .max_by_key(|e| (e.created_at, e.id))
-        .filter(|event| expiration(event).is_none_or(|at| at > now))
-        .map(|event| event.created_at.as_secs())
+    newest(
+        liveness
+            .iter()
+            .filter(|e| e.kind == Kind::from(LIVENESS_KIND) && e.pubkey == *key),
+    )
+    .filter(|event| !reading::is_expired(event, now))
+    .map(|event| event.created_at.as_secs())
 }
 
 /// The first value of each `name` tag, lowercased.
-fn tag_values(event: &Event, name: &str) -> Vec<String> {
-    event
-        .tags
-        .iter()
-        .filter_map(|tag| match tag.as_slice() {
-            [tag_name, value, ..] if tag_name == name => Some(value.trim().to_lowercase()),
-            _ => None,
-        })
+fn lowercased_tag_values(event: &Event, name: &str) -> Vec<String> {
+    every_tag_value(event, name)
+        .into_iter()
+        .map(|value| value.trim().to_lowercase())
         .collect()
 }
 

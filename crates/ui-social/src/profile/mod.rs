@@ -34,8 +34,9 @@ use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use nostr::types::Timestamp;
 use relay_ui::chrome::{self, App, Profiles, ago, date, escape, icon, name, npub, svg};
+use relay_ui::reading::{first_tag_value, newest};
 use ui_nip34::card::{self, Links, RepoCard, plural};
-use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors, first_tag, newest, topics};
+use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors, topics};
 
 use crate::kinds::{ARTICLE, FOLLOWED_REPOS, FOLLOWS, NOTE, REACTION};
 use crate::mute::Mutes;
@@ -140,7 +141,7 @@ fn kept_repos(key: &PublicKey, announcements: &[Event]) -> Vec<(RepoAddress, Rol
             continue;
         }
         match current.get(&address) {
-            Some(held) if !ui_nip34::repo::supersedes(announcement, held) => {}
+            Some(held) if !relay_ui::reading::supersedes(announcement, held) => {}
             _ => {
                 current.insert(address, announcement);
             }
@@ -1047,7 +1048,7 @@ fn target_id(event: &Event) -> Option<EventId> {
 /// An issue's, patch's or pull request's title: its `subject`, else its
 /// first line.
 fn subject(event: &Event) -> String {
-    first_tag(event, "subject")
+    first_tag_value(event, "subject")
         .map(str::to_owned)
         .unwrap_or_else(|| content::first_line(&event.content, 80))
 }
@@ -1102,8 +1103,8 @@ fn activity_row(links: &Links, event: &Event, targets: &HashMap<EventId, Event>)
         ),
         activity::CI_JOB | activity::CI_WORKFLOW => (
             escape(
-                first_tag(event, "status")
-                    .or_else(|| first_tag(event, "conclusion"))
+                first_tag_value(event, "status")
+                    .or_else(|| first_tag_value(event, "conclusion"))
                     .unwrap_or("result"),
             ),
             None,

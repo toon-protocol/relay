@@ -10,6 +10,7 @@ use nostr::nips::nip01::Coordinate;
 use nostr::nips::nip19::{FromBech32, Nip19Coordinate};
 
 use relay_ui::chrome::{npub, percent_encode};
+use relay_ui::reading::{Address, d_tag, first_tag_value, first_tag_values, newest};
 
 /// NIP-34 repository announcement.
 pub const ANNOUNCEMENT: u16 = 30_617;
@@ -36,12 +37,10 @@ impl RepoAddress {
 
     /// The address an `a` tag value spells, `30617:<hex>:<d>`.
     pub fn parse(coordinate: &str) -> Option<Self> {
-        let mut parts = coordinate.splitn(3, ':');
-        let (kind, owner, d) = (parts.next()?, parts.next()?, parts.next()?);
-        if kind.parse::<u16>().ok()? != ANNOUNCEMENT {
-            return None;
-        }
-        Self::new(PublicKey::from_hex(owner).ok()?, d)
+        let address = Address::parse(coordinate)?;
+        (address.kind == ANNOUNCEMENT)
+            .then(|| Self::new(address.pubkey, &address.d))
+            .flatten()
     }
 
     /// The address an `naddr` spells, with or without `nostr:` before it, if
@@ -103,45 +102,9 @@ impl RepoAddress {
     }
 }
 
-/// The values of the first tag called `name`, after the name.
-pub fn tag_values<'a>(event: &'a Event, name: &str) -> &'a [String] {
-    event
-        .tags
-        .iter()
-        .map(|tag| tag.as_slice())
-        .find(|tag| tag.first().is_some_and(|first| first == name))
-        .map_or(&[], |tag| &tag[1..])
-}
-
-/// The first value of the first tag called `name`.
-pub fn first_tag<'a>(event: &'a Event, name: &str) -> Option<&'a str> {
-    tag_values(event, name).first().map(String::as_str)
-}
-
-/// The event's `d` tag, or empty.
-pub fn d_tag(event: &Event) -> &str {
-    first_tag(event, "d").unwrap_or("")
-}
-
-/// Whether `candidate` is a newer replacement than `held`: later, and on a
-/// `created_at` tie the lowest event id (ADR 0002).
-pub fn supersedes(candidate: &Event, held: &Event) -> bool {
-    (candidate.created_at, held.id) > (held.created_at, candidate.id)
-}
-
-/// The newest of `events`, or none.
-pub fn newest<'a>(events: impl IntoIterator<Item = &'a Event>) -> Option<&'a Event> {
-    events
-        .into_iter()
-        .fold(None, |held: Option<&Event>, candidate| match held {
-            Some(held) if !supersedes(candidate, held) => Some(held),
-            _ => Some(candidate),
-        })
-}
-
 /// The name a repo goes by: its `name` tag, else its `d`.
 pub fn repo_name(announcement: &Event) -> &str {
-    first_tag(announcement, "name")
+    first_tag_value(announcement, "name")
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| d_tag(announcement))
 }
@@ -196,7 +159,7 @@ pub fn refs(state: &Event) -> Vec<(&str, &str)> {
 /// refs/heads/main"]`, else rig's `["r", "HEAD", …]`, else `main` as rig-web
 /// assumed. A pure function.
 pub fn head_branch(state: &Event) -> String {
-    let nip = first_tag(state, "HEAD");
+    let nip = first_tag_value(state, "HEAD");
     let legacy = state
         .tags
         .iter()
@@ -218,7 +181,7 @@ pub fn head_branch(state: &Event) -> String {
 /// in the owner's own announcement (ADR 0002). A pure function.
 pub fn authorized_authors(announcement: &Event) -> Vec<PublicKey> {
     let mut authors = vec![announcement.pubkey];
-    for value in tag_values(announcement, "maintainers") {
+    for value in first_tag_values(announcement, "maintainers") {
         if let Ok(key) = PublicKey::from_hex(value)
             && !authors.contains(&key)
         {

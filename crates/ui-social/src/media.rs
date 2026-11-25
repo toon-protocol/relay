@@ -138,7 +138,7 @@ pub(crate) fn imeta(event: &Event) -> Vec<Media> {
 
 /// The image an article or app names in its `image` tag, if it is `https`.
 pub(crate) fn image_tag(event: &Event) -> Option<Media> {
-    let url = ui_nip34::repo::first_tag(event, "image")?;
+    let url = relay_ui::reading::first_tag_value(event, "image")?;
     let mut media = Media::new(url, None).or_else(|| Media::new(url, Some("image/*")))?;
     media.kind = MediaKind::Image;
     Some(media)

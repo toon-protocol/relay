@@ -33,8 +33,9 @@ use nostr::nips::nip19::{FromBech32, Nip19Coordinate, ToBech32};
 use nostr::types::Timestamp;
 use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{Profiles, ago, escape, icon, name, npub, percent_encode, plain_name, svg};
+use relay_ui::reading::{self, d_tag, every_tag_value, first_tag_value, newest, supersedes};
 use ui_nip34::card::{Links, RepoCard, plural};
-use ui_nip34::repo::{RepoAddress, first_tag, newest, supersedes};
+use ui_nip34::repo::RepoAddress;
 
 use crate::kinds::{APP_SET, REACTION, SOFTWARE_APP, SOFTWARE_ASSET, SOFTWARE_RELEASE};
 use crate::reports::{self, Targets};
@@ -72,10 +73,9 @@ impl Address {
 
     /// The address an `a` tag value spells, if it names `kind`.
     pub(crate) fn parse(coordinate: &str, kind: u16) -> Option<Self> {
-        let mut parts = coordinate.splitn(3, ':');
-        let (named, author, d) = (parts.next()?, parts.next()?, parts.next()?);
-        (named.parse::<u16>().ok()? == kind).then_some(())?;
-        Self::new(kind, PublicKey::from_hex(author).ok()?, d)
+        let address = reading::Address::parse(coordinate)?;
+        (address.kind == kind).then_some(())?;
+        Self::new(kind, address.pubkey, &address.d)
     }
 
     /// The address an `naddr` spells, if it names `kind`.
@@ -88,11 +88,7 @@ impl Address {
 
     /// The address of an addressable event.
     pub(crate) fn of(event: &Event) -> Option<Self> {
-        Self::new(
-            event.kind.as_u16(),
-            event.pubkey,
-            ui_nip34::repo::d_tag(event),
-        )
+        Self::new(event.kind.as_u16(), event.pubkey, d_tag(event))
     }
 
     /// The addresses of `kind` that `event` names in `a` tags, once each.
@@ -156,19 +152,11 @@ fn web_link(url: &str) -> Option<&str> {
     .then_some(url)
 }
 
-/// The values of every tag called `name`, in order.
+/// The values of every tag called `name` that are not blank, in order.
 fn all_values<'a>(event: &'a Event, name: &str) -> Vec<&'a str> {
-    event
-        .tags
-        .iter()
-        .map(|tag| tag.as_slice())
-        .filter_map(|tag| match tag {
-            [tag_name, value, ..] if tag_name == name && !value.trim().is_empty() => {
-                Some(value.as_str())
-            }
-            _ => None,
-        })
-        .collect()
+    let mut values = every_tag_value(event, name);
+    values.retain(|value| !value.trim().is_empty());
+    values
 }
 
 /// A software application (kind 32267) as its newest event describes it.
@@ -202,20 +190,20 @@ impl App {
 
     /// The `name` tag, else the `d`.
     pub(crate) fn name(&self) -> &str {
-        first_tag(&self.event, "name")
+        first_tag_value(&self.event, "name")
             .map(str::trim)
             .filter(|name| !name.is_empty())
             .unwrap_or(self.address.d())
     }
 
     fn summary(&self) -> Option<&str> {
-        first_tag(&self.event, "summary")
+        first_tag_value(&self.event, "summary")
             .map(str::trim)
             .filter(|text| !text.is_empty())
     }
 
     fn icon(&self) -> Option<&str> {
-        first_tag(&self.event, "icon").and_then(https)
+        first_tag_value(&self.event, "icon").and_then(https)
     }
 
     fn images(&self) -> Vec<&str> {
@@ -236,11 +224,11 @@ impl App {
     }
 
     fn website(&self) -> Option<&str> {
-        first_tag(&self.event, "url").and_then(web_link)
+        first_tag_value(&self.event, "url").and_then(web_link)
     }
 
     fn repository(&self) -> Option<&str> {
-        first_tag(&self.event, "repository").and_then(web_link)
+        first_tag_value(&self.event, "repository").and_then(web_link)
     }
 
     /// The NIP-34 repository its `a` tag points at.
@@ -253,7 +241,7 @@ impl App {
     }
 
     fn license(&self) -> Option<&str> {
-        first_tag(&self.event, "license")
+        first_tag_value(&self.event, "license")
             .map(str::trim)
             .filter(|text| !text.is_empty())
     }
@@ -291,11 +279,11 @@ pub(crate) struct Release {
 impl Release {
     /// The `version` tag, else what follows the `@` in the `d` tag.
     pub(crate) fn version(&self) -> &str {
-        first_tag(&self.event, "version")
+        first_tag_value(&self.event, "version")
             .map(str::trim)
             .filter(|version| !version.is_empty())
             .or_else(|| {
-                ui_nip34::repo::d_tag(&self.event)
+                d_tag(&self.event)
                     .rsplit_once('@')
                     .map(|(_, version)| version)
             })
@@ -304,7 +292,7 @@ impl Release {
 
     /// The channel `c`, `main` when it is missing (the draft's default).
     pub(crate) fn channel(&self) -> &str {
-        first_tag(&self.event, "c")
+        first_tag_value(&self.event, "c")
             .map(str::trim)
             .filter(|channel| !channel.is_empty())
             .unwrap_or("main")
@@ -337,11 +325,11 @@ pub(crate) fn releases_of(app: &Address, events: Vec<Event>) -> Vec<Release> {
     for event in events {
         if event.kind != Kind::from(SOFTWARE_RELEASE)
             || event.pubkey != *app.author()
-            || first_tag(&event, "i") != Some(app.d())
+            || first_tag_value(&event, "i") != Some(app.d())
         {
             continue;
         }
-        let d = ui_nip34::repo::d_tag(&event).to_owned();
+        let d = d_tag(&event).to_owned();
         match held.get(&d) {
             Some(current) if !supersedes(&event, current) => {}
             _ => {
@@ -515,9 +503,11 @@ async fn load_app(store: &ReadOnlyStore, address: &Address) -> Option<App> {
                 .identifier(address.d()),
         )
         .await;
-    newest(events.iter().filter(|event| {
-        event.pubkey == *address.author() && ui_nip34::repo::d_tag(event) == address.d()
-    }))
+    newest(
+        events
+            .iter()
+            .filter(|event| event.pubkey == *address.author() && d_tag(event) == address.d()),
+    )
     .cloned()
     .and_then(App::of)
 }
@@ -651,7 +641,7 @@ fn add_known_targets(
             };
             let label = format!("a {} {} asset", app.name(), release.version());
             targets.event(asset.id, label.clone());
-            if let Some(hash) = first_tag(asset, "x") {
+            if let Some(hash) = first_tag_value(asset, "x") {
                 targets.blob(hash, label);
             }
         }
@@ -897,11 +887,11 @@ pub(crate) async fn index(State(pages): State<Pages>, RawQuery(query): RawQuery)
 
 /// A set's `title`, else its `d`.
 fn set_title(set: &Event) -> String {
-    first_tag(set, "title")
-        .or_else(|| first_tag(set, "name"))
+    first_tag_value(set, "title")
+        .or_else(|| first_tag_value(set, "name"))
         .map(str::trim)
         .filter(|title| !title.is_empty())
-        .unwrap_or_else(|| ui_nip34::repo::d_tag(set))
+        .unwrap_or_else(|| d_tag(set))
         .to_owned()
 }
 
@@ -1245,7 +1235,7 @@ fn assets_table(
          </tr></thead><tbody>",
     );
     for asset in rows {
-        let mime = first_tag(asset, "m").map(str::trim).unwrap_or("");
+        let mime = first_tag_value(asset, "m").map(str::trim).unwrap_or("");
         let platforms = all_values(asset, "f");
         let mut platform = if platforms.is_empty() {
             format!(
@@ -1265,17 +1255,17 @@ fn assets_table(
                 .collect::<Vec<_>>()
                 .join("<br>")
         };
-        if let Some(variant) = first_tag(asset, "variant") {
+        if let Some(variant) = first_tag_value(asset, "variant") {
             platform.push_str(&format!(
                 " <span class=\"muted small\">{}</span>",
                 escape(variant)
             ));
         }
-        let size = first_tag(asset, "size")
+        let size = first_tag_value(asset, "size")
             .and_then(|size| size.trim().parse::<u64>().ok())
             .map(human_size)
             .unwrap_or_else(|| "—".to_owned());
-        let hash = first_tag(asset, "x").map(str::trim).unwrap_or("");
+        let hash = first_tag_value(asset, "x").map(str::trim).unwrap_or("");
         let hash_html = match short_hash(hash) {
             Some(short) => format!(
                 "<span class=\"mono\" title=\"{}\">{short}</span>",
@@ -1283,7 +1273,7 @@ fn assets_table(
             ),
             None => "<span class=\"muted\">none</span>".to_owned(),
         };
-        let commit_html = match first_tag(asset, "commit").and_then(commit_id) {
+        let commit_html = match first_tag_value(asset, "commit").and_then(commit_id) {
             Some(commit) => match &commit_base {
                 Some(base) => format!(
                     "<a class=\"mono\" href=\"{}/commit/{commit}\" title=\"{commit}\">{}</a>",
@@ -1297,7 +1287,7 @@ fn assets_table(
             },
             None => "<span class=\"muted\">—</span>".to_owned(),
         };
-        let get = match first_tag(asset, "url").and_then(https) {
+        let get = match first_tag_value(asset, "url").and_then(https) {
             Some(url) => format!(
                 "<a href=\"{}\" rel=\"nofollow noopener noreferrer\">Download</a>",
                 escape(url)
@@ -1469,9 +1459,11 @@ pub(crate) async fn set(State(pages): State<Pages>, Path(target): Path<String>) 
                 .identifier(address.d()),
         )
         .await;
-    let Some(set) = newest(events.iter().filter(|event| {
-        event.pubkey == *address.author() && ui_nip34::repo::d_tag(event) == address.d()
-    }))
+    let Some(set) = newest(
+        events
+            .iter()
+            .filter(|event| event.pubkey == *address.author() && d_tag(event) == address.d()),
+    )
     .cloned() else {
         return not_found(&pages);
     };
@@ -1513,7 +1505,7 @@ pub(crate) async fn set(State(pages): State<Pages>, Path(target): Path<String>) 
         name(names, &set.pubkey),
         ago(set.created_at)
     );
-    if let Some(description) = first_tag(&set, "description") {
+    if let Some(description) = first_tag_value(&set, "description") {
         body.push_str(&format!("<p>{}</p>", escape(description)));
     }
     let shown: Vec<&App> = listed.iter().filter_map(|each| apps.get(each)).collect();
