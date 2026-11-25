@@ -91,7 +91,7 @@ describe('relay image conformance: documented environment variables', () => {
           NOSTR_SECRET_KEY: '2'.repeat(64),
           TOON_SECRET_KEY: DEFAULT_SECRET_KEY,
           TOON_RELAY_PORT: '7200',
-          TOON_BLS_PORT: '3200',
+          TOON_WRITE_PORT: '3200',
           TOON_HOST: '0.0.0.0',
           TOON_WRITE_HOST: '0.0.0.0',
           TOON_DATA_DIR: '/tmp/conformance-data',

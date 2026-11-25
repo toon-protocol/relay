@@ -74,7 +74,8 @@ impl WriteEdge {
     /// its writes are paid at, out of `connector`'s self-description.
     ///
     /// Every failure is a [`RelayError`] that says what the connector did not
-    /// publish; the caller's part is to say so and advertise nothing.
+    /// publish, or published in a shape no one price pays for; the caller's
+    /// part is to say so and advertise nothing.
     pub fn read(configured: &str, connector: &NodeSelfDescription) -> Result<Self, RelayError> {
         let connector_url =
             published(&connector.http_endpoint).ok_or(RelayError::ConnectorPublishesNoUrl)?;
@@ -85,8 +86,12 @@ impl WriteEdge {
             .filter(|key| !key.is_empty())
             .ok_or(RelayError::ConnectorPublishesNoSealKey)?;
         let route = TerminatedRoute::confirm(configured, connector)?;
+        let address = || route.address().to_string();
+        if route.price_per_kib().is_some() {
+            return Err(RelayError::WriteRouteNotFlat { address: address() });
+        }
         let price = whole_price(route.price()).ok_or_else(|| RelayError::RoutePriceNotWhole {
-            address: route.address().to_string(),
+            address: address(),
             price: route.price().to_string(),
         })?;
         let carriage = route_carriage(&route, connector);
@@ -135,10 +140,9 @@ impl WriteEdge {
 
     /// The route's price for one write, in the asset's base units.
     ///
-    /// It is the connector's `price`, which is the whole price of a flat
-    /// route and the base of a sloped one. The slope (`pricePerKib`) is not
-    /// carried, as the TypeScript relay does not carry it: the document has
-    /// one number for a price.
+    /// It is the connector's `price`, the whole price of a flat route. A
+    /// route priced by the KiB (`pricePerKib`) is refused by [`WriteEdge::read`],
+    /// as the document has one number for a price.
     pub fn price(&self) -> u64 {
         self.price
     }
@@ -402,6 +406,29 @@ mod tests {
                 .expect_err("there is no URL to send clients to");
             assert!(matches!(error, RelayError::ConnectorPublishesNoUrl));
         }
+    }
+
+    #[test]
+    fn a_route_priced_by_the_kib_has_no_edge() {
+        let error = WriteEdge::read(
+            "g.toon.relay.store",
+            &connector_with_route(
+                json!({ "prefix": "g.toon.relay.store", "pricePerKib": "10" }),
+                json!({}),
+            ),
+        )
+        .expect_err("one price does not pay for a sloped route");
+        assert!(matches!(
+            error,
+            RelayError::WriteRouteNotFlat { ref address } if address == "g.toon.relay.store"
+        ));
+        assert!(error.to_string().contains("must charge a flat price"));
+        let flat = WriteEdge::read(
+            "g.toon.relay.store",
+            &connector_with_route(json!({ "prefix": "g.toon.relay.store" }), json!({})),
+        )
+        .expect("a flat route still reads");
+        assert_eq!(flat.price(), 1000);
     }
 
     #[test]

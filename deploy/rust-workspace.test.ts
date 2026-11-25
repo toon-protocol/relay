@@ -377,10 +377,10 @@ describe("the Rust image keeps the TypeScript image's contract with a stack", ()
       line.startsWith('ENV TOON_')
     );
     expect(toonDefaults).toEqual([
-      'ENV TOON_BLS_PORT=3100',
       'ENV TOON_DATA_DIR=/data',
       'ENV TOON_RELAY_PORT=7100',
       'ENV TOON_UI_ASSETS_DIR=/usr/local/share/relay/ui-assets',
+      'ENV TOON_WRITE_PORT=3100',
     ]);
   });
 

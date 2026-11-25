@@ -46,7 +46,7 @@ fn ports(command: &mut Command) -> (u16, u16) {
     command
         .env("TOON_WRITE_HOST", "127.0.0.1")
         .env("TOON_HOST", "127.0.0.1")
-        .env("TOON_BLS_PORT", write.to_string())
+        .env("TOON_WRITE_PORT", write.to_string())
         .env("TOON_RELAY_PORT", read.to_string());
     (write, read)
 }
@@ -212,14 +212,32 @@ fn a_flag_beats_its_variable() {
     let (_, read) = ports(&mut command);
     let flagged = free_port();
     command
-        .env("TOON_BLS_PORT", "1")
-        .arg("--bls-port")
+        .env("TOON_WRITE_PORT", "1")
+        .arg("--write-port")
         .arg(flagged.to_string());
     // The variable alone would be a port nothing can listen on here.
     let child = start(&mut command, flagged);
     assert!(get(read, "/").is_some());
     signal(&child, "TERM");
     exit_within(child, 10);
+}
+
+#[test]
+fn the_deprecated_bls_port_still_works_and_warns_naming_its_replacement() {
+    let data = tempfile::tempdir().expect("a temp dir");
+    let mut command = command(&data);
+    let (write, _) = ports(&mut command);
+    command
+        .env_remove("TOON_WRITE_PORT")
+        .env("TOON_BLS_PORT", write.to_string());
+    let child = start(&mut command, write);
+    signal(&child, "TERM");
+    let output = exit_within(child, 10);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("TOON_BLS_PORT is deprecated") && stderr.contains("Use TOON_WRITE_PORT"),
+        "no deprecation warning in {stderr:?}"
+    );
 }
 
 #[test]

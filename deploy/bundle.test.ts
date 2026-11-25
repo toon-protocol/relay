@@ -270,7 +270,7 @@ const FILES_THAT_COULD_NAME_A_CONNECTOR_BUILD = [
 
 // Both relay images carry the same HEALTHCHECK instruction.
 const IMAGE_HEALTHCHECK =
-  /wget -q --spider "http:\/\/([^:/]+):\$\{TOON_BLS_PORT:-3100\}\/health"/;
+  /wget -q --spider "http:\/\/([^:/]+):\$\{TOON_WRITE_PORT:-3100\}\/health"/;
 
 // Every wget-based healthcheck this repo ships, and how to pull the target
 // host out of each site's own syntax.
