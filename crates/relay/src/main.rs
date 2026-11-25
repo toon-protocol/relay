@@ -43,6 +43,17 @@ async fn run() -> Result<(), RelayError> {
         }
         Invocation::Run(config) => config,
     };
+    if let Some(old) = config.deprecated_write_port_name {
+        eprintln!(
+            "Warning: {old} is deprecated and will be removed in the next release. \
+             Use {} instead.",
+            if old.starts_with("--") {
+                "--write-port"
+            } else {
+                "TOON_WRITE_PORT"
+            }
+        );
+    }
     if let Some(workers) = config.verify_workers {
         println!(
             "verify workers ({workers}, TOON_VERIFY_WORKERS or --verify-workers) has no effect: signatures are verified natively, \

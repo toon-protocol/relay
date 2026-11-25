@@ -377,7 +377,8 @@ CLI flags override environment variables. `deploy/` sets these through
 | `TOON_SECRET_KEY` / `NOSTR_SECRET_KEY`          | —         | 64-hex identity key. One of this or `TOON_MNEMONIC` is **required** |
 | `TOON_MNEMONIC`                                 | —         | BIP-39 mnemonic, NIP-06 derivation                                  |
 | `TOON_RELAY_PORT`                               | `7100`    | WebSocket read port                                                 |
-| `TOON_BLS_PORT`                                 | `3100`    | HTTP write / health / metrics port                                  |
+| `TOON_WRITE_PORT`                               | `3100`    | HTTP write / health / metrics port                                  |
+| `TOON_BLS_PORT`                                 |           | Deprecated alias of `TOON_WRITE_PORT` (removed next release; the new name wins) |
 | `TOON_HOST`                                     | `0.0.0.0` | read-port bind address                                              |
 | `TOON_WRITE_HOST`                               | `0.0.0.0` | write-port bind address                                             |
 | `TOON_DATA_DIR`                                 | `./data`  | where `events.db` lives                                             |

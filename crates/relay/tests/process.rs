@@ -46,7 +46,7 @@ fn ports(command: &mut Command) -> (u16, u16) {
     command
         .env("TOON_WRITE_HOST", "127.0.0.1")
         .env("TOON_HOST", "127.0.0.1")
-        .env("TOON_BLS_PORT", write.to_string())
+        .env("TOON_WRITE_PORT", write.to_string())
         .env("TOON_RELAY_PORT", read.to_string());
     (write, read)
 }
@@ -212,8 +212,8 @@ fn a_flag_beats_its_variable() {
     let (_, read) = ports(&mut command);
     let flagged = free_port();
     command
-        .env("TOON_BLS_PORT", "1")
-        .arg("--bls-port")
+        .env("TOON_WRITE_PORT", "1")
+        .arg("--write-port")
         .arg(flagged.to_string());
     // The variable alone would be a port nothing can listen on here.
     let child = start(&mut command, flagged);
