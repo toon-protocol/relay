@@ -22,7 +22,8 @@ use nostr::event::{Event, Kind};
 use nostr::filter::Filter;
 use nostr::key::PublicKey;
 use relay_ui::chrome::{Profiles, ago, escape, person};
-use ui_nip34::repo::{RepoAddress, first_tag, tag_values};
+use relay_ui::reading::{first_tag_value, first_tag_values};
+use ui_nip34::repo::RepoAddress;
 
 use crate::kinds::{REACTION, SNIPPET};
 use crate::post::{self, View};
@@ -48,7 +49,7 @@ pub(crate) enum Origin {
 /// The origin a snippet names: its `repo` tag read in each spelling, else
 /// its first `a` tag naming a repo. A pure function.
 pub(crate) fn origin(snippet: &Event) -> Option<Origin> {
-    if let Some(value) = tag_values(snippet, "repo").first().map(|v| v.trim()) {
+    if let Some(value) = first_tag_values(snippet, "repo").first().map(|v| v.trim()) {
         let repo = RepoAddress::parse(value)
             .or_else(|| RepoAddress::from_naddr(value))
             .or_else(|| crate::ship::source_repo(value));
@@ -67,7 +68,7 @@ pub(crate) fn origin(snippet: &Event) -> Option<Origin> {
 
 /// The snippet's name: its `name` tag, else `snippet`.
 fn title(snippet: &Event) -> &str {
-    first_tag(snippet, "name")
+    first_tag_value(snippet, "name")
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .unwrap_or("snippet")
@@ -76,19 +77,19 @@ fn title(snippet: &Event) -> &str {
 /// The chips a snippet's tags give: language, extension, runtime, licences.
 fn chips(snippet: &Event) -> String {
     let mut out = String::new();
-    if let Some(language) = first_tag(snippet, "l") {
+    if let Some(language) = first_tag_value(snippet, "l") {
         out.push_str(&format!(
             "<span class=\"chip chip-topic\">{}</span>",
             escape(language)
         ));
     }
-    if let Some(extension) = first_tag(snippet, "extension") {
+    if let Some(extension) = first_tag_value(snippet, "extension") {
         out.push_str(&format!(
             "<span class=\"chip mono\">.{}</span>",
             escape(extension.trim_start_matches('.'))
         ));
     }
-    if let Some(runtime) = first_tag(snippet, "runtime") {
+    if let Some(runtime) = first_tag_value(snippet, "runtime") {
         out.push_str(&format!("<span class=\"chip\">{}</span>", escape(runtime)));
     }
     for tag in snippet.tags.iter().map(|tag| tag.as_slice()) {
@@ -106,8 +107,8 @@ fn chips(snippet: &Event) -> String {
 /// text content is the snippet's content.
 fn code_html(snippet: &Event) -> String {
     let runs = ui_highlight::highlight_snippet(
-        first_tag(snippet, "l"),
-        first_tag(snippet, "extension"),
+        first_tag_value(snippet, "l"),
+        first_tag_value(snippet, "extension"),
         &snippet.content,
     );
     let Some(runs) = runs else {
@@ -129,10 +130,10 @@ fn code_html(snippet: &Event) -> String {
 /// A snippet as a card: its name (linking to its page), language, who and
 /// when, its description and its code.
 pub(crate) fn card(view: &View<'_>, snippet: &Event) -> String {
-    let description = first_tag(snippet, "description")
+    let description = first_tag_value(snippet, "description")
         .map(|text| format!("<p class=\"snippet-desc muted small\">{}</p>", escape(text)))
         .unwrap_or_default();
-    let language = first_tag(snippet, "l")
+    let language = first_tag_value(snippet, "l")
         .map(|language| format!("<span class=\"chip\">{}</span>", escape(language)))
         .unwrap_or_default();
     format!(
@@ -205,7 +206,7 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(target): Path<String>)
         escape(title(&snippet)),
         chips(&snippet),
     );
-    if let Some(description) = first_tag(&snippet, "description") {
+    if let Some(description) = first_tag_value(&snippet, "description") {
         main.push_str(&format!("<p class=\"text\">{}</p>", escape(description)));
     }
     main.push_str(&format!(

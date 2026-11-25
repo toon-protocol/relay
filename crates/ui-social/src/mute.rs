@@ -15,7 +15,8 @@ use nostr::event::{Event, EventId, Kind};
 use nostr::filter::Filter;
 use nostr::key::PublicKey;
 use relay_ui::ReadOnlyStore;
-use ui_nip34::repo::{RepoAddress, newest};
+use relay_ui::reading::newest;
+use ui_nip34::repo::RepoAddress;
 
 use crate::kinds::MUTE_LIST;
 

@@ -66,7 +66,7 @@ pub(crate) async fn follows(store: &ReadOnlyStore, viewer: &PublicKey) -> Vec<Pu
     let lists: Vec<Event> = store
         .query(Filter::new().kind(Kind::from(FOLLOWS)).author(*viewer))
         .await;
-    crate::feed::listed_keys(ui_nip34::repo::newest(
+    crate::feed::listed_keys(relay_ui::reading::newest(
         lists.iter().filter(|list| list.pubkey == *viewer),
     ))
 }

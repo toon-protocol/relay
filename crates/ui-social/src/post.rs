@@ -8,8 +8,9 @@ use std::collections::{HashMap, HashSet};
 use nostr::event::Event;
 use nostr::key::PublicKey;
 use relay_ui::chrome::{ago, escape, icon, person, svg};
+use relay_ui::reading::first_tag_value;
 use ui_nip34::card::{self, Extras, Links, RepoCard};
-use ui_nip34::repo::{RepoAddress, first_tag};
+use ui_nip34::repo::RepoAddress;
 
 use crate::PREFIX;
 use crate::content::{self, first_line};
@@ -208,7 +209,7 @@ pub(crate) fn note_card(view: &View<'_>, event: &Event) -> String {
         by_line(view, event, &chip, "")
     );
     if event.kind.as_u16() == THREAD
-        && let Some(title) = first_tag(event, "title")
+        && let Some(title) = first_tag_value(event, "title")
     {
         out.push_str(&format!(
             "<a class=\"post-title\" href=\"{}\">{}</a>",
@@ -362,11 +363,11 @@ pub(crate) fn repost_card(view: &View<'_>, event: &Event) -> Option<String> {
 
 /// A long-form article (kind 30023) as a card: its image, title, summary.
 pub(crate) fn article_card(view: &View<'_>, event: &Event) -> String {
-    let title = first_tag(event, "title")
+    let title = first_tag_value(event, "title")
         .filter(|title| !title.trim().is_empty())
         .map(str::to_owned)
         .unwrap_or_else(|| first_line(&event.content, 120));
-    let summary = first_tag(event, "summary")
+    let summary = first_tag_value(event, "summary")
         .map(|summary| content::clip(summary, 280))
         .unwrap_or_else(|| content::clip(&event.content, 280));
     let repo_line = repos_of(event)
@@ -420,7 +421,7 @@ pub(crate) fn merged_row(
     } else {
         ("merged", "Merged")
     };
-    let title = first_tag(target, "subject")
+    let title = first_tag_value(target, "subject")
         .map(str::to_owned)
         .unwrap_or_else(|| first_line(&target.content, 80));
     let section = if target.kind.as_u16() == kinds::ISSUE {
@@ -458,7 +459,7 @@ pub(crate) fn thread_row(view: &View<'_>, event: &Event) -> Option<String> {
     } else {
         ("a pull request", "pulls", icon::PULL)
     };
-    let title = first_tag(event, "subject")
+    let title = first_tag_value(event, "subject")
         .map(str::to_owned)
         .unwrap_or_else(|| first_line(&event.content, 80));
     let title_html = match view.links.repo_path(&repo) {
@@ -522,7 +523,7 @@ pub(crate) fn repo_post(view: &View<'_>, event: &Event, maker: bool) -> String {
     match event.kind.as_u16() {
         ARTICLE | APP_HANDLER => {
             let title = if event.kind.as_u16() == ARTICLE {
-                first_tag(event, "title")
+                first_tag_value(event, "title")
                     .map(str::to_owned)
                     .unwrap_or_else(|| first_line(&event.content, 120))
             } else {
@@ -533,7 +534,7 @@ pub(crate) fn repo_post(view: &View<'_>, event: &Event, maker: bool) -> String {
                 escape(&event_path(event)),
                 escape(&title)
             ));
-            if let Some(summary) = first_tag(event, "summary") {
+            if let Some(summary) = first_tag_value(event, "summary") {
                 out.push_str(&format!(
                     "<p class=\"muted\">{}</p>",
                     escape(&content::clip(summary, 280))
@@ -545,7 +546,7 @@ pub(crate) fn repo_post(view: &View<'_>, event: &Event, maker: bool) -> String {
             escape(&content::clip(&event.content, CLIP))
         )),
         _ => {
-            if let Some(title) = first_tag(event, "title") {
+            if let Some(title) = first_tag_value(event, "title") {
                 out.push_str(&format!(
                     "<a class=\"post-title\" href=\"{}\">{}</a>",
                     escape(&event_path(event)),

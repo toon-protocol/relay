@@ -49,3 +49,9 @@ _Avoid_: Plan, offer, SKU, VPS
 A tenant's optional, public, signed statement that one environment of one repository, at one
 commit, is served by one lease until a stated time.
 _Avoid_: Release, instance, server
+
+**Event reading**:
+Reading a stored Nostr event the way NIP-01 says: its tags, which version of a replaceable or
+addressable event is current, its coordinate, its kind 0 profile and its expiry. One module in
+`relay-ui`.
+_Avoid_: helpers, utils

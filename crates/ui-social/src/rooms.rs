@@ -40,8 +40,8 @@ use nostr::nips::nip19::{Nip19Coordinate, ToBech32};
 use nostr::types::Timestamp;
 use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{self, Profiles, ago, escape, icon, name, svg};
+use relay_ui::reading::{d_tag, first_tag_value, newest};
 use ui_nip34::card::{RepoCard, plural};
-use ui_nip34::repo::{d_tag, first_tag, newest};
 
 use crate::kinds::THREAD;
 use crate::live::{self, LIVE_ACTIVITY};
@@ -133,7 +133,7 @@ impl Room {
         }
         let flag = |name: &str| event.tags.iter().any(|tag| tag.kind() == name);
         let text = |name: &str| {
-            first_tag(event, name)
+            first_tag_value(event, name)
                 .map(str::trim)
                 .filter(|text| !text.is_empty())
                 .map(str::to_owned)
@@ -234,7 +234,7 @@ async fn in_room(store: &ReadOnlyStore, id: &str, kind: u16, limit: usize) -> Ve
         )
         .await
         .into_iter()
-        .filter(|event| first_tag(event, "h") == Some(id))
+        .filter(|event| first_tag_value(event, "h") == Some(id))
         .collect();
     events.sort_by_key(|event| (event.created_at, event.id));
     events.dedup_by_key(|event| event.id);
@@ -538,7 +538,7 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(id): Path<String>) -> 
     } else {
         body.push_str("<ul>");
         for thread in &threads {
-            let title = first_tag(thread, "title")
+            let title = first_tag_value(thread, "title")
                 .map(str::to_owned)
                 .unwrap_or_else(|| content::first_line(&thread.content, 80));
             body.push_str(&format!(

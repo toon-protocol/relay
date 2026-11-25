@@ -20,7 +20,8 @@ use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use relay_ui::ReadOnlyStore;
 
-use crate::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors, supersedes};
+use crate::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors};
+use relay_ui::reading::supersedes;
 
 /// The most announcements one fork network reads: the scan that finds the
 /// forks whose `u` tag names a repo (the tag's value carries a git URL after

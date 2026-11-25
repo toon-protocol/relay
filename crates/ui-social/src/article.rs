@@ -40,9 +40,10 @@ use nostr::nips::nip21::Nip21;
 use nostr::parser::{NostrParser, Token};
 use nostr::types::{RelayUrl, Timestamp};
 use relay_ui::chrome::{Profiles, ago, escape, name, npub, percent_encode, person, plain_name};
+use relay_ui::reading::{self, first_tag_value, newest};
 use ui_markdown::{Node, Place};
 use ui_nip34::card::plural;
-use ui_nip34::repo::{RepoAddress, first_tag, newest, topics};
+use ui_nip34::repo::{RepoAddress, topics};
 
 use crate::highlights::{self, Marker, Passage};
 use crate::kinds::{ARTICLE, COMMENT, GENERIC_REPOST, HIGHLIGHT, REACTION, SNIPPET};
@@ -82,15 +83,14 @@ impl ArticleAddress {
     /// The address of a kind 30023 event.
     pub(crate) fn of(event: &Event) -> Option<Self> {
         (event.kind.as_u16() == ARTICLE)
-            .then(|| Self::new(event.pubkey, ui_nip34::repo::d_tag(event)))
+            .then(|| Self::new(event.pubkey, relay_ui::reading::d_tag(event)))
     }
 
     /// The address an `a` tag value spells, `30023:<hex>:<d>`.
     pub(crate) fn parse(coordinate: &str) -> Option<Self> {
-        let mut parts = coordinate.splitn(3, ':');
-        let (kind, author, d) = (parts.next()?, parts.next()?, parts.next()?);
-        (kind.parse::<u16>().ok()? == ARTICLE).then_some(())?;
-        Some(Self::new(PublicKey::from_hex(author).ok()?, d))
+        let address = reading::Address::parse(coordinate)?;
+        (address.kind == ARTICLE).then_some(())?;
+        Some(Self::new(address.pubkey, &address.d))
     }
 
     /// The address a NIP-01 coordinate names, if it is an article's.
@@ -261,7 +261,7 @@ fn body_html(
 
 /// The article's title: its `title` tag, else its first line.
 pub(crate) fn title_of(article: &Event) -> String {
-    first_tag(article, "title")
+    first_tag_value(article, "title")
         .map(str::trim)
         .filter(|title| !title.is_empty())
         .map(str::to_owned)
@@ -270,7 +270,7 @@ pub(crate) fn title_of(article: &Event) -> String {
 
 /// The article's `summary` tag, if it says something, else its first line.
 pub(crate) fn summary_of(article: &Event) -> Option<String> {
-    first_tag(article, "summary")
+    first_tag_value(article, "summary")
         .map(str::trim)
         .filter(|text| !text.is_empty())
         .map(str::to_owned)
@@ -528,7 +528,7 @@ async fn part_titles(
                 .filter(|event| ArticleAddress::of(event).as_ref() == Some(part)),
         );
         if let Some(version) = version {
-            let title = first_tag(version, "title")
+            let title = first_tag_value(version, "title")
                 .map(str::trim)
                 .filter(|title| !title.is_empty())
                 .map(str::to_owned)
@@ -615,7 +615,7 @@ fn reader(
     if let Some(cover) = crate::media::image_tag(article) {
         out.push_str(&cover.html("cover"));
     }
-    let published = first_tag(article, "published_at")
+    let published = first_tag_value(article, "published_at")
         .and_then(|at| at.trim().parse::<u64>().ok())
         .map(Timestamp::from)
         .unwrap_or(article.created_at);
@@ -637,7 +637,9 @@ fn reader(
         meta.join(" &middot; "),
         escape(title)
     ));
-    if let Some(summary) = first_tag(article, "summary").filter(|text| !text.trim().is_empty()) {
+    if let Some(summary) =
+        first_tag_value(article, "summary").filter(|text| !text.trim().is_empty())
+    {
         out.push_str(&format!(
             "<p class=\"article-lead\">{}</p>",
             escape(summary.trim())
