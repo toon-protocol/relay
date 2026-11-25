@@ -242,48 +242,57 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab, query: Option<&str>
         return not_found(pages);
     };
     let store = &pages.store;
-    let Some(card) = RepoCard::load(store, &repo).await else {
+    let Some(card) = relay_ui::stored!(RepoCard::load(store, &repo).await) else {
         return not_found(pages);
     };
     let coordinate = repo.coordinate();
-    let mut events: Vec<Event> = store
-        .query(
-            Filter::new()
-                .kinds(TAGGED_KINDS.map(Kind::from))
-                .custom_tag(SingleLetterTag::LOWERCASE_A, coordinate.clone())
-                .limit(LIMIT),
-        )
-        .await
-        .into_iter()
-        .filter(|event| RepoAddress::tagged(event, "a").contains(&repo))
-        .collect();
-    events.extend(
+    let mut events: Vec<Event> = relay_ui::stored!(
         store
             .query(
                 Filter::new()
-                    .kind(Kind::from(COMMENT))
-                    .custom_tag(SingleLetterTag::UPPERCASE_A, coordinate.clone())
+                    .kinds(TAGGED_KINDS.map(Kind::from))
+                    .custom_tag(SingleLetterTag::LOWERCASE_A, coordinate.clone())
                     .limit(LIMIT),
             )
             .await
-            .into_iter()
-            .filter(|event| RepoAddress::tagged(event, "A").contains(&repo)),
+    )
+    .into_iter()
+    .filter(|event| RepoAddress::tagged(event, "a").contains(&repo))
+    .collect();
+    events.extend(
+        relay_ui::stored!(
+            store
+                .query(
+                    Filter::new()
+                        .kind(Kind::from(COMMENT))
+                        .custom_tag(SingleLetterTag::UPPERCASE_A, coordinate.clone())
+                        .limit(LIMIT),
+                )
+                .await
+        )
+        .into_iter()
+        .filter(|event| RepoAddress::tagged(event, "A").contains(&repo)),
     );
     let nip05 = card.profiles().nip05(repo.owner());
     events.extend(
-        store
-            .query(Filter::new().kind(Kind::from(SNIPPET)).limit(SNIPPET_SCAN))
-            .await
-            .into_iter()
-            .filter(|event| snippet_names(event, &repo, nip05)),
+        relay_ui::stored!(
+            store
+                .query(Filter::new().kind(Kind::from(SNIPPET)).limit(SNIPPET_SCAN))
+                .await
+        )
+        .into_iter()
+        .filter(|event| snippet_names(event, &repo, nip05)),
     );
     let sections = sections(events, |key| card.is_maker(key));
-    let engaged = engagement::load_one(store, &repo, &[Act::Star, Act::Follow, Act::Fork]).await;
+    let engaged = relay_ui::stored!(
+        engagement::load_one(store, &repo, &[Act::Star, Act::Follow, Act::Fork]).await
+    );
     let (stars, followers) = (engaged.stars().to_vec(), engaged.followers().to_vec());
     let forks = engaged.fork_count();
 
-    let lineage = Lineage::load(store, &card).await;
-    let (choices, handler_profiles) = handlers::load(store, viewer.as_ref()).await;
+    let lineage = relay_ui::stored!(Lineage::load(store, &card).await);
+    let (choices, handler_profiles) =
+        relay_ui::stored!(handlers::load(store, viewer.as_ref()).await);
 
     let mut keys: Vec<PublicKey> = card.authorized().to_vec();
     if let Some(parent) = card.fork_of() {
@@ -308,17 +317,18 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab, query: Option<&str>
     // Trust and safety, releases, bounties and tips.
     let follows: Option<HashSet<PublicKey>> = match &viewer {
         Some(viewer) => Some(
-            crate::viewer::follows(store, viewer)
-                .await
+            relay_ui::stored!(crate::viewer::follows(store, viewer).await)
                 .into_iter()
                 .collect(),
         ),
         None => None,
     };
-    let report_targets = crate::reports::repo_targets(store, &card).await;
-    let found_reports = crate::reports::load(store, &report_targets).await;
-    let mut extras = crate::apps::repo_sidebar(store, &card).await;
-    extras.push_str(&crate::bounties::repo_sidebar(store, &repo).await);
+    let report_targets = relay_ui::stored!(crate::reports::repo_targets(store, &card).await);
+    let found_reports = relay_ui::stored!(crate::reports::load(store, &report_targets).await);
+    let mut extras = relay_ui::stored!(crate::apps::repo_sidebar(store, &card).await);
+    extras.push_str(&relay_ui::stored!(
+        crate::bounties::repo_sidebar(store, &repo).await
+    ));
     for key in listed
         .iter()
         .map(|event| event.pubkey)
@@ -330,8 +340,8 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab, query: Option<&str>
             keys.push(key);
         }
     }
-    let profiles = Profiles::load(store, &keys).await;
-    let demo = demo::load(store, &card, pages.gateway()).await;
+    let profiles = relay_ui::stored!(Profiles::load(store, &keys).await);
+    let demo = relay_ui::stored!(demo::load(store, &card, pages.gateway()).await);
     let links = pages.links();
     let cards = std::collections::HashMap::from([(repo.clone(), card.clone())]);
     let demos: std::collections::HashMap<RepoAddress, Demo> = demo
@@ -480,16 +490,16 @@ async fn page(pages: &Pages, owner: &str, d: &str, tab: Tab, query: Option<&str>
         links.relay_host(),
         viewer.is_some(),
     ));
-    let mut after = crate::rooms::repo_room_box(pages, &card).await;
+    let mut after = relay_ui::stored!(crate::rooms::repo_room_box(pages, &card).await);
     after.push_str(&extras);
-    after.push_str(&crate::tips::received_card(
-        &crate::tips::totals(
+    after.push_str(&crate::tips::received_card(&relay_ui::stored!(
+        crate::tips::totals(
             store,
             repo.owner(),
             &crate::tips::Subject::Address(repo.coordinate()),
         )
-        .await,
-    ));
+        .await
+    )));
     after.push_str(&crate::tips::split_card(
         card.announcement(),
         profiles.names(),

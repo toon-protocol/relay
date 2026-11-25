@@ -18,7 +18,7 @@ use std::collections::{HashMap, HashSet};
 use nostr::event::{Event, Kind};
 use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
-use relay_ui::ReadOnlyStore;
+use relay_ui::{ReadOnlyStore, StoreError};
 
 use crate::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors};
 use relay_ui::reading::supersedes;
@@ -159,14 +159,14 @@ impl ForkNetwork {
 
     /// The network around `announcement`: up to [`FORK_SCAN`] announcements,
     /// and every one sharing its earliest unique commit.
-    pub async fn load(store: &ReadOnlyStore, announcement: &Event) -> Self {
+    pub async fn load(store: &ReadOnlyStore, announcement: &Event) -> Result<Self, StoreError> {
         let mut events = store
             .query(
                 Filter::new()
                     .kind(Kind::from(ANNOUNCEMENT))
                     .limit(FORK_SCAN),
             )
-            .await;
+            .await?;
         if let Some(commit) = earliest_unique_commit(announcement) {
             events.extend(
                 store
@@ -176,11 +176,11 @@ impl ForkNetwork {
                             .custom_tag(SingleLetterTag::LOWERCASE_R, commit)
                             .limit(FORK_SCAN),
                     )
-                    .await,
+                    .await?,
             );
         }
         events.push(announcement.clone());
-        Self::from_announcements(&events)
+        Ok(Self::from_announcements(&events))
     }
 
     /// The announcement held for `address`.

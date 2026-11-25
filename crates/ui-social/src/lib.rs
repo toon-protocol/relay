@@ -65,6 +65,7 @@ mod trending;
 mod version;
 mod viewer;
 
+use relay_ui::StoreError;
 use std::collections::HashMap;
 
 use axum::Router;
@@ -216,18 +217,21 @@ pub fn app(store: ReadOnlyStore, settings: Settings, apps: Apps) -> AppUi {
 /// names, which the browser follows, or 404. The relay reads its own store
 /// and fetches nothing (ADR 0008).
 async fn picture(State(pages): State<Pages>, Path(npub): Path<String>) -> Response {
-    let found = async {
-        let key = PublicKey::from_bech32(&npub).ok()?;
-        let profiles = pages
-            .store
-            .query(Filter::new().kind(nostr::event::Kind::Metadata).author(key))
-            .await;
+    let profiles = match PublicKey::from_bech32(&npub) {
+        Ok(key) => relay_ui::stored!(
+            pages
+                .store
+                .query(Filter::new().kind(nostr::event::Kind::Metadata).author(key))
+                .await
+        ),
+        Err(_) => Vec::new(),
+    };
+    let found = (|| {
         let newest = relay_ui::reading::newest(&profiles)?;
         let profile = relay_ui::reading::Profile::of(newest);
         let url = media::https(profile.picture.as_deref()?)?;
         HeaderValue::from_str(url).ok()
-    }
-    .await;
+    })();
     let cache = (
         axum::http::header::CACHE_CONTROL,
         HeaderValue::from_static("public, max-age=300"),
@@ -368,12 +372,12 @@ fn parse_event_id(text: &str) -> Option<EventId> {
 }
 
 /// The event with `id`, if the store holds it.
-async fn event_by_id(store: &ReadOnlyStore, id: EventId) -> Option<Event> {
-    store
+async fn event_by_id(store: &ReadOnlyStore, id: EventId) -> Result<Option<Event>, StoreError> {
+    Ok(store
         .query(Filter::new().id(id))
-        .await
+        .await?
         .into_iter()
-        .find(|event| event.id == id)
+        .find(|event| event.id == id))
 }
 
 /// The cards of `repos` this relay has an announcement for, at most
@@ -381,7 +385,7 @@ async fn event_by_id(store: &ReadOnlyStore, id: EventId) -> Option<Event> {
 async fn load_cards(
     store: &ReadOnlyStore,
     repos: impl IntoIterator<Item = RepoAddress>,
-) -> HashMap<RepoAddress, RepoCard> {
+) -> Result<HashMap<RepoAddress, RepoCard>, StoreError> {
     let mut cards = HashMap::new();
     let mut tried = 0;
     for repo in repos {
@@ -392,11 +396,11 @@ async fn load_cards(
             break;
         }
         tried += 1;
-        if let Some(card) = RepoCard::load(store, &repo).await {
+        if let Some(card) = RepoCard::load(store, &repo).await? {
             cards.insert(repo, card);
         }
     }
-    cards
+    Ok(cards)
 }
 
 /// Whether a kind 1 note answers another (NIP-10): an `e` tag marked `root`

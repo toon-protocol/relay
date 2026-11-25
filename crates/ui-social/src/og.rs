@@ -14,6 +14,7 @@
 //! A path naming something this relay does not hold is `404`, as is a post
 //! that is not a ship post: its page names the site card instead.
 
+use relay_ui::{ReadOnlyStore, StoreError};
 use std::collections::HashMap;
 
 use axum::extract::{Path, State};
@@ -21,7 +22,6 @@ use axum::http::HeaderMap;
 use axum::response::Response;
 use nostr::event::EventId;
 use nostr::key::PublicKey;
-use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{Profiles, npub, percent_encode, shown_name};
 use ui_nip34::card::RepoCard;
 use ui_nip34::engagement::{self, Act};
@@ -84,7 +84,7 @@ pub(crate) async fn repo(
     headers: HeaderMap,
 ) -> Response {
     let card = repo_card(&pages, &owner, &file).await;
-    pages.previews.respond(&headers, card).await
+    pages.previews.respond_result(&headers, card).await
 }
 
 /// `/social/og/p/<npub>.png`.
@@ -94,7 +94,7 @@ pub(crate) async fn profile(
     headers: HeaderMap,
 ) -> Response {
     let card = profile_card(&pages, &file).await;
-    pages.previews.respond(&headers, card).await
+    pages.previews.respond_result(&headers, card).await
 }
 
 /// `/social/og/e/<id>.png`.
@@ -104,7 +104,7 @@ pub(crate) async fn ship(
     headers: HeaderMap,
 ) -> Response {
     let card = ship_card(&pages, &file).await;
-    pages.previews.respond(&headers, card).await
+    pages.previews.respond_result(&headers, card).await
 }
 
 /// `/social/og/a/<npub>/<d>.png`.
@@ -114,31 +114,42 @@ pub(crate) async fn article(
     headers: HeaderMap,
 ) -> Response {
     let card = article_card(&pages, &author, &file).await;
-    pages.previews.respond(&headers, card).await
+    pages.previews.respond_result(&headers, card).await
 }
 
 /// A repo as its page counts it: forks from the repo engagement module.
-async fn repo_face(pages: &Pages, card: &RepoCard) -> ui_preview::Repo {
+async fn repo_face(pages: &Pages, card: &RepoCard) -> Result<ui_preview::Repo, StoreError> {
     face_of(&pages.store, card).await
 }
 
-async fn face_of(store: &ReadOnlyStore, card: &RepoCard) -> ui_preview::Repo {
+async fn face_of(store: &ReadOnlyStore, card: &RepoCard) -> Result<ui_preview::Repo, StoreError> {
     let forks = engagement::load_one(store, card.address(), &[Act::Fork])
-        .await
+        .await?
         .fork_count();
-    card.preview(Some(forks))
+    Ok(card.preview(Some(forks)))
 }
 
-async fn repo_card(pages: &Pages, owner: &str, file: &str) -> Option<Card> {
-    let address = RepoAddress::new(parse_pubkey(owner)?, ui_preview::stem(file)?)?;
-    let card = RepoCard::load(&pages.store, &address).await?;
-    let face = Face::Repo(repo_face(pages, &card).await);
-    Some(Card::new(pages.card_host(), face))
+async fn repo_card(pages: &Pages, owner: &str, file: &str) -> Result<Option<Card>, StoreError> {
+    let Some(address) = parse_pubkey(owner)
+        .zip(ui_preview::stem(file))
+        .and_then(|(owner, stem)| RepoAddress::new(owner, stem))
+    else {
+        return Ok(None);
+    };
+    let Some(card) = RepoCard::load(&pages.store, &address).await? else {
+        return Ok(None);
+    };
+    let face = Face::Repo(repo_face(pages, &card).await?);
+    Ok(Some(Card::new(pages.card_host(), face)))
 }
 
-async fn profile_card(pages: &Pages, file: &str) -> Option<Card> {
-    let key = parse_pubkey(ui_preview::stem(file)?)?;
-    let (mut profile, urls) = crate::profile::preview(&pages.store, key).await?;
+async fn profile_card(pages: &Pages, file: &str) -> Result<Option<Card>, StoreError> {
+    let Some(key) = ui_preview::stem(file).and_then(parse_pubkey) else {
+        return Ok(None);
+    };
+    let Some((mut profile, urls)) = crate::profile::preview(&pages.store, key).await? else {
+        return Ok(None);
+    };
     // The picture and banner the kind 0 names, fetched at once (ADR 0011).
     // One that cannot be had is left out, and the card is drawn without it.
     let fetch = |url: Option<String>| async move {
@@ -148,29 +159,42 @@ async fn profile_card(pages: &Pages, file: &str) -> Option<Card> {
         }
     };
     (profile.picture, profile.banner) = tokio::join!(fetch(urls.picture), fetch(urls.banner));
-    Some(Card::new(pages.card_host(), Face::Profile(profile)))
+    Ok(Some(Card::new(pages.card_host(), Face::Profile(profile))))
 }
 
-async fn ship_card(pages: &Pages, file: &str) -> Option<Card> {
-    let id = parse_event_id(ui_preview::stem(file)?)?;
-    let event = event_by_id(&pages.store, id).await?;
-    let cards = load_cards(&pages.store, post::repos_of(&event)).await;
-    let repo = ship::ship_repo(&event, |repo, key| {
+async fn ship_card(pages: &Pages, file: &str) -> Result<Option<Card>, StoreError> {
+    let Some(id) = ui_preview::stem(file).and_then(parse_event_id) else {
+        return Ok(None);
+    };
+    let Some(event) = event_by_id(&pages.store, id).await? else {
+        return Ok(None);
+    };
+    let cards = load_cards(&pages.store, post::repos_of(&event)).await?;
+    let Some(repo) = ship::ship_repo(&event, |repo, key| {
         cards.get(repo).is_some_and(|card| card.is_maker(key))
-    })?;
-    let card = cards.get(&repo)?;
+    }) else {
+        return Ok(None);
+    };
+    let Some(card) = cards.get(&repo) else {
+        return Ok(None);
+    };
     let face = Face::Ship {
         headline: post::ship_title(&event),
-        repo: repo_face(pages, card).await,
+        repo: repo_face(pages, card).await?,
     };
-    Some(Card::new(pages.card_host(), face))
+    Ok(Some(Card::new(pages.card_host(), face)))
 }
 
-async fn article_card(pages: &Pages, author: &str, file: &str) -> Option<Card> {
-    let address = ArticleAddress::new(parse_pubkey(author)?, ui_preview::stem(file)?);
-    let event = article::load(&pages.store, &address).await?;
+async fn article_card(pages: &Pages, author: &str, file: &str) -> Result<Option<Card>, StoreError> {
+    let Some((author, stem)) = parse_pubkey(author).zip(ui_preview::stem(file)) else {
+        return Ok(None);
+    };
+    let address = ArticleAddress::new(author, stem);
+    let Some(event) = article::load(&pages.store, &address).await? else {
+        return Ok(None);
+    };
     let names: HashMap<PublicKey, String> = Profiles::load(&pages.store, &[event.pubkey])
-        .await
+        .await?
         .into_names();
     let title = article::title_of(&event);
     let face = Face::Article(ui_preview::Article {
@@ -182,7 +206,7 @@ async fn article_card(pages: &Pages, author: &str, file: &str) -> Option<Card> {
         author: shown_name(&names, &event.pubkey),
         summary: article::summary_of(&event),
     });
-    Some(Card::new(pages.card_host(), face))
+    Ok(Some(Card::new(pages.card_host(), face)))
 }
 
 #[cfg(test)]
@@ -201,14 +225,17 @@ mod tests {
     struct Held(Arc<Vec<Event>>);
 
     impl EventSource for Held {
-        fn query(&self, filter: Filter) -> Pin<Box<dyn Future<Output = Vec<Event>> + Send + '_>> {
+        fn query(
+            &self,
+            filter: Filter,
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<Event>, StoreError>> + Send + '_>> {
             let found = self
                 .0
                 .iter()
                 .filter(|event| filter.match_event(event, MatchEventOptions::new()))
                 .cloned()
                 .collect();
-            Box::pin(async move { found })
+            Box::pin(async move { Ok(found) })
         }
     }
 
@@ -248,6 +275,6 @@ mod tests {
             announce(&copier, "copy", &[&["r", &commit, "euc"]]),
         ])));
         let card = RepoCard::from_announcement(&parent).unwrap();
-        assert_eq!(face_of(&store, &card).await.forks, Some(2));
+        assert_eq!(face_of(&store, &card).await.unwrap().forks, Some(2));
     }
 }

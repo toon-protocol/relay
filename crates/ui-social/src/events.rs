@@ -13,6 +13,7 @@
 //! event has ended, a submission whose author holds one of the event's
 //! badges (see [`crate::badges`]) is pinned first.
 
+use relay_ui::StoreError;
 use std::collections::{HashMap, HashSet};
 
 use axum::extract::{Path, State};
@@ -44,7 +45,7 @@ const COMING_UP: usize = 3;
 const LIMIT: usize = 2_000;
 
 /// The calendar events on this relay, newest of each.
-async fn calendar(pages: &Pages) -> Vec<CalendarEvent> {
+async fn calendar(pages: &Pages) -> Result<Vec<CalendarEvent>, StoreError> {
     let events = pages
         .store
         .query(
@@ -52,14 +53,17 @@ async fn calendar(pages: &Pages) -> Vec<CalendarEvent> {
                 .kinds([Kind::from(DATE_EVENT), Kind::from(TIME_EVENT)])
                 .limit(CALENDAR_QUERY),
         )
-        .await;
-    calendar::newest_each(&events)
+        .await?;
+    Ok(calendar::newest_each(&events))
 }
 
 /// RSVP counts for each of `events`, by coordinate.
-async fn rsvp_counts(pages: &Pages, events: &[&CalendarEvent]) -> HashMap<String, Rsvps> {
+async fn rsvp_counts(
+    pages: &Pages,
+    events: &[&CalendarEvent],
+) -> Result<HashMap<String, Rsvps>, StoreError> {
     if events.is_empty() {
-        return HashMap::new();
+        return Ok(HashMap::new());
     }
     let coordinates: Vec<String> = events.iter().map(|event| event.coordinate()).collect();
     let answers = pages
@@ -70,14 +74,14 @@ async fn rsvp_counts(pages: &Pages, events: &[&CalendarEvent]) -> HashMap<String
                 .custom_tags(SingleLetterTag::LOWERCASE_A, coordinates.clone())
                 .limit(LIMIT),
         )
-        .await;
-    coordinates
+        .await?;
+    Ok(coordinates
         .into_iter()
         .map(|coordinate| {
             let counts = calendar::rsvps(&answers, &coordinate);
             (coordinate, counts)
         })
-        .collect()
+        .collect())
 }
 
 /// `MON` over the day: a calendar page's corner.
@@ -146,10 +150,11 @@ fn event_row(event: &CalendarEvent, counts: Rsvps, now: i64) -> String {
 /// `/social/events`: live, upcoming and past calendar events.
 pub(crate) async fn index(State(pages): State<Pages>) -> Response {
     let now = chrome::now();
-    let (live, upcoming, mut past) = calendar::schedule(calendar(&pages).await, now);
+    let (live, upcoming, mut past) =
+        calendar::schedule(relay_ui::stored!(calendar(&pages).await), now);
     past.truncate(PAST_SHOWN);
     let all: Vec<&CalendarEvent> = live.iter().chain(&upcoming).chain(&past).collect();
-    let counts = rsvp_counts(&pages, &all).await;
+    let counts = relay_ui::stored!(rsvp_counts(&pages, &all).await);
     let mut body = String::from(
         "<h1 class=\"page-title\">Events</h1><p class=\"muted small\">Launch days, hackathons and \
          meetups: NIP-52 calendar events (kinds 31922 and 31923) written to this relay. Times are \
@@ -191,11 +196,11 @@ pub(crate) async fn index(State(pages): State<Pages>) -> Response {
 }
 
 /// The feed sidebar's "Coming up": the next live or upcoming events.
-pub(crate) async fn coming_up(pages: &Pages) -> String {
+pub(crate) async fn coming_up(pages: &Pages) -> Result<String, StoreError> {
     let now = chrome::now();
-    let (live, upcoming, _) = calendar::schedule(calendar(pages).await, now);
+    let (live, upcoming, _) = calendar::schedule(calendar(pages).await?, now);
     let next: Vec<&CalendarEvent> = live.iter().chain(&upcoming).take(COMING_UP).collect();
-    let counts = rsvp_counts(pages, &next).await;
+    let counts = rsvp_counts(pages, &next).await?;
     let mut out = String::from("<div class=\"side-card\" data-coming-up><h2>Coming up</h2>");
     if next.is_empty() {
         out.push_str("<p class=\"muted small\">Nothing is scheduled.</p>");
@@ -222,7 +227,7 @@ pub(crate) async fn coming_up(pages: &Pages) -> String {
     out.push_str(&format!(
         "<a class=\"small\" href=\"{PREFIX}/events\">All events</a></div>"
     ));
-    out
+    Ok(out)
 }
 
 /// `/social/ev/<naddr>`: a redirect to the event's page.
@@ -301,7 +306,7 @@ fn first_image(event: &Event) -> Option<Media> {
 }
 
 /// The gallery: what `a`-tags the event at `coordinate`.
-async fn submissions(pages: &Pages, coordinate: &str) -> Vec<Submission> {
+async fn submissions(pages: &Pages, coordinate: &str) -> Result<Vec<Submission>, StoreError> {
     let store = &pages.store;
     let tagged: Vec<Event> = store
         .query(
@@ -314,7 +319,7 @@ async fn submissions(pages: &Pages, coordinate: &str) -> Vec<Submission> {
                 .custom_tag(SingleLetterTag::LOWERCASE_A, coordinate.to_owned())
                 .limit(LIMIT),
         )
-        .await
+        .await?
         .into_iter()
         .filter(|event| a_tags(event, coordinate))
         .collect();
@@ -330,7 +335,7 @@ async fn submissions(pages: &Pages, coordinate: &str) -> Vec<Submission> {
             }
         }
     }
-    let cards = load_cards(store, repos).await;
+    let cards = load_cards(store, repos).await?;
     let links = pages.links();
     let repo_entry = |repo: &RepoAddress, at: Timestamp| {
         cards.get(repo).map(|card| Submission {
@@ -403,7 +408,7 @@ async fn submissions(pages: &Pages, coordinate: &str) -> Vec<Submission> {
                     .events(standalone.iter().map(|event| event.id))
                     .limit(LIMIT),
             )
-            .await
+            .await?
     };
     for event in standalone {
         let id = event.id.to_hex();
@@ -447,7 +452,7 @@ async fn submissions(pages: &Pages, coordinate: &str) -> Vec<Submission> {
             at: event.created_at,
         });
     }
-    entries
+    Ok(entries)
 }
 
 /// A gallery card.
@@ -625,15 +630,17 @@ pub(crate) async fn page(
         return not_found(&pages);
     };
     let store = &pages.store;
-    let found = store
-        .query(
-            Filter::new()
-                .kinds([Kind::from(DATE_EVENT), Kind::from(TIME_EVENT)])
-                .author(author)
-                .identifier(d.clone())
-                .limit(20),
-        )
-        .await;
+    let found = relay_ui::stored!(
+        store
+            .query(
+                Filter::new()
+                    .kinds([Kind::from(DATE_EVENT), Kind::from(TIME_EVENT)])
+                    .author(author)
+                    .identifier(d.clone())
+                    .limit(20),
+            )
+            .await
+    );
     let mut found = calendar::newest_each(&found);
     found.retain(|event| event.d() == d && *event.author() == author);
     found.sort_by_key(|event| std::cmp::Reverse(event.event().created_at));
@@ -644,40 +651,46 @@ pub(crate) async fn page(
     let coordinate = event.coordinate();
     let hosts = event.hosts();
 
-    let answers = store
-        .query(
-            Filter::new()
-                .kind(Kind::from(RSVP))
-                .custom_tag(SingleLetterTag::LOWERCASE_A, coordinate.clone())
-                .limit(LIMIT),
-        )
-        .await;
+    let answers = relay_ui::stored!(
+        store
+            .query(
+                Filter::new()
+                    .kind(Kind::from(RSVP))
+                    .custom_tag(SingleLetterTag::LOWERCASE_A, coordinate.clone())
+                    .limit(LIMIT),
+            )
+            .await
+    );
     let counts = calendar::rsvps(&answers, &coordinate);
-    let mut gallery = submissions(&pages, &coordinate).await;
-    let definitions = store
-        .query(
-            Filter::new()
-                .kind(Kind::from(DEFINITION))
-                .authors(hosts.clone())
-                .limit(500),
-        )
-        .await;
+    let mut gallery = relay_ui::stored!(submissions(&pages, &coordinate).await);
+    let definitions = relay_ui::stored!(
+        store
+            .query(
+                Filter::new()
+                    .kind(Kind::from(DEFINITION))
+                    .authors(hosts.clone())
+                    .limit(500),
+            )
+            .await
+    );
     let badges = badges::event_badges(&definitions, event.event(), &coordinate, &hosts);
     let holders = if badges.is_empty() {
         HashMap::new()
     } else {
-        let awards = store
-            .query(
-                Filter::new()
-                    .kind(Kind::from(AWARD))
-                    .authors(hosts.clone())
-                    .custom_tags(
-                        SingleLetterTag::LOWERCASE_A,
-                        badges.iter().map(Badge::coordinate),
-                    )
-                    .limit(LIMIT),
-            )
-            .await;
+        let awards = relay_ui::stored!(
+            store
+                .query(
+                    Filter::new()
+                        .kind(Kind::from(AWARD))
+                        .authors(hosts.clone())
+                        .custom_tags(
+                            SingleLetterTag::LOWERCASE_A,
+                            badges.iter().map(Badge::coordinate),
+                        )
+                        .limit(LIMIT),
+                )
+                .await
+        );
         badges::holders(&awards, &badges)
     };
     let badge_counts = badges::counts(&holders, badges.len());
@@ -688,14 +701,16 @@ pub(crate) async fn page(
         .filter(|author| holders.contains_key(author))
         .collect();
     rank(&mut gallery, &winners, ended);
-    let streams = store
-        .query(
-            Filter::new()
-                .kind(Kind::from(LIVE_ACTIVITY))
-                .custom_tag(SingleLetterTag::LOWERCASE_A, coordinate.clone())
-                .limit(20),
-        )
-        .await;
+    let streams = relay_ui::stored!(
+        store
+            .query(
+                Filter::new()
+                    .kind(Kind::from(LIVE_ACTIVITY))
+                    .custom_tag(SingleLetterTag::LOWERCASE_A, coordinate.clone())
+                    .limit(20),
+            )
+            .await
+    );
 
     let mut keys: Vec<PublicKey> = hosts.clone();
     for key in event
@@ -709,7 +724,7 @@ pub(crate) async fn page(
             keys.push(key);
         }
     }
-    let profiles = Profiles::load(store, &keys).await;
+    let profiles = relay_ui::stored!(Profiles::load(store, &keys).await);
     let names = profiles.names();
 
     let mut body = hero(&event, names, counts, now, ended && !winners.is_empty());
@@ -788,10 +803,12 @@ pub(crate) async fn page(
         escape(&coordinate)
     ));
     body.push_str("</div><aside class=\"sidebar\">");
-    if let (Some(groups), Some(id)) = (pages.groups.as_ref(), event.room())
-        && let Some(room) = groups.room(id).await
-    {
-        body.push_str(&rooms::room_card(&pages, &room).await);
+    let room = match (pages.groups.as_ref(), event.room()) {
+        (Some(groups), Some(id)) => relay_ui::stored!(groups.room(id).await),
+        _ => None,
+    };
+    if let Some(room) = room {
+        body.push_str(&relay_ui::stored!(rooms::room_card(&pages, &room).await));
     }
     body.push_str(&badges_card(&badges, &badge_counts));
     let participants = event.participants();

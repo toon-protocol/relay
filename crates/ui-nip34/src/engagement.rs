@@ -24,8 +24,8 @@ use nostr::event::{Event, Kind};
 use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use nostr::types::Timestamp;
-use relay_ui::ReadOnlyStore;
 use relay_ui::reading::newest;
+use relay_ui::{ReadOnlyStore, StoreError};
 
 use crate::lineage::ForkOf;
 use crate::repo::{ANNOUNCEMENT, RepoAddress};
@@ -157,9 +157,13 @@ impl Engagements {
 
 /// What people did to each of `repos`, as far as `acts` asks: one query per
 /// act, whatever the number of repos.
-pub async fn load(store: &ReadOnlyStore, repos: &[RepoAddress], acts: &[Act]) -> Engagements {
+pub async fn load(
+    store: &ReadOnlyStore,
+    repos: &[RepoAddress],
+    acts: &[Act],
+) -> Result<Engagements, StoreError> {
     if repos.is_empty() || acts.is_empty() {
-        return Engagements::default();
+        return Ok(Engagements::default());
     }
     let coordinates: Vec<String> = repos.iter().map(RepoAddress::coordinate).collect();
     let coordinates = &coordinates;
@@ -167,26 +171,33 @@ pub async fn load(store: &ReadOnlyStore, repos: &[RepoAddress], acts: &[Act]) ->
         if acts.contains(&act) {
             store.query(plan(act, coordinates)).await
         } else {
-            Vec::new()
+            Ok(Vec::new())
         }
     };
-    let reactions = ask(Act::Star).await;
-    let lists = ask(Act::Follow).await;
-    let forks = ask(Act::Fork).await;
-    Engagements::read(repos, &reactions, &lists, &forks)
+    let reactions = ask(Act::Star).await?;
+    let lists = ask(Act::Follow).await?;
+    let forks = ask(Act::Fork).await?;
+    Ok(Engagements::read(repos, &reactions, &lists, &forks))
 }
 
 /// What people did to `repo`, as far as `acts` asks.
-pub async fn load_one(store: &ReadOnlyStore, repo: &RepoAddress, acts: &[Act]) -> Engagement {
-    load(store, std::slice::from_ref(repo), acts)
-        .await
+pub async fn load_one(
+    store: &ReadOnlyStore,
+    repo: &RepoAddress,
+    acts: &[Act],
+) -> Result<Engagement, StoreError> {
+    Ok(load(store, std::slice::from_ref(repo), acts)
+        .await?
         .repos
         .remove(repo)
-        .unwrap_or_default()
+        .unwrap_or_default())
 }
 
 /// The repos `key` starred, newest first, each once.
-pub async fn starred_by(store: &ReadOnlyStore, key: &PublicKey) -> Vec<RepoAddress> {
+pub async fn starred_by(
+    store: &ReadOnlyStore,
+    key: &PublicKey,
+) -> Result<Vec<RepoAddress>, StoreError> {
     let reactions = store
         .query(
             Filter::new()
@@ -195,8 +206,8 @@ pub async fn starred_by(store: &ReadOnlyStore, key: &PublicKey) -> Vec<RepoAddre
                 .custom_tag(SingleLetterTag::LOWERCASE_K, ANNOUNCEMENT.to_string())
                 .limit(LIMIT),
         )
-        .await;
-    starred(key, &reactions)
+        .await?;
+    Ok(starred(key, &reactions))
 }
 
 /// The query for `act` on repos at `coordinates`: the one place a limit is
@@ -371,7 +382,10 @@ mod tests {
     }
 
     impl EventSource for Memory {
-        fn query(&self, filter: Filter) -> Pin<Box<dyn Future<Output = Vec<Event>> + Send + '_>> {
+        fn query(
+            &self,
+            filter: Filter,
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<Event>, StoreError>> + Send + '_>> {
             self.queries.fetch_add(1, Ordering::SeqCst);
             let mut found: Vec<Event> = self
                 .events
@@ -381,7 +395,7 @@ mod tests {
                 .collect();
             found.sort_by(|a, b| (b.created_at, a.id).cmp(&(a.created_at, b.id)));
             found.truncate(filter.limit.unwrap_or(usize::MAX));
-            Box::pin(async move { found })
+            Box::pin(async move { Ok(found) })
         }
     }
 
@@ -426,7 +440,9 @@ mod tests {
             announce(&other, "plain", 3, Some(&c)),
             announce(&other, "url", 4, Some("https://example.com/r.git")),
         ]);
-        let forks = load_one(&memory.store(), &parent, &[Act::Fork]).await;
+        let forks = load_one(&memory.store(), &parent, &[Act::Fork])
+            .await
+            .unwrap();
         let found: Vec<&RepoAddress> = forks.forks().iter().map(|fork| &fork.repo).collect();
         assert_eq!(found, [&repo(&other, "plain"), &repo(&forker, "r")]);
         assert_eq!(forks.fork_count(), 2);
@@ -443,7 +459,7 @@ mod tests {
             1,
             Some(&format!("{c}|https://example.com/r.git")),
         )]);
-        let found = load_one(&memory.store(), &own, &[Act::Fork]).await;
+        let found = load_one(&memory.store(), &own, &[Act::Fork]).await.unwrap();
         assert_eq!(found.fork_count(), 0);
     }
 
@@ -462,7 +478,9 @@ mod tests {
             signed(&other_fan, 7, 22, "+", &[&["e", &a], &["k", "30617"]]),
             star(&other_fan, 23, &elsewhere),
         ]);
-        let found = load_one(&memory.store(), &target, &[Act::Star]).await;
+        let found = load_one(&memory.store(), &target, &[Act::Star])
+            .await
+            .unwrap();
         assert_eq!(found.stars(), [(fan.public_key(), Timestamp::from(30))]);
     }
 
@@ -472,7 +490,9 @@ mod tests {
         let target = repo(&owner, "r");
         let a = target.coordinate();
         let memory = Memory::holding(vec![star(&owner, 1, &a), star(&fan, 2, &a)]);
-        let found = load_one(&memory.store(), &target, &[Act::Star]).await;
+        let found = load_one(&memory.store(), &target, &[Act::Star])
+            .await
+            .unwrap();
         assert_eq!(found.star_count(), 2);
         assert_eq!(found.star_count_besides(&[owner.public_key()]), 1);
     }
@@ -496,9 +516,11 @@ mod tests {
             announce(&forker, "c", 6, Some(&c.coordinate())),
         ]);
         let store = memory.store();
-        let many = load(&store, &[a.clone(), b.clone(), c.clone()], &EVERYTHING).await;
+        let many = load(&store, &[a.clone(), b.clone(), c.clone()], &EVERYTHING)
+            .await
+            .unwrap();
         for repo in [&a, &b, &c] {
-            let one = load_one(&store, repo, &EVERYTHING).await;
+            let one = load_one(&store, repo, &EVERYTHING).await.unwrap();
             assert_eq!(&one, many.of(repo));
         }
         assert_eq!(many.of(&a).star_count(), 2);
@@ -524,7 +546,9 @@ mod tests {
                 &[&["a", &repo(&owner, "x").coordinate()]],
             ),
         ]);
-        let found = load_one(&memory.store(), &target, &[Act::Follow]).await;
+        let found = load_one(&memory.store(), &target, &[Act::Follow])
+            .await
+            .unwrap();
         assert_eq!(
             found.followers(),
             [(stays.public_key(), Timestamp::from(1))]
@@ -536,9 +560,11 @@ mod tests {
         let owner = Keys::generate();
         let repos: Vec<RepoAddress> = (0..5).map(|n| repo(&owner, &format!("r{n}"))).collect();
         let memory = Memory::holding(vec![]);
-        load(&memory.store(), &repos, &EVERYTHING).await;
+        load(&memory.store(), &repos, &EVERYTHING).await.unwrap();
         assert_eq!(memory.queries(), 3);
-        load_one(&memory.store(), &repos[0], &[Act::Star, Act::Fork]).await;
+        load_one(&memory.store(), &repos[0], &[Act::Star, Act::Fork])
+            .await
+            .unwrap();
         assert_eq!(memory.queries(), 5);
     }
 
@@ -554,7 +580,7 @@ mod tests {
             star(&me, 4, &b),
             star(&owner, 5, &a),
         ]);
-        let found = starred_by(&memory.store(), &me.public_key()).await;
+        let found = starred_by(&memory.store(), &me.public_key()).await.unwrap();
         assert_eq!(
             found,
             [

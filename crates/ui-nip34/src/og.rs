@@ -10,7 +10,7 @@ use axum::http::HeaderMap;
 use axum::response::Response;
 use nostr::key::PublicKey;
 use nostr::nips::nip19::FromBech32;
-use relay_ui::ReadOnlyStore;
+use relay_ui::{ReadOnlyStore, StoreError};
 use ui_preview::{Card, Face, Mark};
 
 use crate::Pages;
@@ -31,25 +31,30 @@ pub(crate) async fn repo(
     headers: HeaderMap,
 ) -> Response {
     let card = repo_card(&pages, &owner, &file).await;
-    pages.previews.respond(&headers, card).await
+    pages.previews.respond_result(&headers, card).await
 }
 
-async fn repo_card(pages: &Pages, owner: &str, file: &str) -> Option<Card> {
-    let owner = PublicKey::from_bech32(owner).ok()?;
-    let address = RepoAddress::new(owner, ui_preview::stem(file)?)?;
-    let card = RepoCard::load(&pages.store, &address).await?;
-    Some(Card::new(
-        host(pages),
-        Face::Repo(face_of(&pages.store, &card).await),
-    ))
+async fn repo_card(pages: &Pages, owner: &str, file: &str) -> Result<Option<Card>, StoreError> {
+    let Ok(owner) = PublicKey::from_bech32(owner) else {
+        return Ok(None);
+    };
+    let Some(address) = ui_preview::stem(file).and_then(|stem| RepoAddress::new(owner, stem))
+    else {
+        return Ok(None);
+    };
+    let Some(card) = RepoCard::load(&pages.store, &address).await? else {
+        return Ok(None);
+    };
+    let face = face_of(&pages.store, &card).await?;
+    Ok(Some(Card::new(host(pages), Face::Repo(face))))
 }
 
 /// A repo as its page counts it: forks from the repo engagement module.
-async fn face_of(store: &ReadOnlyStore, card: &RepoCard) -> ui_preview::Repo {
+async fn face_of(store: &ReadOnlyStore, card: &RepoCard) -> Result<ui_preview::Repo, StoreError> {
     let forks = engagement::load_one(store, card.address(), &[Act::Fork])
-        .await
+        .await?
         .fork_count();
-    card.preview(Some(forks))
+    Ok(card.preview(Some(forks)))
 }
 
 fn host(pages: &Pages) -> Option<String> {
@@ -72,14 +77,17 @@ mod tests {
     struct Held(Arc<Vec<Event>>);
 
     impl EventSource for Held {
-        fn query(&self, filter: Filter) -> Pin<Box<dyn Future<Output = Vec<Event>> + Send + '_>> {
+        fn query(
+            &self,
+            filter: Filter,
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<Event>, StoreError>> + Send + '_>> {
             let found = self
                 .0
                 .iter()
                 .filter(|event| filter.match_event(event, MatchEventOptions::new()))
                 .cloned()
                 .collect();
-            Box::pin(async move { found })
+            Box::pin(async move { Ok(found) })
         }
     }
 
@@ -119,6 +127,6 @@ mod tests {
             announce(&copier, "copy", &[&["r", &commit, "euc"]]),
         ])));
         let card = RepoCard::from_announcement(&parent).unwrap();
-        assert_eq!(face_of(&store, &card).await.forks, Some(2));
+        assert_eq!(face_of(&store, &card).await.unwrap().forks, Some(2));
     }
 }

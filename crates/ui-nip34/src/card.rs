@@ -13,8 +13,8 @@ use nostr::event::{Event, Kind};
 use nostr::filter::Filter;
 use nostr::key::PublicKey;
 use nostr::types::Timestamp;
-use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{self, App, Apps, Profiles, ago, escape, icon, npub, percent_encode, svg};
+use relay_ui::{ReadOnlyStore, StoreError};
 
 use crate::engagement::{self, Act};
 use crate::lineage::ForkOf;
@@ -128,7 +128,10 @@ pub struct RepoCard {
 impl RepoCard {
     /// The card for `address`, or none when the owner has announced no such
     /// repo on this relay.
-    pub async fn load(store: &ReadOnlyStore, address: &RepoAddress) -> Option<Self> {
+    pub async fn load(
+        store: &ReadOnlyStore,
+        address: &RepoAddress,
+    ) -> Result<Option<Self>, StoreError> {
         let owner = *address.owner();
         let announcements = store
             .query(
@@ -137,8 +140,11 @@ impl RepoCard {
                     .author(owner)
                     .identifier(address.d()),
             )
-            .await;
-        let announcement = owner_announcement(&owner, address.d(), &announcements)?.clone();
+            .await?;
+        let Some(announcement) = owner_announcement(&owner, address.d(), &announcements).cloned()
+        else {
+            return Ok(None);
+        };
         let authorized = authorized_authors(&announcement);
         let states = store
             .query(
@@ -147,13 +153,13 @@ impl RepoCard {
                     .authors(authorized.clone())
                     .identifier(address.d()),
             )
-            .await;
+            .await?;
         let last_move = honoured_state(&announcement, &states)
             .map(|state| (state.created_at, head_branch(state)));
-        let engaged = engagement::load_one(store, address, &[Act::Star, Act::Follow]).await;
+        let engaged = engagement::load_one(store, address, &[Act::Star, Act::Follow]).await?;
         let (stars, followers) = (engaged.star_count(), engaged.follower_count());
         let (open_issues, open_pulls) =
-            crate::threads::open_counts(store, &address.coordinate(), &authorized).await;
+            crate::threads::open_counts(store, &address.coordinate(), &authorized).await?;
         let fork_of = match ForkOf::of(&announcement) {
             Some(parent) => {
                 let parents = store
@@ -163,7 +169,7 @@ impl RepoCard {
                             .author(*parent.address().owner())
                             .identifier(parent.address().d()),
                     )
-                    .await;
+                    .await?;
                 let name =
                     owner_announcement(parent.address().owner(), parent.address().d(), &parents)
                         .map(|parent| repo_name(parent).to_owned());
@@ -177,8 +183,8 @@ impl RepoCard {
         {
             keys.push(*parent.address().owner());
         }
-        let profiles = Profiles::load(store, &keys).await;
-        Some(Self {
+        let profiles = Profiles::load(store, &keys).await?;
+        Ok(Some(Self {
             address: address.clone(),
             announcement,
             authorized,
@@ -189,7 +195,7 @@ impl RepoCard {
             open_pulls,
             last_move,
             fork_of,
-        })
+        }))
     }
 
     /// A card read from `announcement` alone: no stars, followers, threads

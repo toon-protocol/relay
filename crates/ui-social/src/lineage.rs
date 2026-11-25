@@ -24,6 +24,7 @@
 //! forked or copied, the repo's own makers left out. The fork count is not
 //! this: it comes from `ui_nip34::engagement`, as on every other page.
 
+use relay_ui::StoreError;
 use std::collections::{HashMap, HashSet};
 
 use nostr::event::{Event, Kind};
@@ -161,9 +162,9 @@ impl Lineage {
     }
 
     /// The lineage of `card`'s repo, read from the store.
-    pub(crate) async fn load(store: &ReadOnlyStore, card: &RepoCard) -> Self {
-        let network = ForkNetwork::load(store, card.announcement()).await;
-        let sites = demo::maker_sites(store, card).await;
+    pub(crate) async fn load(store: &ReadOnlyStore, card: &RepoCard) -> Result<Self, StoreError> {
+        let network = ForkNetwork::load(store, card.announcement()).await?;
+        let sites = demo::maker_sites(store, card).await?;
         let mut origins: Vec<String> = Vec::new();
         let mut hashes: Vec<String> = Vec::new();
         for site in &sites {
@@ -203,7 +204,7 @@ impl Lineage {
                                 .custom_tags(letter, origins.clone())
                                 .limit(SITE_SCAN),
                         )
-                        .await,
+                        .await?,
                 );
             }
         }
@@ -215,9 +216,9 @@ impl Lineage {
                         .custom_tags(SingleLetterTag::LOWERCASE_X, hashes)
                         .limit(SITE_SCAN),
                 )
-                .await;
+                .await?;
         }
-        Self::new(card, network, sites, family, lookalikes)
+        Ok(Self::new(card, network, sites, family, lookalikes))
     }
 
     /// The copies whose `a` tag names the site at `coordinate`, oldest first.

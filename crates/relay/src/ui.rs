@@ -18,7 +18,7 @@ use relay_ui::chrome::{App, Apps};
 use relay_ui::meta::PublicUrl;
 use relay_ui::{AppUi, Assets};
 #[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
-use relay_ui::{EventSource, ReadOnlyStore};
+use relay_ui::{EventSource, ReadOnlyStore, StoreError};
 
 #[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
 use crate::store::Query;
@@ -38,12 +38,15 @@ struct Reading {
 
 #[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
 impl EventSource for Reading {
-    fn query(&self, filter: Filter) -> Pin<Box<dyn Future<Output = Vec<Event>> + Send + '_>> {
+    fn query(
+        &self,
+        filter: Filter,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Event>, StoreError>> + Send + '_>> {
         Box::pin(async move {
             let query = self.rules.rules().anonymous().apply(Query::from(filter));
-            self.store.query(query).await.unwrap_or_else(|error| {
+            self.store.query(query).await.map_err(|error| {
                 eprintln!("ui: query failed: {error}");
-                Vec::new()
+                StoreError
             })
         })
     }

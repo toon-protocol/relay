@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 use nostr::event::{Event, Kind};
 use nostr::filter::Filter;
 use nostr::key::PublicKey;
+use relay_ui::StoreError;
 use relay_ui::chrome::{self, Profiles, escape};
 
 use crate::Pages;
@@ -77,7 +78,7 @@ pub(crate) async fn section(
     pages: &Pages,
     provider: &PublicKey,
     served: &[(Deployment, Standing)],
-) -> String {
+) -> Result<String, StoreError> {
     let deployments: Vec<Deployment> = served.iter().map(|(d, _)| d.clone()).collect();
     let workloads: Vec<String> = deployments.iter().map(|d| d.workload.clone()).collect();
     let (evictions, takeovers) = tokio::join!(
@@ -89,7 +90,7 @@ pub(crate) async fn section(
         ),
         async {
             match workloads.is_empty() {
-                true => Vec::new(),
+                true => Ok(Vec::new()),
                 false => {
                     pages
                         .store
@@ -104,11 +105,12 @@ pub(crate) async fn section(
             }
         }
     );
+    let (evictions, takeovers) = (evictions?, takeovers?);
     let log = entries(provider, &deployments, &evictions, &takeovers);
     let mut body = String::from("<h2>Activity</h2>");
     if log.is_empty() {
         body.push_str("<div class=\"box\"><div class=\"empty\">No activity yet.</div></div>");
-        return body;
+        return Ok(body);
     }
     let mut all: Vec<PublicKey> = log
         .iter()
@@ -120,7 +122,7 @@ pub(crate) async fn section(
         .collect();
     all.sort();
     all.dedup();
-    let names: HashMap<PublicKey, String> = Profiles::load(&pages.store, &all).await.into_names();
+    let names: HashMap<PublicKey, String> = Profiles::load(&pages.store, &all).await?.into_names();
     body.push_str(
         "<div class=\"box\"><div class=\"table-wrap\"><table class=\"data-table\" data-activity>\
          <thead><tr><th>When</th><th>Event</th><th>Details</th></tr></thead><tbody>",
@@ -156,7 +158,7 @@ pub(crate) async fn section(
         ));
     }
     body.push_str("</tbody></table></div></div>");
-    body
+    Ok(body)
 }
 
 #[cfg(test)]

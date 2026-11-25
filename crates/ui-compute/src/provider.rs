@@ -10,6 +10,7 @@ use nostr::event::{Event, Kind};
 use nostr::key::PublicKey;
 use nostr::nips::nip19::{FromBech32, Nip19, Nip19Coordinate};
 use nostr::types::Timestamp;
+use relay_ui::StoreError;
 use relay_ui::chrome::{self, App, Apps, Identicon, Profiles, escape};
 use relay_ui::meta::Preview;
 use ui_preview::{Card, Face};
@@ -67,14 +68,18 @@ struct Held {
 
 /// `key`'s Provider and its Listings, as the store holds them; `None` when
 /// it holds no Provider Profile for it.
-async fn held(pages: &Pages, key: PublicKey) -> Option<Held> {
+async fn held(pages: &Pages, key: PublicKey) -> Result<Option<Held>, StoreError> {
     let of = |kind: u16| directory_filter(kind).author(key);
-    let (profiles, listings, liveness): (Vec<Event>, Vec<Event>, Vec<Event>) = tokio::join!(
+    let (profiles, listings, liveness) = tokio::join!(
         pages.store.query(of(PROFILE_KIND)),
         pages.store.query(of(LISTING_KIND)),
         pages.store.query(of(LIVENESS_KIND)),
     );
-    let mut provider = directory::provider(&profiles, &key)?;
+    let (profiles, listings, liveness): (Vec<Event>, Vec<Event>, Vec<Event>) =
+        (profiles?, listings?, liveness?);
+    let Some(mut provider) = directory::provider(&profiles, &key) else {
+        return Ok(None);
+    };
     let now = crate::now();
     let mut listings = directory::join(&profiles, &listings);
     // A Listing marked hidden makes its Provider Anyone-only, as the
@@ -86,22 +91,25 @@ async fn held(pages: &Pages, key: PublicKey) -> Option<Held> {
     directory::apply_liveness(&mut listings, &liveness, now);
     listings.sort_by_cached_key(|l| (l.name.to_lowercase(), l.d.clone()));
     let live_since = directory::live_since(&liveness, &key, now);
-    Some(Held {
+    Ok(Some(Held {
         provider,
         listings,
         live_since,
-    })
+    }))
 }
 
 /// The name a Provider is shown under: its Profile's own, else its kind 0's.
-async fn names(pages: &Pages, provider: &Provider) -> HashMap<PublicKey, String> {
+async fn names(
+    pages: &Pages,
+    provider: &Provider,
+) -> Result<HashMap<PublicKey, String>, StoreError> {
     let mut names = Profiles::load(&pages.store, &[provider.key])
-        .await
+        .await?
         .into_names();
     if let Some(name) = &provider.name {
         names.insert(provider.key, name.clone());
     }
-    names
+    Ok(names)
 }
 
 /// `/compute/p/<npub>`: one Provider.
@@ -109,16 +117,19 @@ pub(crate) async fn provider_page(
     State(pages): State<Pages>,
     Path(npub): Path<String>,
 ) -> Response {
-    let Some(held) = async {
-        let key = parse_pubkey(&npub)?;
-        held(&pages, key).await
-    }
-    .await
-    else {
+    let Some(held) = relay_ui::stored!(
+        async {
+            let Some(key) = parse_pubkey(&npub) else {
+                return Ok(None);
+            };
+            held(&pages, key).await
+        }
+        .await
+    ) else {
         return fallback(State(pages)).await;
     };
     let key = held.provider.key;
-    let names = names(&pages, &held.provider).await;
+    let names = relay_ui::stored!(names(&pages, &held.provider).await);
     let shown = chrome::plain_name(&names, &key);
     let mut body = format!(
         "<p class=\"muted small\"><a href=\"{PREFIX}\">Compute</a></p>\
@@ -137,9 +148,13 @@ pub(crate) async fn provider_page(
     } else {
         body.push_str(&listing_table(&held.listings));
     }
-    let served = deployment::serving(&pages, &key).await;
-    body.push_str(&deployment::serving_section(&pages, &served).await);
-    body.push_str(&crate::activity::section(&pages, &key, &served).await);
+    let served = relay_ui::stored!(deployment::serving(&pages, &key).await);
+    body.push_str(&relay_ui::stored!(
+        deployment::serving_section(&pages, &served).await
+    ));
+    body.push_str(&relay_ui::stored!(
+        crate::activity::section(&pages, &key, &served).await
+    ));
     // A key with no name is its npub's start, as the cards name it, not
     // the initials the page heads with.
     let named = chrome::shown_name(&names, &key);
@@ -193,11 +208,15 @@ pub(crate) async fn provider_card(
     Path(file): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    let card = async {
-        let key = parse_pubkey(ui_preview::stem(&file)?)?;
-        let held = held(&pages, key).await?;
-        let names = names(&pages, &held.provider).await;
-        Some(Card::new(
+    let card: Result<Option<Card>, StoreError> = async {
+        let Some(key) = ui_preview::stem(&file).and_then(parse_pubkey) else {
+            return Ok(None);
+        };
+        let Some(held) = held(&pages, key).await? else {
+            return Ok(None);
+        };
+        let names = names(&pages, &held.provider).await?;
+        Ok(Some(Card::new(
             pages.card_host(),
             Face::Provider(ui_preview::Provider {
                 name: chrome::shown_name(&names, &key),
@@ -205,10 +224,10 @@ pub(crate) async fn provider_card(
                 live: held.live_since.is_some(),
                 listings: held.listings.len(),
             }),
-        ))
+        )))
     }
     .await;
-    pages.previews.respond(&headers, card).await
+    pages.previews.respond_result(&headers, card).await
 }
 
 /// `/compute/og/l/<npub>/<d>.png`.
@@ -217,13 +236,18 @@ pub(crate) async fn listing_card(
     Path((npub, file)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    let card = async {
-        let key = parse_pubkey(&npub)?;
-        let d = card_stem(&file)?;
-        let held = held(&pages, key).await?;
-        let listing = held.listings.iter().find(|l| l.d == d)?;
-        let names = names(&pages, &held.provider).await;
-        Some(Card::new(
+    let card: Result<Option<Card>, StoreError> = async {
+        let (Some(key), Some(d)) = (parse_pubkey(&npub), card_stem(&file)) else {
+            return Ok(None);
+        };
+        let Some(held) = held(&pages, key).await? else {
+            return Ok(None);
+        };
+        let Some(listing) = held.listings.iter().find(|l| l.d == d) else {
+            return Ok(None);
+        };
+        let names = names(&pages, &held.provider).await?;
+        Ok(Some(Card::new(
             pages.card_host(),
             Face::Listing(ui_preview::Listing {
                 name: listing.name.clone(),
@@ -235,10 +259,10 @@ pub(crate) async fn listing_card(
                     .map(|hour| format!("{} per hour", per_hour(hour))),
                 live: listing.live,
             }),
-        ))
+        )))
     }
     .await;
-    pages.previews.respond(&headers, card).await
+    pages.previews.respond_result(&headers, card).await
 }
 
 /// The Provider's Profile fields.
@@ -355,19 +379,22 @@ pub(crate) async fn listing_page(
     Path((npub, d)): Path<(String, String)>,
     RawQuery(query): RawQuery,
 ) -> Response {
-    let Some(held) = async {
-        let key = parse_pubkey(&npub)?;
-        held(&pages, key).await
-    }
-    .await
-    else {
+    let Some(held) = relay_ui::stored!(
+        async {
+            let Some(key) = parse_pubkey(&npub) else {
+                return Ok(None);
+            };
+            held(&pages, key).await
+        }
+        .await
+    ) else {
         return fallback(State(pages)).await;
     };
     let key = held.provider.key;
     let Some(listing) = held.listings.iter().find(|l| l.d == d) else {
         return fallback(State(pages)).await;
     };
-    let names = names(&pages, &held.provider).await;
+    let names = relay_ui::stored!(names(&pages, &held.provider).await);
     let provider_name = chrome::plain_name(&names, &key);
     let mut rows = vec![
         ("Provider", provider_link(&names, &key)),
