@@ -211,6 +211,14 @@ pub enum RelayError {
     )]
     SubscribeRouteNotFlat { address: String },
 
+    /// The connector prices the write route by size: the one price the
+    /// NIP-11 document advertises would not pay for a write.
+    #[error(
+        "the connector prices `{address}` by the KiB, so no one price pays for a write: the \
+         write route must charge a flat price"
+    )]
+    WriteRouteNotFlat { address: String },
+
     /// The connector charges nothing at the subscribe route: a packet would
     /// credit nothing.
     #[error("the connector charges nothing at `{address}`, so a packet would credit nothing")]
