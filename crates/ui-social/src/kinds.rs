@@ -72,7 +72,7 @@ pub(crate) const TIP_ACKNOWLEDGEMENT: u16 = 9_851;
 /// The tip NIP's tip route, a replaceable event the recipient signs.
 pub(crate) const TIP_ROUTE: u16 = 10_850;
 
-pub(crate) use ui_nip34::card::FOLLOWED_REPOS;
+pub(crate) use ui_nip34::engagement::FOLLOWED_REPOS;
 pub(crate) use ui_nip34::repo::ANNOUNCEMENT;
 
 /// What a reader calls a kind, in a chip.

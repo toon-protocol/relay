@@ -2247,6 +2247,7 @@ dependencies = [
  "nostr",
  "relay-ui",
  "serde_json",
+ "tokio",
  "ui-markdown",
  "ui-preview",
 ]

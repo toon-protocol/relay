@@ -19,3 +19,4 @@ ui-preview.workspace = true
 
 [dev-dependencies]
 nostr = { workspace = true, features = ["os-rng"] }
+tokio.workspace = true
