@@ -9,7 +9,8 @@ use nostr::event::Event;
 use nostr::key::PublicKey;
 use relay_ui::chrome::{escape, npub};
 
-use crate::repo::{d_tag, first_tag, repo_name};
+use crate::repo::repo_name;
+use relay_ui::reading::{d_tag, first_tag_value};
 
 /// The longest query read; the rest is ignored.
 const QUERY_LIMIT: usize = 200;
@@ -100,7 +101,7 @@ fn word_score(word: &str, repo: &Event, owner: &str, key: &PublicKey) -> u32 {
     {
         best = best.max(15);
     }
-    let description = first_tag(repo, "description")
+    let description = first_tag_value(repo, "description")
         .unwrap_or_default()
         .to_lowercase();
     if starts_a_word(&description, word) {

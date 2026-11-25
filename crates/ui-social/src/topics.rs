@@ -31,10 +31,9 @@ use nostr::event::{Event, Kind};
 use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use relay_ui::chrome::{self, Profiles, escape, icon, percent_encode, plain_name, svg};
+use relay_ui::reading::{first_tag_value, supersedes};
 use ui_nip34::card::{Links, plural};
-use ui_nip34::repo::{
-    ANNOUNCEMENT, RepoAddress, authorized_authors, first_tag, repo_name, supersedes, topics,
-};
+use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors, repo_name, topics};
 
 use crate::kinds::LABEL;
 use crate::mute::Mutes;
@@ -526,7 +525,7 @@ fn row(
         escape(&repo.coordinate()),
         title_link(context.links, repo, names, announcement),
     );
-    if let Some(description) = first_tag(announcement, "description")
+    if let Some(description) = first_tag_value(announcement, "description")
         .map(str::trim)
         .filter(|text| !text.is_empty())
     {

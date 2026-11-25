@@ -11,7 +11,7 @@
 
 use nostr::event::{Event, Kind};
 use relay_ui::chrome::{escape, icon, svg};
-use ui_nip34::repo::{first_tag, newest};
+use relay_ui::reading::{first_tag_value, newest};
 
 /// NIP-53 live streaming event.
 pub(crate) const LIVE_ACTIVITY: u16 = 30_311;
@@ -44,7 +44,7 @@ impl Live {
             return None;
         }
         let updated = i64::try_from(event.created_at.as_secs()).unwrap_or(0);
-        let status = match first_tag(event, "status")
+        let status = match first_tag_value(event, "status")
             .map(str::to_ascii_lowercase)
             .as_deref()
         {
@@ -52,7 +52,7 @@ impl Live {
             Some("planned") => Status::Planned,
             _ => Status::Ended,
         };
-        let participants = first_tag(event, "current_participants")
+        let participants = first_tag_value(event, "current_participants")
             .and_then(|count| count.trim().parse::<usize>().ok())
             .unwrap_or_else(|| {
                 let mut keys: Vec<&str> = event
@@ -68,7 +68,7 @@ impl Live {
                 keys.dedup();
                 keys.len()
             });
-        let streaming = first_tag(event, "streaming")
+        let streaming = first_tag_value(event, "streaming")
             .map(str::trim)
             .filter(|url| {
                 url.strip_prefix("https://")
@@ -79,7 +79,7 @@ impl Live {
             })
             .map(str::to_owned);
         Some(Self {
-            title: first_tag(event, "title")
+            title: first_tag_value(event, "title")
                 .map(str::trim)
                 .filter(|title| !title.is_empty())
                 .unwrap_or("Live stream")

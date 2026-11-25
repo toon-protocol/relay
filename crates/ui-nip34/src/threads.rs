@@ -14,7 +14,7 @@ use relay_ui::meta::Preview;
 
 use super::markup::{Tab, ago, avatar, icon, name, repo_header, svg};
 use super::{
-    ANNOUNCEMENT, authorized_authors, escape, first_tag, html_with, names, newest, not_found,
+    ANNOUNCEMENT, authorized_authors, escape, first_tag_value, html_with, names, newest, not_found,
     repo_path, repo_preview, resolve_repo,
 };
 
@@ -357,7 +357,7 @@ fn parse_id(id: &str) -> Option<EventId> {
 
 /// The title of a thread: its subject, else the start of its content.
 fn title_of(event: &Event) -> String {
-    let subject = first_tag(event, "subject").filter(|subject| !subject.trim().is_empty());
+    let subject = first_tag_value(event, "subject").filter(|subject| !subject.trim().is_empty());
     let title = subject
         .or_else(|| event.content.lines().find(|line| !line.trim().is_empty()))
         .unwrap_or("(untitled)");
@@ -817,11 +817,11 @@ pub(super) async fn pull(
             ("Clone", "clone"),
             ("Merge base", "merge-base"),
         ] {
-            if let Some(value) = first_tag(&pull, tag) {
+            if let Some(value) = first_tag_value(&pull, tag) {
                 facts.push((heading, value.to_owned()));
             }
         }
-        if let Some(tip) = first_tag(&pull, "c") {
+        if let Some(tip) = first_tag_value(&pull, "c") {
             facts.push(("Tip", tip.to_owned()));
         }
         // Only the PR's own author moves its tip.
@@ -843,7 +843,7 @@ pub(super) async fn pull(
             })
             .collect();
         if let Some(latest) = newest(updates.iter().copied())
-            && let Some(tip) = first_tag(latest, "c")
+            && let Some(tip) = first_tag_value(latest, "c")
         {
             facts.push(("Latest tip", tip.to_owned()));
         }
@@ -852,7 +852,9 @@ pub(super) async fn pull(
         for (index, update) in ordered.iter().enumerate() {
             facts.push((
                 if index == 0 { "Updates" } else { "" },
-                first_tag(update, "c").unwrap_or("(no tip)").to_owned(),
+                first_tag_value(update, "c")
+                    .unwrap_or("(no tip)")
+                    .to_owned(),
             ));
         }
     }

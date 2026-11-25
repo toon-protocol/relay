@@ -42,8 +42,9 @@ use nostr::key::PublicKey;
 use nostr::types::Timestamp;
 use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{self, Profiles, ago, escape, npub, percent_encode, plain_name};
+use relay_ui::reading::first_tag_value;
 use ui_nip34::card::{is_star, plural};
-use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors, first_tag};
+use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors};
 
 use crate::kinds::{
     ADDRESS_ASSERTION, COMMENT, FOLLOWED_REPOS, FOLLOWS, GENERIC_REPOST, NOTE, REACTION, REPORT,
@@ -167,7 +168,7 @@ pub(crate) fn fork_of(announcement: &Event) -> Option<RepoAddress> {
     if announcement.kind != Kind::from(ANNOUNCEMENT) {
         return None;
     }
-    let upstream = RepoAddress::parse(first_tag(announcement, "u")?)?;
+    let upstream = RepoAddress::parse(first_tag_value(announcement, "u")?)?;
     (Some(&upstream) != RepoAddress::of(announcement).as_ref()).then_some(upstream)
 }
 
@@ -179,7 +180,9 @@ pub(crate) fn acted_on(event: &Event) -> Vec<RepoAddress> {
             .into_iter()
             .filter(|repo| is_star(event, &repo.coordinate()))
             .collect(),
-        GENERIC_REPOST if first_tag(event, "k") == Some("30617") => RepoAddress::tagged(event, "a"),
+        GENERIC_REPOST if first_tag_value(event, "k") == Some("30617") => {
+            RepoAddress::tagged(event, "a")
+        }
         COMMENT => RepoAddress::tagged(event, "A"),
         FOLLOWED_REPOS | NOTE => RepoAddress::tagged(event, "a"),
         ANNOUNCEMENT => fork_of(event).into_iter().collect(),
@@ -492,10 +495,11 @@ pub(crate) fn providers(events: &[Event]) -> Vec<Provider> {
         .iter()
         .filter(|event| event.kind == Kind::from(ADDRESS_ASSERTION))
     {
-        let Some(repo) = first_tag(event, "d").and_then(RepoAddress::parse) else {
+        let Some(repo) = first_tag_value(event, "d").and_then(RepoAddress::parse) else {
             continue;
         };
-        let Some(rank) = first_tag(event, "rank").and_then(|rank| rank.trim().parse::<u64>().ok())
+        let Some(rank) =
+            first_tag_value(event, "rank").and_then(|rank| rank.trim().parse::<u64>().ok())
         else {
             continue;
         };
@@ -863,7 +867,7 @@ fn row_html(
         escape(&row.repo.coordinate()),
         topics::title_link(context.links, &row.repo, context.names, announcement),
     );
-    if let Some(description) = first_tag(announcement, "description")
+    if let Some(description) = first_tag_value(announcement, "description")
         .map(str::trim)
         .filter(|text| !text.is_empty())
     {

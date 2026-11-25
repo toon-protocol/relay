@@ -14,6 +14,7 @@ use nostr::key::PublicKey;
 use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{self, App, Apps, Identicon, Profiles, escape};
 use relay_ui::meta::{Preview, summary};
+use relay_ui::reading::newest;
 use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors, owner_announcement};
 use ui_preview::{Card, Face};
 
@@ -237,17 +238,18 @@ pub(crate) fn state(
     evictions: &[Event],
     takeovers: &[Event],
 ) -> Standing {
-    let evicted = evictions
-        .iter()
-        .filter(|e| e.kind == Kind::from(EVICTION_KIND))
-        .filter(|e| deployment.names(&e.pubkey))
-        .filter(|e| {
-            tag_slices(e).any(
-                |tag| matches!(tag, [name, value, ..] if name == "x" && *value == deployment.workload),
-            )
-        })
-        .max_by_key(|e| (e.created_at, e.id));
-    let taken = valid_takeovers(deployment, takeovers).max_by_key(|e| (e.created_at, e.id));
+    let evicted = newest(
+        evictions
+            .iter()
+            .filter(|e| e.kind == Kind::from(EVICTION_KIND))
+            .filter(|e| deployment.names(&e.pubkey))
+            .filter(|e| {
+                tag_slices(e).any(
+                    |tag| matches!(tag, [name, value, ..] if name == "x" && *value == deployment.workload),
+                )
+            }),
+    );
+    let taken = newest(valid_takeovers(deployment, takeovers));
     match (evicted, taken) {
         (Some(e), Some(t)) if t.created_at > e.created_at => {
             Standing::TakenOver { winner: t.pubkey }
@@ -520,11 +522,7 @@ async fn load(
                 .identifier(environment.to_owned()),
         )
         .await;
-    let events: Vec<Event> = events
-        .into_iter()
-        .max_by_key(|e| (e.created_at, e.id))
-        .into_iter()
-        .collect();
+    let events: Vec<Event> = newest(&events).cloned().into_iter().collect();
     with_states(&pages.store, &events)
         .await
         .into_iter()

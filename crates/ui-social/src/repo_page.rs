@@ -31,8 +31,9 @@ use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
 use nostr::types::Timestamp;
 use relay_ui::chrome::{self, Profiles, ago, escape, icon, name, svg};
+use relay_ui::reading::{first_tag_value, first_tag_values};
 use ui_nip34::card::{self, RepoCard, clone_urls, plural};
-use ui_nip34::repo::{RepoAddress, first_tag, tag_values, topics};
+use ui_nip34::repo::{RepoAddress, topics};
 
 use crate::demo::{self, Demo};
 use crate::kinds::{
@@ -190,11 +191,13 @@ pub(crate) fn sections(events: Vec<Event>, is_maker: impl Fn(&PublicKey) -> bool
 /// Whether a snippet's `repo` tag names `repo`: its address, an `naddr` of
 /// it, or its `nostr://` URL. A pure function.
 fn snippet_names(snippet: &Event, repo: &RepoAddress, nip05: Option<&str>) -> bool {
-    tag_values(snippet, "repo").first().is_some_and(|value| {
-        RepoAddress::parse(value).as_ref() == Some(repo)
-            || RepoAddress::from_naddr(value).as_ref() == Some(repo)
-            || ship::source_names(value, repo, nip05)
-    })
+    first_tag_values(snippet, "repo")
+        .first()
+        .is_some_and(|value| {
+            RepoAddress::parse(value).as_ref() == Some(repo)
+                || RepoAddress::from_naddr(value).as_ref() == Some(repo)
+                || ship::source_names(value, repo, nip05)
+        })
 }
 
 /// `/social/r/<naddr>`: a redirect to the repo's page.
@@ -630,7 +633,7 @@ fn media_grid(view: &View<'_>, events: &[&Event]) -> String {
                 item.html(""),
                 chrome::person(view.links.apps(), view.names, &event.pubkey),
                 escape(&post::event_path(event)),
-                first_tag(event, "title")
+                first_tag_value(event, "title")
                     .map(escape)
                     .unwrap_or_else(|| crate::kinds::label(event.kind.as_u16()).to_owned()),
             ));
@@ -714,7 +717,7 @@ fn sidebar(view: &View<'_>, card: &RepoCard, before: &str, after: &str) -> Strin
             escape(&url)
         ));
     }
-    let web: Vec<&String> = tag_values(card.announcement(), "web")
+    let web: Vec<&String> = first_tag_values(card.announcement(), "web")
         .iter()
         .filter(|url| url.starts_with("https://") || url.starts_with("http://"))
         .collect();

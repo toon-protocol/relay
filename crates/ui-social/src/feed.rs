@@ -55,7 +55,7 @@ fn admits(event: &Event) -> bool {
     match event.kind.as_u16() {
         NOTE => !crate::is_reply(event),
         GENERIC_REPOST => {
-            ui_nip34::repo::first_tag(event, "k") == Some("30617")
+            relay_ui::reading::first_tag_value(event, "k") == Some("30617")
                 && !RepoAddress::tagged(event, "a").is_empty()
         }
         ARTICLE | ANNOUNCEMENT | ISSUE | PULL_REQUEST => true,
@@ -145,7 +145,7 @@ pub(crate) fn newest_list<'a>(
     author: &PublicKey,
     kind: u16,
 ) -> Option<&'a Event> {
-    ui_nip34::repo::newest(
+    relay_ui::reading::newest(
         events
             .iter()
             .filter(|event| event.pubkey == *author && event.kind == Kind::from(kind)),

@@ -10,7 +10,8 @@
 use nostr::event::{Event, Kind};
 use nostr::key::PublicKey;
 use relay_ui::chrome::nip05_identifier;
-use ui_nip34::repo::{RepoAddress, d_tag, first_tag, newest};
+use relay_ui::reading::{d_tag, first_tag_value, newest};
+use ui_nip34::repo::RepoAddress;
 
 use crate::media::Media;
 
@@ -214,7 +215,7 @@ pub(crate) fn statuses(key: &PublicKey, events: &[Event], now: i64) -> Vec<Statu
         })) else {
             continue;
         };
-        let expired = first_tag(status, "expiration")
+        let expired = first_tag_value(status, "expiration")
             .and_then(|at| at.trim().parse::<i64>().ok())
             .is_some_and(|at| at <= now);
         let text = status.content.trim();
@@ -224,7 +225,7 @@ pub(crate) fn statuses(key: &PublicKey, events: &[Event], now: i64) -> Vec<Statu
         standing.push(Status {
             kind: kind.to_owned(),
             text: text.to_owned(),
-            link: first_tag(status, "r")
+            link: first_tag_value(status, "r")
                 .filter(|url| web_url(url))
                 .map(str::to_owned),
             repo: RepoAddress::tagged(status, "a").into_iter().next(),

@@ -12,7 +12,7 @@ use relay_ui::meta::Preview;
 
 pub(crate) use relay_ui::chrome::{ago, avatar, icon, name, svg};
 
-use crate::{escape, first_tag, repo_name, repo_path};
+use crate::{escape, first_tag_value, repo_name, repo_path};
 
 /// The whole page: the shared shell, with `/repo`'s bar and `body`.
 pub(crate) fn page(apps: &Apps, title: &str, body: &str) -> String {
@@ -57,7 +57,7 @@ pub(crate) fn repo_header(
             escape(parent.d()),
         ));
     }
-    if let Some(description) = first_tag(announcement, "description")
+    if let Some(description) = first_tag_value(announcement, "description")
         .map(str::trim)
         .filter(|text| !text.is_empty())
     {

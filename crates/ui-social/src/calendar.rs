@@ -16,7 +16,7 @@ use nostr::key::PublicKey;
 use nostr::nips::nip01::Coordinate;
 use nostr::nips::nip19::{Nip19Coordinate, ToBech32};
 use relay_ui::chrome::{self, npub, percent_encode};
-use ui_nip34::repo::{d_tag, first_tag};
+use relay_ui::reading::{d_tag, first_tag_value};
 
 use crate::PREFIX;
 
@@ -68,13 +68,13 @@ impl CalendarEvent {
         if d_tag(event).is_empty() {
             return None;
         }
-        let title = first_tag(event, "title")
-            .or_else(|| first_tag(event, "name"))
+        let title = first_tag_value(event, "title")
+            .or_else(|| first_tag_value(event, "name"))
             .map(str::trim)
             .filter(|title| !title.is_empty())?
             .to_owned();
-        let start = first_tag(event, "start")?;
-        let end = first_tag(event, "end");
+        let start = first_tag_value(event, "start")?;
+        let end = first_tag_value(event, "end");
         let when = match event.kind.as_u16() {
             DATE_EVENT => {
                 let start = day_number(start)?;
@@ -89,7 +89,7 @@ impl CalendarEvent {
                 let end = end
                     .and_then(|end| end.trim().parse::<i64>().ok())
                     .filter(|end| *end > start);
-                let zone = first_tag(event, "start_tzid")
+                let zone = first_tag_value(event, "start_tzid")
                     .map(str::trim)
                     .filter(|zone| !zone.is_empty())
                     .map(str::to_owned);
@@ -176,7 +176,7 @@ impl CalendarEvent {
 
     /// The `summary` tag, else the start of the content.
     pub(crate) fn summary(&self) -> Option<String> {
-        first_tag(&self.event, "summary")
+        first_tag_value(&self.event, "summary")
             .map(str::trim)
             .filter(|summary| !summary.is_empty())
             .map(str::to_owned)
@@ -250,7 +250,7 @@ impl CalendarEvent {
 
     /// The NIP-29 group the event was posted to (its `h` tag): its room.
     pub(crate) fn room(&self) -> Option<&str> {
-        first_tag(&self.event, "h").filter(|id| !id.is_empty())
+        first_tag_value(&self.event, "h").filter(|id| !id.is_empty())
     }
 
     /// When, in words: `Sat, Nov 2, 2026, 09:00 – 18:00 UTC`, or the days of
@@ -374,7 +374,7 @@ pub(crate) fn newest_each(events: &[Event]) -> Vec<CalendarEvent> {
     for event in events {
         let key = (event.kind, event.pubkey, d_tag(event).to_owned());
         match held.get(&key) {
-            Some(current) if !ui_nip34::repo::supersedes(event, current) => {}
+            Some(current) if !relay_ui::reading::supersedes(event, current) => {}
             _ => {
                 held.insert(key, event);
             }
@@ -432,7 +432,7 @@ pub(crate) fn rsvps(events: &[Event], coordinate: &str) -> Rsvps {
             continue;
         }
         match newest.get(&event.pubkey) {
-            Some(held) if !ui_nip34::repo::supersedes(event, held) => {}
+            Some(held) if !relay_ui::reading::supersedes(event, held) => {}
             _ => {
                 newest.insert(event.pubkey, event);
             }
@@ -440,7 +440,7 @@ pub(crate) fn rsvps(events: &[Event], coordinate: &str) -> Rsvps {
     }
     let mut counts = Rsvps::default();
     for event in newest.values() {
-        match first_tag(event, "status")
+        match first_tag_value(event, "status")
             .map(str::to_ascii_lowercase)
             .as_deref()
         {
