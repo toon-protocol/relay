@@ -50,7 +50,7 @@ use tokio::sync::{Mutex, MutexGuard};
 use crate::auth::CLOSED_AUTH_REQUIRED;
 use crate::clock::unix_seconds;
 use crate::read_side::ReadSide;
-use crate::store::Query;
+use crate::store::{Hidden, Query};
 use crate::{Store, VerifiedEvent};
 
 const PUT_USER: u16 = 9000;
@@ -423,6 +423,32 @@ impl Groups {
         !restricted || group.includes_any(keys)
     }
 
+    /// What a connection that has proven `keys` may not see, as store
+    /// conditions: what [`Groups::may_read`] refuses it, event by event.
+    fn hidden_from(&self, keys: &HashSet<PublicKey>) -> Vec<Hidden> {
+        let outside = |restricted: fn(&Group) -> bool| -> Vec<String> {
+            self.0
+                .iter()
+                .filter(|(_, group)| restricted(group) && !group.includes_any(keys))
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        vec![
+            Hidden {
+                tag: "h".to_string(),
+                values: outside(Group::content_restricted),
+                kinds: METADATA_KINDS,
+                within: false,
+            },
+            Hidden {
+                tag: "d".to_string(),
+                values: outside(|group| group.private),
+                kinds: METADATA_KINDS,
+                within: true,
+            },
+        ]
+    }
+
     /// The `CLOSED` reason for a filter that names a group the connection
     /// may not read, if it does.
     fn refuse(&self, filter: &Filter, keys: &HashSet<PublicKey>) -> Option<&'static str> {
@@ -459,12 +485,30 @@ impl GroupView {
         self.read().may_read(event, keys)
     }
 
+    pub(crate) fn hidden_from(&self, keys: &HashSet<PublicKey>) -> Vec<Hidden> {
+        self.read().hidden_from(keys)
+    }
+
     pub(crate) fn refuse(
         &self,
         filter: &Filter,
         keys: &HashSet<PublicKey>,
     ) -> Option<&'static str> {
         self.read().refuse(filter, keys)
+    }
+}
+
+#[cfg(test)]
+impl GroupView {
+    /// The groups `events` (moderation events) build, as the write side
+    /// would accept them in order.
+    pub(crate) fn built_by(events: &[Event]) -> Self {
+        let mut groups = Groups::default();
+        for event in events {
+            groups.permit(event).expect("the group event is permitted");
+            groups.apply(event);
+        }
+        Self(Arc::new(RwLock::new(groups)))
     }
 }
 
@@ -654,6 +698,8 @@ async fn dissolve(store: &Store, group: &str) -> Result<(), crate::RelayError> {
         filter: Filter::new().kinds(METADATA_KINDS.map(Kind::from)),
         multi_letter_tags: vec![("d".to_string(), HashSet::from([group.to_string()]))],
         wrap_recipients: None,
+        hidden: Vec::new(),
+        hidden_kinds: Vec::new(),
     };
     doomed.extend(store.query(metadata).await?.iter().map(|e| e.id.to_hex()));
     store.remove(doomed).await?;
@@ -666,6 +712,8 @@ fn in_group(group: &str) -> Query {
         filter: Filter::new(),
         multi_letter_tags: vec![("h".to_string(), HashSet::from([group.to_string()]))],
         wrap_recipients: None,
+        hidden: Vec::new(),
+        hidden_kinds: Vec::new(),
     }
 }
 

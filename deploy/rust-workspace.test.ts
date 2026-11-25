@@ -287,7 +287,7 @@ describe("the connector's crate is read for its self-description only", () => {
 });
 
 describe('the payment attribution headers are named in one module', () => {
-  // The connector states a payment in three `X-TOON-*` headers (ADR 0040).
+  // The connector states a payment in `X-TOON-*` headers (ADR 0040, 0086).
   // Two definitions of their names are two that drift, and a second reader
   // of them is a second place a payment could be claimed (#194).
   const ATTRIBUTION = 'crates/relay/src/write/payment.rs';

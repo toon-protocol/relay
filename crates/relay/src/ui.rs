@@ -2,8 +2,6 @@
 //! each is built from, and which one a request belongs to.
 
 #[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
-use std::collections::HashSet;
-#[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
 use std::future::Future;
 use std::path::Path;
 #[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
@@ -22,69 +20,38 @@ use relay_ui::{AppUi, Assets};
 #[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
 use relay_ui::{EventSource, ReadOnlyStore};
 
-use crate::auth::AuthPolicy;
-use crate::groups::GroupView;
+#[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
+use crate::store::Query;
+use crate::view::HeldRules;
 use crate::{Relay, RelayError, Store};
 
-/// The read rules of a connection that has not authenticated (NIP-42), as a
-/// session applies them. A server-rendered page cannot sign in for its
-/// visitor, so every app UI reads the store as such a connection would: a
-/// private or closed NIP-29 group's events, a private group's metadata, the
-/// kinds the operator restricts and gift wraps meant for their recipients
-/// alone are left out, on `/repo` as on `/social`.
-#[derive(Debug, Clone, Default)]
-#[cfg_attr(
-    not(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute")),
-    allow(dead_code)
-)]
-pub(crate) struct Unauthenticated {
-    /// NIP-42's policy, while it is on.
-    pub(crate) auth: Option<AuthPolicy>,
-    /// NIP-29's groups, while it is on.
-    pub(crate) groups: Option<GroupView>,
-}
-
-#[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
-impl Unauthenticated {
-    /// Whether such a connection may be shown `event`.
-    fn may_read(&self, event: &Event) -> bool {
-        self.auth
-            .as_ref()
-            .is_none_or(|auth| auth.shows_unauthenticated(event))
-            && self
-                .groups
-                .as_ref()
-                .is_none_or(|groups| groups.may_read(event, &HashSet::new()))
-    }
-}
-
 /// The store as an app UI sees it: queries, and nothing else, answered as
-/// to a connection that has not authenticated.
+/// to the anonymous reader. A server-rendered page cannot sign in for its
+/// visitor, so every app UI reads what [`crate::view::Rules::anonymous`] leaves it, on
+/// `/repo` as on `/social`; the store applies those conditions before the
+/// filter's `limit`, so a page's limit counts only what it may show.
 #[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
 struct Reading {
     store: Store,
-    rules: Unauthenticated,
+    rules: HeldRules,
 }
 
 #[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
 impl EventSource for Reading {
     fn query(&self, filter: Filter) -> Pin<Box<dyn Future<Output = Vec<Event>> + Send + '_>> {
         Box::pin(async move {
-            let events = self.store.query(filter).await.unwrap_or_else(|error| {
+            let query = self.rules.rules().anonymous().apply(Query::from(filter));
+            self.store.query(query).await.unwrap_or_else(|error| {
                 eprintln!("ui: query failed: {error}");
                 Vec::new()
-            });
-            events
-                .into_iter()
-                .filter(|event| self.rules.may_read(event))
-                .collect()
+            })
         })
     }
 }
 
 /// The read-only handle every app UI is built from: `store` under `rules`.
 #[cfg(any(feature = "ui-repo", feature = "ui-social", feature = "ui-compute"))]
-fn reading(store: &Store, rules: &Unauthenticated) -> ReadOnlyStore {
+fn reading(store: &Store, rules: &HeldRules) -> ReadOnlyStore {
     ReadOnlyStore::new(Reading {
         store: store.clone(),
         rules: rules.clone(),
@@ -111,8 +78,9 @@ pub(crate) struct UiSettings<'a> {
     /// the key their metadata is signed with.
     #[cfg_attr(not(feature = "ui-social"), allow(dead_code))]
     pub(crate) group_signer: Option<nostr::key::PublicKey>,
-    /// What every app UI may read ([`Unauthenticated`]).
-    pub(crate) reads: Unauthenticated,
+    /// The relay's rules for readers, which every app UI reads under as the
+    /// anonymous reader.
+    pub(crate) reads: HeldRules,
 }
 
 /// The host and port (when one is given) of a URL configuration has already

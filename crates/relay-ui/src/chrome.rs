@@ -611,27 +611,20 @@ impl Profiles {
     pub fn from_events(keys: &[PublicKey], events: &[Event]) -> Self {
         let mut profiles = Self::default();
         for key in keys {
-            let newest = events
-                .iter()
-                .filter(|event| event.pubkey == *key && event.kind == Kind::Metadata)
-                .max_by(|a, b| (a.created_at, b.id).cmp(&(b.created_at, a.id)));
-            let Some(profile) = newest else { continue };
-            let Ok(serde_json::Value::Object(fields)) = serde_json::from_str(&profile.content)
-            else {
-                continue;
-            };
-            let text = |field: &str| fields.get(field).and_then(|value| value.as_str());
-            if let Some(name) = ["display_name", "name"]
-                .into_iter()
-                .filter_map(text)
-                .find(|name| !name.trim().is_empty())
-            {
-                profiles.names.insert(*key, name.trim().to_owned());
+            let newest = crate::reading::newest(
+                events
+                    .iter()
+                    .filter(|event| event.pubkey == *key && event.kind == Kind::Metadata),
+            );
+            let Some(event) = newest else { continue };
+            let profile = crate::reading::Profile::of(event);
+            if let Some(name) = profile.shown_name() {
+                profiles.names.insert(*key, name.to_owned());
             }
-            if let Some(nip05) = text("nip05").and_then(nip05_identifier) {
+            if let Some(nip05) = profile.nip05.as_deref().and_then(nip05_identifier) {
                 profiles.nip05.insert(*key, nip05);
             }
-            if fields.get("bot") == Some(&serde_json::Value::Bool(true)) {
+            if profile.bot {
                 profiles.bots.insert(*key);
             }
         }

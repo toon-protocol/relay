@@ -32,6 +32,12 @@ The payment route on a person's connector where they can be tipped, named with t
 its sealing key in an event the person signs.
 _Avoid_: Tip address, payment pointer, payee address, wallet
 
+### Reading
+
+**Reader's view**:
+What one reader may see of this relay's store: the NIP-42 and NIP-29 rules for an anonymous reader or a set of proven keys, applied as conditions of the store query so `limit` counts only what is visible. One module in `crates/relay`, used by the WebSocket session and the app UIs.
+_Avoid_: ACL, permissions, filter
+
 ### Compute
 
 The TOON Compute words are `TOON_Network/CONTEXT.md`'s; these are the ones the relay's pages use.

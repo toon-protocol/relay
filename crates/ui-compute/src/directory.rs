@@ -8,7 +8,7 @@ use nostr::event::{Event, Kind};
 use nostr::key::PublicKey;
 use relay_ui::chrome::param;
 use relay_ui::meta::summary;
-use relay_ui::reading::{Address, every_tag_value, newest};
+use relay_ui::reading::{self, Address, every_tag_value, newest};
 use serde_json::Value;
 
 /// A Provider Profile.
@@ -133,7 +133,7 @@ pub(crate) fn apply_liveness(listings: &mut [Listing], liveness: &[Event], now: 
             newest.insert(event.pubkey, event);
         }
     }
-    newest.retain(|_, event| expiration(event).is_none_or(|at| at > now));
+    newest.retain(|_, event| !reading::is_expired(event, now));
     for listing in listings {
         let Some(event) = newest.get(&listing.provider) else {
             listing.live = false;
@@ -162,13 +162,6 @@ pub(crate) fn sort_for_buyers(listings: &mut [Listing]) {
                 (None, None) => std::cmp::Ordering::Equal,
             })
     });
-}
-
-pub(crate) fn expiration(event: &Event) -> Option<u64> {
-    event.tags.iter().find_map(|tag| match tag.as_slice() {
-        [name, at, ..] if name == "expiration" => at.parse().ok(),
-        _ => None,
-    })
 }
 
 /// A whole count written as a JSON number or a string of digits.
@@ -429,7 +422,7 @@ pub(crate) fn live_since(liveness: &[Event], key: &PublicKey, now: u64) -> Optio
             .iter()
             .filter(|e| e.kind == Kind::from(LIVENESS_KIND) && e.pubkey == *key),
     )
-    .filter(|event| expiration(event).is_none_or(|at| at > now))
+    .filter(|event| !reading::is_expired(event, now))
     .map(|event| event.created_at.as_secs())
 }
 

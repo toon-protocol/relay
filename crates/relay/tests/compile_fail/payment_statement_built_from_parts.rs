@@ -1,14 +1,15 @@
 //! A payment statement cannot be assembled from a payer, an amount and a
 //! chain: the only way to one is the paid-write handler reading the
-//! connector's three headers.
+//! connector's headers.
 
 use relay::{Chain, PaymentStatement};
 
-fn claim(payer: String, amount: String) -> PaymentStatement {
+fn claim(payer: String, amount: String, chain: Chain) -> PaymentStatement {
     PaymentStatement {
         payer,
         amount,
-        chain: Chain::Evm,
+        chain,
+        network: None,
     }
 }
 
