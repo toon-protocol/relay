@@ -2,20 +2,20 @@
 //! repository's card, and `/repo/og/site.png`, the site card the other
 //! pages name. A repo page names `/social`'s card instead while `/social`
 //! is on ([`crate::card::Links::preview_image`]); these are what it names
-//! when `/repo` is served alone. Forks are counted as the forks this relay
-//! holds that name the repo in a `u` tag.
+//! when `/repo` is served alone. Forks are counted by the repo engagement
+//! module ([`crate::engagement`]), as every page counts them.
 
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use nostr::key::PublicKey;
 use nostr::nips::nip19::FromBech32;
-use relay_ui::StoreError;
+use relay_ui::{ReadOnlyStore, StoreError};
 use ui_preview::{Card, Face, Mark};
 
 use crate::Pages;
 use crate::card::RepoCard;
-use crate::lineage::ForkNetwork;
+use crate::engagement::{self, Act};
 use crate::repo::RepoAddress;
 
 /// `/repo/og/site.png`.
@@ -45,16 +45,88 @@ async fn repo_card(pages: &Pages, owner: &str, file: &str) -> Result<Option<Card
     let Some(card) = RepoCard::load(&pages.store, &address).await? else {
         return Ok(None);
     };
-    let forks = ForkNetwork::load(&pages.store, card.announcement())
+    let face = face_of(&pages.store, &card).await?;
+    Ok(Some(Card::new(host(pages), Face::Repo(face))))
+}
+
+/// A repo as its page counts it: forks from the repo engagement module.
+async fn face_of(store: &ReadOnlyStore, card: &RepoCard) -> Result<ui_preview::Repo, StoreError> {
+    let forks = engagement::load_one(store, card.address(), &[Act::Fork])
         .await?
-        .forks(&address)
-        .len();
-    Ok(Some(Card::new(
-        host(pages),
-        Face::Repo(card.preview(Some(forks))),
-    )))
+        .fork_count();
+    Ok(card.preview(Some(forks)))
 }
 
 fn host(pages: &Pages) -> Option<String> {
     ui_preview::footer_host(&pages.apps, pages.defaults.relay_host.as_deref())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+
+    use nostr::event::{Event, EventBuilder, FinalizeEvent, Kind, Tag};
+    use nostr::filter::{Filter, MatchEventOptions};
+    use nostr::key::Keys;
+    use relay_ui::EventSource;
+
+    use super::*;
+
+    struct Held(Arc<Vec<Event>>);
+
+    impl EventSource for Held {
+        fn query(
+            &self,
+            filter: Filter,
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<Event>, StoreError>> + Send + '_>> {
+            let found = self
+                .0
+                .iter()
+                .filter(|event| filter.match_event(event, MatchEventOptions::new()))
+                .cloned()
+                .collect();
+            Box::pin(async move { Ok(found) })
+        }
+    }
+
+    fn announce(keys: &Keys, d: &str, tags: &[&[&str]]) -> Event {
+        EventBuilder::new(Kind::from(30_617), "")
+            .tags(
+                [&["d", d][..]]
+                    .into_iter()
+                    .chain(tags.iter().copied())
+                    .map(|tag| Tag::parse(tag.iter().copied()).unwrap()),
+            )
+            .finalize(keys)
+            .unwrap()
+    }
+
+    /// One repo, two forks (a bare coordinate and `|<git url>`) and a copy
+    /// that only shares the earliest unique commit: the card says 2 forks.
+    #[tokio::test]
+    async fn the_preview_card_counts_distinct_fork_repos() {
+        let (owner, bare, url, copier) = (
+            Keys::generate(),
+            Keys::generate(),
+            Keys::generate(),
+            Keys::generate(),
+        );
+        let commit = "b".repeat(40);
+        let parent = announce(&owner, "r", &[&["r", &commit, "euc"]]);
+        let coordinate = RepoAddress::of(&parent).unwrap().coordinate();
+        let store = ReadOnlyStore::new(Held(Arc::new(vec![
+            parent.clone(),
+            announce(&bare, "r", &[&["u", &coordinate]]),
+            announce(
+                &url,
+                "r",
+                &[&["u", &format!("{coordinate}|https://example.com/r.git")]],
+            ),
+            announce(&copier, "copy", &[&["r", &commit, "euc"]]),
+        ])));
+        let card = RepoCard::from_announcement(&parent).unwrap();
+        assert_eq!(face_of(&store, &card).await.unwrap().forks, Some(2));
+    }
 }

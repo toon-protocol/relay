@@ -90,8 +90,10 @@ describe('relay image conformance: /social forks, remixes, live demos and Open i
       expect(text).toMatch(
         /href="https:\/\/[0-9a-z]{50}surfcast\.nsite\.example\/" rel="noopener noreferrer">Try it/
       );
-      // People, not events: Ruth, Dan, Leo, Iris and the anonymous key.
-      expect(text).toContain('Forks<span class="count">5</span>');
+      // Distinct fork repos, as every page counts them (relay#367): Ruth's
+      // tidepool. Dan's tidepool-nz only shares the first commit, and the
+      // sites are remixes and copies, so none of them is counted.
+      expect(text).toContain('Forks<span class="count">1</span>');
       expect(text).toContain('public and permanent');
     }
   );

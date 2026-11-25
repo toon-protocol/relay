@@ -258,3 +258,98 @@ async fn trending_counts_people_in_the_window_and_topics_list_repos() {
 
     assert_eq!(get(relay, "/social/t/%20").await.0, StatusCode::NOT_FOUND);
 }
+
+/// One repo, two forks (one bare coordinate, one `|<git url>`) and one copy
+/// that only shares the earliest unique commit: every page that counts forks
+/// shows 2 (#367).
+#[tokio::test]
+async fn every_page_shows_the_same_fork_count() {
+    let running = running().await;
+    let relay = &running.relay;
+    let (maya, bare, url, copier) = (
+        Keys::generate(),
+        Keys::generate(),
+        Keys::generate(),
+        Keys::generate(),
+    );
+    let now = Timestamp::now().as_secs();
+    let tide = format!("30617:{}:tide", maya.public_key().to_hex());
+    let commit = "a".repeat(40);
+    store(
+        relay,
+        &event(
+            &maya,
+            30_617,
+            now - 100,
+            "",
+            &[
+                &["d", "tide"],
+                &["name", "tide"],
+                &["t", "rust"],
+                &["r", &commit, "euc"],
+            ],
+        ),
+    )
+    .await;
+    store(
+        relay,
+        &event(
+            &bare,
+            30_617,
+            now - 90,
+            "",
+            &[&["d", "tide"], &["u", &tide], &["r", &commit, "euc"]],
+        ),
+    )
+    .await;
+    store(
+        relay,
+        &event(
+            &url,
+            30_617,
+            now - 80,
+            "",
+            &[
+                &["d", "tide"],
+                &["u", &format!("{tide}|https://example.com/tide.git")],
+            ],
+        ),
+    )
+    .await;
+    store(
+        relay,
+        &event(
+            &copier,
+            30_617,
+            now - 70,
+            "",
+            &[&["d", "tide-copy"], &["r", &commit, "euc"]],
+        ),
+    )
+    .await;
+
+    let base = format!("/social/r/{}/tide", npub(&maya));
+    for path in [base.clone(), format!("{base}/forks")] {
+        let (status, html) = get(relay, &path).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            html.matches("Forks<span class=\"count\">2</span>").count() >= 1,
+            "{path}"
+        );
+        assert!(
+            !html.contains("Forks<span class=\"count\">3</span>"),
+            "{path}"
+        );
+    }
+    let (_, forks) = get(relay, &format!("{base}/forks")).await;
+    assert!(
+        forks.contains(">same first commit<"),
+        "the copy stays listed"
+    );
+    assert!(forks.contains("2 forks"), "the glance: {forks}");
+    for path in ["/social/trending?window=week", "/social/t/rust"] {
+        let (_, html) = get(relay, path).await;
+        let found = row(&html, &tide).unwrap_or_else(|| panic!("{path}"));
+        assert!(found.contains("data-forks=\"2\""), "{path}: {found}");
+    }
+}
