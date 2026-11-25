@@ -26,6 +26,7 @@
 //! An article is addressable: an edit replaces it, so the reader shows the
 //! newest version the store holds.
 
+use relay_ui::StoreError;
 use std::collections::{HashMap, HashSet};
 
 use axum::extract::{Path, RawQuery, State};
@@ -283,7 +284,7 @@ pub(crate) fn summary_of(article: &Event) -> Option<String> {
 pub(crate) async fn load(
     store: &relay_ui::ReadOnlyStore,
     address: &ArticleAddress,
-) -> Option<Event> {
+) -> Result<Option<Event>, StoreError> {
     let versions = store
         .query(
             Filter::new()
@@ -292,13 +293,13 @@ pub(crate) async fn load(
                 .identifier(address.d.clone())
                 .limit(50),
         )
-        .await;
-    newest(
+        .await?;
+    Ok(newest(
         versions
             .iter()
             .filter(|event| ArticleAddress::of(event).as_ref() == Some(address)),
     )
-    .cloned()
+    .cloned())
 }
 
 /// Whether `event` has a tag `name` whose value is `value`.
@@ -316,7 +317,7 @@ async fn naming(
     article: &Event,
     coordinate: &str,
     by_id: bool,
-) -> Vec<Event> {
+) -> Result<Vec<Event>, StoreError> {
     let mut found: Vec<Event> = store
         .query(
             Filter::new()
@@ -324,7 +325,7 @@ async fn naming(
                 .custom_tag(SingleLetterTag::LOWERCASE_A, coordinate.to_owned())
                 .limit(LIMIT),
         )
-        .await
+        .await?
         .into_iter()
         .filter(|event| tagged(event, "a", coordinate))
         .collect();
@@ -338,14 +339,14 @@ async fn naming(
                         .event(article.id)
                         .limit(LIMIT),
                 )
-                .await
+                .await?
                 .into_iter()
                 .filter(|event| tagged(event, "e", &id)),
         );
     }
     let mut seen = HashSet::new();
     found.retain(|event| seen.insert(event.id));
-    found
+    Ok(found)
 }
 
 pub(crate) async fn by_naddr(
@@ -372,52 +373,59 @@ pub(crate) async fn by_key(
 
 async fn page(pages: &Pages, address: &ArticleAddress, query: Option<&str>) -> Response {
     let store = &pages.store;
-    let Some(article) = load(store, address).await else {
+    let Some(article) = relay_ui::stored!(load(store, address).await) else {
         return not_found(pages);
     };
     let coordinate = address.coordinate();
-    let highlights = naming(store, HIGHLIGHT, &article, &coordinate, true).await;
-    let reactions = naming(store, REACTION, &article, &coordinate, true).await;
-    let boosts = naming(store, GENERIC_REPOST, &article, &coordinate, false).await;
-    let mut comments: Vec<Event> = store
-        .query(
-            Filter::new()
-                .kind(Kind::from(COMMENT))
-                .custom_tag(SingleLetterTag::UPPERCASE_A, coordinate.clone())
-                .limit(LIMIT),
-        )
-        .await
-        .into_iter()
-        .filter(|comment| tagged(comment, "A", &coordinate))
-        .collect();
+    let highlights = relay_ui::stored!(naming(store, HIGHLIGHT, &article, &coordinate, true).await);
+    let reactions = relay_ui::stored!(naming(store, REACTION, &article, &coordinate, true).await);
+    let boosts =
+        relay_ui::stored!(naming(store, GENERIC_REPOST, &article, &coordinate, false).await);
+    let mut comments: Vec<Event> = relay_ui::stored!(
+        store
+            .query(
+                Filter::new()
+                    .kind(Kind::from(COMMENT))
+                    .custom_tag(SingleLetterTag::UPPERCASE_A, coordinate.clone())
+                    .limit(LIMIT),
+            )
+            .await
+    )
+    .into_iter()
+    .filter(|comment| tagged(comment, "A", &coordinate))
+    .collect();
     comments.sort_by_key(|comment| (comment.created_at, comment.id));
 
-    let sets = store
-        .query(
-            Filter::new()
-                .kind(Kind::from(crate::kinds::CURATION_SET))
-                .author(address.author)
-                .custom_tag(SingleLetterTag::LOWERCASE_A, coordinate.clone())
-                .limit(200),
-        )
-        .await;
+    let sets = relay_ui::stored!(
+        store
+            .query(
+                Filter::new()
+                    .kind(Kind::from(crate::kinds::CURATION_SET))
+                    .author(address.author)
+                    .custom_tag(SingleLetterTag::LOWERCASE_A, coordinate.clone())
+                    .limit(200),
+            )
+            .await
+    );
     let series = series::series_of(&sets, address);
-    let titles = part_titles(store, &series).await;
+    let titles = relay_ui::stored!(part_titles(store, &series).await);
 
     let ids = mentioned_ids(&article.content, EMBEDS);
     let snippets: HashMap<EventId, Event> = if ids.is_empty() {
         HashMap::new()
     } else {
-        store
-            .query(Filter::new().ids(ids).kind(Kind::from(SNIPPET)))
-            .await
-            .into_iter()
-            .map(|event| (event.id, event))
-            .collect()
+        relay_ui::stored!(
+            store
+                .query(Filter::new().ids(ids).kind(Kind::from(SNIPPET)))
+                .await
+        )
+        .into_iter()
+        .map(|event| (event.id, event))
+        .collect()
     };
 
     let repos = post::repos_of(&article);
-    let cards = load_cards(store, repos.clone()).await;
+    let cards = relay_ui::stored!(load_cards(store, repos.clone()).await);
     let passages = highlights::passages(&highlights);
 
     let mut keys: Vec<PublicKey> = vec![article.pubkey];
@@ -438,7 +446,7 @@ async fn page(pages: &Pages, address: &ArticleAddress, query: Option<&str>) -> R
             keys.push(key);
         }
     }
-    let profiles = Profiles::load(store, &keys).await;
+    let profiles = relay_ui::stored!(Profiles::load(store, &keys).await);
     let links = pages.links();
     let no_demos = HashMap::new();
     let view = View {
@@ -464,7 +472,8 @@ async fn page(pages: &Pages, address: &ArticleAddress, query: Option<&str>) -> R
     let mut reported = crate::reports::Targets::default();
     reported.address(coordinate.clone(), "this article".to_owned());
     reported.event(article.id, "this article".to_owned());
-    let mut body = crate::reports::page_banner(store, &reported, query, None).await;
+    let mut body =
+        relay_ui::stored!(crate::reports::page_banner(store, &reported, query, None).await);
     body.push_str(&format!(
         "<div class=\"reader{}\">",
         if series.is_empty() { " no-series" } else { "" }
@@ -501,10 +510,10 @@ async fn page(pages: &Pages, address: &ArticleAddress, query: Option<&str>) -> R
 async fn part_titles(
     store: &relay_ui::ReadOnlyStore,
     series: &[Series],
-) -> HashMap<ArticleAddress, String> {
+) -> Result<HashMap<ArticleAddress, String>, StoreError> {
     let parts: Vec<&ArticleAddress> = series.iter().flat_map(|one| one.parts.iter()).collect();
     if parts.is_empty() {
-        return HashMap::new();
+        return Ok(HashMap::new());
     }
     let authors: HashSet<PublicKey> = parts.iter().map(|part| part.author).collect();
     let ds: HashSet<String> = parts.iter().map(|part| part.d.clone()).collect();
@@ -516,7 +525,7 @@ async fn part_titles(
                 .identifiers(ds)
                 .limit(LIMIT),
         )
-        .await;
+        .await?;
     let mut titles = HashMap::new();
     for part in parts {
         if titles.contains_key(part) {
@@ -536,7 +545,7 @@ async fn part_titles(
             titles.insert(part.clone(), title);
         }
     }
-    titles
+    Ok(titles)
 }
 
 /// The series nav: each series' parts in order, the one being read marked.

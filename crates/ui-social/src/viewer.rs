@@ -9,6 +9,7 @@ use nostr::event::{Event, Kind};
 use nostr::filter::Filter;
 use nostr::key::PublicKey;
 use relay_ui::ReadOnlyStore;
+use relay_ui::StoreError;
 use relay_ui::chrome::{escape, npub};
 
 use crate::kinds::FOLLOWS;
@@ -62,13 +63,16 @@ pub(crate) fn as_query(viewer: Option<&PublicKey>, first: bool) -> String {
 }
 
 /// The keys `viewer`'s newest kind 3 follow list names, once each.
-pub(crate) async fn follows(store: &ReadOnlyStore, viewer: &PublicKey) -> Vec<PublicKey> {
+pub(crate) async fn follows(
+    store: &ReadOnlyStore,
+    viewer: &PublicKey,
+) -> Result<Vec<PublicKey>, StoreError> {
     let lists: Vec<Event> = store
         .query(Filter::new().kind(Kind::from(FOLLOWS)).author(*viewer))
-        .await;
-    crate::feed::listed_keys(relay_ui::reading::newest(
+        .await?;
+    Ok(crate::feed::listed_keys(relay_ui::reading::newest(
         lists.iter().filter(|list| list.pubkey == *viewer),
-    ))
+    )))
 }
 
 /// A small form that reloads the page as another key (a `GET` back to the

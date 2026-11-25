@@ -21,6 +21,7 @@
 //! demo's place. Either way the relay serves and fetches nothing of either
 //! (ADR 0001).
 
+use relay_ui::StoreError;
 use std::collections::HashMap;
 
 use nostr::event::{Event, Kind};
@@ -128,7 +129,10 @@ pub(crate) fn choose(
 
 /// The site manifests `card`'s authorized authors signed whose `source` is
 /// the repo, newest first.
-pub(crate) async fn maker_sites(store: &ReadOnlyStore, card: &RepoCard) -> Vec<Event> {
+pub(crate) async fn maker_sites(
+    store: &ReadOnlyStore,
+    card: &RepoCard,
+) -> Result<Vec<Event>, StoreError> {
     let mut sites: Vec<Event> = store
         .query(
             Filter::new()
@@ -136,12 +140,12 @@ pub(crate) async fn maker_sites(store: &ReadOnlyStore, card: &RepoCard) -> Vec<E
                 .authors(card.authorized().to_vec())
                 .limit(SCAN),
         )
-        .await
+        .await?
         .into_iter()
         .filter(|site| card.is_maker(&site.pubkey) && is_manifest(site) && sourced_from(site, card))
         .collect();
     sites.sort_by(|a, b| (b.created_at, a.id).cmp(&(a.created_at, b.id)));
-    sites
+    Ok(sites)
 }
 
 /// `card`'s repo's live demo, linkable with `gateway`, if it has one.
@@ -149,9 +153,9 @@ pub(crate) async fn load(
     store: &ReadOnlyStore,
     card: &RepoCard,
     gateway: Option<&str>,
-) -> Option<Demo> {
+) -> Result<Option<Demo>, StoreError> {
     let sites = if gateway.is_some() {
-        maker_sites(store, card).await
+        maker_sites(store, card).await?
     } else {
         Vec::new()
     };
@@ -163,8 +167,8 @@ pub(crate) async fn load(
                 .custom_tag(SingleLetterTag::LOWERCASE_A, card.address().coordinate())
                 .limit(SCAN),
         )
-        .await;
-    choose(card, &sites, &apps, gateway)
+        .await?;
+    Ok(choose(card, &sites, &apps, gateway))
 }
 
 /// The demos of the repos in `cards`, for a page that draws them: a launch
@@ -174,7 +178,7 @@ pub(crate) async fn for_cards(
     cards: &HashMap<RepoAddress, RepoCard>,
     launches: &[(&Event, RepoAddress)],
     gateway: Option<&str>,
-) -> HashMap<RepoAddress, Demo> {
+) -> Result<HashMap<RepoAddress, Demo>, StoreError> {
     let mut demos = HashMap::new();
     for (event, repo) in launches {
         if let Some(card) = cards.get(repo)
@@ -188,11 +192,11 @@ pub(crate) async fn for_cards(
         if demos.contains_key(repo) {
             continue;
         }
-        if let Some(demo) = load(store, card, gateway).await {
+        if let Some(demo) = load(store, card, gateway).await? {
             demos.insert(repo.clone(), demo);
         }
     }
-    demos
+    Ok(demos)
 }
 
 #[cfg(test)]

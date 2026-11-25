@@ -27,6 +27,7 @@
 //! has a tag that links the two, and this relay's group metadata carries
 //! only the fields NIP-29 names.
 
+use relay_ui::StoreError;
 use std::collections::HashMap;
 
 use axum::extract::{Path, State};
@@ -78,18 +79,20 @@ impl Groups {
     }
 
     /// The room `id`, if the relay has signed metadata for it.
-    pub(crate) async fn room(&self, id: &str) -> Option<Room> {
-        rooms(&self.raw, self.signer, [id.to_owned()])
-            .await
-            .remove(id)
+    pub(crate) async fn room(&self, id: &str) -> Result<Option<Room>, StoreError> {
+        Ok(rooms(&self.raw, self.signer, [id.to_owned()])
+            .await?
+            .remove(id))
     }
 
     /// The room a repo keeps: the group named the repo's `d`, readable by
     /// anyone, that an authorized author of the repo administers.
-    pub(crate) async fn repo_room(&self, card: &RepoCard) -> Option<Room> {
-        let room = self.room(card.address().d()).await?;
+    pub(crate) async fn repo_room(&self, card: &RepoCard) -> Result<Option<Room>, StoreError> {
+        let Some(room) = self.room(card.address().d()).await? else {
+            return Ok(None);
+        };
         if !room.readable() {
-            return None;
+            return Ok(None);
         }
         let admins = self
             .raw
@@ -99,12 +102,14 @@ impl Groups {
                     .author(self.signer)
                     .identifier(room.id.clone()),
             )
-            .await;
-        let admins = newest(admins.iter().filter(|event| d_tag(event) == room.id))?;
-        listed_keys(admins)
+            .await?;
+        let Some(admins) = newest(admins.iter().filter(|event| d_tag(event) == room.id)) else {
+            return Ok(None);
+        };
+        Ok(listed_keys(admins)
             .iter()
             .any(|key| card.is_maker(key))
-            .then_some(room)
+            .then_some(room))
     }
 }
 
@@ -196,10 +201,10 @@ async fn rooms(
     store: &ReadOnlyStore,
     signer: PublicKey,
     ids: impl IntoIterator<Item = String>,
-) -> HashMap<String, Room> {
+) -> Result<HashMap<String, Room>, StoreError> {
     let ids: Vec<String> = ids.into_iter().collect();
     if ids.is_empty() {
-        return HashMap::new();
+        return Ok(HashMap::new());
     }
     let events = store
         .query(
@@ -208,7 +213,7 @@ async fn rooms(
                 .author(signer)
                 .identifiers(ids.clone()),
         )
-        .await;
+        .await?;
     let mut found = HashMap::new();
     for id in ids {
         let held = newest(
@@ -220,11 +225,16 @@ async fn rooms(
             found.insert(id, room);
         }
     }
-    found
+    Ok(found)
 }
 
 /// The newest `limit` events of `kind` in group `id`, oldest first.
-async fn in_room(store: &ReadOnlyStore, id: &str, kind: u16, limit: usize) -> Vec<Event> {
+async fn in_room(
+    store: &ReadOnlyStore,
+    id: &str,
+    kind: u16,
+    limit: usize,
+) -> Result<Vec<Event>, StoreError> {
     let mut events: Vec<Event> = store
         .query(
             Filter::new()
@@ -232,18 +242,18 @@ async fn in_room(store: &ReadOnlyStore, id: &str, kind: u16, limit: usize) -> Ve
                 .custom_tag(SingleLetterTag::LOWERCASE_H, id.to_owned())
                 .limit(limit),
         )
-        .await
+        .await?
         .into_iter()
         .filter(|event| first_tag_value(event, "h") == Some(id))
         .collect();
     events.sort_by_key(|event| (event.created_at, event.id));
     events.dedup_by_key(|event| event.id);
     let skip = events.len().saturating_sub(limit);
-    events.split_off(skip)
+    Ok(events.split_off(skip))
 }
 
 /// The live activities in room `id` (an `h` tag).
-async fn room_streams(store: &ReadOnlyStore, id: &str) -> Vec<Event> {
+async fn room_streams(store: &ReadOnlyStore, id: &str) -> Result<Vec<Event>, StoreError> {
     store
         .query(
             Filter::new()
@@ -329,7 +339,7 @@ fn transcript_html(names: &HashMap<PublicKey, String>, messages: &[Event]) -> St
 
 /// A room's card for a sidebar: its live banner, its latest messages and a
 /// link to it; or, for a room a visitor cannot read, what it needs.
-pub(crate) async fn room_card(pages: &Pages, room: &Room) -> String {
+pub(crate) async fn room_card(pages: &Pages, room: &Room) -> Result<String, StoreError> {
     let store = &pages.store;
     let head = format!(
         "<div class=\"box-header\"><a class=\"strong\" href=\"{}\">#{}</a><span class=\"grow\"></span>\
@@ -343,33 +353,33 @@ pub(crate) async fn room_card(pages: &Pages, room: &Room) -> String {
         },
     );
     if !room.readable() {
-        return format!(
+        return Ok(format!(
             "<section class=\"box room-card\" data-room=\"{}\">{head}<div class=\"box-body\">\
              <p class=\"muted small\">This room needs sign-in in a client.</p></div></section>",
             escape(&room.id)
-        );
+        ));
     }
-    let messages = in_room(store, &room.id, CHAT, PREVIEW).await;
-    let streams = room_streams(store, &room.id).await;
+    let messages = in_room(store, &room.id, CHAT, PREVIEW).await?;
+    let streams = room_streams(store, &room.id).await?;
     let keys: Vec<PublicKey> = messages.iter().map(|event| event.pubkey).collect();
-    let profiles = Profiles::load(store, &keys).await;
+    let profiles = Profiles::load(store, &keys).await?;
     let banner = live::banner(&streams, chrome::now()).unwrap_or_default();
-    format!(
+    Ok(format!(
         "<section class=\"box room-card\" data-room=\"{}\">{head}<div class=\"box-body stack-sm\">{banner}{}\
          <a href=\"{}\">Read the room</a></div><div class=\"box-footer\">{READ_ONLY_NOTE}</div></section>",
         escape(&room.id),
         transcript_html(profiles.names(), &messages),
         escape(&room.path()),
-    )
+    ))
 }
 
 /// The repo page sidebar's Room box, when the repo keeps a room.
-pub(crate) async fn repo_room_box(pages: &Pages, card: &RepoCard) -> String {
+pub(crate) async fn repo_room_box(pages: &Pages, card: &RepoCard) -> Result<String, StoreError> {
     let Some(groups) = pages.groups.as_ref() else {
-        return String::new();
+        return Ok(String::new());
     };
-    let Some(room) = groups.repo_room(card).await else {
-        return String::new();
+    let Some(room) = groups.repo_room(card).await? else {
+        return Ok(String::new());
     };
     let since = Timestamp::from(
         u64::try_from(chrome::now())
@@ -385,16 +395,16 @@ pub(crate) async fn repo_room_box(pages: &Pages, card: &RepoCard) -> String {
                 .since(since)
                 .limit(1_000),
         )
-        .await
+        .await?
         .len();
-    format!(
+    Ok(format!(
         "<div class=\"side-card\" data-room=\"{}\"><h2>Room</h2><p class=\"muted small\">#{}, a public \
          group on this relay (NIP-29). {today} {} today.</p><a href=\"{}\">Read the room</a></div>",
         escape(&room.id),
         escape(&room.name),
         plural(today, "message", "messages"),
         escape(&room.path()),
-    )
+    ))
 }
 
 /// `/social/g/<id>`: a room, read-only.
@@ -413,7 +423,7 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(id): Path<String>) -> 
             ),
         );
     };
-    let Some(room) = groups.room(&id).await else {
+    let Some(room) = relay_ui::stored!(groups.room(&id).await) else {
         // No room, or a private one: the relay serves neither's metadata
         // to a visitor, so the page cannot tell them apart.
         return html(
@@ -476,19 +486,21 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(id): Path<String>) -> 
         );
     }
     let store = &pages.store;
-    let messages = in_room(store, &room.id, CHAT, TRANSCRIPT).await;
-    let mut threads = in_room(store, &room.id, THREAD, THREADS).await;
+    let messages = relay_ui::stored!(in_room(store, &room.id, CHAT, TRANSCRIPT).await);
+    let mut threads = relay_ui::stored!(in_room(store, &room.id, THREAD, THREADS).await);
     threads.reverse();
-    let streams = room_streams(store, &room.id).await;
-    let members = groups
-        .raw
-        .query(
-            Filter::new()
-                .kinds([Kind::from(GROUP_MEMBERS), Kind::from(GROUP_ADMINS)])
-                .author(groups.signer)
-                .identifier(room.id.clone()),
-        )
-        .await;
+    let streams = relay_ui::stored!(room_streams(store, &room.id).await);
+    let members = relay_ui::stored!(
+        groups
+            .raw
+            .query(
+                Filter::new()
+                    .kinds([Kind::from(GROUP_MEMBERS), Kind::from(GROUP_ADMINS)])
+                    .author(groups.signer)
+                    .identifier(room.id.clone()),
+            )
+            .await
+    );
     let newest_of = |kind: u16| {
         newest(
             members
@@ -516,7 +528,7 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(id): Path<String>) -> 
             keys.push(key);
         }
     }
-    let profiles = Profiles::load(store, &keys).await;
+    let profiles = relay_ui::stored!(Profiles::load(store, &keys).await);
     let names = profiles.names();
 
     if let Some(banner) = live::banner(&streams, chrome::now()) {

@@ -11,10 +11,10 @@ use axum::response::Response;
 use nostr::event::{Event, Kind};
 use nostr::filter::{Filter, SingleLetterTag};
 use nostr::key::PublicKey;
-use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{self, App, Apps, Identicon, Profiles, escape};
 use relay_ui::meta::{Preview, summary};
 use relay_ui::reading::{self, Address, newest};
+use relay_ui::{ReadOnlyStore, StoreError};
 use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors, owner_announcement};
 use ui_preview::{Card, Face};
 
@@ -277,7 +277,10 @@ pub(crate) fn deployment_path(signer: &PublicKey, environment: &str) -> String {
 
 /// The Deployments in `events` that have the shape and have not expired,
 /// newest first, each with its state read from the store.
-async fn with_states(store: &ReadOnlyStore, events: &[Event]) -> Vec<(Deployment, Standing)> {
+async fn with_states(
+    store: &ReadOnlyStore,
+    events: &[Event],
+) -> Result<Vec<(Deployment, Standing)>, StoreError> {
     let now = crate::now();
     let mut deployments: Vec<Deployment> = events
         .iter()
@@ -285,7 +288,7 @@ async fn with_states(store: &ReadOnlyStore, events: &[Event]) -> Vec<(Deployment
         .collect();
     deployments.sort_by_key(|d| std::cmp::Reverse(d.created_at));
     if deployments.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let workloads: Vec<String> = deployments.iter().map(|d| d.workload.clone()).collect();
     let primaries: Vec<PublicKey> = deployments.iter().map(|d| d.primary).collect();
@@ -304,7 +307,8 @@ async fn with_states(store: &ReadOnlyStore, events: &[Event]) -> Vec<(Deployment
         ),
         store.query(directory_filter(LIVENESS_KIND).authors(primaries)),
     );
-    deployments
+    let (evictions, takeovers, liveness) = (evictions?, takeovers?, liveness?);
+    Ok(deployments
         .into_iter()
         .map(|d| {
             let s = state(
@@ -315,23 +319,26 @@ async fn with_states(store: &ReadOnlyStore, events: &[Event]) -> Vec<(Deployment
             );
             (d, s)
         })
-        .collect()
+        .collect())
 }
 
 /// The Deployments that name `provider` in a `p` tag, each with its state.
-pub(crate) async fn serving(pages: &Pages, provider: &PublicKey) -> Vec<(Deployment, Standing)> {
+pub(crate) async fn serving(
+    pages: &Pages,
+    provider: &PublicKey,
+) -> Result<Vec<(Deployment, Standing)>, StoreError> {
     let events = pages
         .store
         .query(
             directory_filter(DEPLOYMENT_KIND)
                 .custom_tag(SingleLetterTag::LOWERCASE_P, provider.to_hex()),
         )
-        .await;
-    with_states(&pages.store, &events)
-        .await
+        .await?;
+    Ok(with_states(&pages.store, &events)
+        .await?
         .into_iter()
         .filter(|(d, _)| d.names(provider))
-        .collect()
+        .collect())
 }
 
 /// A state as a short phrase, naming keys by `names`.
@@ -391,11 +398,11 @@ fn keys(deployment: &Deployment, state: &Standing) -> Vec<PublicKey> {
 async fn names_of(
     store: &ReadOnlyStore,
     served: &[(Deployment, Standing)],
-) -> HashMap<PublicKey, String> {
+) -> Result<HashMap<PublicKey, String>, StoreError> {
     let mut all: Vec<PublicKey> = served.iter().flat_map(|(d, s)| keys(d, s)).collect();
     all.sort();
     all.dedup();
-    Profiles::load(store, &all).await.into_names()
+    Ok(Profiles::load(store, &all).await?.into_names())
 }
 
 /// A Deployment's commit, shown as `label`, linked into `/repo` while that
@@ -413,13 +420,16 @@ fn commit_html(deployment: &Deployment, repo_on: bool, label: &str) -> String {
 }
 
 /// The Serving section of a provider page. `served` is [`serving`]'s answer for the provider.
-pub(crate) async fn serving_section(pages: &Pages, served: &[(Deployment, Standing)]) -> String {
+pub(crate) async fn serving_section(
+    pages: &Pages,
+    served: &[(Deployment, Standing)],
+) -> Result<String, StoreError> {
     let mut body = String::from("<h2>Serving</h2>");
     if served.is_empty() {
         body.push_str("<div class=\"box\"><div class=\"empty\">No Deployments name this provider.</div></div>");
-        return body;
+        return Ok(body);
     }
-    let names = names_of(&pages.store, served).await;
+    let names = names_of(&pages.store, served).await?;
     body.push_str(
         "<div class=\"box\"><div class=\"table-wrap\"><table class=\"data-table\">\
          <thead><tr><th>Deployment</th><th>Repository</th><th>State</th></tr></thead><tbody>",
@@ -437,7 +447,7 @@ pub(crate) async fn serving_section(pages: &Pages, served: &[(Deployment, Standi
         ));
     }
     body.push_str("</tbody></table></div></div>");
-    body
+    Ok(body)
 }
 
 /// The Environments tab's body for `repo` on `/repo`: the Deployments of
@@ -449,25 +459,27 @@ pub(crate) async fn environments(
     apps: &Apps,
     repo: &RepoAddress,
     authorized: &[PublicKey],
-) -> String {
+) -> Result<String, StoreError> {
     let events = store
         .query(
             directory_filter(DEPLOYMENT_KIND)
                 .custom_tag(SingleLetterTag::LOWERCASE_A, repo.coordinate())
                 .authors(authorized.iter().copied()),
         )
-        .await;
+        .await?;
     let served: Vec<(Deployment, Standing)> = with_states(store, &events)
-        .await
+        .await?
         .into_iter()
         .filter(|(d, _)| d.repo == *repo)
         .collect();
     if served.is_empty() {
-        return "<div class=\"box\"><div class=\"empty\">No environments: the repository's \
+        return Ok(
+            "<div class=\"box\"><div class=\"empty\">No environments: the repository's \
                 owner and maintainers have published no Deployment of it to this relay.</div></div>"
-            .to_owned();
+                .to_owned(),
+        );
     }
-    let names = names_of(store, &served).await;
+    let names = names_of(store, &served).await?;
     let repo_on = apps.serves(App::Repo);
     let mut body = String::from(
         "<div class=\"box\"><div class=\"table-wrap\"><table class=\"data-table\">\
@@ -495,7 +507,7 @@ pub(crate) async fn environments(
         ));
     }
     body.push_str("</tbody></table></div></div>");
-    body
+    Ok(body)
 }
 
 /// The repository, linked into `/repo` while that app is on.
@@ -512,7 +524,7 @@ async fn load(
     pages: &Pages,
     signer: PublicKey,
     environment: &str,
-) -> Option<(Deployment, Standing)> {
+) -> Result<Option<(Deployment, Standing)>, StoreError> {
     let events = pages
         .store
         .query(
@@ -520,12 +532,12 @@ async fn load(
                 .author(signer)
                 .identifier(environment.to_owned()),
         )
-        .await;
+        .await?;
     let events: Vec<Event> = newest(&events).cloned().into_iter().collect();
-    with_states(&pages.store, &events)
-        .await
+    Ok(with_states(&pages.store, &events)
+        .await?
         .into_iter()
-        .find(|(d, _)| d.environment == environment)
+        .find(|(d, _)| d.environment == environment))
 }
 
 /// A Deployment's card.
@@ -555,13 +567,17 @@ pub(crate) async fn deployment_card(
     Path((npub, file)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    let card = async {
-        let signer = parse_pubkey(&npub)?;
-        let (d, s) = load(&pages, signer, card_stem(&file)?).await?;
+    let card: Result<Option<Card>, StoreError> = async {
+        let (Some(signer), Some(environment)) = (parse_pubkey(&npub), card_stem(&file)) else {
+            return Ok(None);
+        };
+        let Some((d, s)) = load(&pages, signer, environment).await? else {
+            return Ok(None);
+        };
         let names = Profiles::load(&pages.store, &keys(&d, &s))
-            .await
+            .await?
             .into_names();
-        Some(Card::new(
+        Ok(Some(Card::new(
             pages.card_host(),
             Face::Deployment(ui_preview::Deployment {
                 repo: d.repo.d().to_owned(),
@@ -571,10 +587,10 @@ pub(crate) async fn deployment_card(
                 state: state_text(&s, &names),
                 running: matches!(s, Standing::Running { .. }),
             }),
-        ))
+        )))
     }
     .await;
-    pages.previews.respond(&headers, card).await
+    pages.previews.respond_result(&headers, card).await
 }
 
 /// `/compute/d/<npub>/<environment>`: one Deployment.
@@ -585,18 +601,20 @@ pub(crate) async fn deployment_page(
     let Some(signer) = parse_pubkey(&npub) else {
         return fallback(State(pages)).await;
     };
-    let Some((d, s)) = load(&pages, signer, &environment).await else {
+    let Some((d, s)) = relay_ui::stored!(load(&pages, signer, &environment).await) else {
         return fallback(State(pages)).await;
     };
-    let announcements = pages
-        .store
-        .query(
-            Filter::new()
-                .kind(Kind::from(ANNOUNCEMENT))
-                .author(*d.repo.owner())
-                .identifier(d.repo.d().to_owned()),
-        )
-        .await;
+    let announcements = relay_ui::stored!(
+        pages
+            .store
+            .query(
+                Filter::new()
+                    .kind(Kind::from(ANNOUNCEMENT))
+                    .author(*d.repo.owner())
+                    .identifier(d.repo.d().to_owned()),
+            )
+            .await
+    );
     // The owner is named by the repository address itself; a maintainer only
     // by the owner's announcement.
     let authorized = d.signer == *d.repo.owner()
@@ -606,7 +624,7 @@ pub(crate) async fn deployment_page(
     all.push(*d.repo.owner());
     all.sort();
     all.dedup();
-    let names = Profiles::load(&pages.store, &all).await.into_names();
+    let names = relay_ui::stored!(Profiles::load(&pages.store, &all).await).into_names();
 
     let commit = commit_html(&d, pages.apps.serves(App::Repo), &d.commit);
     let mut rows = vec![

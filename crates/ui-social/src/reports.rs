@@ -20,6 +20,7 @@
 //! and removal stays the operator's blocklist (`docs/retention.md`). A
 //! person's reports count once.
 
+use relay_ui::StoreError;
 use std::collections::{HashMap, HashSet};
 
 use axum::extract::{Path, RawQuery, State};
@@ -184,9 +185,12 @@ pub(crate) fn tally(
 }
 
 /// The reports in the store that name one of `targets`, newest first.
-pub(crate) async fn load(store: &ReadOnlyStore, targets: &Targets) -> Vec<Event> {
+pub(crate) async fn load(
+    store: &ReadOnlyStore,
+    targets: &Targets,
+) -> Result<Vec<Event>, StoreError> {
     if targets.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let mut found: Vec<Event> = Vec::new();
     for (tag, values) in [
@@ -206,13 +210,13 @@ pub(crate) async fn load(store: &ReadOnlyStore, targets: &Targets) -> Vec<Event>
                         .custom_tags(tag, values.keys().cloned())
                         .limit(LIMIT),
                 )
-                .await,
+                .await?,
         );
     }
     found.retain(|report| reason(report, targets).is_some());
     found.sort_by(|a, b| (b.created_at, a.id).cmp(&(a.created_at, b.id)));
     found.dedup_by_key(|report| report.id);
-    found
+    Ok(found)
 }
 
 /// `malware (2), spam (1)`.
@@ -330,17 +334,21 @@ async fn reports_page(
     let store = &pages.store;
     let viewer = as_key(query);
     let follows: Option<HashSet<PublicKey>> = match &viewer {
-        Some(viewer) => Some(viewer::follows(store, viewer).await.into_iter().collect()),
+        Some(viewer) => Some(
+            relay_ui::stored!(viewer::follows(store, viewer).await)
+                .into_iter()
+                .collect(),
+        ),
         None => None,
     };
-    let found = load(store, targets).await;
+    let found = relay_ui::stored!(load(store, targets).await);
     let mut keys: Vec<PublicKey> = Vec::new();
     for key in found.iter().map(|report| report.pubkey).chain(viewer) {
         if !keys.contains(&key) {
             keys.push(key);
         }
     }
-    let profiles = Profiles::load(store, &keys).await;
+    let profiles = relay_ui::stored!(Profiles::load(store, &keys).await);
     let names = profiles.names();
     let everyone = tally(&found, targets, None);
     let mut body = format!(
@@ -391,14 +399,17 @@ async fn reports_page(
 
 /// What a report about a repo may name: the repo, and the app listings its
 /// makers publish for it with their releases and files.
-pub(crate) async fn repo_targets(store: &ReadOnlyStore, card: &RepoCard) -> Targets {
+pub(crate) async fn repo_targets(
+    store: &ReadOnlyStore,
+    card: &RepoCard,
+) -> Result<Targets, StoreError> {
     let mut targets = Targets::default();
     targets.address(
         card.address().coordinate(),
         format!("the repo {}", card.name()),
     );
-    for app in apps::apps_of_repo(store, card).await {
-        apps::add_targets(store, &app, &mut targets).await;
+    for app in apps::apps_of_repo(store, card).await? {
+        apps::add_targets(store, &app, &mut targets).await?;
     }
     // The makers' own posts about it: its launches and release notes.
     let posts = store
@@ -409,11 +420,11 @@ pub(crate) async fn repo_targets(store: &ReadOnlyStore, card: &RepoCard) -> Targ
                 .custom_tag(SingleLetterTag::LOWERCASE_A, card.address().coordinate())
                 .limit(MAKER_POSTS),
         )
-        .await;
+        .await?;
     for post in posts {
         targets.event(post.id, "a maker's post about it".to_owned());
     }
-    targets
+    Ok(targets)
 }
 
 /// `/social/r/<npub>/<d>/reports`.
@@ -425,10 +436,10 @@ pub(crate) async fn repo(
     let Some(repo) = parse_pubkey(&owner).and_then(|owner| RepoAddress::new(owner, &d)) else {
         return not_found(&pages);
     };
-    let Some(card) = RepoCard::load(&pages.store, &repo).await else {
+    let Some(card) = relay_ui::stored!(RepoCard::load(&pages.store, &repo).await) else {
         return not_found(&pages);
     };
-    let targets = repo_targets(&pages.store, &card).await;
+    let targets = relay_ui::stored!(repo_targets(&pages.store, &card).await);
     let back = format!("{PREFIX}/r/{}", repo.path_segments());
     reports_page(
         &pages,
@@ -450,11 +461,11 @@ pub(crate) async fn app(
     let Some(address) = apps::address_of_path(&owner, &d) else {
         return not_found(&pages);
     };
-    let Some(app) = apps::find(&pages.store, &address).await else {
+    let Some(app) = relay_ui::stored!(apps::find(&pages.store, &address).await) else {
         return not_found(&pages);
     };
     let mut targets = Targets::default();
-    apps::add_targets(&pages.store, &app, &mut targets).await;
+    relay_ui::stored!(apps::add_targets(&pages.store, &app, &mut targets).await);
     reports_page(
         &pages,
         app.name(),
@@ -475,9 +486,9 @@ pub(crate) async fn post_banner(
     launched: Option<&RepoCard>,
     links: &ui_nip34::card::Links,
     query: Option<&str>,
-) -> String {
+) -> Result<String, StoreError> {
     let mut targets = match launched {
-        Some(card) => repo_targets(store, card).await,
+        Some(card) => repo_targets(store, card).await?,
         None => Targets::default(),
     };
     targets.event(event.id, "this post".to_owned());
@@ -496,27 +507,27 @@ pub(crate) async fn page_banner(
     targets: &Targets,
     query: Option<&str>,
     link: Option<&str>,
-) -> String {
-    let found = load(store, targets).await;
+) -> Result<String, StoreError> {
+    let found = load(store, targets).await?;
     if found.is_empty() {
-        return String::new();
+        return Ok(String::new());
     }
     let viewer = as_key(query);
     let follows: Option<HashSet<PublicKey>> = match &viewer {
-        Some(viewer) => Some(viewer::follows(store, viewer).await.into_iter().collect()),
+        Some(viewer) => Some(viewer::follows(store, viewer).await?.into_iter().collect()),
         None => None,
     };
     let names = match &viewer {
-        Some(viewer) => Profiles::load(store, &[*viewer]).await.into_names(),
+        Some(viewer) => Profiles::load(store, &[*viewer]).await?.into_names(),
         None => HashMap::new(),
     };
-    banner(
+    Ok(banner(
         &found,
         targets,
         viewer.as_ref().zip(follows.as_ref()),
         &names,
         link,
-    )
+    ))
 }
 
 #[cfg(test)]

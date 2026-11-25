@@ -11,6 +11,7 @@
 //! owner wrote as text, "Tip split (set by the owner)", and nothing that
 //! looks like a button. `docs/apps/social.md` says how the pages draw tips.
 
+use relay_ui::StoreError;
 use std::collections::{HashMap, HashSet};
 
 use nostr::event::{Event, EventId, Kind};
@@ -169,7 +170,7 @@ pub(crate) async fn totals(
     store: &ReadOnlyStore,
     recipient: &PublicKey,
     subject: &Subject,
-) -> Totals {
+) -> Result<Totals, StoreError> {
     let filter = Filter::new()
         .kind(Kind::from(TIP_ACKNOWLEDGEMENT))
         .author(*recipient)
@@ -181,13 +182,16 @@ pub(crate) async fn totals(
             filter.custom_tag(SingleLetterTag::LOWERCASE_A, coordinate.as_str())
         }
     };
-    tally(&store.query(filter).await, recipient, subject)
+    Ok(tally(&store.query(filter).await?, recipient, subject))
 }
 
 /// Whether `key` can be tipped: its newest tip route (kind 10850) names a
 /// connector, an ILP address and a sealing key. Read-only; the route's
 /// details are the payer's to read from the connector.
-pub(crate) async fn route_card(store: &ReadOnlyStore, key: &PublicKey) -> String {
+pub(crate) async fn route_card(
+    store: &ReadOnlyStore,
+    key: &PublicKey,
+) -> Result<String, StoreError> {
     let routes = store
         .query(
             Filter::new()
@@ -195,25 +199,25 @@ pub(crate) async fn route_card(store: &ReadOnlyStore, key: &PublicKey) -> String
                 .author(*key)
                 .limit(1),
         )
-        .await;
+        .await?;
     let tagged = |event: &Event, wanted: &str| {
         event.tags.iter().map(|tag| tag.as_slice()).any(
             |tag| matches!(tag, [name, value, ..] if name == wanted && !value.trim().is_empty()),
         )
     };
     let Some(route) = routes.first() else {
-        return String::new();
+        return Ok(String::new());
     };
     if !["connector_url", "ilp_address", "connector_seal_key"]
         .iter()
         .all(|wanted| tagged(route, wanted))
     {
-        return String::new();
+        return Ok(String::new());
     }
-    "<div class=\"side-card\" data-tip-route><h2>Can be tipped</h2><p class=\"muted small\">This \
+    Ok("<div class=\"side-card\" data-tip-route><h2>Can be tipped</h2><p class=\"muted small\">This \
      person has published a tip route. This page cannot send a tip: a client does, with a \
      payment.</p></div>"
-        .to_owned()
+        .to_owned())
 }
 
 /// A card with the tips received, or nothing when none counted.

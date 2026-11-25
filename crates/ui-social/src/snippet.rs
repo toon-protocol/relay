@@ -154,8 +154,7 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(target): Path<String>)
         return not_found(&pages);
     };
     let store = &pages.store;
-    let Some(snippet) = event_by_id(store, id)
-        .await
+    let Some(snippet) = relay_ui::stored!(event_by_id(store, id).await)
         .filter(|event| event.kind.as_u16() == SNIPPET)
     else {
         return not_found(&pages);
@@ -165,26 +164,28 @@ pub(crate) async fn page(State(pages): State<Pages>, Path(target): Path<String>)
         Some(Origin::Repo(repo)) => vec![repo.clone()],
         _ => Vec::new(),
     };
-    let cards = load_cards(store, repos.clone()).await;
-    let replies = note::replies(store, &snippet).await;
-    let reactions: Vec<Event> = store
-        .query(
-            Filter::new()
-                .kind(Kind::from(REACTION))
-                .event(snippet.id)
-                .limit(LIMIT),
-        )
-        .await
-        .into_iter()
-        .filter(|reaction| note::answers(reaction, &snippet.id.to_hex()))
-        .collect();
+    let cards = relay_ui::stored!(load_cards(store, repos.clone()).await);
+    let replies = relay_ui::stored!(note::replies(store, &snippet).await);
+    let reactions: Vec<Event> = relay_ui::stored!(
+        store
+            .query(
+                Filter::new()
+                    .kind(Kind::from(REACTION))
+                    .event(snippet.id)
+                    .limit(LIMIT),
+            )
+            .await
+    )
+    .into_iter()
+    .filter(|reaction| note::answers(reaction, &snippet.id.to_hex()))
+    .collect();
     let mut keys: Vec<PublicKey> = vec![snippet.pubkey];
     for reply in &replies {
         if !keys.contains(&reply.pubkey) {
             keys.push(reply.pubkey);
         }
     }
-    let profiles = Profiles::load(store, &keys).await;
+    let profiles = relay_ui::stored!(Profiles::load(store, &keys).await);
     let links = pages.links();
     let no_demos = HashMap::new();
     let view = View {

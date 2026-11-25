@@ -47,7 +47,7 @@ use relay_ui::chrome::{
     shown_name,
 };
 use relay_ui::meta::Preview;
-use relay_ui::{AppUi, Assets, ReadOnlyStore};
+use relay_ui::{AppUi, Assets, ReadOnlyStore, StoreError};
 use ui_preview::Previews;
 
 use search::Sort;
@@ -82,7 +82,10 @@ pub const UNAVAILABLE: &str = "git browsing unavailable";
 /// its announcement authorizes (ADR 0002), the HTML of the environments they
 /// signed. `ui-compute` supplies it, since it owns the Deployment.
 pub type Environments = Arc<
-    dyn Fn(RepoAddress, Vec<PublicKey>) -> Pin<Box<dyn Future<Output = String> + Send>>
+    dyn Fn(
+            RepoAddress,
+            Vec<PublicKey>,
+        ) -> Pin<Box<dyn Future<Output = Result<String, StoreError>> + Send>>
         + Send
         + Sync,
 >;
@@ -148,13 +151,15 @@ async fn environments_page(
     let (Some(draw), true) = (&pages.environments, pages.apps.serves(App::Compute)) else {
         return not_found(&pages.apps);
     };
-    let Some((owner, announcement)) = resolve_repo(&pages.store, &npub, &d).await else {
+    let Some((owner, announcement)) =
+        relay_ui::stored!(resolve_repo(&pages.store, &npub, &d).await)
+    else {
         return not_found(&pages.apps);
     };
     let Some(address) = RepoAddress::new(owner, &d) else {
         return not_found(&pages.apps);
     };
-    let names = names(&pages.store, &lineage::named_keys(&announcement)).await;
+    let names = relay_ui::stored!(names(&pages.store, &lineage::named_keys(&announcement)).await);
     let mut body = repo_header(
         &pages.apps,
         &owner,
@@ -163,7 +168,9 @@ async fn environments_page(
         &names,
         Tab::Environments,
     );
-    body.push_str(&draw(address, authorized_authors(&announcement)).await);
+    body.push_str(&relay_ui::stored!(
+        draw(address, authorized_authors(&announcement)).await
+    ));
     let preview = repo_preview(
         &pages.apps,
         pages.defaults.relay_host.clone(),
@@ -447,16 +454,18 @@ async fn list(
         sort_named: sort_name.is_some(),
         query,
     };
-    let events = store
-        .query(
-            Filter::new()
-                .kind(Kind::from(ANNOUNCEMENT))
-                .limit(LIST_LIMIT),
-        )
-        .await;
+    let events = relay_ui::stored!(
+        store
+            .query(
+                Filter::new()
+                    .kind(Kind::from(ANNOUNCEMENT))
+                    .limit(LIST_LIMIT),
+            )
+            .await
+    );
     let repos = latest_announcements(&events);
     let owners: Vec<PublicKey> = repos.iter().map(|repo| repo.pubkey).collect();
-    let names = names(&store, &owners).await;
+    let names = relay_ui::stored!(names(&store, &owners).await);
     let found = search::find(&repos, &names, &words, asked.topic.as_deref(), asked.sort);
     let mut body = search_hero(&asked, &repos);
     if repos.is_empty() {
@@ -509,8 +518,14 @@ async fn list(
 
 /// The repo at `/repo/<npub>/<d>`: its owner and the owner's latest
 /// announcement, or none.
-async fn resolve_repo(store: &ReadOnlyStore, npub: &str, d: &str) -> Option<(PublicKey, Event)> {
-    let owner = PublicKey::from_bech32(npub).ok()?;
+async fn resolve_repo(
+    store: &ReadOnlyStore,
+    npub: &str,
+    d: &str,
+) -> Result<Option<(PublicKey, Event)>, StoreError> {
+    let Ok(owner) = PublicKey::from_bech32(npub) else {
+        return Ok(None);
+    };
     let announcements = store
         .query(
             Filter::new()
@@ -518,9 +533,9 @@ async fn resolve_repo(store: &ReadOnlyStore, npub: &str, d: &str) -> Option<(Pub
                 .author(owner)
                 .identifier(d),
         )
-        .await;
-    let announcement = owner_announcement(&owner, d, &announcements)?;
-    Some((owner, announcement.clone()))
+        .await?;
+    Ok(owner_announcement(&owner, d, &announcements)
+        .map(|announcement| (owner, announcement.clone())))
 }
 
 async fn home(
@@ -533,21 +548,24 @@ async fn home(
     }): State<Pages>,
     Path((owner, d)): Path<(String, String)>,
 ) -> Response {
-    let Some((owner, announcement)) = resolve_repo(&store, &owner, &d).await else {
+    let Some((owner, announcement)) = relay_ui::stored!(resolve_repo(&store, &owner, &d).await)
+    else {
         return not_found(&apps);
     };
     let announcement = &announcement;
     let authors = authorized_authors(announcement);
-    let states = store
-        .query(
-            Filter::new()
-                .kind(Kind::from(STATE))
-                .authors(authors.clone())
-                .identifier(d.clone()),
-        )
-        .await;
+    let states = relay_ui::stored!(
+        store
+            .query(
+                Filter::new()
+                    .kind(Kind::from(STATE))
+                    .authors(authors.clone())
+                    .identifier(d.clone()),
+            )
+            .await
+    );
     let state = honoured_state(announcement, &states);
-    let names = names(&store, &lineage::named_keys(announcement)).await;
+    let names = relay_ui::stored!(names(&store, &lineage::named_keys(announcement)).await);
     let base = repo_path(&owner, &d);
 
     let mut body = repo_header(&apps, &owner, &d, announcement, &names, Tab::Code);
@@ -557,7 +575,7 @@ async fn home(
         (Some(state), Some(branch)) => body.push_str(&ref_menu(&base, "tree", branch, state)),
         _ => body.push_str("<span></span>"),
     }
-    let nip05 = Profiles::load(&store, &[owner]).await;
+    let nip05 = relay_ui::stored!(Profiles::load(&store, &[owner]).await);
     let nostr_urls = RepoAddress::new(owner, &d)
         .map(|address| {
             card::clone_urls(
@@ -752,7 +770,7 @@ async fn redirect(
     let Some(id) = id else {
         return not_found(&apps);
     };
-    let events = store.query(Filter::new().id(id)).await;
+    let events = relay_ui::stored!(store.query(Filter::new().id(id)).await);
     let Some(event) = events.iter().find(|event| event.id == id) else {
         return not_found(&apps);
     };

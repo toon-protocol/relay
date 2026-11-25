@@ -28,9 +28,9 @@ use nostr::key::PublicKey;
 use nostr::nips::nip01::Coordinate;
 use nostr::nips::nip19::{Nip19Coordinate, ToBech32};
 use nostr::types::RelayUrl;
-use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{Profiles, escape, percent_encode};
 use relay_ui::reading::{d_tag, newest};
+use relay_ui::{ReadOnlyStore, StoreError};
 use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress};
 
 use crate::kinds::{APP_HANDLER, FOLLOWS, GIT_AUTHORS, HANDLER_RECOMMENDATION};
@@ -244,7 +244,7 @@ pub(crate) fn followed_by(viewer: &PublicKey, lists: &[Event]) -> HashSet<Public
 pub(crate) async fn load(
     store: &ReadOnlyStore,
     viewer: Option<&PublicKey>,
-) -> (Vec<Choice>, Profiles) {
+) -> Result<(Vec<Choice>, Profiles), StoreError> {
     let recommendations = store
         .query(
             Filter::new()
@@ -252,9 +252,9 @@ pub(crate) async fn load(
                 .identifier(ANNOUNCEMENT.to_string())
                 .limit(SCAN),
         )
-        .await;
+        .await?;
     if recommendations.is_empty() {
-        return (Vec::new(), Profiles::default());
+        return Ok((Vec::new(), Profiles::default()));
     }
     let handlers = store
         .query(
@@ -263,7 +263,7 @@ pub(crate) async fn load(
                 .custom_tag(SingleLetterTag::LOWERCASE_K, ANNOUNCEMENT.to_string())
                 .limit(SCAN),
         )
-        .await;
+        .await?;
     let follows = match viewer {
         Some(viewer) => {
             let lists = store
@@ -272,7 +272,7 @@ pub(crate) async fn load(
                         .kinds([Kind::from(FOLLOWS), Kind::from(GIT_AUTHORS)])
                         .author(*viewer),
                 )
-                .await;
+                .await?;
             followed_by(viewer, &lists)
         }
         None => HashSet::new(),
@@ -280,8 +280,8 @@ pub(crate) async fn load(
     let mut choices = rank(&handlers, &recommendations, &follows);
     choices.truncate(SHOWN);
     let keys: Vec<PublicKey> = choices.iter().map(|choice| choice.handler.pubkey).collect();
-    let profiles = Profiles::load(store, &keys).await;
-    (choices, profiles)
+    let profiles = Profiles::load(store, &keys).await?;
+    Ok((choices, profiles))
 }
 
 /// What a handler is called: its metadata's name, else its key's profile

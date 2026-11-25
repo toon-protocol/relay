@@ -9,6 +9,7 @@
 //! hides; it removes nothing from the store, and someone reading without
 //! the lens sees everything.
 
+use relay_ui::StoreError;
 use std::collections::HashSet;
 
 use nostr::event::{Event, EventId, Kind};
@@ -31,13 +32,16 @@ pub(crate) struct Mutes {
 
 impl Mutes {
     /// The newest mute list of `viewer` in the store, or nothing muted.
-    pub(crate) async fn load(store: &ReadOnlyStore, viewer: &PublicKey) -> Self {
+    pub(crate) async fn load(
+        store: &ReadOnlyStore,
+        viewer: &PublicKey,
+    ) -> Result<Self, StoreError> {
         let lists = store
             .query(Filter::new().kind(Kind::from(MUTE_LIST)).author(*viewer))
-            .await;
-        newest(lists.iter().filter(|list| list.pubkey == *viewer))
+            .await?;
+        Ok(newest(lists.iter().filter(|list| list.pubkey == *viewer))
             .map(Self::from_list)
-            .unwrap_or_default()
+            .unwrap_or_default())
     }
 
     /// The public items of a mute list. A pure function.

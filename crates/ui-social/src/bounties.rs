@@ -18,6 +18,7 @@
 //! NIP-75 tallies Lightning zap receipts (kind 9735), which TOON does not
 //! produce, and the relay never checks a payment. So no bar is drawn.
 
+use relay_ui::StoreError;
 use std::collections::{HashMap, HashSet};
 
 use axum::extract::{RawQuery, State};
@@ -160,7 +161,9 @@ pub(crate) struct Bounty {
 
 /// Every bounty on this relay that names a repo or an issue, newest first,
 /// with its status.
-pub(crate) async fn load(store: &ReadOnlyStore) -> (Vec<Bounty>, HashMap<RepoAddress, RepoCard>) {
+pub(crate) async fn load(
+    store: &ReadOnlyStore,
+) -> Result<(Vec<Bounty>, HashMap<RepoAddress, RepoCard>), StoreError> {
     let mut held: HashMap<Address, Event> = HashMap::new();
     for listing in store
         .query(
@@ -169,7 +172,7 @@ pub(crate) async fn load(store: &ReadOnlyStore) -> (Vec<Bounty>, HashMap<RepoAdd
                 .custom_tag(SingleLetterTag::LOWERCASE_T, "bounty")
                 .limit(LIMIT),
         )
-        .await
+        .await?
         .into_iter()
         .filter(is_bounty)
     {
@@ -197,7 +200,7 @@ pub(crate) async fn load(store: &ReadOnlyStore) -> (Vec<Bounty>, HashMap<RepoAdd
     } else {
         store
             .query(Filter::new().kind(Kind::from(ISSUE)).ids(issue_ids))
-            .await
+            .await?
             .into_iter()
             .map(|issue| (issue.id, issue))
             .collect()
@@ -237,7 +240,7 @@ pub(crate) async fn load(store: &ReadOnlyStore) -> (Vec<Bounty>, HashMap<RepoAdd
             repos.push(repo);
         }
     }
-    let cards = load_cards(store, repos).await;
+    let cards = load_cards(store, repos).await?;
     // The statuses of the issues, from honoured authors only, so a
     // stranger's cannot crowd one out of the query's limit.
     let mut authors: HashSet<PublicKey> = HashSet::new();
@@ -264,7 +267,7 @@ pub(crate) async fn load(store: &ReadOnlyStore) -> (Vec<Bounty>, HashMap<RepoAdd
                     .authors(authors)
                     .limit(LIMIT * 4),
             )
-            .await
+            .await?
     };
     for bounty in &mut bounties {
         let resolved = bounty.issue.as_ref().is_some_and(|issue| {
@@ -281,31 +284,37 @@ pub(crate) async fn load(store: &ReadOnlyStore) -> (Vec<Bounty>, HashMap<RepoAdd
     bounties.sort_by(|a, b| {
         (b.listing.created_at, a.listing.id).cmp(&(a.listing.created_at, b.listing.id))
     });
-    (bounties, cards)
+    Ok((bounties, cards))
 }
 
 /// How many open bounties name `repo` (or one of its issues).
-pub(crate) async fn open_count(store: &ReadOnlyStore, repo: &RepoAddress) -> usize {
-    let (bounties, _) = load(store).await;
-    bounties
+pub(crate) async fn open_count(
+    store: &ReadOnlyStore,
+    repo: &RepoAddress,
+) -> Result<usize, StoreError> {
+    let (bounties, _) = load(store).await?;
+    Ok(bounties
         .iter()
         .filter(|bounty| bounty.status == Status::Open && bounty.repo.as_ref() == Some(repo))
-        .count()
+        .count())
 }
 
 /// The repo page's sidebar card: its open bounties, or nothing.
-pub(crate) async fn repo_sidebar(store: &ReadOnlyStore, repo: &RepoAddress) -> String {
-    let open = open_count(store, repo).await;
+pub(crate) async fn repo_sidebar(
+    store: &ReadOnlyStore,
+    repo: &RepoAddress,
+) -> Result<String, StoreError> {
+    let open = open_count(store, repo).await?;
     if open == 0 {
-        return String::new();
+        return Ok(String::new());
     }
-    format!(
+    Ok(format!(
         "<div class=\"side-card\" data-open-bounties=\"{open}\"><h2>Bounties</h2><p>\
          <a href=\"{PREFIX}/bounties?repo={}\">{open} open {}</a> {} here.</p></div>",
         percent_encode(&repo.coordinate()),
         plural(open, "bounty", "bounties"),
         plural(open, "links", "link"),
-    )
+    ))
 }
 
 /// The chip of a status.
@@ -404,14 +413,17 @@ fn row(
 
 /// The goals that name a repo (only `repo`'s when it is given), newest
 /// first.
-async fn goals(store: &ReadOnlyStore, repo: Option<&RepoAddress>) -> Vec<(Event, RepoAddress)> {
+async fn goals(
+    store: &ReadOnlyStore,
+    repo: Option<&RepoAddress>,
+) -> Result<Vec<(Event, RepoAddress)>, StoreError> {
     let mut filter = Filter::new().kind(Kind::from(ZAP_GOAL)).limit(LIMIT);
     if let Some(repo) = repo {
         filter = filter.custom_tag(SingleLetterTag::LOWERCASE_A, repo.coordinate());
     }
     let mut found: Vec<(Event, RepoAddress)> = store
         .query(filter)
-        .await
+        .await?
         .into_iter()
         .filter_map(|goal| {
             let tagged = RepoAddress::tagged(&goal, "a");
@@ -423,7 +435,7 @@ async fn goals(store: &ReadOnlyStore, repo: Option<&RepoAddress>) -> Vec<(Event,
         })
         .collect();
     found.sort_by(|(a, _), (b, _)| (b.created_at, a.id).cmp(&(a.created_at, b.id)));
-    found
+    Ok(found)
 }
 
 /// One goal in the sidebar.
@@ -546,7 +558,7 @@ pub(crate) async fn page(State(pages): State<Pages>, RawQuery(query): RawQuery) 
     let store = &pages.store;
     let wanted = param(query.as_deref(), "status").and_then(|slug| Status::from_slug(&slug));
     let repo = param(query.as_deref(), "repo").and_then(|value| RepoAddress::parse(&value));
-    let (bounties, mut cards) = load(store).await;
+    let (bounties, mut cards) = relay_ui::stored!(load(store).await);
     let in_repo: Vec<&Bounty> = bounties
         .iter()
         .filter(|bounty| repo.is_none() || bounty.repo == repo)
@@ -556,14 +568,14 @@ pub(crate) async fn page(State(pages): State<Pages>, RawQuery(query): RawQuery) 
         .copied()
         .filter(|bounty| wanted.is_none_or(|status| bounty.status == status))
         .collect();
-    let goals = goals(store, repo.as_ref()).await;
+    let goals = relay_ui::stored!(goals(store, repo.as_ref()).await);
     let missing: Vec<RepoAddress> = goals
         .iter()
         .map(|(_, repo)| repo.clone())
         .chain(repo.clone())
         .filter(|repo| !cards.contains_key(repo))
         .collect();
-    cards.extend(load_cards(store, missing).await);
+    cards.extend(relay_ui::stored!(load_cards(store, missing).await));
     let mut keys: Vec<PublicKey> = Vec::new();
     for key in shown
         .iter()
@@ -574,7 +586,7 @@ pub(crate) async fn page(State(pages): State<Pages>, RawQuery(query): RawQuery) 
             keys.push(key);
         }
     }
-    let profiles = Profiles::load(store, &keys).await;
+    let profiles = relay_ui::stored!(Profiles::load(store, &keys).await);
     let names = profiles.names();
 
     // What each bounty's poster acknowledged toward it, and each goal's
@@ -582,18 +594,22 @@ pub(crate) async fn page(State(pages): State<Pages>, RawQuery(query): RawQuery) 
     let mut paid: HashMap<EventId, Totals> = HashMap::new();
     for bounty in &shown {
         if let Some(address) = Address::of(&bounty.listing) {
-            let tips = crate::tips::totals(
-                store,
-                &bounty.listing.pubkey,
-                &Subject::Address(address.coordinate()),
-            )
-            .await;
+            let tips = relay_ui::stored!(
+                crate::tips::totals(
+                    store,
+                    &bounty.listing.pubkey,
+                    &Subject::Address(address.coordinate()),
+                )
+                .await
+            );
             paid.insert(bounty.listing.id, tips);
         }
     }
     let mut raised: HashMap<EventId, Totals> = HashMap::new();
     for (goal, _) in goals.iter().take(GOALS_SHOWN) {
-        let tips = crate::tips::totals(store, &goal.pubkey, &Subject::Event(goal.id)).await;
+        let tips = relay_ui::stored!(
+            crate::tips::totals(store, &goal.pubkey, &Subject::Event(goal.id)).await
+        );
         raised.insert(goal.id, tips);
     }
 

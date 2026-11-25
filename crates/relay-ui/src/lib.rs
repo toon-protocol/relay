@@ -29,8 +29,9 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::Request;
-use axum::http::header::CONTENT_SECURITY_POLICY;
-use axum::http::{HeaderValue, Response};
+use axum::http::header::{CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE};
+use axum::http::{HeaderValue, Response, StatusCode};
+use axum::response::IntoResponse;
 use nostr::event::Event;
 use nostr::filter::Filter;
 use tower::ServiceExt;
@@ -42,12 +43,65 @@ use tower::ServiceExt;
 pub const CONTENT_SECURITY_POLICY_VALUE: &str =
     "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'";
 
+/// The store could not answer a query. As a response it is the shared error
+/// page with a 500 status, so a broken store never reads as a quiet relay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoreError;
+
+impl std::fmt::Display for StoreError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("the relay's store could not answer")
+    }
+}
+
+impl std::error::Error for StoreError {}
+
+impl IntoResponse for StoreError {
+    fn into_response(self) -> Response<Body> {
+        let mut response = (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            [(CONTENT_TYPE, "text/html; charset=utf-8")],
+            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+             <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+             <title>Relay error</title></head><body><main>\
+             <h1>The relay had an error</h1>\
+             <p>Its store could not answer this page. Try again in a moment.</p>\
+             </main></body></html>",
+        )
+            .into_response();
+        response
+            .headers_mut()
+            .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        response
+    }
+}
+
+/// Unwrap a query's answer in a handler that returns a response: a
+/// [`StoreError`] returns the shared error page from the handler.
+#[macro_export]
+macro_rules! stored {
+    ($answer:expr) => {
+        match $answer {
+            Ok(events) => events,
+            Err(error) => return $crate::__private::IntoResponse::into_response(error),
+        }
+    };
+}
+
+#[doc(hidden)]
+pub mod __private {
+    pub use axum::response::IntoResponse;
+}
+
 /// What a store can be asked, and nothing else. The relay implements it for
 /// its store; it has no method that writes.
 pub trait EventSource: Send + Sync + 'static {
     /// The stored events matching `filter`, newest first, at most its
-    /// `limit`. A store that cannot answer returns no events.
-    fn query(&self, filter: Filter) -> Pin<Box<dyn Future<Output = Vec<Event>> + Send + '_>>;
+    /// `limit`, or [`StoreError`] when the store could not answer.
+    fn query(
+        &self,
+        filter: Filter,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Event>, StoreError>> + Send + '_>>;
 }
 
 /// The read-only query handle an app UI is built from. Cheap to clone.
@@ -72,8 +126,10 @@ impl ReadOnlyStore {
         }
     }
 
-    /// The stored events matching `filter`, newest first.
-    pub async fn query(&self, filter: Filter) -> Vec<Event> {
+    /// The stored events matching `filter`, newest first, or the store's
+    /// error: a page answers it with [`StoreError`]'s error page, never with
+    /// an empty list.
+    pub async fn query(&self, filter: Filter) -> Result<Vec<Event>, StoreError> {
         self.source.query(filter).await
     }
 }

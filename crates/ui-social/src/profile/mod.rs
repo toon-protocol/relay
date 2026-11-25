@@ -24,6 +24,7 @@ mod activity;
 mod badges;
 mod identity;
 
+use relay_ui::StoreError;
 use std::collections::{HashMap, HashSet};
 
 use axum::extract::{Path, RawQuery, State};
@@ -277,34 +278,36 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
     let store = &pages.store;
     // `?as=<npub>`: read through that key's mute list (NIP-51 kind 10000).
     let lens = crate::viewer::as_key(query);
-    let mutes = match &lens {
+    let mutes = relay_ui::stored!(match &lens {
         Some(viewer) => Mutes::load(store, viewer).await,
-        None => Mutes::default(),
-    };
+        None => Ok(Mutes::default()),
+    });
     let now = chrome::now();
-    let lists = store
-        .query(
-            Filter::new()
-                .author(key)
-                .kinds(
-                    [
-                        0,
-                        FOLLOWS,
-                        FOLLOWED_REPOS,
-                        identity::EXTERNAL_IDENTITIES,
-                        badges::PROFILE_BADGES,
-                        badges::LEGACY_PROFILE_BADGES,
-                        identity::USER_STATUS,
-                        PINNED_REPOS,
-                    ]
-                    .map(Kind::from),
-                )
-                .limit(LIMIT),
-        )
-        .await;
-    let who = who(pages, key, &lists, now).await;
-    let kept = load_kept(store, &key).await;
-    let mut stars = engagement::starred_by(store, &key).await;
+    let lists = relay_ui::stored!(
+        store
+            .query(
+                Filter::new()
+                    .author(key)
+                    .kinds(
+                        [
+                            0,
+                            FOLLOWS,
+                            FOLLOWED_REPOS,
+                            identity::EXTERNAL_IDENTITIES,
+                            badges::PROFILE_BADGES,
+                            badges::LEGACY_PROFILE_BADGES,
+                            identity::USER_STATUS,
+                            PINNED_REPOS,
+                        ]
+                        .map(Kind::from),
+                    )
+                    .limit(LIMIT),
+            )
+            .await
+    );
+    let who = relay_ui::stored!(who(pages, key, &lists, now).await);
+    let kept = relay_ui::stored!(load_kept(store, &key).await);
+    let mut stars = relay_ui::stored!(engagement::starred_by(store, &key).await);
     let starred_all = stars.len();
     stars.retain(|repo| !mutes.hides_key(repo.owner()));
     let starred_muted = starred_all - stars.len();
@@ -312,7 +315,8 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
     let links = pages.links();
     let mut reported = crate::reports::Targets::default();
     reported.person(&key, "this person".to_owned());
-    let mut body = crate::reports::page_banner(store, &reported, query, None).await;
+    let mut body =
+        relay_ui::stored!(crate::reports::page_banner(store, &reported, query, None).await);
     body.push_str(&banner(&who.meta));
     body.push_str("<div class=\"profile\">");
     let mut issuers: Vec<PublicKey> = who.badges.iter().map(|badge| badge.issuer).collect();
@@ -339,7 +343,8 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
     main.push_str(&chrome::tabs("Profile", &tabs));
     let mut names_wanted = issuers;
     names_wanted.extend(lens);
-    let lens_names = Profiles::load(store, &lens.into_iter().collect::<Vec<_>>()).await;
+    let lens_names =
+        relay_ui::stored!(Profiles::load(store, &lens.into_iter().collect::<Vec<_>>()).await);
     if let Some(viewer) = &lens {
         main.push_str(&format!(
             "<p class=\"muted small\" data-muted>Read as {}: {}{starred_muted} starred {} by \
@@ -363,7 +368,7 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
                     .filter(|(_, role)| *role == Role::Owner)
                     .map(|(repo, _)| repo.clone())
                     .collect();
-                let cards = load_cards(store, owned.clone()).await;
+                let cards = relay_ui::stored!(load_cards(store, owned.clone()).await);
                 let mut ranked: Vec<RepoAddress> = owned
                     .into_iter()
                     .filter(|repo| cards.contains_key(repo))
@@ -377,7 +382,7 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
             } else {
                 (pins, "Pinned by this key, in its order (kind 10617).")
             };
-            let cards = load_cards(store, shown.clone()).await;
+            let cards = relay_ui::stored!(load_cards(store, shown.clone()).await);
             for card in cards.values() {
                 names_wanted.extend(card.authorized().iter().copied());
             }
@@ -393,11 +398,11 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
                 "Nothing to pin yet: this key keeps no repos here.",
             ));
             main.push_str("</section>");
-            main.push_str(&activity(pages, &links, &key, now).await);
+            main.push_str(&relay_ui::stored!(activity(pages, &links, &key, now).await));
         }
         Tab::Repositories => {
             let addresses: Vec<RepoAddress> = kept.iter().map(|(repo, _)| repo.clone()).collect();
-            let cards = load_cards(store, addresses.clone()).await;
+            let cards = relay_ui::stored!(load_cards(store, addresses.clone()).await);
             main.push_str(&format!(
                 "<p class=\"muted small\">{} {} it announced (kind 30617), then {} whose owner named \
                  it a maintainer (ADR 0002).</p>",
@@ -420,7 +425,7 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
             ));
         }
         Tab::Starred => {
-            let cards = load_cards(store, stars.clone()).await;
+            let cards = relay_ui::stored!(load_cards(store, stars.clone()).await);
             main.push_str(
                 "<p class=\"muted small\">Repos this key starred: a <code>+</code> reaction on the \
                  repo's address, each a paid write. Newest first.</p>",
@@ -434,7 +439,7 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
             ));
         }
         Tab::Posts => {
-            main.push_str(&posts(pages, &links, &key).await);
+            main.push_str(&relay_ui::stored!(posts(pages, &links, &key).await));
         }
     }
 
@@ -446,18 +451,20 @@ async fn page(pages: &Pages, target: &str, tab: Tab, query: Option<&str>) -> Res
             .filter(|event| event.pubkey == key && event.kind == Kind::from(0)),
     );
     names_wanted.extend(metadata.map(crate::tips::split_keys).unwrap_or_default());
-    let profiles = Profiles::load(store, &names_wanted).await;
+    let profiles = relay_ui::stored!(Profiles::load(store, &names_wanted).await);
     let mut tips = metadata
         .map(|event| crate::tips::split_card(event, profiles.names(), "this person"))
         .unwrap_or_default();
-    tips.push_str(&crate::tips::route_card(store, &key).await);
-    tips.push_str(&crate::tips::received_card(
-        &crate::tips::totals(store, &key, &crate::tips::Subject::Person).await,
+    tips.push_str(&relay_ui::stored!(
+        crate::tips::route_card(store, &key).await
     ));
+    tips.push_str(&crate::tips::received_card(&relay_ui::stored!(
+        crate::tips::totals(store, &key, &crate::tips::Subject::Person).await
+    )));
     body.push_str(&sidebar(&who, profiles.names(), &tips));
     body.push_str(&format!("<div class=\"profile-main\">{main}</div></div>"));
     let title = shown(&who.meta, &key);
-    let card = preview(store, key).await;
+    let card = relay_ui::stored!(preview(store, key).await);
     let counts = card
         .as_ref()
         .map(|(profile, _)| (profile.repos, profile.followers));
@@ -522,7 +529,10 @@ fn shown(meta: &Metadata, key: &PublicKey) -> String {
 
 /// The repos `key` keeps on this relay ([`kept_repos`]), read from the
 /// store.
-async fn load_kept(store: &relay_ui::ReadOnlyStore, key: &PublicKey) -> Vec<(RepoAddress, Role)> {
+async fn load_kept(
+    store: &relay_ui::ReadOnlyStore,
+    key: &PublicKey,
+) -> Result<Vec<(RepoAddress, Role)>, StoreError> {
     let mut announcements = store
         .query(
             Filter::new()
@@ -530,7 +540,7 @@ async fn load_kept(store: &relay_ui::ReadOnlyStore, key: &PublicKey) -> Vec<(Rep
                 .author(*key)
                 .limit(LIMIT),
         )
-        .await;
+        .await?;
     announcements.extend(
         store
             .query(
@@ -538,9 +548,9 @@ async fn load_kept(store: &relay_ui::ReadOnlyStore, key: &PublicKey) -> Vec<(Rep
                     .kind(Kind::from(ANNOUNCEMENT))
                     .limit(MAINTAINER_SCAN),
             )
-            .await,
+            .await?,
     );
-    kept_repos(key, &announcements)
+    Ok(kept_repos(key, &announcements))
 }
 
 /// The `https` pictures a profile's kind 0 names, for its card to fetch.
@@ -558,13 +568,13 @@ pub(crate) struct PictureUrls {
 pub(crate) async fn preview(
     store: &relay_ui::ReadOnlyStore,
     key: PublicKey,
-) -> Option<(ui_preview::Profile, PictureUrls)> {
+) -> Result<Option<(ui_preview::Profile, PictureUrls)>, StoreError> {
     let profiles = store
         .query(Filter::new().author(key).kind(Kind::Metadata).limit(LIMIT))
-        .await;
-    let kept = load_kept(store, &key).await;
+        .await?;
+    let kept = load_kept(store, &key).await?;
     if profiles.is_empty() && kept.is_empty() {
-        return None;
+        return Ok(None);
     }
     let meta = identity::metadata(&key, &profiles);
     let follow_lists = store
@@ -574,7 +584,7 @@ pub(crate) async fn preview(
                 .custom_tag(SingleLetterTag::LOWERCASE_P, key.to_hex())
                 .limit(FOLLOWER_LIMIT),
         )
-        .await;
+        .await?;
     let urls = PictureUrls {
         picture: meta.picture.clone(),
         banner: meta.banner.as_ref().map(|banner| banner.url().to_owned()),
@@ -590,12 +600,12 @@ pub(crate) async fn preview(
         followers: followers(&key, &follow_lists),
         bot: meta.bot,
     };
-    Some((profile, urls))
+    Ok(Some((profile, urls)))
 }
 
 /// The sidebar's facts about `key`, read from `lists` (everything the key
 /// signed of the list kinds) and the store.
-async fn who(pages: &Pages, key: PublicKey, lists: &[Event], now: i64) -> Who {
+async fn who(pages: &Pages, key: PublicKey, lists: &[Event], now: i64) -> Result<Who, StoreError> {
     let store = &pages.store;
     let meta = identity::metadata(&key, lists);
     let mut identities = newest(lists.iter().filter(|event| {
@@ -613,14 +623,14 @@ async fn who(pages: &Pages, key: PublicKey, lists: &[Event], now: i64) -> Who {
                 .custom_tag(SingleLetterTag::LOWERCASE_P, key.to_hex())
                 .limit(FOLLOWER_LIMIT),
         )
-        .await;
+        .await?;
     let pairs = badges::accepted(&key, lists);
     let shown = if pairs.is_empty() {
         Vec::new()
     } else {
         let awards = store
             .query(Filter::new().ids(pairs.iter().map(|(_, id)| *id)))
-            .await;
+            .await?;
         let issuers: Vec<PublicKey> = awards.iter().map(|award| award.pubkey).collect();
         let definitions = if issuers.is_empty() {
             Vec::new()
@@ -632,7 +642,7 @@ async fn who(pages: &Pages, key: PublicKey, lists: &[Event], now: i64) -> Who {
                         .authors(issuers)
                         .limit(LIMIT),
                 )
-                .await
+                .await?
         };
         badges::shown(&key, &pairs, &awards, &definitions)
     };
@@ -645,9 +655,9 @@ async fn who(pages: &Pages, key: PublicKey, lists: &[Event], now: i64) -> Who {
                     .author(key)
                     .limit(1),
             )
-            .await
+            .await?
             .is_empty();
-    Who {
+    Ok(Who {
         key,
         compute_provider,
         statuses: identity::statuses(&key, lists, now),
@@ -658,7 +668,7 @@ async fn who(pages: &Pages, key: PublicKey, lists: &[Event], now: i64) -> Who {
         badges: shown,
         known: !lists.is_empty(),
         meta,
-    }
+    })
 }
 
 /// The banner: the profile's `https` image, which the visitor's browser
@@ -917,7 +927,12 @@ fn tiles(
 }
 
 /// The activity graph and the recent activity under it.
-async fn activity(pages: &Pages, links: &Links, key: &PublicKey, now: i64) -> String {
+async fn activity(
+    pages: &Pages,
+    links: &Links,
+    key: &PublicKey,
+    now: i64,
+) -> Result<String, StoreError> {
     let store = &pages.store;
     let since = u64::try_from(activity::since(now)).unwrap_or(0);
     let mut events = store
@@ -928,7 +943,7 @@ async fn activity(pages: &Pages, links: &Links, key: &PublicKey, now: i64) -> St
                 .since(Timestamp::from(since))
                 .limit(ACTIVITY_LIMIT),
         )
-        .await;
+        .await?;
     events.sort_by(|a, b| (b.created_at, a.id).cmp(&(a.created_at, b.id)));
     let graph = activity::graph(key, &events, now);
     let mut out = format!(
@@ -959,7 +974,7 @@ async fn activity(pages: &Pages, links: &Links, key: &PublicKey, now: i64) -> St
     } else {
         store
             .query(Filter::new().ids(target_ids))
-            .await
+            .await?
             .into_iter()
             .map(|event| (event.id, event))
             .collect()
@@ -977,7 +992,7 @@ async fn activity(pages: &Pages, links: &Links, key: &PublicKey, now: i64) -> St
         out.push_str("</ul>");
     }
     out.push_str("</section>");
-    out
+    Ok(out)
 }
 
 /// The 53 × 7 squares, a week a column.
@@ -1103,7 +1118,7 @@ fn activity_row(links: &Links, event: &Event, targets: &HashMap<EventId, Event>)
 
 /// The Posts tab: notes that start a conversation and articles, newest
 /// first, drawn as the feed draws them.
-async fn posts(pages: &Pages, links: &Links, key: &PublicKey) -> String {
+async fn posts(pages: &Pages, links: &Links, key: &PublicKey) -> Result<String, StoreError> {
     let store = &pages.store;
     let mut events = store
         .query(
@@ -1112,7 +1127,7 @@ async fn posts(pages: &Pages, links: &Links, key: &PublicKey) -> String {
                 .kinds([Kind::from(NOTE), Kind::from(ARTICLE)])
                 .limit(POSTS * 3),
         )
-        .await;
+        .await?;
     events.sort_by(|a, b| (b.created_at, a.id).cmp(&(a.created_at, b.id)));
     let shown: Vec<Event> = events
         .into_iter()
@@ -1127,7 +1142,7 @@ async fn posts(pages: &Pages, links: &Links, key: &PublicKey) -> String {
             }
         }
     }
-    let cards = load_cards(store, repos).await;
+    let cards = load_cards(store, repos).await?;
     let mut keys = vec![*key];
     for mentioned in shown
         .iter()
@@ -1137,7 +1152,7 @@ async fn posts(pages: &Pages, links: &Links, key: &PublicKey) -> String {
             keys.push(mentioned);
         }
     }
-    let profiles = Profiles::load(store, &keys).await;
+    let profiles = Profiles::load(store, &keys).await?;
     let no_demos = HashMap::new();
     let view = View {
         links,
@@ -1154,7 +1169,7 @@ async fn posts(pages: &Pages, links: &Links, key: &PublicKey) -> String {
     );
     if shown.is_empty() {
         out.push_str("<div class=\"box\"><div class=\"empty\">No posts yet.</div></div>");
-        return out;
+        return Ok(out);
     }
     out.push_str("<div class=\"feed\">");
     for event in &shown {
@@ -1165,7 +1180,7 @@ async fn posts(pages: &Pages, links: &Links, key: &PublicKey) -> String {
         });
     }
     out.push_str("</div>");
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
