@@ -130,7 +130,10 @@ async fn trending_counts_people_in_the_window_and_topics_list_repos() {
             30_617,
             now - 3 * day,
             "",
-            &[&["d", "tide-fork"], &["u", &tide]],
+            &[
+                &["d", "tide-fork"],
+                &["u", &format!("{tide}|https://example.com/tide.git")],
+            ],
         ),
     )
     .await;
@@ -216,11 +219,9 @@ async fn trending_counts_people_in_the_window_and_topics_list_repos() {
     .await;
     let (status, html) = get(relay, "/social/t/rust").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(
-        row(&html, &tide)
-            .expect("tide")
-            .contains("Tagged by its owner")
-    );
+    let tagged = row(&html, &tide).expect("tide");
+    assert!(tagged.contains("Tagged by its owner"));
+    assert!(tagged.contains("data-forks=\"1\""), "{tagged}");
     let labelled = row(&html, &sail).expect("sail by label");
     assert!(labelled.contains("data-labeller"));
     assert!(labelled.contains(&npub(&labeller)));

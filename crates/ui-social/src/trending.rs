@@ -43,6 +43,7 @@ use nostr::types::Timestamp;
 use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{self, Profiles, ago, escape, npub, percent_encode, plain_name};
 use ui_nip34::card::{is_star, plural};
+use ui_nip34::lineage::ForkOf;
 use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors, first_tag};
 
 use crate::kinds::{
@@ -162,13 +163,13 @@ pub(crate) fn path(
 }
 
 /// The repo a kind 30617 says it forks: its `u` tag, when that names another
-/// repo's address (a `u` that is a git URL names none here). A pure function.
+/// repo's address, with or without `|<git url>` after it (a `u` that is only a
+/// git URL names none here), read as `/repo` reads it. A pure function.
 pub(crate) fn fork_of(announcement: &Event) -> Option<RepoAddress> {
     if announcement.kind != Kind::from(ANNOUNCEMENT) {
         return None;
     }
-    let upstream = RepoAddress::parse(first_tag(announcement, "u")?)?;
-    (Some(&upstream) != RepoAddress::of(announcement).as_ref()).then_some(upstream)
+    ForkOf::of(announcement).map(|parent| parent.address().clone())
 }
 
 /// The repos `event` is a trending act on (the table in the module doc).
@@ -400,15 +401,16 @@ pub(crate) async fn stars_and_forks(
         .query(
             Filter::new()
                 .kind(Kind::from(REACTION))
-                .custom_tags(SingleLetterTag::LOWERCASE_A, coordinates.clone())
+                .custom_tags(SingleLetterTag::LOWERCASE_A, coordinates)
                 .limit(COUNT_LIMIT),
         )
         .await;
+    // Not `#u`: a fork's `u` may carry `|<git url>` after the coordinate,
+    // which an exact tag match misses (#354). `fork_of` reads it instead.
     let forks = store
         .query(
             Filter::new()
                 .kind(Kind::from(ANNOUNCEMENT))
-                .custom_tags(SingleLetterTag::LOWERCASE_U, coordinates)
                 .limit(COUNT_LIMIT),
         )
         .await;
@@ -1176,6 +1178,15 @@ mod tests {
         let fork = signed(&fan, 30_617, 1, "", &[&["d", "r"], &["u", &repo]]);
         assert_eq!(fork_of(&fork), RepoAddress::parse(&repo));
         assert_eq!(on(fork), 1);
+        let with_url = signed(
+            &fan,
+            30_617,
+            1,
+            "",
+            &[&["d", "r"], &["u", &format!("{repo}|nostr://x/y")]],
+        );
+        assert_eq!(fork_of(&with_url), RepoAddress::parse(&repo));
+        assert_eq!(on(with_url), 1);
         let url = signed(
             &fan,
             30_617,
