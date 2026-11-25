@@ -223,8 +223,8 @@ async fn picture(State(pages): State<Pages>, Path(npub): Path<String>) -> Respon
             .query(Filter::new().kind(nostr::event::Kind::Metadata).author(key))
             .await;
         let newest = relay_ui::reading::newest(&profiles)?;
-        let fields: serde_json::Value = serde_json::from_str(&newest.content).ok()?;
-        let url = media::https(fields.get("picture")?.as_str()?)?;
+        let profile = relay_ui::reading::Profile::of(newest);
+        let url = media::https(profile.picture.as_deref()?)?;
         HeaderValue::from_str(url).ok()
     }
     .await;
