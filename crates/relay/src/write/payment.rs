@@ -62,11 +62,6 @@ impl Chain {
     pub(super) fn named(namespace: &str) -> Self {
         Self(namespace.to_string())
     }
-
-    /// The chain's namespace, as stated.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
 }
 
 impl std::fmt::Display for Chain {
