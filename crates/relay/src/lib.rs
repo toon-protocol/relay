@@ -45,6 +45,7 @@ mod subscribe;
 mod ui;
 mod verified;
 mod version;
+mod view;
 mod write;
 
 pub use config::{Config, EdgeSettings, Invocation, SubscribeSettings, USAGE};
