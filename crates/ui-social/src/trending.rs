@@ -37,14 +37,14 @@ use axum::extract::{RawQuery, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use nostr::event::{Event, Kind};
-use nostr::filter::{Filter, SingleLetterTag};
+use nostr::filter::Filter;
 use nostr::key::PublicKey;
 use nostr::types::Timestamp;
 use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{self, Profiles, ago, escape, npub, percent_encode, plain_name};
 use relay_ui::reading::{first_tag_value, newest};
-use ui_nip34::card::{is_star, plural};
-use ui_nip34::lineage::ForkOf;
+use ui_nip34::card::plural;
+use ui_nip34::engagement::{self, Act, forked_from, is_star};
 use ui_nip34::repo::{ANNOUNCEMENT, RepoAddress, authorized_authors};
 
 use crate::kinds::{
@@ -67,8 +67,6 @@ const ACT_LIMIT: usize = 10_000;
 const NOTE_LIMIT: usize = 3_000;
 /// The most reports read for `as`.
 const REPORT_LIMIT: usize = 5_000;
-/// The most stars or forks read for a page's rows.
-const COUNT_LIMIT: usize = 20_000;
 /// The most NIP-85 assertions read.
 const ASSERTION_LIMIT: usize = 2_000;
 /// The rows a trending page shows.
@@ -163,16 +161,6 @@ pub(crate) fn path(
     out
 }
 
-/// The repo a kind 30617 says it forks: its `u` tag, when that names another
-/// repo's address, with or without `|<git url>` after it (a `u` that is only a
-/// git URL names none here), read as `/repo` reads it. A pure function.
-pub(crate) fn fork_of(announcement: &Event) -> Option<RepoAddress> {
-    if announcement.kind != Kind::from(ANNOUNCEMENT) {
-        return None;
-    }
-    ForkOf::of(announcement).map(|parent| parent.address().clone())
-}
-
 /// The repos `event` is a trending act on (the table in the module doc).
 /// A pure function.
 pub(crate) fn acted_on(event: &Event) -> Vec<RepoAddress> {
@@ -186,7 +174,7 @@ pub(crate) fn acted_on(event: &Event) -> Vec<RepoAddress> {
         }
         COMMENT => RepoAddress::tagged(event, "A"),
         FOLLOWED_REPOS | NOTE => RepoAddress::tagged(event, "a"),
-        ANNOUNCEMENT => fork_of(event).into_iter().collect(),
+        ANNOUNCEMENT => forked_from(event).into_iter().collect(),
         _ => Vec::new(),
     }
 }
@@ -390,94 +378,6 @@ pub(crate) fn muted_repo(mutes: &Mutes, catalog: &Catalog, repo: &RepoAddress) -
     mutes.hides_repo(repo, &catalog.own_topics(repo))
 }
 
-/// Distinct stargazers and distinct forks of each of `repos`: two queries.
-pub(crate) async fn stars_and_forks(
-    store: &ReadOnlyStore,
-    repos: &[RepoAddress],
-) -> HashMap<RepoAddress, (usize, usize)> {
-    let mut counts = HashMap::new();
-    if repos.is_empty() {
-        return counts;
-    }
-    let coordinates: Vec<String> = repos.iter().map(RepoAddress::coordinate).collect();
-    let reactions = store
-        .query(
-            Filter::new()
-                .kind(Kind::from(REACTION))
-                .custom_tags(SingleLetterTag::LOWERCASE_A, coordinates)
-                .limit(COUNT_LIMIT),
-        )
-        .await;
-    // Not `#u`: a fork's `u` may carry `|<git url>` after the coordinate,
-    // which an exact tag match misses (#354). `fork_of` reads it instead.
-    let forks = store
-        .query(
-            Filter::new()
-                .kind(Kind::from(ANNOUNCEMENT))
-                .limit(COUNT_LIMIT),
-        )
-        .await;
-    for repo in repos {
-        let coordinate = repo.coordinate();
-        let stars: HashSet<PublicKey> = reactions
-            .iter()
-            .filter(|event| is_star(event, &coordinate))
-            .map(|event| event.pubkey)
-            .collect();
-        let forked: HashSet<RepoAddress> = forks
-            .iter()
-            .filter(|event| fork_of(event).as_ref() == Some(repo))
-            .filter_map(RepoAddress::of)
-            .collect();
-        counts.insert(repo.clone(), (stars.len(), forked.len()));
-    }
-    counts
-}
-
-/// Distinct people other than each repo's `makers` (ADR 0002) who starred
-/// it: what a ranking by stars orders by, as the trending score leaves the
-/// makers out. One query.
-pub(crate) async fn stars_from_others(
-    store: &ReadOnlyStore,
-    repos: &[RepoAddress],
-    makers: &HashMap<RepoAddress, Vec<PublicKey>>,
-) -> HashMap<RepoAddress, usize> {
-    if repos.is_empty() {
-        return HashMap::new();
-    }
-    let coordinates: Vec<String> = repos.iter().map(RepoAddress::coordinate).collect();
-    let reactions = store
-        .query(
-            Filter::new()
-                .kind(Kind::from(REACTION))
-                .custom_tags(SingleLetterTag::LOWERCASE_A, coordinates)
-                .limit(COUNT_LIMIT),
-        )
-        .await;
-    count_from_others(&reactions, repos, makers)
-}
-
-/// [`stars_from_others`] over `reactions`. A pure function.
-fn count_from_others(
-    reactions: &[Event],
-    repos: &[RepoAddress],
-    makers: &HashMap<RepoAddress, Vec<PublicKey>>,
-) -> HashMap<RepoAddress, usize> {
-    repos
-        .iter()
-        .map(|repo| {
-            let coordinate = repo.coordinate();
-            let own = makers.get(repo).map(Vec::as_slice).unwrap_or_default();
-            let people: HashSet<PublicKey> = reactions
-                .iter()
-                .filter(|event| is_star(event, &coordinate) && !own.contains(&event.pubkey))
-                .map(|event| event.pubkey)
-                .collect();
-            (repo.clone(), people.len())
-        })
-        .collect()
-}
-
 /// A NIP-85 provider's ranking of repos: its kind 30384s whose `d` is a
 /// repo's address.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -633,7 +533,7 @@ pub(crate) async fn page(State(pages): State<Pages>, RawQuery(query): RawQuery) 
     rows.truncate(SHOWN);
 
     let repos: Vec<RepoAddress> = rows.iter().map(|row| row.repo.clone()).collect();
-    let counts = stars_and_forks(store, &repos).await;
+    let counts = engagement::load(store, &repos, &[Act::Star, Act::Fork]).await;
     let mut keys: Vec<PublicKey> = asked.viewer.into_iter().chain(asked.by).collect();
     keys.extend(providers.iter().map(|provider| provider.key));
     for repo in &repos {
@@ -678,7 +578,10 @@ pub(crate) async fn page(State(pages): State<Pages>, RawQuery(query): RawQuery) 
                 &context,
                 row,
                 index + 1,
-                counts.get(&row.repo).copied().unwrap_or_default(),
+                (
+                    counts.of(&row.repo).star_count(),
+                    counts.of(&row.repo).fork_count(),
+                ),
                 &asked,
             ));
         }
@@ -1093,19 +996,6 @@ mod tests {
     }
 
     #[test]
-    fn stars_from_others_leave_the_makers_out() {
-        let (owner, fan, other_fan) = (Keys::generate(), Keys::generate(), Keys::generate());
-        let repo = RepoAddress::new(owner.public_key(), "r").unwrap();
-        let a = repo.coordinate();
-        let star = |keys: &Keys| signed(keys, 7, 1, "+", &[&["a", &a], &["k", "30617"]]);
-        let reactions = [star(&owner), star(&fan), star(&fan), star(&other_fan)];
-        let makers: HashMap<RepoAddress, Vec<PublicKey>> =
-            [(repo.clone(), vec![owner.public_key()])].into();
-        let counted = count_from_others(&reactions, std::slice::from_ref(&repo), &makers);
-        assert_eq!(counted.get(&repo), Some(&2));
-    }
-
-    #[test]
     fn a_mute_list_drops_a_repo_by_its_owner_or_its_own_topic() {
         let (viewer, owner, other) = (Keys::generate(), Keys::generate(), Keys::generate());
         let announce = |keys: &Keys, d: &str, topic: &str| {
@@ -1180,7 +1070,7 @@ mod tests {
         assert_eq!(on(signed(&fan, 1, 1, "", &[&["a", &repo]])), 1);
         assert_eq!(on(signed(&fan, 1621, 1, "", &[&["a", &repo]])), 0);
         let fork = signed(&fan, 30_617, 1, "", &[&["d", "r"], &["u", &repo]]);
-        assert_eq!(fork_of(&fork), RepoAddress::parse(&repo));
+        assert_eq!(forked_from(&fork), RepoAddress::parse(&repo));
         assert_eq!(on(fork), 1);
         let with_url = signed(
             &fan,
@@ -1189,7 +1079,7 @@ mod tests {
             "",
             &[&["d", "r"], &["u", &format!("{repo}|nostr://x/y")]],
         );
-        assert_eq!(fork_of(&with_url), RepoAddress::parse(&repo));
+        assert_eq!(forked_from(&with_url), RepoAddress::parse(&repo));
         assert_eq!(on(with_url), 1);
         let url = signed(
             &fan,

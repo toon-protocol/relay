@@ -10,25 +10,19 @@
 //! NIP-09 deletion removes an event from the store, so an un-star subtracts.
 
 use nostr::event::{Event, Kind};
-use nostr::filter::{Filter, SingleLetterTag};
+use nostr::filter::Filter;
 use nostr::key::PublicKey;
 use nostr::types::Timestamp;
 use relay_ui::ReadOnlyStore;
 use relay_ui::chrome::{self, App, Apps, Profiles, ago, escape, icon, npub, percent_encode, svg};
 
+use crate::engagement::{self, Act};
 use crate::lineage::ForkOf;
 use crate::repo::{
     ANNOUNCEMENT, RepoAddress, STATE, authorized_authors, head_branch, honoured_state,
     owner_announcement, repo_name, topics,
 };
 use relay_ui::reading::first_tag_value;
-
-/// NIP-25 reaction: a star when it is `+` on a repo.
-pub const REACTION: u16 = 7;
-/// NIP-51 git repositories: the repos a key follows.
-pub const FOLLOWED_REPOS: u16 = 10_018;
-/// The most stars or followers one query reads.
-const PEOPLE_LIMIT: usize = 5_000;
 
 /// What a card links to: the apps that are on (an "Open repo" link needs
 /// `/repo`), and the host visitors' clients reach this relay at, for the
@@ -156,8 +150,8 @@ impl RepoCard {
             .await;
         let last_move = honoured_state(&announcement, &states)
             .map(|state| (state.created_at, head_branch(state)));
-        let stars = stargazers(store, address).await.len();
-        let followers = followers(store, address).await.len();
+        let engaged = engagement::load_one(store, address, &[Act::Star, Act::Follow]).await;
+        let (stars, followers) = (engaged.star_count(), engaged.follower_count());
         let (open_issues, open_pulls) =
             crate::threads::open_counts(store, &address.coordinate(), &authorized).await;
         let fork_of = match ForkOf::of(&announcement) {
@@ -514,76 +508,6 @@ pub fn clone_urls(
     urls
 }
 
-/// Whether `event` names `coordinate` in a tag called `name` (relay hints
-/// and markers after the value are ignored).
-fn names_value(event: &Event, name: &str, value: &str) -> bool {
-    event
-        .tags
-        .iter()
-        .map(|tag| tag.as_slice())
-        .any(|tag| matches!(tag, [n, v, ..] if n == name && v == value))
-}
-
-/// Whether `event` stars the repo at `coordinate`: a kind 7 whose content is
-/// `+`, with the repo in an `a` tag and `30617` in a `k` tag. A pure function.
-pub fn is_star(event: &Event, coordinate: &str) -> bool {
-    event.kind == Kind::from(REACTION)
-        && event.content.trim() == "+"
-        && names_value(event, "a", coordinate)
-        && names_value(event, "k", &ANNOUNCEMENT.to_string())
-}
-
-/// Each author among `events` that `admits` once, with the time of their
-/// newest such event, newest first (a tie to the lower key). A pure function.
-pub fn people(events: &[Event], admits: impl Fn(&Event) -> bool) -> Vec<(PublicKey, Timestamp)> {
-    let mut found: Vec<(PublicKey, Timestamp)> = Vec::new();
-    for event in events.iter().filter(|event| admits(event)) {
-        match found.iter_mut().find(|(key, _)| *key == event.pubkey) {
-            Some((_, at)) => *at = (*at).max(event.created_at),
-            None => found.push((event.pubkey, event.created_at)),
-        }
-    }
-    found.sort_by(|(a, at_a), (b, at_b)| at_b.cmp(at_a).then_with(|| a.to_hex().cmp(&b.to_hex())));
-    found
-}
-
-/// The people who starred `address`, newest first.
-pub async fn stargazers(
-    store: &ReadOnlyStore,
-    address: &RepoAddress,
-) -> Vec<(PublicKey, Timestamp)> {
-    let coordinate = address.coordinate();
-    let events = store
-        .query(
-            Filter::new()
-                .kind(Kind::from(REACTION))
-                .custom_tag(SingleLetterTag::LOWERCASE_A, coordinate.clone())
-                .limit(PEOPLE_LIMIT),
-        )
-        .await;
-    people(&events, |event| is_star(event, &coordinate))
-}
-
-/// The people whose followed-repos list (kind 10018) names `address`,
-/// newest first.
-pub async fn followers(
-    store: &ReadOnlyStore,
-    address: &RepoAddress,
-) -> Vec<(PublicKey, Timestamp)> {
-    let coordinate = address.coordinate();
-    let events = store
-        .query(
-            Filter::new()
-                .kind(Kind::from(FOLLOWED_REPOS))
-                .custom_tag(SingleLetterTag::LOWERCASE_A, coordinate.clone())
-                .limit(PEOPLE_LIMIT),
-        )
-        .await;
-    people(&events, |event| {
-        event.kind == Kind::from(FOLLOWED_REPOS) && names_value(event, "a", &coordinate)
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use nostr::event::{EventBuilder, FinalizeEvent, Tag};
@@ -629,44 +553,6 @@ mod tests {
         assert!(demo.contains("data-demo>"));
         assert!(demo.contains("Live demo</a>"));
         assert!(!demo.contains("Open repo"));
-    }
-
-    #[test]
-    fn a_star_is_a_plus_on_the_repo_with_its_kind() {
-        let owner = Keys::generate().public_key();
-        let a = format!("30617:{}:r", owner.to_hex());
-        let fan = Keys::generate();
-        let star = |content: &str, tags: &[&[&str]]| signed(&fan, 7, 1, content, tags);
-        assert!(is_star(
-            &star("+", &[&["a", &a, "wss://x"], &["k", "30617"]]),
-            &a
-        ));
-        assert!(!is_star(&star("-", &[&["a", &a], &["k", "30617"]]), &a));
-        assert!(!is_star(&star("🔥", &[&["a", &a], &["k", "30617"]]), &a));
-        assert!(!is_star(&star("+", &[&["a", &a]]), &a));
-        assert!(!is_star(&star("+", &[&["e", &a], &["k", "30617"]]), &a));
-        let other = format!("30617:{}:other", owner.to_hex());
-        assert!(!is_star(&star("+", &[&["a", &other], &["k", "30617"]]), &a));
-    }
-
-    #[test]
-    fn people_are_counted_once_however_often_they_write() {
-        let a = Keys::generate();
-        let b = Keys::generate();
-        let events = [
-            signed(&a, 7, 10, "+", &[]),
-            signed(&a, 7, 30, "+", &[]),
-            signed(&b, 7, 20, "+", &[]),
-            signed(&b, 7, 40, "-", &[]),
-        ];
-        let counted = people(&events, |event| event.content == "+");
-        assert_eq!(
-            counted,
-            vec![
-                (a.public_key(), Timestamp::from(30)),
-                (b.public_key(), Timestamp::from(20)),
-            ]
-        );
     }
 
     #[test]
