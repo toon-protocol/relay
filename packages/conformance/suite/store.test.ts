@@ -102,7 +102,7 @@ describe('relay image conformance: replaceable kinds', () => {
 
 describe('relay image conformance: addressable kinds', () => {
   conformanceTestEach(
-    [30000, 30023, 39999, 10032, 10050, 10099],
+    [30000, 30023, 39999],
     (kind) => `kind ${kind} keeps the latest event per author, kind and d tag`,
     async (kind) => {
       const { secretKey, pubkey } = author();
@@ -147,25 +147,26 @@ describe('relay image conformance: addressable kinds', () => {
     ).toEqual(ids(empty));
   });
 
-  conformanceTest(
-    'a kind just outside 10032-10099 is replaceable, not addressable',
-    async () => {
+  conformanceTestEach(
+    [10032, 10050, 10099, 10100],
+    (kind) => `kind ${kind} is replaceable: the d tag is ignored`,
+    async (kind) => {
       const { secretKey, pubkey } = author();
       const t = now();
       const older = sign(secretKey, {
-        kind: 10100,
+        kind,
         created_at: t - 10,
         tags: [['d', 'a']],
       });
       const newer = sign(secretKey, {
-        kind: 10100,
+        kind,
         created_at: t,
         tags: [['d', 'b']],
       });
       await publishOk(relay, older);
       await publishOk(relay, newer);
       expect(
-        await storedIds(relay, { authors: [pubkey], kinds: [10100] })
+        await storedIds(relay, { authors: [pubkey], kinds: [kind] })
       ).toEqual(ids(newer));
     }
   );
