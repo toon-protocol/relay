@@ -238,3 +238,37 @@ async fn the_groups_are_rebuilt_in_the_order_their_events_arrived() {
         200
     );
 }
+
+#[tokio::test]
+async fn a_non_members_limit_is_filled_with_public_notes_not_a_private_groups() {
+    let running = with_groups().await;
+    let (owner, writer) = (Keys::generate(), Keys::generate());
+    accepted(&running, &in_group(&owner, 9007, "secret", &[&["private"]])).await;
+    // The private group's notes are the newest, so they would fill the limit.
+    for at in 0..3 {
+        accepted(
+            &running,
+            &signed_by(&writer, 1, NOW + 10 + at, &[&["t", "public"]]),
+        )
+        .await;
+    }
+    for at in 0..5 {
+        accepted(
+            &running,
+            &signed_by(&owner, 1, NOW + 100 + at, &[&["h", "secret"]]),
+        )
+        .await;
+    }
+
+    let mut stranger = Client::connect(&running.read_url).await;
+    stranger.next().await.expect("the challenge");
+    let found = stranger
+        .req("notes", json!({ "kinds": [1], "limit": 3 }))
+        .await;
+    assert_eq!(found.len(), 3, "{found:?}");
+    assert!(
+        found
+            .iter()
+            .all(|e| e["pubkey"] == writer.public_key().to_hex())
+    );
+}

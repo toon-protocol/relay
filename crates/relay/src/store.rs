@@ -331,6 +331,27 @@ pub struct Query {
     /// `p` tags names one of `keys` (hex); no key at all admits none. Other
     /// kinds are unaffected. A condition, so `limit` counts only what is kept.
     pub wrap_recipients: Option<Vec<String>>,
+    /// Events the reader may not see, each a condition of the query so that
+    /// `limit` counts only what is kept.
+    pub hidden: Vec<Hidden>,
+}
+
+/// Events a query leaves out: those whose `tag` has one of `values`, among
+/// the kinds in `kinds` (`within`) or among all the others (not `within`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hidden {
+    pub tag: String,
+    pub values: Vec<String>,
+    pub kinds: std::ops::RangeInclusive<u16>,
+    pub within: bool,
+}
+
+impl Query {
+    /// This query, also requiring each multi-letter tag.
+    pub(crate) fn with_multi_letter_tags(mut self, tags: Vec<(String, HashSet<String>)>) -> Self {
+        self.multi_letter_tags = tags;
+        self
+    }
 }
 
 impl From<Filter> for Query {
@@ -339,6 +360,7 @@ impl From<Filter> for Query {
             filter,
             multi_letter_tags: Vec::new(),
             wrap_recipients: None,
+            hidden: Vec::new(),
         }
     }
 }
@@ -710,6 +732,22 @@ fn run_query(
             parameters.push("p".to_string().into());
             parameters.extend(keys.iter().cloned().map(Value::from));
         }
+    }
+
+    for hidden in query
+        .hidden
+        .iter()
+        .filter(|hidden| !hidden.values.is_empty())
+    {
+        conditions.push(format!(
+            "NOT ((kind BETWEEN ? AND ?) = ? AND {HAS_TAG} ({})) ELSE 0 END)",
+            placeholders(hidden.values.len())
+        ));
+        parameters.push(i64::from(*hidden.kinds.start()).into());
+        parameters.push(i64::from(*hidden.kinds.end()).into());
+        parameters.push(i64::from(hidden.within).into());
+        parameters.push(hidden.tag.clone().into());
+        parameters.extend(hidden.values.iter().cloned().map(Value::from));
     }
 
     let mut sql = SELECT.to_string();
