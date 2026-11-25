@@ -167,8 +167,7 @@ pub(crate) fn fork_of(announcement: &Event) -> Option<RepoAddress> {
     if announcement.kind != Kind::from(ANNOUNCEMENT) {
         return None;
     }
-    let upstream = RepoAddress::parse(first_tag(announcement, "u")?)?;
-    (Some(&upstream) != RepoAddress::of(announcement).as_ref()).then_some(upstream)
+    ui_nip34::lineage::ForkOf::of(announcement).map(|parent| parent.address().clone())
 }
 
 /// The repos `event` is a trending act on (the table in the module doc).
@@ -1176,6 +1175,15 @@ mod tests {
         let fork = signed(&fan, 30_617, 1, "", &[&["d", "r"], &["u", &repo]]);
         assert_eq!(fork_of(&fork), RepoAddress::parse(&repo));
         assert_eq!(on(fork), 1);
+        let with_url = signed(
+            &fan,
+            30_617,
+            1,
+            "",
+            &[&["d", "r"], &["u", &format!("{repo}|nostr://x/y")]],
+        );
+        assert_eq!(fork_of(&with_url), RepoAddress::parse(&repo));
+        assert_eq!(on(with_url), 1);
         let url = signed(
             &fan,
             30_617,
